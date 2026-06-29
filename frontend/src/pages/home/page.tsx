@@ -1,5 +1,40 @@
 import { useCountUp, useInView } from '@/hooks/useCountUp';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+
+// ── Workspaces shown as launch buttons on the home page ──
+// Each maps to a demo account so entering a section signs you in as the
+// matching role (no password). Sections without a dedicated demo user reuse
+// the closest account — the same mapping the in-app RoleSwitcher uses.
+interface WorkspaceSection {
+  slug: string;
+  label: string;
+  icon: string;
+  email: string;
+  workspacePath: string;
+  /** Visually featured on the launcher grid */
+  highlighted?: boolean;
+}
+
+const WORKSPACE_SECTIONS: WorkspaceSection[] = [
+  { slug: 'learner', label: 'Learner', icon: 'ri-user-line', email: 'learner@kbc.test', workspacePath: '/workspace/learner', highlighted: true },
+  { slug: 'coach', label: 'Coach', icon: 'ri-user-heart-line', email: 'coach@kbc.test', workspacePath: '/workspace/coach', highlighted: true },
+  { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
+  { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
+  { slug: 'enrolment', label: 'Enrolment', icon: 'ri-user-add-line', email: 'compliance@kbc.test', workspacePath: '/compliance/enrolment-review', highlighted: true },
+  { slug: 'compliance', label: 'Compliance', icon: 'ri-shield-check-line', email: 'compliance@kbc.test', workspacePath: '/workspace/compliance' },
+  { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
+  { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
+  { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-2-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
+  { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement' },
+  { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
+  { slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
+  { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
+  { slug: 'auditor', label: 'Auditor', icon: 'ri-history-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor' },
+  { slug: 'support', label: 'Support', icon: 'ri-customer-service-2-line', email: 'admin@kbc.test', workspacePath: '/workspace/support' },
+  { slug: 'safeguarding', label: 'Safeguarding', icon: 'ri-shield-line', email: 'compliance@kbc.test', workspacePath: '/workspace/safeguarding' },
+];
 
 function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: { end: number; suffix?: string; prefix?: string; duration?: number; label: string }) {
   const { ref, isInView } = useInView();
@@ -45,6 +80,19 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 }
 
 export default function Home() {
+  const { login } = useAuth();
+  const navigate = useNavigate();
+
+  // Enter a section directly — sign in as its demo account, then route in.
+  const enterWorkspace = (section: WorkspaceSection) => {
+    login(section.email);
+    navigate(section.workspacePath);
+  };
+
+  const scrollToWorkspaces = () => {
+    document.getElementById('workspaces')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
     <div className="min-h-screen bg-background-200">
       {/* ============ HERO SECTION ============ */}
@@ -123,13 +171,13 @@ export default function Home() {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row items-start gap-4 animate-hero-fade-in-up delay-700">
-            <a
-              href="/login"
-              className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 transition-all duration-300 whitespace-nowrap shadow-lg shadow-primary-500/20 hover:shadow-primary-500/30 hover:-translate-y-0.5"
+            <button
+              onClick={scrollToWorkspaces}
+              className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 transition-all duration-300 whitespace-nowrap shadow-lg shadow-primary-500/20 hover:shadow-primary-500/30 hover:-translate-y-0.5 cursor-pointer"
             >
-              <i className="ri-login-box-line text-[15px]" />
-              Sign in to your workspace
-            </a>
+              <i className="ri-grid-line text-[15px]" />
+              Choose your workspace
+            </button>
             <a
               href="/onboarding"
               className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl border border-white/10 text-white/80 text-[14px] font-medium hover:bg-white/5 hover:border-white/20 transition-all duration-300 whitespace-nowrap hover:-translate-y-0.5"
@@ -193,6 +241,51 @@ export default function Home() {
               <CountUpStat end={100} suffix="%" label="Compliance" />
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ============ WORKSPACE LAUNCHER ============ */}
+      <section id="workspaces" className="max-w-6xl mx-auto px-6 pt-20 md:pt-24 scroll-mt-6">
+        <div className="text-center mb-12 animate-fade-in-up">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-primary-600 bg-primary-50 px-3 py-1.5 rounded-full border border-primary-200/40 mb-5">
+            <i className="ri-grid-line text-[10px]" />
+            Workspaces
+          </span>
+          <h2 className="text-[32px] md:text-[40px] font-heading font-semibold text-foreground-900 tracking-tight mb-4">
+            Choose a workspace
+          </h2>
+          <p className="text-[15px] text-foreground-400 max-w-lg mx-auto leading-relaxed">
+            Jump straight into any section — no sign-in required.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 stagger-section">
+          {WORKSPACE_SECTIONS.map((section) => (
+            <button
+              key={section.slug}
+              onClick={() => enterWorkspace(section)}
+              className={`group relative flex flex-col items-center text-center gap-3 rounded-2xl border p-5 transition-all duration-300 hover:-translate-y-0.5 cursor-pointer card-premium ${
+                section.highlighted
+                  ? 'bg-accent-50/60 border-accent-300/70 ring-1 ring-accent-300/50 shadow-lg shadow-accent-500/10 hover:border-accent-400 hover:shadow-accent-500/20'
+                  : 'bg-background-50 border-foreground-200 hover:border-primary-300/70 hover:shadow-lg hover:shadow-primary-500/5'
+              }`}
+            >
+              {section.highlighted && (
+                <span className="absolute top-2 right-2 inline-flex items-center gap-1 text-[9px] font-semibold text-accent-700 bg-accent-100 border border-accent-300/50 px-1.5 py-0.5 rounded-full">
+                  <i className="ri-star-fill text-[8px]" />
+                  Featured
+                </span>
+              )}
+              <span className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-colors duration-300 ${
+                section.highlighted
+                  ? 'bg-accent-100 border-accent-300/50 group-hover:bg-accent-200'
+                  : 'bg-primary-50 border-primary-200/40 group-hover:bg-primary-100'
+              }`}>
+                <i className={`${section.icon} text-[20px] ${section.highlighted ? 'text-accent-700' : 'text-primary-600'}`} />
+              </span>
+              <span className={`text-[13px] font-heading font-semibold ${section.highlighted ? 'text-accent-900' : 'text-foreground-800'}`}>{section.label}</span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -343,13 +436,13 @@ export default function Home() {
                 <i className="ri-compass-3-line text-[15px]" />
                 View the Roadmap
               </a>
-              <a
-                href="/login"
-                className="inline-flex items-center gap-2 px-7 py-3 rounded-xl border border-white/10 text-white/60 text-[14px] font-medium hover:bg-white/5 hover:text-white/80 hover:border-white/20 transition-all duration-300 whitespace-nowrap"
+              <button
+                onClick={scrollToWorkspaces}
+                className="inline-flex items-center gap-2 px-7 py-3 rounded-xl border border-white/10 text-white/60 text-[14px] font-medium hover:bg-white/5 hover:text-white/80 hover:border-white/20 transition-all duration-300 whitespace-nowrap cursor-pointer"
               >
-                <i className="ri-login-box-line text-[15px]" />
-                Sign in
-              </a>
+                <i className="ri-grid-line text-[15px]" />
+                Choose a workspace
+              </button>
             </div>
 
             {/* Phase dots preview */}

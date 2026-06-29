@@ -1,7 +1,7 @@
 import type { RouteObject } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import NotFound from "../pages/NotFound";
 import Home from "../pages/home/page";
-import LoginPage from "../pages/login/page";
 import ForgotPasswordPage from "../pages/forgot-password/page";
 import LearnerOverview from "../pages/workspace/learner/page";
 import CoachDashboard from "../pages/workspace/coach/page";
@@ -269,8 +269,9 @@ const routes: RouteObject[] = [
     element: <InternalPanelPage />,
   },
   {
+    // Login removed — entry is now the workspace launcher on the home page.
     path: "/login",
-    element: <LoginPage />,
+    element: <Navigate to="/" replace />,
   },
   {
     path: "/forgot-password",
