@@ -25,13 +25,9 @@ import AdminDashboard from "../pages/workspace/admin/page";
 import InternalPanelPage from "../pages/internal-panel/page";
 import OnboardingPage from "../pages/onboarding/page";
 import SettingsHub from "../pages/admin/settings/page";
-import PreActiveLearnerJourney from "../pages/compliance/pre-active/page";
-import EmployerContracting from "../pages/compliance/employer-contracting/page";
-import SelfOnboardingPage from "../pages/compliance/self-onboarding/page";
-import EnrolmentReviewPage from "../pages/compliance/enrolment-review/page";
-import EligibilityReviewPage from "../pages/compliance/eligibility/page";
-import InitialAssessmentPage from "../pages/compliance/initial-assessment/page";
-import RPLReviewPage from "../pages/compliance/rpl-review/page";
+import UsersListPage from "../pages/users/page";
+import BoardPage from "../pages/users/BoardPage";
+import WizardPage from "../pages/users/wizard/WizardPage";
 import ThisWeekPage from "../pages/learner/this-week/page";
 import TrainingPlanPage from "../pages/learner/training-plan/page";
 import ModulesPage from "../pages/learner/modules/page";
@@ -63,17 +59,6 @@ import GeneralNotificationsPage from "../pages/notifications/page";
 import GeneralTasksPage from "../pages/tasks/page";
 import GeneralMessagesPage from "../pages/messages/page";
 import EmployerDashboard from "../pages/workspace/employer/page";
-import ComplianceDashboard from "../pages/workspace/compliance/page";
-import NewStartersPage from "../pages/compliance/new-starters/page";
-import DocumentsPage from "../pages/compliance/documents/page";
-import SignaturesPage from "../pages/compliance/signatures/page";
-import EvidencePacksPage from "../pages/compliance/evidence-packs/page";
-import DASPage from "../pages/compliance/das/page";
-import ILRPage from "../pages/compliance/ilr/page";
-import FundingRiskPage from "../pages/compliance/funding-risk/page";
-import AptemSyncPage from "../pages/compliance/aptem-sync/page";
-import AuditReportsPage from "../pages/compliance/audit-reports/page";
-import EnrolmentReportsPage from "../pages/compliance/reports/page";
 import MISDashboard from "../pages/workspace/mis/page";
 import QADashboard from "../pages/workspace/qa/page";
 import TutorDashboard from "../pages/workspace/tutor/page";
@@ -362,32 +347,20 @@ const routes: RouteObject[] = [
     element: <OnboardingPage />,
   },
   {
-    path: "/compliance/pre-active",
-    element: <PreActiveLearnerJourney />,
+    path: "/users",
+    element: <UsersListPage />,
   },
   {
-    path: "/compliance/employer-contracting",
-    element: <EmployerContracting />,
+    path: "/users/:userId",
+    element: <BoardPage />,
   },
   {
-    path: "/compliance/self-onboarding",
-    element: <SelfOnboardingPage />,
+    path: "/users/:userId/wizard",
+    element: <WizardPage />,
   },
   {
-    path: "/compliance/enrolment-review",
-    element: <EnrolmentReviewPage />,
-  },
-  {
-    path: "/compliance/eligibility",
-    element: <EligibilityReviewPage />,
-  },
-  {
-    path: "/compliance/initial-assessment",
-    element: <InitialAssessmentPage />,
-  },
-  {
-    path: "/compliance/rpl-review",
-    element: <RPLReviewPage />,
+    path: "/users/:userId/wizard/:stepSlug",
+    element: <WizardPage />,
   },
   {
     path: "/learner/this-week",
@@ -508,10 +481,6 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/employer",
     element: <EmployerDashboard />,
-  },
-  {
-    path: "/workspace/compliance",
-    element: <ComplianceDashboard />,
   },
   {
     path: "/workspace/mis",
@@ -916,46 +885,6 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
-  },
-  {
-    path: "/compliance/new-starters",
-    element: <NewStartersPage />,
-  },
-  {
-    path: "/compliance/documents",
-    element: <DocumentsPage />,
-  },
-  {
-    path: "/compliance/signatures",
-    element: <SignaturesPage />,
-  },
-  {
-    path: "/compliance/das",
-    element: <DASPage />,
-  },
-  {
-    path: "/compliance/ilr",
-    element: <ILRPage />,
-  },
-  {
-    path: "/compliance/evidence-packs",
-    element: <EvidencePacksPage />,
-  },
-  {
-    path: "/compliance/funding-risk",
-    element: <FundingRiskPage />,
-  },
-  {
-    path: "/compliance/aptem-sync",
-    element: <AptemSyncPage />,
-  },
-  {
-    path: "/compliance/audit-reports",
-    element: <AuditReportsPage />,
-  },
-  {
-    path: "/compliance/reports",
-    element: <EnrolmentReportsPage />,
   },
   {
     path: "/mis/delivery-timeline",

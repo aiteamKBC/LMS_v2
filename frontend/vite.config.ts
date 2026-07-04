@@ -82,5 +82,13 @@ export default defineConfig({
   server: {
     port: 3000,
     host: "0.0.0.0",
+    proxy: {
+      // Forward API calls to the Django backend so the browser sees them as
+      // same-origin (no CORS). Django runs on :8000 by default.
+      "/api": {
+        target: process.env.VITE_API_TARGET || "http://localhost:8000",
+        changeOrigin: true,
+      },
+    },
   },
 });
