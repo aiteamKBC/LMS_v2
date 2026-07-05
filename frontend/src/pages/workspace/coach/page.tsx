@@ -253,9 +253,6 @@ export default function CoachDashboard() {
                 <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
                   <i className="ri-phone-line mr-1"></i> Call Mia
                 </button>
-                <Link to="/coach/at-risk" className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-[12px] font-medium text-red-700 hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  View All Risks
-                </Link>
               </div>
             </div>
           </SectionReveal>

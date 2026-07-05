@@ -203,7 +203,6 @@ import EmployerWorkplaceConfirmations from '@/pages/employer/workplace-confirm/p
 import EmployerKSBProgress from '@/pages/employer/ksb-progress/page';
 import EmployerReports from '@/pages/employer/reports/page';
 import EmployerSupportRequests from '@/pages/employer/support/page';
-import CoachAtRiskPage from "../pages/coach/at-risk/page";
 import CoachMessagesPage from "../pages/coach/messages/page";
 import CoachReportsPage from "../pages/coach/reports/page";
 import CurriculumKsbFrameworksPage from "../pages/curriculum/ksb-frameworks/page";
@@ -784,10 +783,6 @@ const routes: RouteObject[] = [
   {
     path: "/employer/support",
     element: <EmployerSupportRequests />,
-  },
-  {
-    path: "/coach/at-risk",
-    element: <CoachAtRiskPage />,
   },
   {
     path: "/coach/messages",

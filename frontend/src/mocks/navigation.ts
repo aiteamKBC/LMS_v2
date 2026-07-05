@@ -108,11 +108,8 @@ export const coachNavItems: SidebarNavItem[] = [
     id: 'coach-group-learners',
     label: 'My Learners',
     icon: 'ri-group-line',
-    href: '',
-    children: [
-      { id: 'coach-learner-overview', label: 'Learner Overview', icon: 'ri-folder-user-line', href: '/coach/caseload', badge: 24 },
-      { id: 'coach-at-risk', label: 'At-risk Learners', icon: 'ri-alert-line', href: '/coach/at-risk', badge: 3 },
-    ],
+    href: '/coach/caseload',
+    badge: 24,
   },
   {
     id: 'coach-group-attendance',
