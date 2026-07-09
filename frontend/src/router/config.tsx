@@ -113,7 +113,8 @@ import CurriculumStandards from "../pages/curriculum/standards/page";
 import CurriculumWeekBuilder from "../pages/curriculum/week-builder/page";
 import ComponentBuilderPage from "../pages/curriculum/component-builder/page";
 import QuizXmlWorkspace from "../pages/curriculum/quiz-xml/page";
-import TestBanksPage from "../pages/curriculum/test-banks/page";
+import QuizEditPage from "../pages/curriculum/quiz-xml/edit/page";
+import QuestionBankPage from "../pages/curriculum/question-bank/page";
 import CheckpointsPage from "../pages/curriculum/checkpoints/page";
 import TutorSessionsPage from "../pages/tutor/sessions/page";
 import TutorEvidenceReview from "../pages/tutor/evidence-review/page";
@@ -690,8 +691,12 @@ const routes: RouteObject[] = [
     element: <QuizXmlWorkspace />,
   },
   {
-    path: "/curriculum/test-banks",
-    element: <TestBanksPage />,
+    path: "/curriculum/question-bank",
+    element: <QuestionBankPage />,
+  },
+  {
+    path: "/curriculum/quiz-xml/:quizId/edit",
+    element: <QuizEditPage />,
   },
   {
     path: "/curriculum/checkpoints",
