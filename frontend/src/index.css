@@ -943,3 +943,618 @@ table tbody td:last-child {
   background: linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 100%);
   border: 1px solid oklch(var(--primary-800) / 0.4);
 }
+
+/* ===== SweetAlert2 - LMS premium confirmations ===== */
+.swal2-container {
+  z-index: 10060;
+}
+
+.swal2-container.swal2-backdrop-show {
+  background: rgba(3, 7, 18, 0.62);
+  backdrop-filter: blur(8px);
+}
+
+.kbc-swal-popup {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 70px rgba(3, 7, 18, 0.3);
+}
+
+.kbc-swal-html {
+  margin: 0;
+  padding: 0;
+}
+
+.kbc-swal-card {
+  text-align: left;
+  color: #111827;
+}
+
+.kbc-swal-stripe {
+  height: 5px;
+}
+
+.kbc-swal-action-card {
+  background: #fff;
+}
+
+.kbc-swal-action-head {
+  padding: 20px;
+  border-bottom: 1px solid;
+}
+
+.kbc-swal-title-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.kbc-swal-title-line h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.kbc-swal-title-line p {
+  margin: 6px 0 0;
+  max-width: 340px;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.kbc-swal-action-body {
+  padding: 18px 20px 0;
+}
+
+.kbc-swal-head {
+  position: relative;
+  padding: 20px;
+  border-bottom: 1px solid;
+}
+
+.kbc-swal-flag {
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 4px 10px;
+  color: #374151;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.kbc-swal-head > .kbc-swal-flag {
+  position: absolute;
+  right: 20px;
+  top: 20px;
+}
+
+.kbc-swal-head-row {
+  display: flex;
+  gap: 16px;
+  padding-right: 112px;
+  align-items: flex-start;
+}
+
+.kbc-swal-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: #fff;
+  box-shadow: 0 10px 22px rgba(3, 7, 18, 0.18);
+}
+
+.kbc-swal-icon i {
+  font-size: 20px;
+}
+
+.kbc-swal-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.kbc-swal-badges-tight {
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.kbc-swal-badges span {
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #fff;
+  color: #374151;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.kbc-swal-head h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.kbc-swal-head p {
+  margin: 6px 0 0;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.kbc-swal-body {
+  padding: 20px;
+}
+
+.kbc-swal-card-compact .kbc-swal-stripe {
+  height: 5px;
+}
+
+.kbc-swal-compact-body {
+  padding: 22px 22px 0;
+}
+
+.kbc-swal-centered-feedback-body {
+  padding-bottom: 22px;
+}
+
+.kbc-swal-centered-feedback-popup {
+  max-width: calc(100vw - 32px);
+}
+
+.kbc-swal-compact-title-row {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.kbc-swal-compact-title-row h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.kbc-swal-compact-title-row p {
+  margin: 6px 0 0;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.kbc-swal-message {
+  margin: 0;
+  padding: 13px 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 14px;
+  background: #f9fafb;
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+.kbc-swal-message-compact {
+  margin-top: 18px;
+  padding: 13px 14px;
+}
+
+.kbc-swal-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.kbc-swal-facts div {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px 11px;
+  box-shadow: 0 1px 2px rgba(3, 7, 18, 0.04);
+}
+
+.kbc-swal-facts-danger div:first-child {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.kbc-swal-facts-archive div:first-child {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.kbc-swal-facts small {
+  display: block;
+  color: #6b7280;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.kbc-swal-facts strong {
+  display: block;
+  margin-top: 4px;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.kbc-swal-warning {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 11px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.kbc-swal-warning-compact {
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.kbc-swal-actions {
+  gap: 8px;
+  padding: 20px;
+  margin: 0;
+}
+
+.kbc-swal-confirm,
+.kbc-swal-cancel {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border-radius: 12px;
+  padding: 0 18px;
+  font-size: 12px;
+  font-weight: 900;
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.kbc-swal-confirm {
+  color: #fff;
+  box-shadow: 0 10px 18px rgba(76, 29, 149, 0.2);
+}
+
+.kbc-swal-confirm-archive {
+  background: #4c1d95;
+}
+
+.kbc-swal-confirm-danger {
+  background: #dc2626;
+}
+
+.kbc-swal-confirm:hover,
+.kbc-swal-cancel:hover {
+  transform: translateY(-1px);
+}
+
+.kbc-swal-confirm-archive:hover {
+  background: #3b0764;
+}
+
+.kbc-swal-confirm-danger:hover {
+  background: #b91c1c;
+}
+
+.kbc-swal-confirm:disabled,
+.kbc-swal-cancel:disabled {
+  cursor: wait;
+  opacity: 0.86;
+}
+
+.kbc-swal-confirm-loading {
+  gap: 8px;
+  min-width: 118px;
+}
+
+.kbc-swal-button-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #fff;
+  border-radius: 999px;
+  animation: kbc-swal-spin 0.75s linear infinite;
+}
+
+@keyframes kbc-swal-spin {
+  to { transform: rotate(360deg); }
+}
+
+.kbc-swal-cancel {
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #1f2937;
+}
+
+.kbc-swal-cancel:hover {
+  background: #f3f4f6;
+}
+
+.kbc-swal-loader {
+  border-color: #fff transparent #fff transparent;
+}
+
+.kbc-swal-validation {
+  margin: 0 20px 18px;
+  border-radius: 12px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.kbc-standard-swal-popup {
+  border-radius: 6px;
+  padding: 28px 30px 26px;
+  box-shadow: 0 24px 70px rgba(3, 7, 18, 0.3);
+}
+
+.kbc-standard-swal-popup .swal2-icon {
+  margin: 8px auto 18px;
+}
+
+.kbc-standard-swal-title {
+  padding: 0;
+  color: #374151;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.kbc-standard-swal-text {
+  margin: 16px auto 0;
+  padding: 0;
+  max-width: 380px;
+  color: #374151;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.kbc-standard-swal-actions {
+  gap: 8px;
+  margin: 28px 0 0;
+}
+
+.kbc-standard-swal-confirm,
+.kbc-standard-swal-cancel,
+.kbc-standard-swal-popup .swal2-cancel {
+  min-height: 46px;
+  border-radius: 5px;
+  padding: 0 22px;
+  border: 0;
+  font-size: 15px;
+  font-weight: 800;
+  transition: transform 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.kbc-standard-swal-confirm {
+  background: #6d4dd8;
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(109, 77, 216, 0.22);
+}
+
+.kbc-standard-swal-confirm:hover {
+  background: #5b35d1;
+  transform: translateY(-1px);
+}
+
+.kbc-standard-swal-cancel,
+.kbc-standard-swal-popup .swal2-cancel {
+  background: #6b7280;
+  color: #fff;
+}
+
+.kbc-standard-swal-cancel:hover,
+.kbc-standard-swal-popup .swal2-cancel:hover {
+  background: #4b5563;
+  transform: translateY(-1px);
+}
+
+.kbc-standard-swal-loader {
+  border-color: #6d4dd8 transparent #6d4dd8 transparent;
+}
+
+.kbc-standard-swal-progress {
+  background: linear-gradient(90deg, #6d4dd8, #10b981);
+}
+
+.kbc-standard-swal-validation {
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.kbc-swal-toast {
+  border: 1px solid #d1d5db;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: 0 18px 45px rgba(3, 7, 18, 0.18);
+  min-width: 360px;
+}
+
+.kbc-swal-toast-success {
+  border-top: 4px solid #10b981;
+}
+
+.kbc-swal-toast-error {
+  border-top: 4px solid #dc2626;
+}
+
+.kbc-swal-toast-info {
+  border-top: 4px solid #4c1d95;
+}
+
+.kbc-swal-toast-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.kbc-swal-toast-text {
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.kbc-swal-toast-progress {
+  background: linear-gradient(90deg, #4c1d95, #10b981);
+}
+
+.kbc-swal-toast-popup,
+.kbc-swal-feedback-popup {
+  max-width: calc(100vw - 32px);
+}
+
+.kbc-swal-toast-popup {
+  border-color: var(--kbc-swal-toast-border, #d1d5db);
+  background: linear-gradient(135deg, #fff 0%, var(--kbc-swal-toast-soft, #f9fafb) 100%);
+  box-shadow: 0 18px 44px rgba(3, 7, 18, 0.18);
+}
+
+.kbc-swal-toast-popup::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--kbc-swal-toast-color, #4c1d95);
+}
+
+.kbc-swal-toast-body {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 16px 18px 16px 20px;
+  text-align: left;
+}
+
+.kbc-swal-toast-copy h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.kbc-swal-toast-copy p {
+  margin: 4px 0 0;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.kbc-swal-feedback-body {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 24px;
+  text-align: left;
+}
+
+.kbc-swal-feedback-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(3, 7, 18, 0.16);
+}
+
+.kbc-swal-feedback-icon i {
+  font-size: 20px;
+}
+
+.kbc-swal-feedback-body h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.kbc-swal-feedback-body p {
+  margin: 6px 0 0;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .swal2-container {
+    padding: 12px;
+  }
+
+  .kbc-swal-popup {
+    width: min(100%, 420px) !important;
+    border-radius: 16px;
+  }
+
+  .kbc-swal-action-head,
+  .kbc-swal-action-body,
+  .kbc-swal-actions {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .kbc-swal-title-line {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .kbc-swal-head-row {
+    padding-right: 0;
+  }
+
+  .kbc-swal-flag {
+    display: inline-flex;
+    grid-column: 1 / -1;
+    width: max-content;
+    margin-top: 2px;
+  }
+
+  .kbc-swal-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .kbc-swal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .kbc-swal-confirm,
+  .kbc-swal-cancel {
+    width: 100%;
+  }
+
+  .kbc-swal-toast-popup {
+    width: calc(100vw - 24px) !important;
+  }
+}

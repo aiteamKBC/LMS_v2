@@ -1,7 +1,25 @@
-import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { useCurriculumData } from '@/hooks/useCurriculumData';
+import type {
+  CurriculumComponent,
+  CurriculumGroup,
+  CurriculumKsbEntry,
+  CurriculumOverview,
+  CurriculumProgramme,
+  CurriculumProgrammeInput,
+  CurriculumSession,
+  CurriculumStaffProfile,
+} from '@/lib/curriculumApi';
+import {
+  deleteStaffingAssignment,
+  updateCurriculumProgramme,
+  updateStaffingAssignment,
+} from '@/lib/curriculumApi';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — Full Programme Hierarchy
@@ -30,6 +48,7 @@ interface Week {
   startDate: string;
   endDate: string;
   otjh: number;
+  components?: CurriculumComponent[];
   sessions: Session[];
 }
 
@@ -37,6 +56,8 @@ interface Module {
   id: string;
   name: string;
   description: string;
+  cohort?: string;
+  group?: string;
   weeks: number;
   otjh: number;
   version: string;
@@ -54,7 +75,7 @@ interface Group {
   tutor: string;
   startDate: string;
   endDate: string;
-  status: 'active' | 'pending' | 'completed';
+  status: 'active' | 'planned' | 'completed';
   modules: Module[];
   schedule: string;
   mode: string;
@@ -77,7 +98,9 @@ interface Programme {
   name: string;
   standard: string;
   level: string;
-  status: 'published' | 'approved' | 'in-review' | 'draft';
+  status: string;
+  owner: string;
+  color: string;
   description: string;
   duration: string;
   intent: string;
@@ -95,6 +118,16 @@ interface Programme {
   staffing: { coach: string; tutor: string; groups: string; cohorts: string; status: string; role: string }[];
 }
 
+type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description'>>;
+type SelectOption = { value: string; label: string };
+
+const PROGRAMME_STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'published', label: 'Published' },
+  { value: 'archived', label: 'Archived' },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock Data — Marketing Executive Level 4
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +138,8 @@ const PROGRAMME: Programme = {
   standard: 'ST0094',
   level: 'Level 4',
   status: 'published',
+  owner: 'Curriculum Team',
+  color: '#6941c6',
   description: '16-month L4 apprenticeship preparing learners for the Marketing Executive standard and CIM L4 Diploma.',
   duration: '16 months',
   intent: 'Build a confident, evidence-led marketing executive who can plan, deliver and evaluate campaigns aligned to employer goals.',
@@ -212,7 +247,7 @@ const PROGRAMME: Programme = {
           tutor: 'Unassigned',
           startDate: 'Sep 2025',
           endDate: 'Mar 2027',
-          status: 'pending',
+          status: 'planned',
           schedule: 'TBD',
           mode: 'Blended',
           modules: [],
@@ -577,37 +612,690 @@ const moduleStatusColors: Record<string, string> = {
   draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/50',
 };
 
+const EMPTY_MODULE: Module = {
+  id: 'no-modules',
+  name: 'No modules found',
+  description: 'No live modules are currently linked to this programme.',
+  weeks: 0,
+  otjh: 0,
+  version: '1.0',
+  status: 'draft',
+  ksbTags: [],
+  ksbMapping: [],
+  weeksData: [],
+};
+
+const EMPTY_PROGRAMME: Programme = {
+  id: '',
+  name: 'Programme',
+  standard: 'Standard not set',
+  level: '',
+  status: 'draft',
+  owner: '',
+  color: '#6941c6',
+  description: '',
+  duration: 'Live curriculum',
+  intent: 'No live programme intent has been configured yet.',
+  rationale: 'No live curriculum rationale has been configured yet.',
+  learnerBenefit: 'No learner benefit has been configured yet.',
+  employerBenefit: 'No employer benefit has been configured yet.',
+  epaOverview: 'No EPA overview has been configured yet.',
+  qualifications: [],
+  mainKsbs: [],
+  secondaryKsbs: [],
+  cohorts: [],
+  modules: [],
+  ksbHeatmap: [],
+  moduleNames: [],
+  staffing: [],
+};
+
+function clean(value: unknown, fallback = '') {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+}
+
+function normalise(value: unknown) {
+  return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function staffProfileName(profile: CurriculumStaffProfile) {
+  return clean(profile.name || profile.Tutor_name || profile.Coach_name || profile.email);
+}
+
+function staffOptions(profiles: CurriculumStaffProfile[] = [], currentValues: string[] = []): SelectOption[] {
+  const names = new Map<string, string>();
+
+  profiles.forEach(profile => {
+    const name = staffProfileName(profile);
+    const key = normalise(name);
+    if (!key || key === 'unassigned' || names.has(key)) return;
+    names.set(key, name);
+  });
+
+  currentValues.forEach(value => {
+    const name = clean(value);
+    const key = normalise(name);
+    if (!key || key === 'unassigned' || names.has(key)) return;
+    names.set(key, name);
+  });
+
+  return Array.from(names.values())
+    .sort((left, right) => left.localeCompare(right))
+    .map(name => ({ value: name, label: name }));
+}
+
+type KsbKind = 'knowledge' | 'skill' | 'behaviour' | 'other';
+
+function ksbKind(code: string): KsbKind {
+  const prefix = clean(code).charAt(0).toUpperCase();
+  if (prefix === 'K') return 'knowledge';
+  if (prefix === 'S') return 'skill';
+  if (prefix === 'B') return 'behaviour';
+  return 'other';
+}
+
+function formatKsbCode(code: string) {
+  const value = clean(code).toUpperCase();
+  const match = value.match(/^([KSB])(\d+(?:\.\d+)?)$/);
+  if (!match) return value;
+  const [, prefix, number] = match;
+  if (number.includes('.') || number.length === 1) return `${prefix}${number}`;
+  return `${prefix}${number.slice(0, 1)}.${number.slice(1)}`;
+}
+
+function ksbParentCode(code: string) {
+  const formatted = formatKsbCode(code);
+  const match = formatted.match(/^([KSB])(\d+)(?:\.\d+)?$/);
+  return match ? `${match[1]}${match[2]}` : formatted;
+}
+
+function ksbTone(kind: KsbKind) {
+  if (kind === 'knowledge') return 'bg-sky-50 text-sky-700 border-sky-200/70';
+  if (kind === 'skill') return 'bg-emerald-50 text-emerald-700 border-emerald-200/70';
+  if (kind === 'behaviour') return 'bg-amber-50 text-amber-700 border-amber-200/70';
+  return 'bg-foreground-100 text-foreground-600 border-foreground-200/70';
+}
+
+function sortKsbCodes(a: string, b: string) {
+  const order: Record<string, number> = { K: 0, S: 1, B: 2 };
+  const parse = (code: string) => {
+    const formatted = formatKsbCode(code);
+    const match = formatted.match(/^([KSB])(\d+)(?:\.(\d+))?$/);
+    return {
+      prefix: match?.[1] || 'Z',
+      major: Number(match?.[2] || 999),
+      minor: Number(match?.[3] || -1),
+      label: formatted,
+    };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  return (order[left.prefix] ?? 9) - (order[right.prefix] ?? 9)
+    || left.major - right.major
+    || left.minor - right.minor
+    || left.label.localeCompare(right.label);
+}
+
+function programmeStatus(status: string): string {
+  if (status === 'active' || status === 'draft' || status === 'published' || status === 'approved' || status === 'in-review' || status === 'archived') return status;
+  return 'active';
+}
+
+function cohortStatus(status: string): Cohort['status'] {
+  if (status === 'planned' || status === 'completed') return status;
+  return 'active';
+}
+
+function groupStatus(status: string): Group['status'] {
+  if (status === 'completed') return 'completed';
+  if (status === 'planned' || status === 'pending') return 'planned';
+  return 'active';
+}
+
+function moduleStatus(status: string): Module['status'] {
+  if (status === 'published' || status === 'approved' || status === 'in-review' || status === 'draft') return status;
+  return status === 'review' ? 'in-review' : 'published';
+}
+
+function sessionStatus(status: string): Session['status'] {
+  if (status === 'completed' || status === 'cancelled' || status === 'pending') return status;
+  return 'scheduled';
+}
+
+function formatDateLabel(value: string) {
+  if (!value) return 'TBD';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function durationMinutes(startTime: string, endTime: string) {
+  const toMinutes = (value: string) => {
+    const [hours = '0', minutes = '0'] = clean(value).split(':');
+    return Number(hours) * 60 + Number(minutes);
+  };
+  const start = toMinutes(startTime);
+  const end = toMinutes(endTime);
+  return end > start ? end - start : 0;
+}
+
+function isProgrammeMatch(programme: CurriculumProgramme, value: string) {
+  const programmeNames = [programme.id, programme.sourceId, programme.name, programme.standard].map(normalise);
+  return programmeNames.includes(normalise(value));
+}
+
+function findProgramme(data: CurriculumOverview | null, routeId: string) {
+  if (!data) return null;
+  const routeKey = normalise(routeId);
+  return data.programmes.find(programme => (
+    normalise(programme.id) === routeKey ||
+    normalise(programme.sourceId) === routeKey ||
+    normalise(programme.name) === routeKey
+  )) ?? null;
+}
+
+function componentWeekNumber(component: CurriculumComponent) {
+  const label = clean(component.week);
+  const match = label.match(/\d+/);
+  return match ? Number(match[0]) : 1;
+}
+
+function isComponentForModule(component: CurriculumComponent, liveModule: { id: string; sourceId: number | string; catalogueId?: string; name: string }) {
+  const componentModuleKeys = [component.moduleCatalogueId, component.moduleId, component.module].map(normalise);
+  const moduleKeys = [liveModule.catalogueId, liveModule.id, liveModule.sourceId, liveModule.name].map(normalise);
+  return moduleKeys.some(key => key && componentModuleKeys.includes(key));
+}
+
+function buildModuleWeeks(moduleId: string, moduleName: string, sessions: CurriculumSession[], components: CurriculumComponent[] = []): Week[] {
+  const byWeek = new Map<number, CurriculumSession[]>();
+  sessions.forEach(session => {
+    const weekNumber = Number(session.week || 1);
+    byWeek.set(weekNumber, [...(byWeek.get(weekNumber) ?? []), session]);
+  });
+
+  const componentsByWeek = new Map<number, CurriculumComponent[]>();
+  components.forEach(component => {
+    const weekNumber = componentWeekNumber(component);
+    componentsByWeek.set(weekNumber, [...(componentsByWeek.get(weekNumber) ?? []), component]);
+  });
+
+  const weekNumbers = [...new Set([...byWeek.keys(), ...componentsByWeek.keys()])].sort((a, b) => a - b);
+
+  return weekNumbers.map((weekNumber) => {
+    const weekSessions = byWeek.get(weekNumber) ?? [];
+    const weekComponents = componentsByWeek.get(weekNumber) ?? [];
+    const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+
+    return {
+      id: `${moduleId}-week-${weekNumber}`,
+      number: weekNumber,
+      title: first?.title || `Week ${weekNumber}`,
+      startDate: formatDateLabel(first?.date || ''),
+      endDate: formatDateLabel(last?.date || first?.date || ''),
+      otjh: Math.round((sorted.reduce((sum, session) => sum + durationMinutes(session.startTime, session.endTime), 0) + weekComponents.reduce((sum, component) => sum + (Number(component.duration) || 0), 0)) / 60),
+      components: weekComponents,
+      sessions: sorted.map(session => ({
+        id: session.id,
+        title: session.title || moduleName,
+        type: 'Live Session',
+        day: session.day || '',
+        date: formatDateLabel(session.date),
+        startTime: session.startTime || '',
+        endTime: session.endTime || '',
+        duration: durationMinutes(session.startTime, session.endTime),
+        tutor: session.tutor || 'Unassigned',
+        venue: session.venue || 'LMS',
+        deliveryMode: session.venue || 'LMS',
+        ksbRefs: session.ksbCodes || [],
+        status: sessionStatus(session.status),
+      })),
+    };
+  });
+}
+
+function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): { programme: Programme; found: boolean } {
+  const source = findProgramme(data, routeId);
+  if (!data || !source) return { programme: EMPTY_PROGRAMME, found: false };
+
+  const programmeSessions = data.sessions.filter(session => isProgrammeMatch(source, session.programme));
+  const programmeGroups = data.groups.filter(group => isProgrammeMatch(source, group.programme));
+  const programmeCohorts = data.cohorts.filter(cohort => (
+    normalise(cohort.programmeId) === normalise(source.id) ||
+    isProgrammeMatch(source, cohort.programme)
+  ));
+  const moduleNamesFromStructure = new Set([
+    ...programmeSessions.map(session => session.module),
+    ...programmeGroups.flatMap(group => group.modules),
+    ...programmeCohorts.flatMap(cohort => cohort.modules),
+  ].filter(Boolean).map(name => clean(name)));
+  const liveModules = data.modules.filter(module => isProgrammeMatch(source, module.programme));
+  const moduleSource: Array<{
+    id: string;
+    sourceId: number | string;
+    catalogueId?: string;
+    name: string;
+    programme: string;
+    cohort?: string;
+    group?: string;
+    weeks: number;
+    ksbCount: number;
+    lessons: number;
+    quizzes: number;
+    assignments: number;
+    status: string;
+    author: string;
+    lastUpdated: string;
+    color: string;
+    notes: string;
+    sessionNames: string[];
+    ksbCodes: string[];
+  }> = liveModules.length > 0
+    ? liveModules
+    : [...moduleNamesFromStructure].map((name, index) => ({
+        id: `module-${normalise(name) || index}`,
+        sourceId: index,
+        name,
+        programme: source.name,
+        cohort: '',
+        group: '',
+        weeks: 0,
+        ksbCount: 0,
+        lessons: 0,
+        quizzes: 0,
+        assignments: 0,
+        status: 'published',
+        author: '',
+        lastUpdated: '',
+        color: source.color,
+        notes: '',
+        sessionNames: [],
+        ksbCodes: [],
+      }));
+
+  const modules = moduleSource.map((liveModule) => {
+    const moduleSessions = programmeSessions.filter(session => (
+      String(session.trainingPlanId) === String(liveModule.sourceId) ||
+      (!liveModule.sourceId && normalise(session.module) === normalise(liveModule.name))
+    ));
+    const moduleComponents = (data.components ?? []).filter(component => (
+      isComponentForModule(component, liveModule) &&
+      (!component.programme || isProgrammeMatch(source, component.programme))
+    ));
+    const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents);
+    const ksbTags = liveModule.ksbCodes?.length ? liveModule.ksbCodes : [...new Set([
+      ...moduleSessions.flatMap(session => session.ksbCodes || []),
+      ...moduleComponents.flatMap(component => component.ksbRefs || []),
+    ])];
+
+    return {
+      id: liveModule.id,
+      name: liveModule.name,
+      description: [liveModule.cohort, liveModule.group].filter(Boolean).join(' - ') || liveModule.notes || `${liveModule.name} linked to ${source.name}.`,
+      cohort: liveModule.cohort || '',
+      group: liveModule.group || '',
+      weeks: weeksData.length || liveModule.weeks || 0,
+      otjh: Math.round((moduleSessions.reduce((sum, session) => sum + durationMinutes(session.startTime, session.endTime), 0) + moduleComponents.reduce((sum, component) => sum + (Number(component.duration) || 0), 0)) / 60),
+      version: '1.0',
+      status: moduleStatus(liveModule.status),
+      ksbTags,
+      ksbMapping: ksbTags.map(code => ({ ksb: code, weight: Math.min(100, Math.max(10, Math.round(100 / Math.max(ksbTags.length, 1)))) })),
+      weeksData,
+    };
+  });
+
+  const groupsByCohort = new Map<string, CurriculumGroup[]>();
+  programmeGroups.forEach(group => {
+    groupsByCohort.set(group.cohortId, [...(groupsByCohort.get(group.cohortId) ?? []), group]);
+  });
+
+  const cohorts = programmeCohorts.map(cohort => ({
+    id: cohort.id,
+    name: cohort.name,
+    startDate: formatDateLabel(cohort.startDate),
+    endDate: formatDateLabel(cohort.endDate),
+    status: cohortStatus(cohort.status),
+    learners: cohort.learners || 0,
+    progress: cohort.progress || 0,
+    attendance: cohort.attendance || 0,
+    groups: (groupsByCohort.get(cohort.id) ?? []).map(group => ({
+      id: group.id,
+      name: group.name,
+      learners: group.learners || 0,
+      coach: group.coach || 'Unassigned',
+      tutor: group.tutor || 'Unassigned',
+      startDate: formatDateLabel(group.startDate),
+      endDate: formatDateLabel(group.endDate),
+      status: groupStatus(group.status),
+      schedule: group.schedule || 'TBD',
+      mode: group.mode || 'Live',
+      modules: modules.filter(module => group.modules.some(name => normalise(name) === normalise(module.name))),
+    })),
+  }));
+
+  const ksbSet = data.ksbSets.find(set => (
+    normalise(set.programmeId) === normalise(source.id) ||
+    isProgrammeMatch(source, set.programmeName) ||
+    isProgrammeMatch(source, set.standard)
+  ));
+  const ksbEntries: CurriculumKsbEntry[] = ksbSet?.ksbs ?? [];
+  const moduleNames = modules.map((module, index) => `M${index + 1}`);
+  const moduleLabelByName = new Map(modules.map((module, index) => [normalise(module.name), moduleNames[index]]));
+  const emptyCoverage = moduleNames.reduce<Record<string, number | null>>((coverage, label) => ({ ...coverage, [label]: null }), {});
+  const ksbHeatmap = ksbEntries.map(entry => ({
+    ksb: entry.code,
+    title: entry.title || entry.description || entry.code,
+    coverage: (entry.modules || []).reduce<Record<string, number | null>>((coverage, moduleName) => {
+      const label = moduleLabelByName.get(normalise(moduleName));
+      return label ? { ...coverage, [label]: 100 } : coverage;
+    }, emptyCoverage),
+  }));
+  const mainKsbs = ksbEntries.filter(entry => entry.type !== 'Behaviour').map(entry => entry.code);
+  const secondaryKsbs = ksbEntries.filter(entry => entry.type === 'Behaviour').map(entry => entry.code);
+  const staffMap = new Map<string, { coach: string; tutor: string; groups: Set<string>; cohorts: Set<string> }>();
+  cohorts.flatMap(cohort => cohort.groups.map(group => ({ cohort, group }))).forEach(({ cohort, group }) => {
+    const key = `${group.coach}|${group.tutor}`;
+    const entry = staffMap.get(key) ?? { coach: group.coach, tutor: group.tutor, groups: new Set<string>(), cohorts: new Set<string>() };
+    entry.groups.add(group.name);
+    entry.cohorts.add(cohort.name);
+    staffMap.set(key, entry);
+  });
+
+  return {
+    found: true,
+    programme: {
+      id: source.id,
+      name: source.name,
+      standard: source.standard,
+      level: source.level || 'Level not set',
+      status: programmeStatus(source.status),
+      owner: source.owner || '',
+      color: source.color || '#6941c6',
+      description: source.description || `${source.standard} curriculum plan.`,
+      duration: 'Live curriculum',
+      intent: source.description || 'No live programme intent has been configured yet.',
+      rationale: 'Built from the live curriculum training plan, modules, cohorts, groups and scheduled sessions.',
+      learnerBenefit: 'Learners follow the live cohorts, groups and modules configured in the LMS.',
+      employerBenefit: 'Employers see the current delivery plan and staffing linked to this programme.',
+      epaOverview: source.standard || 'EPA overview not configured.',
+      qualifications: [],
+      mainKsbs,
+      secondaryKsbs,
+      cohorts,
+      modules,
+      ksbHeatmap,
+      moduleNames,
+      staffing: [...staffMap.values()].map(entry => ({
+        coach: entry.coach,
+        tutor: entry.tutor,
+        groups: [...entry.groups].join(', '),
+        cohorts: [...entry.cohorts].join(', '),
+        status: entry.coach === 'Unassigned' || entry.tutor === 'Unassigned' ? 'unassigned' : 'active',
+        role: 'Coach / Tutor',
+      })),
+    },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
-  const [tab, setTab] = useState<'overview' | 'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('overview');
+  const { data, loading, error, reload } = useCurriculumData();
+  const { programme: PROGRAMME, found } = useMemo(() => buildLiveProgramme(data, id || ''), [data, id]);
+  const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('cohorts');
   const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
   const [selectedWeek, setSelectedWeek] = useState<string>(PROGRAMME.modules[0]?.weeksData[0]?.id || '');
   const [sessionFilter, setSessionFilter] = useState<string>('all');
+  const [cohortSearch, setCohortSearch] = useState<string>('');
+  const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
+  const [groupSearch, setGroupSearch] = useState<string>('');
+  const [groupCohortFilter, setGroupCohortFilter] = useState<string>('all');
+  const [groupStatusFilter, setGroupStatusFilter] = useState<string>('all');
+  const [moduleSearch, setModuleSearch] = useState<string>('');
+  const [moduleCohortFilter, setModuleCohortFilter] = useState<string>('all');
+  const [moduleGroupFilter, setModuleGroupFilter] = useState<string>('all');
+  const [sessionSearch, setSessionSearch] = useState<string>('');
+  const [sessionTutorFilter, setSessionTutorFilter] = useState<string>('all');
+  const [sessionPage, setSessionPage] = useState<number>(1);
+  const [sessionPageSize, setSessionPageSize] = useState<number>(25);
+  const [ksbSearch, setKsbSearch] = useState<string>('');
+  const [staffingSearch, setStaffingSearch] = useState<string>('');
+  const [staffingStatusFilter, setStaffingStatusFilter] = useState<string>('all');
   const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [assignMode, setAssignMode] = useState<string | null>(null);
+  const [assignForms, setAssignForms] = useState<Record<string, { coach: string; tutor: string }>>({});
+  const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
+  const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', status: 'active', owner: '', color: '#6941c6', description: '' });
+  const [savingAction, setSavingAction] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (PROGRAMME.cohorts.length > 0 && !PROGRAMME.cohorts.some(c => c.id === selectedCohort)) {
+      setSelectedCohort(PROGRAMME.cohorts[0].id);
+    }
+  }, [PROGRAMME.cohorts, selectedCohort]);
+
+  useEffect(() => {
+    if (PROGRAMME.modules.length > 0 && !PROGRAMME.modules.some(m => m.id === selectedModule)) {
+      setSelectedModule(PROGRAMME.modules[0].id);
+      setSelectedWeek(PROGRAMME.modules[0].weeksData[0]?.id || '');
+    }
+  }, [PROGRAMME.modules, selectedModule]);
+
+  useEffect(() => {
+    setSessionPage(1);
+  }, [sessionSearch, sessionTutorFilter, sessionFilter, sessionPageSize]);
 
   const cohort = PROGRAMME.cohorts.find(c => c.id === selectedCohort) || PROGRAMME.cohorts[0];
-  const module = PROGRAMME.modules.find(m => m.id === selectedModule) || PROGRAMME.modules[0];
+  const module = PROGRAMME.modules.find(m => m.id === selectedModule) || PROGRAMME.modules[0] || EMPTY_MODULE;
   const week = module?.weeksData.find(w => w.id === selectedWeek) || module?.weeksData[0];
+  const allGroups = useMemo(() => PROGRAMME.cohorts.flatMap(cohortItem => (
+    cohortItem.groups.map(group => ({ cohort: cohortItem, group }))
+  )), [PROGRAMME.cohorts]);
+  const coachOptions = useMemo(
+    () => staffOptions(data?.coaches ?? [], allGroups.map(({ group }) => group.coach)),
+    [data?.coaches, allGroups],
+  );
+  const tutorOptions = useMemo(
+    () => staffOptions(data?.tutors ?? [], allGroups.map(({ group }) => group.tutor)),
+    [data?.tutors, allGroups],
+  );
+  const filteredCohorts = useMemo(() => {
+    const query = normalise(cohortSearch);
+    return PROGRAMME.cohorts.filter(cohortItem => {
+      const matchesSearch = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate].some(value => normalise(value).includes(query));
+      const matchesStatus = cohortStatusFilter === 'all' || cohortItem.status === cohortStatusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [PROGRAMME.cohorts, cohortSearch, cohortStatusFilter]);
+  const filteredGroups = useMemo(() => {
+    const query = normalise(groupSearch);
+    return allGroups.filter(({ cohort: cohortItem, group }) => {
+      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.tutor, group.schedule, group.mode, group.status].some(value => normalise(value).includes(query));
+      const matchesCohort = groupCohortFilter === 'all' || cohortItem.id === groupCohortFilter;
+      const matchesStatus = groupStatusFilter === 'all' || group.status === groupStatusFilter;
+      return matchesSearch && matchesCohort && matchesStatus;
+    });
+  }, [allGroups, groupSearch, groupCohortFilter, groupStatusFilter]);
+  const moduleCohorts = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.cohort)).filter(Boolean))].sort(), [PROGRAMME.modules]);
+  const moduleGroups = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.group)).filter(Boolean))].sort(), [PROGRAMME.modules]);
+  const filteredModules = useMemo(() => {
+    const query = normalise(moduleSearch);
+    return PROGRAMME.modules.filter(mod => {
+      const matchesSearch = !query || [mod.name, mod.description, mod.cohort, mod.group, ...mod.ksbTags].some(value => normalise(value).includes(query));
+      const matchesCohort = moduleCohortFilter === 'all' || clean(mod.cohort) === moduleCohortFilter;
+      const matchesGroup = moduleGroupFilter === 'all' || clean(mod.group) === moduleGroupFilter;
+      return matchesSearch && matchesCohort && matchesGroup;
+    });
+  }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter]);
+  const filteredWeeks = module.weeksData;
+  const weekModuleOptions = PROGRAMME.modules;
 
   const allSessions = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.sessions));
-  const filteredSessions = sessionFilter === 'all' ? allSessions : allSessions.filter(s => s.status === sessionFilter);
+  const sessionTutors = useMemo(() => [...new Set(allSessions.map(session => clean(session.tutor)).filter(Boolean))].sort(), [allSessions]);
+  const filteredSessions = useMemo(() => {
+    const query = normalise(sessionSearch);
+    return allSessions.filter(session => {
+      const matchesStatus = sessionFilter === 'all' || session.status === sessionFilter;
+      const matchesTutor = sessionTutorFilter === 'all' || session.tutor === sessionTutorFilter;
+      const matchesSearch = !query || [session.title, session.type, session.day, session.date, session.startTime, session.endTime, session.tutor, session.venue, session.status, ...session.ksbRefs].some(value => normalise(value).includes(query));
+      return matchesStatus && matchesTutor && matchesSearch;
+    });
+  }, [allSessions, sessionFilter, sessionTutorFilter, sessionSearch]);
+  const sessionPageCount = Math.max(1, Math.ceil(filteredSessions.length / sessionPageSize));
+  const currentSessionPage = Math.min(sessionPage, sessionPageCount);
+  const sessionStartIndex = (currentSessionPage - 1) * sessionPageSize;
+  const pagedSessions = filteredSessions.slice(sessionStartIndex, sessionStartIndex + sessionPageSize);
+  const filteredKsbHeatmap = useMemo(() => {
+    const query = normalise(ksbSearch);
+    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title].some(value => normalise(value).includes(query)));
+  }, [PROGRAMME.ksbHeatmap, ksbSearch]);
+  const filteredStaffing = useMemo(() => {
+    const query = normalise(staffingSearch);
+    return PROGRAMME.staffing.filter(entry => {
+      const matchesSearch = !query || [entry.coach, entry.tutor, entry.groups, entry.cohorts, entry.status, entry.role].some(value => normalise(value).includes(query));
+      const matchesStatus = staffingStatusFilter === 'all' || entry.status === staffingStatusFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [PROGRAMME.staffing, staffingSearch, staffingStatusFilter]);
 
   const totalSessions = allSessions.length;
   const completedSessions = allSessions.filter(s => s.status === 'completed').length;
+  const scheduledSessions = allSessions.filter(s => s.status === 'scheduled').length;
   const totalOtjh = PROGRAMME.modules.reduce((a, m) => a + m.otjh, 0);
   const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
   const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
+  const activeGroups = allGroups.filter(({ group }) => group.status === 'active').length;
+  const assignedGroups = allGroups.filter(({ group }) => group.coach !== 'Unassigned' && group.tutor !== 'Unassigned').length;
+  const staffingCoverage = totalGroups ? Math.round((assignedGroups / totalGroups) * 100) : 0;
+  const ksbCoverage = PROGRAMME.ksbHeatmap.length
+    ? Math.round((PROGRAMME.ksbHeatmap.filter(row => Object.values(row.coverage).some(value => value !== null && value !== undefined)).length / PROGRAMME.ksbHeatmap.length) * 100)
+    : 0;
+  const completionRate = totalSessions ? Math.round((completedSessions / totalSessions) * 100) : 0;
+  const programmeHealth = Math.round((ksbCoverage + staffingCoverage + completionRate) / 3);
+  const unassignedGroups = PROGRAMME.cohorts.flatMap(c => (
+    c.groups
+      .filter(g => g.coach === 'Unassigned' || g.tutor === 'Unassigned')
+      .map(g => ({ cohort: c, group: g }))
+  ));
+
+  const openAssign = (group: Group) => {
+    setAssignMode(group.id);
+    setAssignForms(prev => ({
+      ...prev,
+      [group.id]: {
+        coach: group.coach === 'Unassigned' ? '' : group.coach,
+        tutor: group.tutor === 'Unassigned' ? '' : group.tutor,
+      },
+    }));
+  };
+
+  const saveAssignment = async (groupId: string) => {
+    const form = assignForms[groupId] || { coach: '', tutor: '' };
+    setSavingAction(groupId);
+    try {
+      await updateStaffingAssignment(groupId, { coach: form.coach, tutor: form.tutor });
+      await showCurriculumAlert({
+        title: 'Staffing assignment saved',
+        text: 'The live curriculum data will refresh with the updated coach and tutor.',
+        icon: 'success',
+        timer: 1600,
+      });
+      setAssignMode(null);
+      reload();
+    } catch (err) {
+      await showCurriculumAlert({
+        title: 'Unable to save assignment',
+        text: err instanceof Error ? err.message : 'The staffing assignment could not be saved.',
+        icon: 'error',
+      });
+    } finally {
+      setSavingAction(null);
+    }
+  };
+
+  const removeAssignment = async (groupId: string) => {
+    setSavingAction(groupId);
+    try {
+      await deleteStaffingAssignment(groupId);
+      await showCurriculumAlert({
+        title: 'Staffing assignment removed',
+        text: 'The group is now unassigned in default Curriculum views.',
+        icon: 'success',
+        timer: 1600,
+      });
+      reload();
+    } catch (err) {
+      await showCurriculumAlert({
+        title: 'Unable to remove assignment',
+        text: err instanceof Error ? err.message : 'The staffing assignment could not be removed.',
+        icon: 'error',
+      });
+    } finally {
+      setSavingAction(null);
+    }
+  };
+
+  const openProgrammeForm = () => {
+    setProgrammeForm({
+      name: PROGRAMME.name,
+      standard: PROGRAMME.standard,
+      level: PROGRAMME.level,
+      status: PROGRAMME.status,
+      owner: PROGRAMME.owner,
+      color: PROGRAMME.color,
+      description: PROGRAMME.description,
+    });
+    setProgrammeFormOpen(true);
+  };
+
+  const openStructureWizard = (context: { cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' } = {}) => {
+    setWizardContext(context);
+    setWizardOpen(true);
+  };
+
+  const saveProgramme = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!programmeForm.name.trim()) {
+      await showCurriculumAlert({
+        title: 'Programme name required',
+        text: 'Enter a programme name before saving.',
+        icon: 'warning',
+      });
+      return;
+    }
+    setSavingAction('programme');
+    try {
+      await updateCurriculumProgramme(id || PROGRAMME.id, programmeForm);
+      await showCurriculumAlert({
+        title: 'Programme updated',
+        text: 'The programme header has been refreshed from the database.',
+        icon: 'success',
+        timer: 1600,
+      });
+      setProgrammeFormOpen(false);
+      reload();
+    } catch (err) {
+      await showCurriculumAlert({
+        title: 'Unable to update programme',
+        text: err instanceof Error ? err.message : 'The programme could not be saved.',
+        icon: 'error',
+      });
+    } finally {
+      setSavingAction(null);
+    }
+  };
 
   const tabs = [
-    { key: 'overview' as const, label: 'Overview & Intent', icon: 'ri-file-info-line' },
     { key: 'cohorts' as const, label: 'Cohorts', icon: 'ri-group-line' },
     { key: 'groups' as const, label: 'Groups', icon: 'ri-team-line' },
     { key: 'modules' as const, label: 'Modules', icon: 'ri-stack-line' },
@@ -616,11 +1304,107 @@ export default function ProgrammeDetailPage() {
     { key: 'ksb' as const, label: 'KSB Heatmap', icon: 'ri-bar-chart-line' },
     { key: 'staffing' as const, label: 'Staffing', icon: 'ri-user-settings-line' },
   ];
+  const tabContext = {
+    cohorts: { title: 'Cohort delivery map', description: 'Track each cohort, its live groups, schedule health and learner allocation.', count: `${filteredCohorts.length} visible` },
+    groups: { title: 'Groups and weekly delivery', description: 'Manage delivery teams, timetable patterns and module links for every group.', count: `${filteredGroups.length} visible` },
+    modules: { title: 'Module catalogue in this programme', description: 'Review attached modules, KSB coverage, delivery context and authoring links.', count: `${filteredModules.length} visible` },
+    weeks: { title: 'Weekly learning sequence', description: 'Inspect the selected module week-by-week with sessions and tutor delivery detail.', count: `${module.weeksData.length} weeks` },
+    sessions: { title: 'Session operations', description: 'Search, filter and page through live scheduled and completed sessions.', count: `${filteredSessions.length} sessions` },
+    ksb: { title: 'KSB heatmap', description: 'See how each KSB is covered across the modules in this programme.', count: `${filteredKsbHeatmap.length} KSBs` },
+    staffing: { title: 'Staff assignment', description: 'Assign and monitor coaches and tutors across cohorts and groups.', count: `${filteredStaffing.length} assignments` },
+  }[tab];
+  const assignmentTarget = assignMode ? allGroups.find(({ group }) => group.id === assignMode) : null;
+
+  if (loading) {
+    return (
+      <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
+        <div className="p-6 space-y-6">
+          <div className="bg-background-50 rounded-2xl border border-primary-200/70 p-5 sm:p-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-4">
+                <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
+                  <i className="ri-database-2-line text-lg"></i>
+                </span>
+                <div>
+                  <p className="text-[11px] font-semibold text-primary-600 uppercase tracking-wider mb-1">Live database sync</p>
+                  <h1 className="text-xl font-heading font-bold text-foreground-900">Loading programme structure</h1>
+                  <p className="text-[13px] text-foreground-500 mt-1">Cohorts, groups, modules, weeks and sessions are being prepared.</p>
+                </div>
+              </div>
+              <button disabled className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold cursor-wait whitespace-nowrap flex items-center gap-2">
+                <i className="ri-loader-4-line animate-spin text-sm"></i>
+                Process in progress
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5 pt-4 border-t border-foreground-200/60">
+              {['Cohorts', 'Groups', 'Learners', 'Modules', 'Total OTJH'].map(label => (
+                <LoadingStatPill key={label} label={label} />
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-xl bg-background-100 p-2 overflow-hidden">
+            {['Cohorts', 'Groups', 'Modules', 'Weeks', 'Sessions'].map(label => (
+              <div key={label} className="h-8 w-24 rounded-lg bg-background-50 border border-foreground-200/50 animate-pulse" />
+            ))}
+          </div>
+
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 space-y-4">
+            <div className="h-4 w-40 rounded bg-background-200 animate-pulse" />
+            <div className="h-3 w-full max-w-3xl rounded bg-background-200 animate-pulse" />
+            <div className="h-3 w-full max-w-2xl rounded bg-background-200 animate-pulse" />
+            <div className="h-3 w-full max-w-xl rounded bg-background-200 animate-pulse" />
+          </div>
+        </div>
+      </WorkspaceShell>
+    );
+  }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={`${PROGRAMME.name} ${PROGRAMME.level}`} pageSubtitle={`${PROGRAMME.standard} · ${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
-        {/* ── Programme Header ── */}
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.standard} · ${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
+      <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
+        {loading && (
+          <div className="rounded-xl border border-primary-200/60 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">
+            Loading live programme data...
+          </div>
+        )}
+        {error && (
+          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            Curriculum API error: {error}.
+          </div>
+        )}
+        {!loading && !error && !found && (
+          <div className="rounded-xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-700">
+            Programme not found for route id: {id}
+          </div>
+        )}
+        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
+                  <i className="ri-database-2-line text-xs"></i>
+                  Live programme
+                </span>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-700">{PROGRAMME.status}</span>
+                <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
+                <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.standard || 'Standard not set'}</span>
+              </div>
+              <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
+              <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 xl:justify-end">
+              <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/standards/${encodeURIComponent(PROGRAMME.standard || PROGRAMME.id)}`)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+                <i className="ri-file-list-3-line text-sm"></i>
+                View Standard
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {false && (
         <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 sm:p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -628,14 +1412,18 @@ export default function ProgrammeDetailPage() {
                 <span className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">{PROGRAMME.cohorts.length} cohorts · {PROGRAMME.modules.length} modules · {PROGRAMME.standard} · {PROGRAMME.level}</span>
                 <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-primary-500 text-white">{PROGRAMME.status}</span>
               </div>
-              <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name} {PROGRAMME.level}</h1>
+              <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name}</h1>
               <p className="text-[13px] text-foreground-500 mt-1">{PROGRAMME.description}</p>
+              {PROGRAMME.owner && <p className="text-[11px] text-foreground-400 mt-2">Owner: {PROGRAMME.owner}</p>}
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+              <button onClick={() => openStructureWizard({ startStep: 'cohort' })} className="px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[12px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <i className="ri-add-line mr-1"></i> Add Structure
+              </button>
+              <button onClick={openProgrammeForm} className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                 <i className="ri-edit-line mr-1"></i> Edit Programme
               </button>
-              <button className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+              <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/standards/${encodeURIComponent(PROGRAMME.standard || PROGRAMME.id)}`)} className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                 <i className="ri-file-list-3-line mr-1"></i> View Standard
               </button>
             </div>
@@ -650,28 +1438,44 @@ export default function ProgrammeDetailPage() {
             <StatPill icon="ri-time-line" value={totalOtjh} label="Total OTJH" />
           </div>
         </div>
+        )}
 
-        {/* ── Tabs ── */}
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
+        {/* Programme Navigation */}
+        <div className="sticky top-0 z-20 flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
           {tabs.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer shrink-0 ${tab === t.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-              <i className={`${t.icon} text-[13px]`}></i>
-              {t.label}
-              {t.key === 'modules' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{PROGRAMME.modules.length}</span>}
-              {t.key === 'cohorts' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{PROGRAMME.cohorts.length}</span>}
-              {t.key === 'groups' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{totalGroups}</span>}
-              {t.key === 'sessions' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{totalSessions}</span>}
+            <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
+              <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
+                <i className={`${t.icon} text-[14px]`}></i>
+              </span>
+              <span>{t.label}</span>
+              {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
+              {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.cohorts.length}</span>}
+              {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
+              {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
+              {t.key === 'staffing' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{staffingCoverage}%</span>}
             </button>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary-500">Current workspace</p>
+            <h2 className="mt-1 text-base font-heading font-black text-foreground-950">{tabContext.title}</h2>
+            <p className="mt-1 text-[13px] text-foreground-500">{tabContext.description}</p>
+          </div>
+          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
+            <i className="ri-pulse-line text-sm"></i>
+            {tabContext.count}
+          </span>
         </div>
 
         {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Overview & Intent
         ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'overview' && (
+        {false && (
           <div className="space-y-5">
             {/* Programme Intent */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Programme Intent</h3>
               <div className="space-y-4">
                 <IntentBlock label="Intent" text={PROGRAMME.intent} />
@@ -691,23 +1495,19 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {/* KSB Groups */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">KSB Groups</h3>
               <p className="text-[12px] text-foreground-400 mb-3">Main and secondary KSBs covered at programme level.</p>
               <div className="mb-4">
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Main ({PROGRAMME.mainKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
-                  {PROGRAMME.mainKsbs.map(k => (
-                    <span key={k} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-primary-50 text-primary-700 border border-primary-200/50">{k}</span>
-                  ))}
+                  <KsbGroupedTags codes={PROGRAMME.mainKsbs} />
                 </div>
               </div>
               <div>
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Secondary ({PROGRAMME.secondaryKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
-                  {PROGRAMME.secondaryKsbs.map(k => (
-                    <span key={k} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-secondary-100 text-secondary-700 border border-secondary-200/50">{k}</span>
-                  ))}
+                  <KsbGroupedTags codes={PROGRAMME.secondaryKsbs} />
                 </div>
               </div>
             </div>
@@ -719,8 +1519,32 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'cohorts' && (
           <div className="space-y-4">
-            {PROGRAMME.cohorts.map(c => (
-              <div key={c.id} className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <input value={cohortSearch} onChange={event => setCohortSearch(event.target.value)} placeholder="Search cohorts, dates, status..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                </div>
+                <select value={cohortStatusFilter} onChange={event => setCohortStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                  <option value="all">All statuses</option>
+                  <option value="planned">Planned</option>
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                </select>
+                <button onClick={() => { setCohortSearch(''); setCohortStatusFilter('all'); }} disabled={!cohortSearch && cohortStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+              </div>
+              <p className="text-[11px] text-foreground-400 mt-3">{filteredCohorts.length} of {PROGRAMME.cohorts.length} cohorts</p>
+            </div>
+
+            {filteredCohorts.length === 0 && (
+              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <p className="text-sm font-semibold text-foreground-700 mt-2">No cohorts match these filters</p>
+              </div>
+            )}
+
+            {filteredCohorts.map(c => (
+              <div key={c.id} className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
                 {/* Cohort Header — Clickable */}
                 <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
@@ -752,7 +1576,7 @@ export default function ProgrammeDetailPage() {
                   <div className="px-4 pb-4 border-t border-background-200/30">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                       {c.groups.map(g => (
-                        <div key={g.id} className="bg-background-100 rounded-xl border border-foreground-200/60 p-4">
+                        <div key={g.id} className="rounded-2xl border border-background-200/80 bg-background-100 p-4 shadow-sm">
                           <div className="flex items-center justify-between mb-2">
                             <p className="text-[13px] font-semibold text-foreground-900">{g.name}</p>
                             <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
@@ -768,17 +1592,68 @@ export default function ProgrammeDetailPage() {
                             <span className="text-[10px] text-foreground-400">{g.startDate} — {g.endDate}</span>
                           </div>
                           <div className="flex items-center gap-2 mt-3">
-                            <Link to={`/curriculum/cohorts/${c.id}`} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">View Full Details</Link>
-                            <button className="px-2.5 py-1 bg-background-50 border border-background-200 rounded-md text-[10px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">Assign Staff</button>
+                            <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                              {expandedGroup === g.id ? 'Hide Details' : 'View Full Details'}
+                            </button>
+                            <button onClick={() => openAssign(g)} className="px-2.5 py-1 bg-background-50 border border-background-200 rounded-md text-[10px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">Assign Staff</button>
                           </div>
+
+                          {expandedGroup === g.id && (
+                            <div className="mt-4 rounded-xl border border-primary-200/50 bg-background-50 p-4 shadow-sm">
+                              <div className="flex items-start justify-between gap-3 mb-3">
+                                <div>
+                                  <p className="text-[12px] font-semibold text-foreground-900">{g.name} full details</p>
+                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} · {g.startDate} — {g.endDate}</p>
+                                </div>
+                                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
+                              </div>
+
+                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
+                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Coach</p>
+                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.coach}</p>
+                                </div>
+                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
+                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Tutor</p>
+                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.tutor}</p>
+                                </div>
+                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
+                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Schedule</p>
+                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.schedule}</p>
+                                </div>
+                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
+                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Modules</p>
+                                  <p className="text-[11px] font-semibold text-foreground-800">{g.modules.length}</p>
+                                </div>
+                              </div>
+
+                              {g.modules.length > 0 ? (
+                                <div className="space-y-2">
+                                  {g.modules.map(moduleItem => (
+                                    <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+                                      <div className="min-w-0">
+                                        <p className="text-[11px] font-semibold text-foreground-900 truncate">{moduleItem.name}</p>
+                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks · {moduleItem.otjh}h OTJH · {moduleItem.weeksData.reduce((sum, weekItem) => sum + weekItem.sessions.length, 0)} sessions</p>
+                                      </div>
+                                      <button onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }} className="px-2.5 py-1 rounded-md border border-background-200 bg-background-100 text-[10px] font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
+                                        Open Weeks
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] text-foreground-500">No modules are linked to this group yet.</p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
                     <div className="flex items-center gap-2 mt-3">
-                      <Link to={`/curriculum/cohorts/${c.id}/allocate`} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                      <button onClick={() => showCurriculumAlert({ title: 'Learner allocation is resource-scoped', text: `${c.name} is live in this programme view. Learner allocation should use the live MIS workflow instead of the legacy mock page.`, icon: 'info' })} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                         <i className="ri-user-add-line mr-1"></i> Allocate Learners
-                      </Link>
-                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                      </button>
+                      <button onClick={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                         <i className="ri-add-line mr-1"></i> New Group
                       </button>
                     </div>
@@ -794,14 +1669,42 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'groups' && (
           <div className="space-y-4">
-            {PROGRAMME.cohorts.map(c => (
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <input value={groupSearch} onChange={event => setGroupSearch(event.target.value)} placeholder="Search groups, coach, tutor, schedule..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                </div>
+                <select value={groupCohortFilter} onChange={event => setGroupCohortFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                  <option value="all">All cohorts</option>
+                  {PROGRAMME.cohorts.map(cohortItem => <option key={cohortItem.id} value={cohortItem.id}>{cohortItem.name}</option>)}
+                </select>
+                <select value={groupStatusFilter} onChange={event => setGroupStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                  <option value="all">All statuses</option>
+                  <option value="planned">Planned</option>
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                </select>
+                <button onClick={() => { setGroupSearch(''); setGroupCohortFilter('all'); setGroupStatusFilter('all'); }} disabled={!groupSearch && groupCohortFilter === 'all' && groupStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+              </div>
+              <p className="text-[11px] text-foreground-400 mt-3">{filteredGroups.length} of {totalGroups} groups</p>
+            </div>
+
+            {filteredGroups.length === 0 && (
+              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <p className="text-sm font-semibold text-foreground-700 mt-2">No groups match these filters</p>
+              </div>
+            )}
+
+            {PROGRAMME.cohorts.filter(c => c.groups.some(g => filteredGroups.some(item => item.group.id === g.id))).map(c => (
               <div key={c.id} className="space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[12px] font-semibold text-foreground-700">{c.name}</span>
                   <span className="text-[10px] text-foreground-400">{c.groups.length} groups · {c.learners} learners</span>
                 </div>
-                {c.groups.map(g => (
-                  <div key={g.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+                {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
+                  <div key={g.id} className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
                     <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4">
                       <div className="w-12 h-12 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
                         <i className="ri-team-line text-secondary-700 text-lg"></i>
@@ -821,10 +1724,10 @@ export default function ProgrammeDetailPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => setAssignMode(assignMode === g.id ? null : g.id)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => openAssign(g)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                           <i className="ri-user-add-line mr-1"></i> Assign Staff
                         </button>
-                        <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                        <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                           <i className="ri-edit-line mr-1"></i> Edit
                         </button>
                       </div>
@@ -832,32 +1735,24 @@ export default function ProgrammeDetailPage() {
 
                     {/* Assign Staff Panel */}
                     {assignMode === g.id && (
-                      <div className="mt-4 p-4 bg-background-100 rounded-xl border border-foreground-200/60">
+                      <div className="mt-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
                         <h4 className="text-[12px] font-semibold text-foreground-700 mb-3">Assign Coach & Tutor</h4>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                          <div>
-                            <label className="text-[11px] font-medium text-foreground-500 mb-1 block">Coach</label>
-                            <select className="w-full px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                              <option>{g.coach}</option>
-                              <option>Sarah Mitchell</option>
-                              <option>David Chen</option>
-                              <option>Lisa Park</option>
-                              <option>Michael Brown</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-[11px] font-medium text-foreground-500 mb-1 block">Tutor</label>
-                            <select className="w-full px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                              <option>{g.tutor}</option>
-                              <option>James Thompson</option>
-                              <option>Emily Roberts</option>
-                              <option>Mark Williams</option>
-                              <option>Jessica Adams</option>
-                            </select>
-                          </div>
+                          <StaffAssignmentSelect
+                            label="Coach"
+                            value={assignForms[g.id]?.coach ?? (g.coach === 'Unassigned' ? '' : g.coach)}
+                            options={coachOptions}
+                            onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), coach: value } }))}
+                          />
+                          <StaffAssignmentSelect
+                            label="Tutor"
+                            value={assignForms[g.id]?.tutor ?? (g.tutor === 'Unassigned' ? '' : g.tutor)}
+                            options={tutorOptions}
+                            onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), tutor: value } }))}
+                          />
                         </div>
                         <div className="flex items-center gap-2">
-                          <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Save Assignment</button>
+                          <button onClick={() => saveAssignment(g.id)} disabled={savingAction === g.id} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">{savingAction === g.id ? 'Saving...' : 'Save Assignment'}</button>
                           <button onClick={() => setAssignMode(null)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
                         </div>
                       </div>
@@ -874,8 +1769,61 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'modules' && (
           <div className="space-y-4">
-            {PROGRAMME.modules.map((mod, idx) => (
-              <div key={mod.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 card-premium">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <input
+                    value={moduleSearch}
+                    onChange={event => setModuleSearch(event.target.value)}
+                    placeholder="Search modules, cohort, group, KSB..."
+                    className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                  />
+                </div>
+                <select
+                  value={moduleCohortFilter}
+                  onChange={event => setModuleCohortFilter(event.target.value)}
+                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer"
+                >
+                  <option value="all">All cohorts</option>
+                  {moduleCohorts.map(cohortName => (
+                    <option key={cohortName} value={cohortName}>{cohortName}</option>
+                  ))}
+                </select>
+                <select
+                  value={moduleGroupFilter}
+                  onChange={event => setModuleGroupFilter(event.target.value)}
+                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer"
+                >
+                  <option value="all">All groups</option>
+                  {moduleGroups.map(groupName => (
+                    <option key={groupName} value={groupName}>{groupName}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }}
+                  disabled={!moduleSearch && moduleCohortFilter === 'all' && moduleGroupFilter === 'all'}
+                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap"
+                >
+                  Reset
+                </button>
+              </div>
+              <p className="text-[11px] text-foreground-400 mt-3">{filteredModules.length} of {PROGRAMME.modules.length} modules</p>
+            </div>
+
+            {filteredModules.length === 0 && (
+              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <p className="text-sm font-semibold text-foreground-700 mt-2">No modules match these filters</p>
+                <button onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }} className="mt-3 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth">
+                  Clear filters
+                </button>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            {filteredModules.map((mod, idx) => (
+              <div key={mod.id} className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
@@ -892,10 +1840,8 @@ export default function ProgrammeDetailPage() {
                 </div>
 
                 {/* KSB Tags */}
-                <div className="flex items-center gap-2 flex-wrap mb-3">
-                  {mod.ksbTags.map(ksb => (
-                    <span key={ksb} className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-secondary-100 text-secondary-700">{ksb}</span>
-                  ))}
+                <div className="mb-2">
+                  <KsbGroupedTags codes={mod.ksbTags} />
                 </div>
 
                 {/* Module Info Row */}
@@ -906,35 +1852,42 @@ export default function ProgrammeDetailPage() {
                 </div>
 
                 {/* KSB Mapping Bars */}
-                <div className="mb-4">
+                <div className="mb-3">
                   <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSB Coverage</p>
-                  <div className="flex items-center gap-3 flex-wrap">
-                    {mod.ksbMapping.map(km => (
-                      <div key={km.ksb} className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-semibold text-foreground-500 w-8">{km.ksb}</span>
-                        <div className="w-16 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                          <div className="h-full bg-primary-500 rounded-full" style={{ width: `${km.weight}%` }}></div>
-                        </div>
-                        <span className="text-[10px] font-semibold text-foreground-500">{km.weight}%</span>
-                      </div>
-                    ))}
-                  </div>
+                  <KsbCoverageGroups mapping={mod.ksbMapping} />
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 pt-3 border-t border-background-200/30">
-                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button
+                    onClick={() => {
+                      setSelectedModule(mod.id);
+                      setSelectedWeek(mod.weeksData[0]?.id || '');
+                      setTab('weeks');
+                    }}
+                    className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+                  >
                     <i className="ri-eye-line mr-1"></i> View Module
                   </button>
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button
+                    onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(mod.id)}`)}
+                    className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
+                  >
                     <i className="ri-arrow-right-line mr-1"></i> Open Module Builder
                   </button>
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                  <button
+                    onClick={() => {
+                      setKsbSearch(mod.ksbTags[0] ? formatKsbCode(mod.ksbTags[0]) : mod.name);
+                      setTab('ksb');
+                    }}
+                    className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
+                  >
                     <i className="ri-link mr-1"></i> KSB Mapping
                   </button>
                 </div>
               </div>
             ))}
+            </div>
           </div>
         )}
 
@@ -943,17 +1896,47 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'weeks' && (
           <div className="space-y-4">
-            {/* Module Selector */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold text-foreground-400 uppercase">Select Module:</span>
-              {PROGRAMME.modules.map(m => (
-                <button key={m.id} onClick={() => { setSelectedModule(m.id); setSelectedWeek(m.weeksData[0]?.id || ''); }} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${selectedModule === m.id ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600 hover:bg-background-200'}`}>
-                  {m.name.split('—')[0].trim()}
-                </button>
-              ))}
-            </div>
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-[10px] font-bold text-foreground-400 uppercase tracking-wider mb-1">Module picker</p>
+                  </div>
+                  <select value={selectedModule} onChange={event => { const nextModule = PROGRAMME.modules.find(m => m.id === event.target.value); setSelectedModule(event.target.value); setSelectedWeek(nextModule?.weeksData[0]?.id || ''); }} className="w-full h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                    {weekModuleOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.name} - {[option.cohort, option.group].filter(Boolean).join(' / ') || 'No cohort/group'}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-foreground-400">{weekModuleOptions.length} of {PROGRAMME.modules.length} modules</p>
+                </div>
 
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+                <div className="rounded-xl border border-primary-200/60 bg-primary-50/30 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-heading font-bold text-foreground-900">{module.name}</p>
+                      <p className="text-[11px] text-foreground-500 mt-1">{module.description || 'No module description configured.'}</p>
+                    </div>
+                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${moduleStatusColors[module.status]}`}>{module.status}</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+                    <ModuleTooltipMetric icon="ri-calendar-line" label="Cohort" value={module.cohort || 'Not set'} />
+                    <ModuleTooltipMetric icon="ri-team-line" label="Group" value={module.group || 'Not set'} />
+                    <ModuleTooltipMetric icon="ri-calendar-2-line" label="Weeks" value={module.weeksData.length || module.weeks} />
+                    <ModuleTooltipMetric icon="ri-puzzle-2-line" label="Components" value={module.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0)} />
+                  </div>
+                  <button
+                    onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(module.id)}`)}
+                    className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
+                  >
+                    <i className="ri-tools-line text-sm"></i>
+                    Open Module Builder
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{module.name}</h3>
@@ -963,38 +1946,47 @@ export default function ProgrammeDetailPage() {
               </div>
 
               <div className="space-y-3">
-                {module.weeksData.map(w => (
+                {filteredWeeks.map(w => {
+                  const weekComponents = w.components ?? [];
+                  return (
                   <div key={w.id} className="border border-foreground-200/60 rounded-xl overflow-hidden">
                     <button onClick={() => setSelectedWeek(selectedWeek === w.id ? '' : w.id)} className="w-full flex items-center gap-3 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                       <span className="text-[10px] font-semibold text-foreground-300 w-8">W{w.number}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-semibold text-foreground-900">{w.title}</p>
-                        <p className="text-[11px] text-foreground-400">{w.startDate} — {w.endDate} · {w.otjh}h OTJH · {w.sessions.length} sessions</p>
+                        <p className="text-[11px] text-foreground-400">{w.startDate} - {w.endDate} · {w.otjh}h OTJH · {weekComponents.length} components</p>
                       </div>
                       <i className={`ri-arrow-down-s-line text-foreground-400 transition-smooth ${selectedWeek === w.id ? 'rotate-180' : ''}`}></i>
                     </button>
                     {selectedWeek === w.id && (
                       <div className="px-4 pb-4 border-t border-background-200/30">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                          {w.sessions.map((s, i) => (
-                            <div key={s.id} className="flex items-center gap-3 p-3 bg-background-100 rounded-lg border border-foreground-200/60">
+                          {weekComponents.length > 0 ? weekComponents.map((component, i) => (
+                            <div key={component.id} className="flex items-center gap-3 p-3 bg-background-100 rounded-lg border border-foreground-200/60">
                               <span className="text-[10px] font-semibold text-foreground-300 w-5">{i + 1}</span>
                               <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
+                                <p className="text-[12px] font-medium text-foreground-900 truncate">{component.title || 'Untitled component'}</p>
                                 <div className="flex items-center gap-2 flex-wrap mt-1">
-                                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${typeColors[s.type] || 'bg-foreground-100 text-foreground-500'}`}>{s.type}</span>
-                                  <span className="text-[10px] text-foreground-400">{s.day} {s.date} · {s.startTime}—{s.endTime}</span>
-                                  <span className="text-[10px] text-foreground-400"><i className="ri-user-line mr-0.5 text-[9px]"></i>{s.tutor}</span>
+                                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
+                                  <span className="text-[10px] text-foreground-400">{component.duration || 0} min</span>
+                                  {component.contentSections > 0 && <span className="text-[10px] text-foreground-400">{component.contentSections} sections</span>}
+                                  {component.quizQuestions ? <span className="text-[10px] text-foreground-400">{component.quizQuestions} questions</span> : null}
+                                  {component.ksbRefs?.length ? <span className="text-[10px] text-foreground-400">{component.ksbRefs.length} KSBs</span> : null}
                                 </div>
                               </div>
-                              <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sessionStatusColors[s.status]}`}>{s.status}</span>
+                              <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${moduleStatusColors[component.status] || moduleStatusColors.draft}`}>{component.status}</span>
                             </div>
-                          ))}
+                          )) : (
+                            <div className="md:col-span-2 rounded-lg border border-dashed border-foreground-200 bg-background-100 px-4 py-5 text-center text-[12px] font-medium text-foreground-500">
+                              No module-builder components are attached to this week yet.
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -1005,6 +1997,20 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'sessions' && (
           <div className="space-y-4">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3 items-center">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="Search sessions, dates, KSB, venue..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                </div>
+                <select value={sessionTutorFilter} onChange={event => setSessionTutorFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                  <option value="all">All tutors</option>
+                  {sessionTutors.map(tutor => <option key={tutor} value={tutor}>{tutor}</option>)}
+                </select>
+                <button onClick={() => { setSessionSearch(''); setSessionTutorFilter('all'); setSessionFilter('all'); }} disabled={!sessionSearch && sessionTutorFilter === 'all' && sessionFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+              </div>
+            </div>
+
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] font-semibold text-foreground-400 uppercase">Filter:</span>
@@ -1014,10 +2020,21 @@ export default function ProgrammeDetailPage() {
                 </button>
               ))}
               <span className="text-[11px] text-foreground-400 ml-2">{filteredSessions.length} of {totalSessions} sessions</span>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-foreground-400 uppercase">Show</span>
+                <select value={sessionPageSize} onChange={event => setSessionPageSize(Number(event.target.value))} className="h-8 px-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 outline-none cursor-pointer">
+                  {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+                </select>
+              </div>
             </div>
 
             {/* Sessions Table */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+            <div className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60 bg-background-50">
+                <p className="text-[11px] text-foreground-500">
+                  Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}-{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
+                </p>
+              </div>
               <div className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                 <span>Session</span>
                 <span className="text-center">Type</span>
@@ -1028,7 +2045,7 @@ export default function ProgrammeDetailPage() {
                 <span className="text-center">Status</span>
               </div>
               <div className="divide-y divide-background-200/30">
-                {filteredSessions.map((s, i) => (
+                {pagedSessions.map((s, i) => (
                   <div key={s.id} className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
                     <div className="min-w-0">
                       <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
@@ -1047,6 +2064,23 @@ export default function ProgrammeDetailPage() {
                   </div>
                 ))}
               </div>
+              <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60 bg-background-50">
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                    <i className="ri-skip-left-line text-xs"></i>
+                  </button>
+                  <button onClick={() => setSessionPage(page => Math.max(1, page - 1))} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                    <i className="ri-arrow-left-s-line text-sm"></i>
+                  </button>
+                  <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
+                  <button onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                    <i className="ri-arrow-right-s-line text-sm"></i>
+                  </button>
+                  <button onClick={() => setSessionPage(sessionPageCount)} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                    <i className="ri-skip-right-line text-xs"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1055,10 +2089,20 @@ export default function ProgrammeDetailPage() {
             TAB: KSB Heatmap
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'ksb' && (
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+          <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
             <div className="mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
               <p className="text-[12px] text-foreground-400 mt-1">Weight of each KSB within each module. Empty cells indicate the KSB is not addressed in that module.</p>
+            </div>
+            <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
+              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <input value={ksbSearch} onChange={event => setKsbSearch(event.target.value)} placeholder="Search KSB code or title..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                </div>
+                <button onClick={() => setKsbSearch('')} disabled={!ksbSearch} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+              </div>
+              <p className="text-[11px] text-foreground-400 mt-3">{filteredKsbHeatmap.length} of {PROGRAMME.ksbHeatmap.length} KSBs</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-[11px]">
@@ -1072,9 +2116,11 @@ export default function ProgrammeDetailPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-background-200/30">
-                  {PROGRAMME.ksbHeatmap.map((row, i) => (
+                  {filteredKsbHeatmap.map((row, i) => (
                     <tr key={i} className="hover:bg-background-100/30 transition-smooth">
-                      <td className="py-2.5 px-3 font-semibold text-foreground-700">{row.ksb}</td>
+                      <td className="py-2.5 px-3 font-semibold text-foreground-700">
+                        <KsbBadge code={row.ksb} />
+                      </td>
                       {PROGRAMME.moduleNames.map(mn => {
                         const val = row.coverage[mn];
                         return (
@@ -1101,18 +2147,36 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'staffing' && (
           <div className="space-y-4">
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Coach & Tutor Assignment</h3>
                   <p className="text-[12px] text-foreground-400 mt-1">Manage staff allocation across cohorts and groups.</p>
                 </div>
-                <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <button onClick={() => {
+                  const target = unassignedGroups[0]?.group || allGroups[0]?.group;
+                  if (target) openAssign(target);
+                }} disabled={allGroups.length === 0} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                   <i className="ri-add-line mr-1"></i> New Assignment
                 </button>
               </div>
 
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+              <div className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                <div className="border-b border-foreground-200/60 p-4">
+                  <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
+                    <div className="relative">
+                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                      <input value={staffingSearch} onChange={event => setStaffingSearch(event.target.value)} placeholder="Search coach, tutor, group, cohort..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                    </div>
+                    <select value={staffingStatusFilter} onChange={event => setStaffingStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                      <option value="all">All statuses</option>
+                      <option value="active">Active</option>
+                      <option value="unassigned">Unassigned</option>
+                    </select>
+                    <button onClick={() => { setStaffingSearch(''); setStaffingStatusFilter('all'); }} disabled={!staffingSearch && staffingStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+                  </div>
+                  <p className="text-[11px] text-foreground-400 mt-3">{filteredStaffing.length} of {PROGRAMME.staffing.length} assignments</p>
+                </div>
                 <div className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                   <span>Coach</span>
                   <span>Tutor</span>
@@ -1122,7 +2186,7 @@ export default function ProgrammeDetailPage() {
                   <span className="text-center">Action</span>
                 </div>
                 <div className="divide-y divide-background-200/30">
-                  {PROGRAMME.staffing.map((s, i) => (
+                  {filteredStaffing.map((s, i) => (
                     <div key={i} className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                       <div className="flex items-center gap-2">
                         <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-[10px] font-bold">
@@ -1142,11 +2206,15 @@ export default function ProgrammeDetailPage() {
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{s.status}</span>
                       </div>
                       <div className="flex justify-center gap-1">
-                        <button className="w-7 h-7 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center hover:bg-primary-200 transition-smooth cursor-pointer">
-                          <i className="ri-edit-line text-xs"></i>
-                        </button>
-                        <button className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 flex items-center justify-center hover:bg-red-100 hover:text-red-600 transition-smooth cursor-pointer">
-                          <i className="ri-delete-bin-line text-xs"></i>
+                        <button
+                          title="Open the group-level assignment editor"
+                          onClick={() => {
+                            setGroupSearch(s.groups.split(',')[0]?.trim() || s.coach || s.tutor);
+                            setTab('groups');
+                          }}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700 transition-smooth hover:bg-primary-100"
+                        >
+                          <i className="ri-arrow-right-up-line text-xs"></i>
                         </button>
                       </div>
                     </div>
@@ -1156,24 +2224,139 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {/* Unassigned Groups */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Unassigned Groups</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <i className="ri-alert-line text-amber-600 text-sm"></i>
-                    <p className="text-[13px] font-semibold text-amber-800">Group C1</p>
-                    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Cohort C</span>
+                {unassignedGroups.length === 0 ? (
+                  <div className="rounded-2xl border border-background-200/80 bg-background-100 p-4">
+                    <p className="text-[12px] font-medium text-foreground-600">All live groups have coach and tutor assignments.</p>
                   </div>
-                  <p className="text-[11px] text-amber-700 mb-3">No coach or tutor assigned. Programme starts Sep 2025.</p>
-                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-user-add-line mr-1"></i> Assign Now
-                  </button>
+                ) : unassignedGroups.map(({ cohort, group }) => (
+                  <div key={group.id} className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <i className="ri-alert-line text-amber-600 text-sm"></i>
+                      <p className="text-[13px] font-semibold text-amber-800">{group.name}</p>
+                      <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{cohort.name}</span>
+                    </div>
+                    <p className="text-[11px] text-amber-700 mb-3">Missing {group.coach === 'Unassigned' && group.tutor === 'Unassigned' ? 'coach and tutor' : group.coach === 'Unassigned' ? 'coach' : 'tutor'} assignment. Starts {group.startDate}.</p>
+                    <button onClick={() => openAssign(group)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                      <i className="ri-user-add-line mr-1"></i> Assign Now
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {programmeFormOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setProgrammeFormOpen(false)}>
+            <form onSubmit={saveProgramme} className="bg-background-50 rounded-2xl w-full max-w-xl shadow-2xl" onClick={event => event.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">Edit Programme</h3>
+                <button type="button" onClick={() => setProgrammeFormOpen(false)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Programme name *</span>
+                    <input value={programmeForm.name} onChange={event => setProgrammeForm(prev => ({ ...prev, name: event.target.value }))} required className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Standard</span>
+                    <input value={programmeForm.standard} onChange={event => setProgrammeForm(prev => ({ ...prev, standard: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Level</span>
+                    <input value={programmeForm.level} onChange={event => setProgrammeForm(prev => ({ ...prev, level: event.target.value }))} placeholder="Example: L4" className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Status</span>
+                    <select value={programmeForm.status} onChange={event => setProgrammeForm(prev => ({ ...prev, status: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300">
+                      {PROGRAMME_STATUS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Owner</span>
+                    <input value={programmeForm.owner} onChange={event => setProgrammeForm(prev => ({ ...prev, owner: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
+                  </label>
+                  <label className="block">
+                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Colour</span>
+                    <input type="color" value={programmeForm.color} onChange={event => setProgrammeForm(prev => ({ ...prev, color: event.target.value }))} className="mt-1 w-full h-9 px-2 py-1 bg-background-50 border border-foreground-200/60 rounded-lg focus:outline-none focus:border-primary-300" />
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="text-[10px] font-semibold text-foreground-400 uppercase">Description</span>
+                  <textarea value={programmeForm.description} onChange={event => setProgrammeForm(prev => ({ ...prev, description: event.target.value }))} rows={3} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
+                </label>
+              </div>
+              <div className="px-6 py-4 border-t border-background-200/60 flex justify-end gap-2">
+                <button type="button" onClick={() => setProgrammeFormOpen(false)} disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                <button type="submit" disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === 'programme' ? 'Saving...' : 'Save Programme'}</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {tab === 'staffing' && assignmentTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setAssignMode(null)}>
+            <div className="bg-background-50 rounded-2xl w-full max-w-md shadow-2xl" onClick={event => event.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Assign Staff</h3>
+                  <p className="text-[11px] text-foreground-400 mt-0.5">{assignmentTarget.cohort.name} - {assignmentTarget.group.name}</p>
+                </div>
+                <button type="button" onClick={() => setAssignMode(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <StaffAssignmentSelect
+                  label="Coach"
+                  value={assignForms[assignmentTarget.group.id]?.coach ?? ''}
+                  options={coachOptions}
+                  onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), coach: value } }))}
+                />
+                <StaffAssignmentSelect
+                  label="Tutor"
+                  value={assignForms[assignmentTarget.group.id]?.tutor ?? ''}
+                  options={tutorOptions}
+                  onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), tutor: value } }))}
+                />
+              </div>
+              <div className="px-6 py-4 border-t border-background-200/60 flex justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => showCurriculumConfirm({
+                    title: 'Clear staffing assignment?',
+                    text: `This removes the coach and tutor assignment for ${assignmentTarget.group.name}. The group remains live and will be marked unassigned.`,
+                    icon: 'warning',
+                    confirmButtonText: 'Clear Assignment',
+                    onConfirm: async () => {
+                      setAssignMode(null);
+                      await removeAssignment(assignmentTarget.group.id);
+                    },
+                  })}
+                  disabled={savingAction === assignmentTarget.group.id}
+                  className="px-4 py-2 rounded-lg border border-red-200/60 bg-red-50 text-[12px] font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setAssignMode(null)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                  <button type="button" onClick={() => saveAssignment(assignmentTarget.group.id)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === assignmentTarget.group.id ? 'Saving...' : 'Save Assignment'}</button>
                 </div>
               </div>
             </div>
           </div>
         )}
+        <AddCurriculumStructureWizard
+          isOpen={wizardOpen}
+          onClose={() => setWizardOpen(false)}
+          onSaved={reload}
+          initialProgrammeId={id || PROGRAMME.id}
+          initialCohortId={wizardContext.cohortId}
+          initialGroupId={wizardContext.groupId}
+          startStep={wizardContext.startStep || 'cohort'}
+        />
       </div>
     </WorkspaceShell>
   );
@@ -1183,14 +2366,168 @@ export default function ProgrammeDetailPage() {
 // Helper Components
 // ─────────────────────────────────────────────────────────────────────────────
 
+function StaffAssignmentSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: SelectOption[];
+}) {
+  const currentValue = clean(value);
+  const hasCurrentValue = currentValue && currentValue !== 'Unassigned' && !options.some(option => option.value === currentValue);
+  const visibleOptions = hasCurrentValue ? [{ value: currentValue, label: currentValue }, ...options] : options;
+
+  return (
+    <label className="block">
+      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
+      <select
+        value={currentValue === 'Unassigned' ? '' : currentValue}
+        onChange={event => onChange(event.target.value)}
+        className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300 cursor-pointer"
+      >
+        <option value="">Unassigned</option>
+        {visibleOptions.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
   return (
-    <div className="flex items-center gap-2 bg-background-100 rounded-lg p-3">
-      <i className={`${icon} text-foreground-400 text-sm`}></i>
+    <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
+      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+        <i className={`${icon} text-sm`}></i>
+      </span>
       <div>
-        <p className="text-sm font-bold text-foreground-900">{value}</p>
+        <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
+        <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function ProgressRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <span className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{label}</span>
+        <span className="text-[11px] font-black text-foreground-900">{value}%</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-background-200">
+        <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function MiniDarkMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div>
+      <p className="text-[15px] font-black leading-tight text-foreground-950">{value}</p>
+      <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-400">{label}</p>
+    </div>
+  );
+}
+
+function LoadingStatPill({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 bg-background-100 rounded-lg p-3">
+      <span className="w-4 h-4 rounded bg-background-200 animate-pulse" />
+      <div className="min-w-0 flex-1">
+        <div className="h-4 w-10 rounded bg-background-200 animate-pulse mb-1" />
         <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
       </div>
+    </div>
+  );
+}
+
+function ModuleTooltipMetric({ icon, label, value }: { icon: string; label: string; value: number | string }) {
+  return (
+    <span className="flex items-center gap-2 rounded-lg bg-background-100 border border-foreground-200/60 px-2.5 py-2">
+      <i className={`${icon} text-primary-500 text-xs`}></i>
+      <span className="min-w-0">
+        <span className="block text-[9px] font-bold text-foreground-400 uppercase leading-tight">{label}</span>
+        <span className="block text-[11px] font-semibold text-foreground-800 truncate leading-tight mt-0.5">{value}</span>
+      </span>
+    </span>
+  );
+}
+
+function componentTypeLabel(type: string) {
+  return clean(type, 'Component')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function componentTypeTone(type: string) {
+  const key = normalise(type);
+  if (key.includes('live')) return 'bg-primary-100 text-primary-700';
+  if (key.includes('quiz')) return 'bg-amber-100 text-amber-700';
+  if (key.includes('assignment') || key.includes('evidence')) return 'bg-sky-100 text-sky-700';
+  if (key.includes('reading') || key.includes('selfstudy')) return 'bg-emerald-100 text-emerald-700';
+  if (key.includes('video') || key.includes('podcast')) return 'bg-secondary-100 text-secondary-700';
+  return 'bg-foreground-100 text-foreground-600';
+}
+
+function KsbBadge({ code, compact = false }: { code: string; compact?: boolean }) {
+  return (
+    <span className={`${compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5'} inline-flex items-center rounded-md border font-semibold ${ksbTone(ksbKind(code))}`}>
+      {formatKsbCode(code)}
+    </span>
+  );
+}
+
+function KsbGroupedTags({ codes, limit }: { codes: string[]; limit?: number }) {
+  const sorted = [...new Set(codes.map(code => clean(code)).filter(Boolean))].sort(sortKsbCodes);
+  const visible = typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
+  const groups = visible.reduce<Record<string, string[]>>((acc, code) => {
+    const parent = ksbParentCode(code);
+    acc[parent] = [...(acc[parent] ?? []), code];
+    return acc;
+  }, {});
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {Object.entries(groups).map(([parent, children]) => {
+        const childCodes = children.filter(code => formatKsbCode(code) !== parent);
+        return (
+          <div key={parent} className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 ${ksbTone(ksbKind(parent))}`}>
+            <div className="text-[9px] font-bold leading-tight">{parent}</div>
+            {childCodes.length > 0 && (
+              <div className="flex items-center gap-0.5 flex-wrap">
+                {childCodes.map(code => <KsbBadge key={code} code={code} compact />)}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {typeof limit === 'number' && sorted.length > limit && (
+        <span className="text-[10px] font-semibold text-foreground-400 px-2 py-1">+{sorted.length - limit}</span>
+      )}
+    </div>
+  );
+}
+
+function KsbCoverageGroups({ mapping }: { mapping: { ksb: string; weight: number }[] }) {
+  const sorted = [...mapping].sort((a, b) => sortKsbCodes(a.ksb, b.ksb));
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {sorted.map(item => (
+        <div key={item.ksb} className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${ksbTone(ksbKind(item.ksb))}`}>
+          <span className="text-[10px] font-bold">{formatKsbCode(item.ksb)}</span>
+          <span className="w-10 h-1.5 bg-white/70 rounded-full overflow-hidden">
+            <span className="block h-full bg-current rounded-full" style={{ width: `${item.weight}%` }}></span>
+          </span>
+          <span className="text-[9px] font-semibold">{item.weight}%</span>
+        </div>
+      ))}
     </div>
   );
 }

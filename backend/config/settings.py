@@ -10,10 +10,61 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
+from urllib.parse import parse_qsl, urlparse, unquote
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def load_env_file(path):
+    if not path.exists():
+        return
+
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+load_env_file(BASE_DIR / '.env')
+
+
+def database_from_url(database_url):
+    parsed = urlparse(database_url)
+    scheme = parsed.scheme.replace('postgresql', 'postgres')
+    engine_by_scheme = {
+        'postgres': 'django.db.backends.postgresql',
+        'mysql': 'django.db.backends.mysql',
+        'sqlite': 'django.db.backends.sqlite3',
+    }
+
+    if scheme not in engine_by_scheme:
+        raise ValueError(f'Unsupported database scheme: {parsed.scheme}')
+
+    if scheme == 'sqlite':
+        return {
+            'ENGINE': engine_by_scheme[scheme],
+            'NAME': unquote(parsed.path.lstrip('/')) or BASE_DIR / 'db.sqlite3',
+        }
+
+    options = dict(parse_qsl(parsed.query))
+    options.pop('channel_binding', None)
+    return {
+        'ENGINE': engine_by_scheme[scheme],
+        'NAME': unquote(parsed.path.lstrip('/')),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or ''),
+        'OPTIONS': options,
+    }
 
 
 # Quick-start development settings - unsuitable for production
@@ -25,7 +76,7 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
 
 
 # Application definition
@@ -72,8 +123,9 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+DATABASE_URL = os.environ.get('DATABASE_URL')
 DATABASES = {
-    'default': {
+    'default': database_from_url(DATABASE_URL) if DATABASE_URL else {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
@@ -115,3 +167,19 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'api': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}
