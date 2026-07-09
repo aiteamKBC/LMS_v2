@@ -1,20 +1,28 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
+import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { roleNavMap } from '@/mocks/navigation';
+import { ENGAGEMENT_LEARNERS, countByProgramme, filterByProgramme, type ProgrammeCode, type ProgrammeFilterValue } from '@/mocks/engagement-data';
 
 const engagementNav = roleNavMap.engagement;
 
 interface LearnerEngagement {
   id: string;
   name: string;
+  avatarImg?: string;
+  programmeCode: ProgrammeCode;
   programme: string;
   cohort: string;
+  coach: string;
   engagementScore: number;
   lastLogin: string;
   sessionsAttended: number;
   totalSessions: number;
+  consecutiveMissed: number;
+  lastAttendance: string;
   evidenceSubmitted: number;
   evidenceTarget: number;
   otjhHours: number;
@@ -22,21 +30,52 @@ interface LearnerEngagement {
   clubActivity: number;
   messageResponse: number;
   trend: 'up' | 'down' | 'stable';
+  attendanceTrend: 'deteriorating' | 'declining' | 'stable' | 'improving';
   riskLevel: 'green' | 'amber' | 'red';
+  quizAverage: number;
+  ksbProgress: number;
+  overallPoints: number;
+  overallStatus: 'on-track' | 'monitor' | 'at-risk';
+  pointsThisMonth: number;
+  monthlyStatus: 'rising' | 'falling' | 'stable';
+  badgesCount: number;
+  topBadge: string;
+  flags: string[];
+  attendanceAction: string;
+  employerNotified: boolean;
+  interventionDate: string | null;
 }
 
-const LEARNERS: LearnerEngagement[] = [
-  { id: 'le-01', name: 'Emily Watson', programme: 'Digital Marketer L3', cohort: 'Cohort B', engagementScore: 94, lastLogin: 'Today', sessionsAttended: 18, totalSessions: 20, evidenceSubmitted: 12, evidenceTarget: 14, otjhHours: 156, otjhTarget: 180, clubActivity: 8, messageResponse: 100, trend: 'up', riskLevel: 'green' },
-  { id: 'le-02', name: 'Sarah Mitchell', programme: 'Business Admin L3', cohort: 'Cohort A', engagementScore: 88, lastLogin: '1 day ago', sessionsAttended: 17, totalSessions: 20, evidenceSubmitted: 11, evidenceTarget: 14, otjhHours: 142, otjhTarget: 180, clubActivity: 6, messageResponse: 95, trend: 'up', riskLevel: 'green' },
-  { id: 'le-03', name: 'David Chen', programme: 'Software Developer L4', cohort: 'Cohort F', engagementScore: 76, lastLogin: '2 days ago', sessionsAttended: 15, totalSessions: 20, evidenceSubmitted: 9, evidenceTarget: 14, otjhHours: 128, otjhTarget: 180, clubActivity: 4, messageResponse: 80, trend: 'stable', riskLevel: 'green' },
-  { id: 'le-04', name: 'Liam Foster', programme: 'Project Manager L4', cohort: 'Cohort A', engagementScore: 72, lastLogin: '1 day ago', sessionsAttended: 16, totalSessions: 20, evidenceSubmitted: 8, evidenceTarget: 14, otjhHours: 115, otjhTarget: 180, clubActivity: 3, messageResponse: 75, trend: 'stable', riskLevel: 'green' },
-  { id: 'le-05', name: 'Maya Kapoor', programme: 'HR Consultant L5', cohort: 'Cohort E', engagementScore: 45, lastLogin: 'Today', sessionsAttended: 12, totalSessions: 20, evidenceSubmitted: 5, evidenceTarget: 14, otjhHours: 98, otjhTarget: 180, clubActivity: 2, messageResponse: 45, trend: 'stable', riskLevel: 'amber' },
-  { id: 'le-06', name: 'Sophie Williams', programme: 'Marketing Executive L4', cohort: 'Cohort C', engagementScore: 62, lastLogin: '2 days ago', sessionsAttended: 14, totalSessions: 20, evidenceSubmitted: 7, evidenceTarget: 14, otjhHours: 105, otjhTarget: 180, clubActivity: 5, messageResponse: 60, trend: 'down', riskLevel: 'amber' },
-  { id: 'le-07', name: 'Aisha Patel', programme: 'Accountancy L3', cohort: 'Cohort C', engagementScore: 35, lastLogin: '3 days ago', sessionsAttended: 10, totalSessions: 20, evidenceSubmitted: 4, evidenceTarget: 14, otjhHours: 72, otjhTarget: 180, clubActivity: 1, messageResponse: 30, trend: 'down', riskLevel: 'amber' },
-  { id: 'le-08', name: 'James Okonkwo', programme: 'Data Analyst L4', cohort: 'Cohort D', engagementScore: 28, lastLogin: '5 days ago', sessionsAttended: 8, totalSessions: 20, evidenceSubmitted: 3, evidenceTarget: 14, otjhHours: 58, otjhTarget: 180, clubActivity: 0, messageResponse: 15, trend: 'down', riskLevel: 'red' },
-  { id: 'le-09', name: 'Daniel Walsh', programme: 'Business Admin L3', cohort: 'Cohort A', engagementScore: 41, lastLogin: '4 days ago', sessionsAttended: 11, totalSessions: 20, evidenceSubmitted: 5, evidenceTarget: 14, otjhHours: 88, otjhTarget: 180, clubActivity: 2, messageResponse: 40, trend: 'down', riskLevel: 'amber' },
-  { id: 'le-10', name: 'Olivia Park', programme: 'Marketing Executive L4', cohort: 'Cohort B', engagementScore: 81, lastLogin: '1 day ago', sessionsAttended: 16, totalSessions: 20, evidenceSubmitted: 10, evidenceTarget: 14, otjhHours: 138, otjhTarget: 180, clubActivity: 7, messageResponse: 88, trend: 'up', riskLevel: 'green' },
-];
+// Derived from the shared engagement roster (single source of truth).
+const LEARNERS: LearnerEngagement[] = ENGAGEMENT_LEARNERS.map(l => ({
+  id: l.id, name: l.name, avatarImg: l.avatarImg, programmeCode: l.programmeCode, programme: l.programme, cohort: l.cohort, coach: l.coach,
+  engagementScore: l.engagementScore, lastLogin: l.lastActive, sessionsAttended: l.sessionsAttended, totalSessions: l.totalSessions,
+  consecutiveMissed: l.consecutiveMissed, lastAttendance: l.lastAttendance,
+  evidenceSubmitted: l.evidenceSubmitted, evidenceTarget: l.evidenceTarget, otjhHours: l.otjhHours, otjhTarget: l.otjhTarget,
+  clubActivity: l.clubActivity, messageResponse: l.messageResponse, trend: l.trend, attendanceTrend: l.attendanceTrend, riskLevel: l.riskLevel,
+  quizAverage: l.quizAverage, ksbProgress: l.ksbProgress, overallPoints: l.overallPoints, overallStatus: l.overallStatus,
+  pointsThisMonth: l.pointsThisMonth, monthlyStatus: l.monthlyStatus, badgesCount: l.badgesCount, topBadge: l.topBadge,
+  flags: l.flags, attendanceAction: l.attendanceAction, employerNotified: l.employerNotified, interventionDate: l.interventionDate,
+}));
+
+const ATTENDANCE_TREND_CONFIG: Record<LearnerEngagement['attendanceTrend'], { label: string; text: string; icon: string }> = {
+  deteriorating: { label: 'Deteriorating', text: 'text-red-600', icon: 'ri-arrow-down-line' },
+  declining: { label: 'Declining', text: 'text-amber-600', icon: 'ri-arrow-down-line' },
+  stable: { label: 'Stable', text: 'text-foreground-400', icon: 'ri-subtract-line' },
+  improving: { label: 'Improving', text: 'text-emerald-600', icon: 'ri-arrow-up-line' },
+};
+
+const OVERALL_STATUS_CONFIG: Record<LearnerEngagement['overallStatus'], { label: string; bg: string; text: string }> = {
+  'on-track': { label: 'On Track', bg: 'bg-emerald-100', text: 'text-emerald-700' },
+  'monitor': { label: 'Monitor', bg: 'bg-amber-100', text: 'text-amber-700' },
+  'at-risk': { label: 'At Risk', bg: 'bg-red-100', text: 'text-red-700' },
+};
+
+const MONTHLY_STATUS_CONFIG: Record<LearnerEngagement['monthlyStatus'], { label: string; text: string; icon: string }> = {
+  rising: { label: 'Rising', text: 'text-emerald-600', icon: 'ri-arrow-up-line' },
+  falling: { label: 'Falling', text: 'text-red-600', icon: 'ri-arrow-down-line' },
+  stable: { label: 'Stable', text: 'text-foreground-400', icon: 'ri-subtract-line' },
+};
 
 const ENGAGEMENT_BREAKDOWN = [
   { label: 'Session Attendance', weight: 30, avg: 82 },
@@ -49,17 +88,33 @@ const ENGAGEMENT_BREAKDOWN = [
 
 export default function LearnerEngagementPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [riskFilter, setRiskFilter] = useState<'all' | 'green' | 'amber' | 'red'>('all');
-  const filtered = LEARNERS.filter(l => {
+  const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
+  const [profile, setProfile] = useState<LearnerEngagement | null>(null);
+  const programmeCounts = countByProgramme(LEARNERS);
+  const programmeScoped = filterByProgramme(LEARNERS, programmeFilter);
+  const filtered = programmeScoped.filter(l => {
     const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) || l.programme.toLowerCase().includes(search.toLowerCase());
     const matchRisk = riskFilter === 'all' || l.riskLevel === riskFilter;
     return matchSearch && matchRisk;
   });
-  const greenCount = LEARNERS.filter(l => l.riskLevel === 'green').length;
-  const amberCount = LEARNERS.filter(l => l.riskLevel === 'amber').length;
-  const redCount = LEARNERS.filter(l => l.riskLevel === 'red').length;
-  const avgScore = Math.round(LEARNERS.reduce((s, l) => s + l.engagementScore, 0) / LEARNERS.length);
+
+  // Deep-link support: /engagement/learner-engagement?learner=en-01 opens that
+  // learner's profile directly, e.g. from the absence queue or catch-up panel.
+  useEffect(() => {
+    const learnerId = searchParams.get('learner');
+    if (!learnerId) return;
+    const match = LEARNERS.find(l => l.id === learnerId);
+    if (match) setProfile(match);
+    setSearchParams(prev => { prev.delete('learner'); return prev; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  const greenCount = programmeScoped.filter(l => l.riskLevel === 'green').length;
+  const amberCount = programmeScoped.filter(l => l.riskLevel === 'amber').length;
+  const redCount = programmeScoped.filter(l => l.riskLevel === 'red').length;
+  const avgScore = programmeScoped.length ? Math.round(programmeScoped.reduce((s, l) => s + l.engagementScore, 0) / programmeScoped.length) : 0;
 
   return (
     <WorkspaceShell
@@ -83,16 +138,10 @@ export default function LearnerEngagementPage() {
           <button onClick={() => navigate('/engagement/attendance-risk')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
             <i className="ri-alert-line text-sm"></i> Attendance Risk
           </button>
-          <button onClick={() => navigate('/engagement/call-logs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-phone-line text-sm"></i> Call Logs
-          </button>
-          <button onClick={() => navigate('/engagement/catchup-overdue')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-timer-line text-sm"></i> Catch-up Overdue
-          </button>
-          <button onClick={() => navigate('/engagement/communication')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-message-2-line text-sm"></i> Communication
-          </button>
         </div>
+
+        {/* Programme Filter */}
+        <ProgrammeFilter value={programmeFilter} onChange={setProgrammeFilter} counts={programmeCounts} />
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
@@ -102,7 +151,7 @@ export default function LearnerEngagementPage() {
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
             {(['all', 'green', 'amber', 'red'] as const).map(f => (
-              <button key={f} onClick={() => setRiskFilter(f)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${riskFilter === f ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={f} onClick={() => setRiskFilter(f)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${riskFilter === f ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {f === 'all' ? 'All' : f === 'green' ? 'Green' : f === 'amber' ? 'Amber' : 'Red'}
               </button>
             ))}
@@ -138,35 +187,186 @@ export default function LearnerEngagementPage() {
             <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-1 rounded-full">{filtered.length} learners</span>
           </div>
           <div className="divide-y divide-background-200/30">
-            {filtered.map(learner => (
-              <div key={learner.id} className={`p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${learner.riskLevel === 'red' ? 'bg-red-50/20' : learner.riskLevel === 'amber' ? 'bg-amber-50/20' : ''}`}>
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${learner.riskLevel === 'red' ? 'bg-red-100 text-red-700' : learner.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{learner.name.charAt(0)}</div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground-900">{learner.name}</p>
-                    <p className="text-[10px] text-foreground-400">{learner.programme} &middot; {learner.cohort}</p>
+            {filtered.map(learner => {
+              const attendancePct = Math.round((learner.sessionsAttended / learner.totalSessions) * 100);
+              const overallStatus = OVERALL_STATUS_CONFIG[learner.overallStatus];
+              const monthlyStatus = MONTHLY_STATUS_CONFIG[learner.monthlyStatus];
+              return (
+                <div key={learner.id} className={`p-4 space-y-3 ${learner.riskLevel === 'red' ? 'bg-red-50/20' : learner.riskLevel === 'amber' ? 'bg-amber-50/20' : ''}`}>
+                  {/* Header row */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <button onClick={() => setProfile(learner)} className="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer">
+                      <div className="w-10 h-10 rounded-full shrink-0 overflow-hidden bg-background-200">
+                        {learner.avatarImg ? (
+                          <img src={learner.avatarImg} alt={learner.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className={`w-full h-full flex items-center justify-center text-sm font-bold ${learner.riskLevel === 'red' ? 'bg-red-100 text-red-700' : learner.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{learner.name.charAt(0)}</div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground-900 hover:text-primary-600 transition-smooth">{learner.name}</p>
+                        <p className="text-[10px] text-foreground-400">{learner.programme} &middot; {learner.cohort} &middot; {learner.lastLogin}</p>
+                      </div>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-foreground-400">Engagement:</span>
+                        <span className={`font-bold text-sm ${learner.engagementScore >= 70 ? 'text-emerald-600' : learner.engagementScore >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{learner.engagementScore}%</span>
+                      </div>
+                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${learner.riskLevel === 'red' ? 'bg-red-100 text-red-700' : learner.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{learner.riskLevel.toUpperCase()}</span>
+                    </div>
+                  </div>
+
+                  {/* Attendance progress bar */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-foreground-400">Attendance</span>
+                      <span className="text-[10px] font-semibold text-foreground-700">{learner.sessionsAttended}/{learner.totalSessions} sessions ({attendancePct}%)</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-background-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${attendancePct >= 90 ? 'bg-emerald-500' : attendancePct >= 75 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${attendancePct}%` }}></div>
+                    </div>
+                  </div>
+                  
+
+                  {/* Metrics grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-[11px]">
+                    <div>
+                      <p className="text-[10px] text-foreground-400 mb-0.5">Quiz Average</p>
+                      <p className="font-semibold text-foreground-900">{learner.quizAverage}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-foreground-400 mb-0.5">KSB Progression</p>
+                      <p className="font-semibold text-foreground-900">{learner.ksbProgress}%</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-foreground-400 mb-0.5">Overall Points</p>
+                      <p className="font-semibold text-foreground-900">{learner.overallPoints.toLocaleString()}</p>
+                      <span className={`inline-block mt-0.5 text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${overallStatus.bg} ${overallStatus.text}`}>{overallStatus.label}</span>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-foreground-400 mb-0.5">Points This Month</p>
+                      <p className="font-semibold text-foreground-900">+{learner.pointsThisMonth}</p>
+                      <span className={`inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-semibold ${monthlyStatus.text}`}>
+                        <i className={monthlyStatus.icon}></i>{monthlyStatus.label}
+                      </span>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-[10px] text-foreground-400 mb-0.5">Badges</p>
+                      <p className="font-semibold text-foreground-900 flex items-center gap-1">
+                        <i className="ri-medal-line text-accent-500"></i>
+                        {learner.badgesCount} <span className="text-[10px] font-normal text-foreground-400 truncate">&middot; {learner.topBadge}</span>
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 text-[11px] shrink-0 flex-wrap">
-                  <div className="flex items-center gap-1">
-                    <span className="text-foreground-400">Score:</span>
-                    <span className={`font-bold text-sm ${learner.engagementScore >= 70 ? 'text-emerald-600' : learner.engagementScore >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{learner.engagementScore}%</span>
-                  </div>
-                  <span className="text-foreground-400">Att: {learner.sessionsAttended}/{learner.totalSessions}</span>
-                  <span className="text-foreground-400">Evd: {learner.evidenceSubmitted}/{learner.evidenceTarget}</span>
-                  <span className="text-foreground-400">OTJH: {learner.otjhHours}h</span>
-                  <span className="text-foreground-400">{learner.lastLogin}</span>
-                  <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${learner.riskLevel === 'red' ? 'bg-red-100 text-red-700' : learner.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{learner.riskLevel.toUpperCase()}</span>
-                  <span className={`text-[10px] font-medium ${learner.trend === 'up' ? 'text-emerald-600' : learner.trend === 'down' ? 'text-red-600' : 'text-foreground-400'}`}>
-                    <i className={`${learner.trend === 'up' ? 'ri-arrow-up-line' : learner.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'} mr-0.5`}></i>
-                    {learner.trend}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
+
+      {/* Learner Profile Panel */}
+      <RightSlidePanel isOpen={!!profile} onClose={() => setProfile(null)} title={profile?.name} coloredHeader>
+        {profile && (
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full shrink-0 overflow-hidden bg-background-200">
+                {profile.avatarImg ? (
+                  <img src={profile.avatarImg} alt={profile.name} className="w-full h-full object-cover" />
+                ) : (
+                  <div className={`w-full h-full flex items-center justify-center text-base font-bold ${profile.riskLevel === 'red' ? 'bg-red-100 text-red-700' : profile.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{profile.name.charAt(0)}</div>
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground-900">{profile.name}</p>
+                <p className="text-[11px] text-foreground-400">{profile.programme} &middot; {profile.cohort} &middot; Coach: {profile.coach}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${profile.riskLevel === 'red' ? 'bg-red-100 text-red-700' : profile.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{profile.riskLevel.toUpperCase()} risk</span>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${OVERALL_STATUS_CONFIG[profile.overallStatus].bg} ${OVERALL_STATUS_CONFIG[profile.overallStatus].text}`}>{OVERALL_STATUS_CONFIG[profile.overallStatus].label}</span>
+              <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${ATTENDANCE_TREND_CONFIG[profile.attendanceTrend].text}`}>
+                <i className={ATTENDANCE_TREND_CONFIG[profile.attendanceTrend].icon}></i>{ATTENDANCE_TREND_CONFIG[profile.attendanceTrend].label} attendance
+              </span>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-medium text-foreground-800 mb-2">Engagement Score</p>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-foreground-400">Overall</span>
+                <span className={`text-[10px] font-bold ${profile.engagementScore >= 70 ? 'text-emerald-600' : profile.engagementScore >= 40 ? 'text-amber-600' : 'text-red-600'}`}>{profile.engagementScore}%</span>
+              </div>
+              <div className="w-full h-2 bg-background-200 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${profile.engagementScore >= 70 ? 'bg-emerald-500' : profile.engagementScore >= 40 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${profile.engagementScore}%` }}></div>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-[11px] font-medium text-foreground-800 mb-2">Attendance &amp; Progress</p>
+              <div className="space-y-2">
+                {[
+                  { label: 'Session Attendance', value: Math.round((profile.sessionsAttended / profile.totalSessions) * 100), detail: `${profile.sessionsAttended}/${profile.totalSessions} sessions` },
+                  { label: 'Evidence Submission', value: Math.round((profile.evidenceSubmitted / profile.evidenceTarget) * 100), detail: `${profile.evidenceSubmitted}/${profile.evidenceTarget} pieces` },
+                  { label: 'OTJH Progress', value: Math.round((profile.otjhHours / profile.otjhTarget) * 100), detail: `${profile.otjhHours}/${profile.otjhTarget}h` },
+                  { label: 'Quiz Average', value: profile.quizAverage, detail: `${profile.quizAverage}%` },
+                  { label: 'KSB Progression', value: profile.ksbProgress, detail: `${profile.ksbProgress}%` },
+                ].map(bar => (
+                  <div key={bar.label}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-foreground-400">{bar.label}</span>
+                      <span className="text-[10px] font-semibold text-foreground-700">{bar.detail}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-background-200 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${bar.value >= 70 ? 'bg-emerald-500' : bar.value >= 45 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${Math.min(bar.value, 100)}%` }}></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-[11px]">
+              <div className="bg-background-100/50 rounded-lg p-3">
+                <p className="text-[10px] text-foreground-400 mb-1">Overall Points</p>
+                <p className="font-semibold text-foreground-900">{profile.overallPoints.toLocaleString()}</p>
+              </div>
+              <div className="bg-background-100/50 rounded-lg p-3">
+                <p className="text-[10px] text-foreground-400 mb-1">Points This Month</p>
+                <p className="font-semibold text-foreground-900">+{profile.pointsThisMonth}</p>
+              </div>
+              <div className="bg-background-100/50 rounded-lg p-3">
+                <p className="text-[10px] text-foreground-400 mb-1">Badges</p>
+                <p className="font-semibold text-foreground-900 flex items-center gap-1"><i className="ri-medal-line text-accent-500"></i>{profile.badgesCount} <span className="text-[10px] font-normal text-foreground-400">&middot; {profile.topBadge}</span></p>
+              </div>
+              <div className="bg-background-100/50 rounded-lg p-3">
+                <p className="text-[10px] text-foreground-400 mb-1">Last Attendance</p>
+                <p className="font-semibold text-foreground-900">{profile.lastAttendance}</p>
+              </div>
+            </div>
+
+            {profile.flags.length > 0 && (
+              <div className="bg-background-100/50 rounded-lg p-3">
+                <p className="text-[11px] font-medium text-foreground-800 mb-1.5">Flags</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {profile.flags.map(flag => (
+                    <span key={flag} className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">{flag}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="bg-amber-50/50 rounded-lg p-3">
+              <p className="text-[11px] font-medium text-amber-800 mb-0.5">Recommended Action</p>
+              <p className="text-[11px] text-amber-700">{profile.attendanceAction}</p>
+              <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                {profile.employerNotified && <span className="text-[10px] text-amber-600 font-medium">Employer notified</span>}
+                {profile.interventionDate && <span className="text-[10px] text-amber-600">Intervention: {profile.interventionDate}</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </RightSlidePanel>
     </WorkspaceShell>
   );
 }

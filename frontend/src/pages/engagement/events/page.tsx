@@ -14,21 +14,22 @@ interface Event {
   time: string;
   location: string;
   type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
+  // Learners who've said they intend to attend — not a capacity-limited RSVP,
+  // just a headcount signal for the organiser.
   attendees: number;
-  capacity: number;
   status: 'upcoming' | 'ongoing' | 'completed';
   organizer: string;
 }
 
 const INITIAL_EVENTS: Event[] = [
-  { id: 'ev-01', title: 'Marketing Club Monthly Showcase', description: 'Present your marketing campaigns and get feedback from peers and ambassadors.', date: '13 Jun 2026', time: '13:00 - 15:00', location: 'Teams Virtual', type: 'workshop', attendees: 28, capacity: 35, status: 'upcoming', organizer: 'Rebecca Okonkwo' },
-  { id: 'ev-02', title: 'Summer Apprentice Social', description: 'End of year social event for all apprentices. Food, games, and networking.', date: '20 Jun 2026', time: '16:00 - 19:00', location: 'KBC Central London', type: 'social', attendees: 45, capacity: 60, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-03', title: 'Leadership Workshop', description: 'Develop leadership skills with guest speaker Dr. Amara Okafor.', date: '15 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 22, capacity: 30, status: 'upcoming', organizer: 'Sarah Chen' },
-  { id: 'ev-04', title: 'Coding Competition', description: 'Monthly coding challenge with prizes for top performers.', date: '10 Jun 2026', time: '09:00 - 17:00', location: 'Online Platform', type: 'competition', attendees: 18, capacity: 25, status: 'ongoing', organizer: 'James Harrington' },
-  { id: 'ev-05', title: 'Employer Networking Night', description: 'Connect with employers and explore career opportunities.', date: '25 Jun 2026', time: '18:00 - 20:00', location: 'KBC Manchester Office', type: 'networking', attendees: 30, capacity: 40, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-06', title: 'Quarterly Awards Ceremony', description: 'Celebrate top learners and achievements across all programmes.', date: '28 Jun 2026', time: '14:00 - 16:00', location: 'KBC Central London', type: 'celebration', attendees: 50, capacity: 80, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-07', title: 'AI in Marketing Deep Dive', description: 'Advanced workshop on AI tools for marketing professionals.', date: '5 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 24, capacity: 25, status: 'completed', organizer: 'Tom Whitfield' },
-  { id: 'ev-08', title: 'Project Controls Masterclass', description: 'Master project management tools and techniques with industry experts.', date: '2 Jun 2026', time: '14:00 - 16:00', location: 'Teams Virtual', type: 'workshop', attendees: 20, capacity: 25, status: 'completed', organizer: 'James Harrington' },
+  { id: 'ev-01', title: 'Marketing Club Monthly Showcase', description: 'Present your marketing campaigns and get feedback from peers and ambassadors.', date: '13 Jun 2026', time: '13:00 - 15:00', location: 'Teams Virtual', type: 'workshop', attendees: 28, status: 'upcoming', organizer: 'Rebecca Okonkwo' },
+  { id: 'ev-02', title: 'Summer Apprentice Social', description: 'End of year social event for all apprentices. Food, games, and networking.', date: '20 Jun 2026', time: '16:00 - 19:00', location: 'KBC Central London', type: 'social', attendees: 45, status: 'upcoming', organizer: 'Tom Harrington' },
+  { id: 'ev-03', title: 'Leadership Workshop', description: 'Develop leadership skills with guest speaker Dr. Amara Okafor.', date: '15 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 22, status: 'upcoming', organizer: 'Sarah Chen' },
+  { id: 'ev-04', title: 'Coding Competition', description: 'Monthly coding challenge with prizes for top performers.', date: '10 Jun 2026', time: '09:00 - 17:00', location: 'Online Platform', type: 'competition', attendees: 18, status: 'ongoing', organizer: 'James Harrington' },
+  { id: 'ev-05', title: 'Employer Networking Night', description: 'Connect with employers and explore career opportunities.', date: '25 Jun 2026', time: '18:00 - 20:00', location: 'KBC Manchester Office', type: 'networking', attendees: 30, status: 'upcoming', organizer: 'Tom Harrington' },
+  { id: 'ev-06', title: 'Quarterly Awards Ceremony', description: 'Celebrate top learners and achievements across all programmes.', date: '28 Jun 2026', time: '14:00 - 16:00', location: 'KBC Central London', type: 'celebration', attendees: 50, status: 'upcoming', organizer: 'Tom Harrington' },
+  { id: 'ev-07', title: 'AI in Marketing Deep Dive', description: 'Advanced workshop on AI tools for marketing professionals.', date: '5 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 24, status: 'completed', organizer: 'Tom Whitfield' },
+  { id: 'ev-08', title: 'Project Controls Masterclass', description: 'Master project management tools and techniques with industry experts.', date: '2 Jun 2026', time: '14:00 - 16:00', location: 'Teams Virtual', type: 'workshop', attendees: 20, status: 'completed', organizer: 'James Harrington' },
 ];
 
 const typeConfig: Record<string, { icon: string; bg: string; text: string }> = {
@@ -47,7 +48,6 @@ interface EventFormData {
   endTime: string;
   location: string;
   type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
-  capacity: number;
   organizer: string;
 }
 
@@ -58,7 +58,6 @@ interface FormErrors {
   startTime?: string;
   endTime?: string;
   location?: string;
-  capacity?: string;
   organizer?: string;
 }
 
@@ -70,7 +69,6 @@ const blankForm: EventFormData = {
   endTime: '',
   location: '',
   type: 'workshop',
-  capacity: 30,
   organizer: 'Tom Harrington',
 };
 
@@ -92,7 +90,7 @@ function EventForm({
         <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Event Type <span className="text-red-500">*</span></label>
         <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 flex-wrap">
           {(Object.keys(typeConfig) as Array<keyof typeof typeConfig>).map(t => (
-            <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+            <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
               <i className={`${typeConfig[t].icon} text-sm`}></i>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -138,18 +136,11 @@ function EventForm({
         <input type="text" value={form.location} onChange={e => { setForm(f => ({ ...f, location: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.location; return n; }); }} placeholder="e.g. Teams Virtual or KBC Central London" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.location ? 'border-red-300' : 'border-foreground-200/60'}`} />
         {errors.location && <p className="text-[10px] text-red-500 mt-1">{errors.location}</p>}
       </div>
-      {/* Capacity & Organizer */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Capacity <span className="text-red-500">*</span></label>
-          <input type="number" value={form.capacity} onChange={e => { setForm(f => ({ ...f, capacity: parseInt(e.target.value) || 0 })); setErrors(errs => { const n = { ...errs }; delete n.capacity; return n; }); }} min={5} max={500} className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.capacity ? 'border-red-300' : 'border-foreground-200/60'}`} />
-          {errors.capacity && <p className="text-[10px] text-red-500 mt-1">{errors.capacity}</p>}
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Organizer <span className="text-red-500">*</span></label>
-          <input type="text" value={form.organizer} onChange={e => { setForm(f => ({ ...f, organizer: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.organizer; return n; }); }} placeholder="e.g. Tom Harrington" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.organizer ? 'border-red-300' : 'border-foreground-200/60'}`} />
-          {errors.organizer && <p className="text-[10px] text-red-500 mt-1">{errors.organizer}</p>}
-        </div>
+      {/* Organizer */}
+      <div>
+        <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Organizer <span className="text-red-500">*</span></label>
+        <input type="text" value={form.organizer} onChange={e => { setForm(f => ({ ...f, organizer: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.organizer; return n; }); }} placeholder="e.g. Tom Harrington" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.organizer ? 'border-red-300' : 'border-foreground-200/60'}`} />
+        {errors.organizer && <p className="text-[10px] text-red-500 mt-1">{errors.organizer}</p>}
       </div>
     </div>
   );
@@ -166,8 +157,6 @@ function validateForm(form: EventFormData): FormErrors {
   if (!form.endTime) errs.endTime = 'End time is required';
   if (form.startTime && form.endTime && form.startTime >= form.endTime) errs.endTime = 'End time must be after start time';
   if (!form.location.trim()) errs.location = 'Location is required';
-  if (!form.capacity || form.capacity < 5) errs.capacity = 'Minimum 5 capacity';
-  else if (form.capacity > 500) errs.capacity = 'Maximum 500 capacity';
   if (!form.organizer.trim()) errs.organizer = 'Organizer is required';
   return errs;
 }
@@ -220,7 +209,6 @@ export default function EventsPage() {
       location: addForm.location.trim(),
       type: addForm.type,
       attendees: 0,
-      capacity: addForm.capacity,
       status: 'upcoming',
       organizer: addForm.organizer.trim(),
     };
@@ -240,7 +228,6 @@ export default function EventsPage() {
       endTime: endTime || '',
       location: event.location,
       type: event.type,
-      capacity: event.capacity,
       organizer: event.organizer,
     });
     setEditErrors({});
@@ -260,7 +247,6 @@ export default function EventsPage() {
         time: `${editForm.startTime} - ${editForm.endTime}`,
         location: editForm.location.trim(),
         type: editForm.type,
-        capacity: editForm.capacity,
         organizer: editForm.organizer.trim(),
       };
     }));
@@ -301,23 +287,20 @@ export default function EventsPage() {
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
             <i className="ri-thumb-up-line text-sm"></i> Recognition
           </button>
-          <button onClick={() => navigate('/engagement/communication')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-message-2-line text-sm"></i> Communication
-          </button>
         </div>
 
         {/* Filters & Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'upcoming', 'ongoing', 'completed'].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s as 'all' | 'upcoming' | 'ongoing' | 'completed')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === s ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={s} onClick={() => setStatusFilter(s as 'all' | 'upcoming' | 'ongoing' | 'completed')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === s ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'workshop', 'social', 'networking', 'competition', 'celebration'].map(t => (
-              <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {t === 'all' ? 'All Types' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
@@ -332,7 +315,6 @@ export default function EventsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map(event => {
             const cfg = typeConfig[event.type] || { icon: 'ri-calendar-line', bg: 'bg-background-100', text: 'text-foreground-500' };
-            const pct = Math.round((event.attendees / event.capacity) * 100);
             return (
               <div key={event.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium hover:border-primary-200/50 transition-smooth">
                 <div className="flex items-start gap-3 mb-3">
@@ -351,14 +333,10 @@ export default function EventsPage() {
                   <p><i className="ri-map-pin-line mr-1 text-primary-500"></i>{event.location}</p>
                   <p><i className="ri-user-line mr-1 text-primary-500"></i>{event.organizer}</p>
                 </div>
-                <div className="mt-3">
-                  <div className="flex items-center justify-between text-[10px] mb-1">
-                    <span className="text-foreground-400">{event.attendees} / {event.capacity}</span>
-                    <span className={`font-bold ${pct >= 80 ? 'text-red-600' : pct >= 60 ? 'text-amber-600' : 'text-primary-600'}`}>{pct}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-background-200 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-primary-500'}`} style={{ width: `${pct}%` }}></div>
-                  </div>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground-600">
+                  <i className="ri-group-line text-primary-500"></i>
+                  <span className="font-semibold text-foreground-900">{event.attendees}</span>
+                  <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>

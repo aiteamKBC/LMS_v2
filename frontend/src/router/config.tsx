@@ -134,7 +134,6 @@ import IfateStandardPage from "../pages/curriculum/ifate-standard/page";
 import CurriculumMisAllocationPage from "../pages/curriculum/mis-allocation/page";
 import CurriculumReportsPage from "../pages/curriculum/reports/page";
 import CommunicationPage from "../pages/communication/page";
-import SharedCommunicationPage from "../pages/engagement/communication/page";
 import CurriculumQAPage from "../pages/curriculum/curriculum-qa/page";
 import FinanceWorkspace from "../pages/workspace/finance/page";
 import FundingOverviewPage from "../pages/finance/funding/page";
@@ -177,12 +176,9 @@ import QaDeliverySetup from "../pages/qa/delivery-setup/page";
 import QaGatewayEpa from "../pages/qa/gateway-epa/page";
 import LearnerEngagementPage from "../pages/engagement/learner-engagement/page";
 import AttendanceRiskPage from "../pages/engagement/attendance-risk/page";
-import AbsenceQueuePage from "../pages/engagement/absence-queue/page";
-import CatchupOverduePage from "../pages/engagement/catchup-overdue/page";
 import CallLogsPage from "../pages/engagement/call-logs/page";
 import WhatsAppLogsPage from "../pages/engagement/whatsapp-logs/page";
 import EmailLogsPage from "../pages/engagement/email-logs/page";
-import EmployerEscalationsPage from "../pages/engagement/employer-escalations/page";
 import PointsRulesPage from "../pages/engagement/points-rules/page";
 import RewardsShopPage from "../pages/engagement/rewards-shop/page";
 import VoucherClaimsPage from "../pages/engagement/voucher-claims/page";
@@ -862,18 +858,6 @@ const routes: RouteObject[] = [
     element: <AttendanceRiskPage />,
   },
   {
-    path: "/engagement/absence-queue",
-    element: <AbsenceQueuePage />,
-  },
-  {
-    path: "/engagement/catchup-overdue",
-    element: <CatchupOverduePage />,
-  },
-  {
-    path: "/engagement/communication",
-    element: <SharedCommunicationPage />,
-  },
-  {
     path: "/engagement/call-logs",
     element: <CallLogsPage />,
   },
@@ -884,10 +868,6 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/email-logs",
     element: <EmailLogsPage />,
-  },
-  {
-    path: "/engagement/employer-escalations",
-    element: <EmployerEscalationsPage />,
   },
   {
     path: "/engagement/points-rules",
