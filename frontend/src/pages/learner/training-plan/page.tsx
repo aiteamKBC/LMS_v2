@@ -1,6 +1,9 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { RealLearnerPlanView } from '@/components/feature/RealLearnerPlanView';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMyLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, QUIZ_1_DATA, READING_1_DATA, PODCAST_1_DATA } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES, TRAINING_MONTH_GROUPS, ACTIVITY_TYPE_META, TrainingActivity, ActivityType, ActivityStatus, WeekGroup, MonthGroup } from '@/mocks/training-plan';
@@ -26,6 +29,11 @@ type FilterStatus = '' | ActivityStatus;
    MAIN PAGE
    ═══════════════════════════════════════════════════════ */
 export default function TrainingPlanPage() {
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const myLearner = useMyLearner();
+  const kind = urlKind ?? myLearner?.kind;
+  const id = urlId ?? myLearner?.id;
+  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const { warning } = useToast();
   const [searchParams] = useSearchParams();
   const highlightParam = searchParams.get('highlight');
@@ -149,6 +157,19 @@ export default function TrainingPlanPage() {
       };
     }).filter(g => g.weeks.length > 0);
   }, [hasActiveFilters, searchQuery, filterType, filterStatus, filterMonth, filterWeek]);
+
+  if (isRealMode) {
+    return (
+      <RealLearnerPlanView
+        real={real}
+        loading={loading}
+        loadError={loadError}
+        pageLabel="Training Plan"
+        kind={kind}
+        learnerId={id}
+      />
+    );
+  }
 
   return (
     <WorkspaceShell

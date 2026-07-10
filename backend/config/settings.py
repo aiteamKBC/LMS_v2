@@ -11,9 +11,50 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+from urllib.parse import urlparse, unquote, parse_qs
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_env(path):
+    """Minimal .env reader (stdlib only) -> dict. Ignores blanks/comments."""
+    values = {}
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip()] = val.strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    return values
+
+
+ENV = _load_env(BASE_DIR / ".env")
+
+
+def _neon_config(database_url):
+    """Turn a postgres URL into a Django DATABASES entry for Neon."""
+    parsed = urlparse(database_url)
+    query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+    options = {}
+    # libpq params Neon needs; forwarded to psycopg by the postgresql backend.
+    for key in ("sslmode", "channel_binding"):
+        if key in query:
+            options[key] = query[key]
+    return {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": (parsed.path or "/").lstrip("/"),
+        "USER": unquote(parsed.username or ""),
+        "PASSWORD": unquote(parsed.password or ""),
+        "HOST": parsed.hostname or "",
+        "PORT": str(parsed.port or 5432),
+        "OPTIONS": options,
+        # Reuse connections for a short while (Neon pooler friendly).
+        "CONN_MAX_AGE": 60,
+    }
 
 
 # Quick-start development settings - unsuitable for production
@@ -37,6 +78,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'learner_api',
 ]
 
 MIDDLEWARE = [
@@ -72,12 +114,29 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
+# Django's own tables (auth/sessions/admin/migrations) stay on local SQLite so we
+# never write framework tables into the client's Neon database. The enrolment
+# users table lives in Neon and is reached only through the `learner_api` app
+# models, routed there by learner_api.routers.EnrolmentRouter.
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+
+_database_url = ENV.get('Database_url') or ENV.get('DATABASE_URL')
+if _database_url:
+    DATABASES['enrolment'] = _neon_config(_database_url)
+
+DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
+
+# CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so
+# requests are same-origin in the browser. Allow the dev hosts explicitly.
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
 
 
 # Password validation

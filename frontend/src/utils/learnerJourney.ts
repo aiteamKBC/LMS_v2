@@ -1,0 +1,144 @@
+import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+
+export interface JourneyComponent {
+  title: string;
+  expectedOtjh: number | null;
+  isQuiz?: boolean;
+  quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
+  quizAttempts?: LearnerQuizAttempt[];
+}
+export interface JourneyWeek {
+  week: string;
+  otjh: number;
+  components: JourneyComponent[];
+}
+export interface JourneyModule {
+  module: string;
+  weeks: JourneyWeek[];
+}
+
+/**
+ * Visual metadata for a component, derived from its title. Real learner data
+ * carries no component "type" field — titles arrive as "Type · Detail" (or just
+ * "Type"), so we key off the segment before the "·" to pick an icon/colour that
+ * matches the mock training-plan's ACTIVITY_TYPE_META styling.
+ */
+export interface ComponentTypeMeta {
+  label: string;
+  detail: string | null;
+  icon: string;
+  bg: string;
+  color: string;
+}
+
+const TYPE_META: Record<string, { icon: string; bg: string; color: string }> = {
+  video: { icon: 'ri-play-circle-line', bg: 'bg-red-50', color: 'text-red-600' },
+  quiz: { icon: 'ri-questionnaire-line', bg: 'bg-amber-50', color: 'text-amber-600' },
+  reading: { icon: 'ri-book-open-line', bg: 'bg-blue-50', color: 'text-blue-600' },
+  podcast: { icon: 'ri-headphone-line', bg: 'bg-violet-50', color: 'text-violet-600' },
+  reflection: { icon: 'ri-brain-line', bg: 'bg-purple-50', color: 'text-purple-600' },
+  powerpoint: { icon: 'ri-slideshow-line', bg: 'bg-orange-50', color: 'text-orange-600' },
+  'live session': { icon: 'ri-vidicon-line', bg: 'bg-rose-50', color: 'text-rose-600' },
+  'recording placeholder': { icon: 'ri-record-circle-line', bg: 'bg-slate-50', color: 'text-slate-600' },
+  'workplace evidence': { icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
+  evidence: { icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
+  activity: { icon: 'ri-tools-line', bg: 'bg-orange-50', color: 'text-orange-600' },
+};
+
+const DEFAULT_TYPE_META = { icon: 'ri-checkbox-circle-line', bg: 'bg-background-100', color: 'text-foreground-500' };
+
+/** Split a "Type · Detail" component title into styled parts. */
+export function componentTypeMeta(title: string): ComponentTypeMeta {
+  const [rawLabel, ...rest] = title.split('·').map((s) => s.trim());
+  const label = rawLabel || title;
+  const detail = rest.length ? rest.join(' · ') : null;
+  const meta = TYPE_META[label.toLowerCase()] || DEFAULT_TYPE_META;
+  return { label, detail, ...meta };
+}
+
+/** Grade "30%" (or legacy number) -> numeric percent. */
+function gradePercent(grade: string | number | undefined): number {
+  if (typeof grade === 'number') return grade;
+  const m = String(grade ?? '').match(/-?\d+(\.\d+)?/);
+  return m ? parseFloat(m[0]) : 0;
+}
+
+/** First number found in a free-text time ("about 25 minutes" -> 25). null if none. */
+function parseMinutes(text: string | undefined): number | null {
+  const m = String(text ?? '').match(/\d+(\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+/** For each quiz, the learner's BEST attempt = highest grade%, ties -> most recent. */
+function bestAttemptPerQuiz(attempts: LearnerQuizAttempt[]): LearnerQuizAttempt[] {
+  const byQuiz = new Map<number, LearnerQuizAttempt>();
+  for (const a of attempts) {
+    const cur = byQuiz.get(a.quizId);
+    if (!cur) { byQuiz.set(a.quizId, a); continue; }
+    const better = gradePercent(a.grade) > gradePercent(cur.grade)
+      || (gradePercent(a.grade) === gradePercent(cur.grade) && (a.submittedAt || '') > (cur.submittedAt || ''));
+    if (better) byQuiz.set(a.quizId, a);
+  }
+  return Array.from(byQuiz.values());
+}
+
+export interface QuizAggregateStats {
+  quizzesTaken: number;       // distinct quizzes with at least one attempt
+  totalMinutes: number;       // summed chosen time of each quiz's best attempt
+  totalHours: number;         // totalMinutes / 60, rounded to 1dp
+  ksbCodes: string[];         // union of KSB codes across best attempts
+  ksbCount: number;           // distinct KSB count
+}
+
+/**
+ * Aggregate a learner's Weekly_Quizzes into the overview-card figures.
+ * Uses only each quiz's BEST attempt (highest grade). Time comes from the
+ * learner's chosen `reportedTime` (first number parsed as minutes); KSBs are
+ * the union of the best attempts' selected codes.
+ */
+export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateStats {
+  const empty: QuizAggregateStats = { quizzesTaken: 0, totalMinutes: 0, totalHours: 0, ksbCodes: [], ksbCount: 0 };
+  if (!real || !Array.isArray(real.quizAttempts) || real.quizAttempts.length === 0) return empty;
+
+  const best = bestAttemptPerQuiz(real.quizAttempts);
+  let totalMinutes = 0;
+  const ksbSet = new Set<string>();
+  for (const a of best) {
+    const mins = parseMinutes(a.reportedTime);
+    if (mins != null) totalMinutes += mins;
+    for (const code of a.ksbs || []) ksbSet.add(code);
+  }
+  return {
+    quizzesTaken: best.length,
+    totalMinutes,
+    totalHours: Math.round((totalMinutes / 60) * 10) / 10,
+    ksbCodes: Array.from(ksbSet),
+    ksbCount: ksbSet.size,
+  };
+}
+
+/** Group a learner's flat week/components arrays into module -> week -> components. */
+export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
+  if (!real) return [];
+  return real.modules.map((moduleTitle) => {
+    const weeksForModule = real.week.filter((w) => w.module === moduleTitle);
+    return {
+      module: moduleTitle,
+      weeks: weeksForModule.map((w) => {
+        const components = real.components
+          .filter((c) => c.module === moduleTitle && c.week === w.week)
+          .map((c) => ({
+            title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
+            quizAttempts: c.isQuiz && c.quizMeta
+              ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
+              : undefined,
+          }));
+        return {
+          week: w.week,
+          otjh: components.reduce((n, c) => n + (c.expectedOtjh || 0), 0),
+          components,
+        };
+      }),
+    };
+  });
+}
