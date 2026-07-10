@@ -101,7 +101,7 @@ export default function QuestionBankPage() {
     if (bankSearch.trim()) params.set('search', bankSearch.trim());
 
     try {
-      const response = await fetch(`/api/question-bank/?${params.toString()}`, { signal });
+      const response = await fetch(`/quiz_api/question-bank/?${params.toString()}`, { signal });
       if (!response.ok) throw new Error('Could not load question bank');
       const data: QuestionBankData = await response.json();
       setQuestionBank(data);
@@ -189,7 +189,7 @@ export default function QuestionBankPage() {
     if (!selectedQuestion || !targetQuizId) return;
     setAddingQuestion(true);
     try {
-      const response = await fetch(`/api/question-bank/questions/${selectedQuestion.id}/add-to-quiz/`, {
+      const response = await fetch(`/quiz_api/question-bank/questions/${selectedQuestion.id}/add-to-quiz/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quizId: Number(targetQuizId) }),

@@ -258,7 +258,7 @@ export default function QuizXmlWorkspacePage() {
     if (search.trim()) params.set('search', search.trim());
 
     try {
-      const response = await fetch(`/api/quizzes/?${params.toString()}`);
+      const response = await fetch(`/quiz_api/quizzes/?${params.toString()}`);
       if (!response.ok) throw new Error('Could not load quizzes');
       const data = await response.json();
       setQuizzes(data.results);
@@ -288,7 +288,7 @@ export default function QuizXmlWorkspacePage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch('/api/training-plan-options/', { signal: controller.signal })
+    fetch('/quiz_api/training-plan-options/', { signal: controller.signal })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load training plan options')))
       .then((data: TrainingPlanOptions) => setTrainingPlanOptions(data))
       .catch(err => {
@@ -427,9 +427,9 @@ export default function QuizXmlWorkspacePage() {
         const body = new FormData();
         body.append('file', uploadFile);
         Object.entries(form).forEach(([key, value]) => body.append(key, value));
-        response = await fetch('/api/quizzes/', { method: 'POST', body });
+        response = await fetch('/quiz_api/quizzes/', { method: 'POST', body });
       } else {
-        response = await fetch('/api/quizzes/', {
+        response = await fetch('/quiz_api/quizzes/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -482,9 +482,9 @@ export default function QuizXmlWorkspacePage() {
         body.append('programme', generatorForm.programme);
         body.append('module', generatorForm.module);
         body.append('questionCount', generatorForm.questionCount);
-        response = await fetch('/api/ai/generate-questions/', { method: 'POST', body });
+        response = await fetch('/quiz_api/ai/generate-questions/', { method: 'POST', body });
       } else {
-        response = await fetch('/api/ai/generate-questions/', {
+        response = await fetch('/quiz_api/ai/generate-questions/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -518,7 +518,7 @@ export default function QuizXmlWorkspacePage() {
     setSavingGeneratedQuiz(true);
     setError('');
     try {
-      const createResponse = await fetch('/api/quizzes/', {
+      const createResponse = await fetch('/quiz_api/quizzes/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -540,7 +540,7 @@ export default function QuizXmlWorkspacePage() {
       const created = await createResponse.json().catch(() => null);
       if (!createResponse.ok) throw new Error(created?.error || 'Could not create quiz');
 
-      const saveResponse = await fetch(`/api/quizzes/${created.id}/questions/`, {
+      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questions: generatedQuestions, removeMissing: true }),
@@ -559,7 +559,7 @@ export default function QuizXmlWorkspacePage() {
   };
 
   const updateStatus = async (ids: number[], status: QuizStatus) => {
-    const responses = await Promise.all(ids.map(id => fetch(`/api/quizzes/${id}/`, {
+    const responses = await Promise.all(ids.map(id => fetch(`/quiz_api/quizzes/${id}/`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
@@ -577,7 +577,7 @@ export default function QuizXmlWorkspacePage() {
 
   const updateAuthor = async (quiz: QuizPackage, author: string) => {
     if (quiz.author === author) return;
-    await fetch(`/api/quizzes/${quiz.id}/`, {
+    await fetch(`/quiz_api/quizzes/${quiz.id}/`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ author }),
@@ -588,7 +588,7 @@ export default function QuizXmlWorkspacePage() {
 
   const deleteSelected = async () => {
     const ids = [...selectedIds];
-    const responses = await Promise.all(ids.map(id => fetch(`/api/quizzes/${id}/`, { method: 'DELETE' })));
+    const responses = await Promise.all(ids.map(id => fetch(`/quiz_api/quizzes/${id}/`, { method: 'DELETE' })));
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error('Could not delete selected quizzes');
     setSelectedIds([]);
@@ -619,7 +619,7 @@ export default function QuizXmlWorkspacePage() {
     setPreviewLoadingId(quiz.id);
     setError('');
     try {
-      const response = await fetch(`/api/quizzes/${quiz.id}/preview/`);
+      const response = await fetch(`/quiz_api/quizzes/${quiz.id}/preview/`);
       if (!response.ok) throw new Error('Could not load quiz preview');
       const data = await response.json();
       setPreviewData(data);
@@ -681,7 +681,7 @@ export default function QuizXmlWorkspacePage() {
     setEditorSaving(true);
     setError('');
     try {
-      const response = await fetch(`/api/quizzes/${editorData.quiz.id}/questions/`, {
+      const response = await fetch(`/quiz_api/quizzes/${editorData.quiz.id}/questions/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questions: editorData.questions }),
@@ -883,7 +883,7 @@ export default function QuizXmlWorkspacePage() {
                         <button onClick={() => void openQuestionEditor(quiz)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth" title="Review questions">
                           <i className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></i>
                         </button>
-                        <a href={`/api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center"><i className="ri-download-line"></i></a>
+                        <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center"><i className="ri-download-line"></i></a>
                       </div>
                     </td>
                   </tr>
@@ -976,7 +976,7 @@ export default function QuizXmlWorkspacePage() {
               )}
               <div className="flex items-center gap-2 mb-4">
                 <button onClick={() => void updateStatus([selectedQuiz.id], 'published')} className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600">Publish</button>
-                <a href={`/api/quizzes/${selectedQuiz.id}/download/`} className="flex-1 px-3 py-2 bg-background-100 rounded-lg text-sm font-semibold text-center hover:bg-background-200">Download</a>
+                <a href={`/quiz_api/quizzes/${selectedQuiz.id}/download/`} className="flex-1 px-3 py-2 bg-background-100 rounded-lg text-sm font-semibold text-center hover:bg-background-200">Download</a>
               </div>
               <div className="rounded-xl border border-foreground-200/60 bg-background-100/60 p-4 space-y-3">
                 <div>
@@ -1029,7 +1029,7 @@ export default function QuizXmlWorkspacePage() {
                 {previewData.quiz.packageType === 'scorm' ? (
                   <iframe
                     title={`${previewData.quiz.title} SCORM preview`}
-                    src={`/api/quizzes/${previewData.quiz.id}/scorm/`}
+                    src={`/quiz_api/quizzes/${previewData.quiz.id}/scorm/`}
                     className="w-full h-full min-h-[620px] border-0 bg-background-50"
                     sandbox="allow-scripts allow-forms allow-same-origin"
                   />

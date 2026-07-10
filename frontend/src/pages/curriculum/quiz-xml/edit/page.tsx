@@ -289,10 +289,10 @@ export default function QuizEditPage() {
     setLoading(true);
     setPageError('');
     try {
-      const response = await fetch(`/api/quizzes/${quizId}/questions/`);
+      const response = await fetch(`/quiz_api/quizzes/${quizId}/questions/`);
       if (!response.ok) throw new Error('Could not load quiz editor');
       const nextData: QuizEditorData = await response.json();
-      const courseLinksResponse = await fetch(`/api/quizzes/${nextData.quiz.id}/course-links/`);
+      const courseLinksResponse = await fetch(`/quiz_api/quizzes/${nextData.quiz.id}/course-links/`);
       const nextCourseLinks: CourseLinksState | null = courseLinksResponse.ok ? await courseLinksResponse.json() : null;
       const nextSettings = settingsFromQuiz(nextData.quiz);
       setData(nextData);
@@ -455,7 +455,7 @@ export default function QuizEditPage() {
     if (!data || savingQuestions) return;
     setSavingQuestions(true);
     try {
-      const response = await fetch(`/api/quizzes/${data.quiz.id}/questions/`, {
+      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/questions/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ questions, removeMissing: true }),
@@ -524,7 +524,7 @@ export default function QuizEditPage() {
     if (!data || !settings) return;
     setSavingSettings(true);
     try {
-      const response = await fetch(`/api/quizzes/${data.quiz.id}/`, {
+      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
@@ -561,7 +561,7 @@ export default function QuizEditPage() {
     if (!data || !courseLinks) return;
     setSavingCourseLinks(true);
     try {
-      const response = await fetch(`/api/quizzes/${data.quiz.id}/course-links/`, {
+      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/course-links/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trainingPlanIds: courseLinks.selectedIds }),
@@ -584,7 +584,7 @@ export default function QuizEditPage() {
     if (!data || data.quiz.status === nextStatus || savingStatus) return;
     setSavingStatus(true);
     try {
-      const response = await fetch(`/api/quizzes/${data.quiz.id}/`, {
+      const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),

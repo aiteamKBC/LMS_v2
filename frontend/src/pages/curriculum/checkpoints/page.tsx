@@ -292,7 +292,7 @@ export default function CheckpointsPage() {
     try {
       const params = new URLSearchParams({ assessmentType: 'checkpoint' });
       if (showArchive) params.set('status', 'trash');
-      const response = await fetch(`/api/quizzes/?${params.toString()}`);
+      const response = await fetch(`/quiz_api/quizzes/?${params.toString()}`);
       if (!response.ok) throw new Error('Could not load checkpoint quizzes');
       const data: { results: QuizPackageResponse[] } = await response.json();
       setCheckpoints(data.results.map(quizToCheckpoint));
@@ -346,7 +346,7 @@ export default function CheckpointsPage() {
   const updateCheckpointStatus = async (checkpoint: MonthlyCheckpoint, status: CheckpointStatus) => {
     setError('');
     try {
-      const response = await fetch(`/api/quizzes/${checkpoint.id}/`, {
+      const response = await fetch(`/quiz_api/quizzes/${checkpoint.id}/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, assessmentType: 'checkpoint' }),
@@ -361,7 +361,7 @@ export default function CheckpointsPage() {
   const deleteCheckpoint = async (checkpoint: MonthlyCheckpoint) => {
     setError('');
     try {
-      const response = await fetch(`/api/quizzes/${checkpoint.id}/`, { method: 'DELETE' });
+      const response = await fetch(`/quiz_api/quizzes/${checkpoint.id}/`, { method: 'DELETE' });
       if (!response.ok) throw new Error('Could not delete checkpoint quiz');
       await loadCheckpoints();
     } catch (err) {
@@ -378,7 +378,7 @@ export default function CheckpointsPage() {
         setError('');
         setModalError('');
         setSavingCheckpoint(true);
-        const response = await fetch(`/api/quizzes/${editingCheckpoint.id}/`, {
+        const response = await fetch(`/quiz_api/quizzes/${editingCheckpoint.id}/`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -418,9 +418,9 @@ export default function CheckpointsPage() {
         body.append('questions', String(Number(form.questions || 20)));
         body.append('status', form.status);
         body.append('assessmentType', 'checkpoint');
-        response = await fetch('/api/quizzes/', { method: 'POST', body });
+        response = await fetch('/quiz_api/quizzes/', { method: 'POST', body });
       } else {
-        response = await fetch('/api/quizzes/', {
+        response = await fetch('/quiz_api/quizzes/', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
