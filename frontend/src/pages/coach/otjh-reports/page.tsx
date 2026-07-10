@@ -4,7 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
-const API_ENDPOINT = '/api/coach/caseload';
+const API_ENDPOINT = '/coach_api/coach/caseload';
 
 type FilterKey = 'all' | 'behind' | 'need-attention' | 'on-track';
 type OtjhRowStatus = 'behind' | 'on-track' | 'ahead' | 'need-attention' | 'unknown';
