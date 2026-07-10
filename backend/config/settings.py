@@ -19,43 +19,52 @@ from urllib.parse import urlparse, unquote, parse_qs
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def _load_env(path):
-    """Minimal .env reader (stdlib only) -> dict. Ignores blanks/comments."""
-    values = {}
-    try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            values[key.strip()] = val.strip().strip('"').strip("'")
-    except FileNotFoundError:
-        pass
-    return values
+def load_env_file(path):
+    if not path.exists():
+        return
+
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+
+        key, value = line.split('=', 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
 
 
-ENV = _load_env(BASE_DIR / ".env")
+load_env_file(BASE_DIR / '.env')
 
 
-def _neon_config(database_url):
-    """Turn a postgres URL into a Django DATABASES entry for Neon."""
+def database_from_url(database_url):
     parsed = urlparse(database_url)
-    query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
-    options = {}
-    # libpq params Neon needs; forwarded to psycopg by the postgresql backend.
-    for key in ("sslmode", "channel_binding"):
-        if key in query:
-            options[key] = query[key]
+    scheme = parsed.scheme.replace('postgresql', 'postgres')
+    engine_by_scheme = {
+        'postgres': 'django.db.backends.postgresql',
+        'mysql': 'django.db.backends.mysql',
+        'sqlite': 'django.db.backends.sqlite3',
+    }
+
+    if scheme not in engine_by_scheme:
+        raise ValueError(f'Unsupported database scheme: {parsed.scheme}')
+
+    if scheme == 'sqlite':
+        return {
+            'ENGINE': engine_by_scheme[scheme],
+            'NAME': unquote(parsed.path.lstrip('/')) or BASE_DIR / 'db.sqlite3',
+        }
+
+    options = dict(parse_qsl(parsed.query))
+    options.pop('channel_binding', None)
     return {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": (parsed.path or "/").lstrip("/"),
-        "USER": unquote(parsed.username or ""),
-        "PASSWORD": unquote(parsed.password or ""),
-        "HOST": parsed.hostname or "",
-        "PORT": str(parsed.port or 5432),
-        "OPTIONS": options,
-        # Reuse connections for a short while (Neon pooler friendly).
-        "CONN_MAX_AGE": 60,
+        'ENGINE': engine_by_scheme[scheme],
+        'NAME': unquote(parsed.path.lstrip('/')),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or ''),
+        'OPTIONS': options,
     }
 
 
@@ -198,5 +207,18 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-MEDIA_URL = 'media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'curriculum_api': {
+            'handlers': ['console'],
+            'level': 'INFO',
+        },
+    },
+}
