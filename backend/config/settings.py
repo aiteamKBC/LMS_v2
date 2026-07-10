@@ -98,6 +98,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'learner_api',
+    'curriculum_api',
 ]
 
 MIDDLEWARE = [
@@ -157,9 +158,10 @@ else:
         }
     }
 
-_database_url = ENV.get('Database_url') or ENV.get('DATABASE_URL')
-if _database_url:
-    DATABASES['enrolment'] = _neon_config(_database_url)
+# Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
+_enrolment_database_url = os.environ.get('ENROLMENT_DATABASE_URL') or os.environ.get('Database_url')
+if _enrolment_database_url:
+    DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
