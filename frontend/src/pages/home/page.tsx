@@ -81,11 +81,28 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 export default function Home() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
 
   // Enter a section directly — sign in as its demo account, then route in.
   const enterWorkspace = (section: WorkspaceSection) => {
+    if (section.slug === 'enrolment') {
+      setEnrolmentChoiceOpen(true);
+      return;
+    }
     login(section.email);
     navigate(section.workspacePath);
+  };
+
+  const chooseApprenticeshipEnrolment = () => {
+    setEnrolmentChoiceOpen(false);
+    login('compliance@kbc.test');
+    navigate('/users');
+  };
+
+  const choosedelivery = () => {
+    setEnrolmentChoiceOpen(false);
+    login('compliance@kbc.test');
+    navigate('/delivery');
   };
 
   const scrollToWorkspaces = () => {
@@ -507,6 +524,50 @@ export default function Home() {
           </div>
         </div>
       </footer>
+
+      {/* ============ ENROLMENT TYPE CHOICE MODAL ============ */}
+      {enrolmentChoiceOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setEnrolmentChoiceOpen(false)} aria-hidden="true" />
+          <div className="relative w-full max-w-lg bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl p-6">
+            <div className="flex items-start justify-between gap-4 mb-5">
+              <div>
+                <h2 className="text-[16px] font-heading font-semibold text-foreground-900">Choose enrolment type</h2>
+                <p className="text-[13px] text-foreground-400 mt-1">Select the pathway you'd like to enrol into.</p>
+              </div>
+              <button
+                onClick={() => setEnrolmentChoiceOpen(false)}
+                aria-label="Close"
+                className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer shrink-0"
+              >
+                <i className="ri-close-line text-[18px]" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <button
+                onClick={chooseApprenticeshipEnrolment}
+                className="group flex flex-col items-start text-left gap-3 rounded-2xl border border-foreground-200 p-5 hover:border-primary-300/70 hover:shadow-lg hover:shadow-primary-500/5 transition-all duration-300 cursor-pointer"
+              >
+                <span className="w-11 h-11 rounded-xl bg-primary-50 border border-primary-200/40 flex items-center justify-center group-hover:bg-primary-100 transition-colors duration-300">
+                  <i className="ri-graduation-cap-line text-primary-600 text-[18px]" />
+                </span>
+                <span className="text-[14px] font-heading font-semibold text-foreground-900">Onboarding</span>
+                <span className="text-[12px] text-foreground-400 leading-relaxed">Full apprenticeship journey — users, wizard and compliance board.</span>
+              </button>
+              <button
+                onClick={choosedelivery}
+                className="group flex flex-col items-start text-left gap-3 rounded-2xl border border-foreground-200 p-5 hover:border-accent-300/70 hover:shadow-lg hover:shadow-accent-500/5 transition-all duration-300 cursor-pointer"
+              >
+                <span className="w-11 h-11 rounded-xl bg-accent-50 border border-accent-200/40 flex items-center justify-center group-hover:bg-accent-100 transition-colors duration-300">
+                  <i className="ri-briefcase-4-line text-accent-600 text-[18px]" />
+                </span>
+                <span className="text-[14px] font-heading font-semibold text-foreground-900">Delivery</span>
+                <span className="text-[12px] text-foreground-400 leading-relaxed">Enrol a commercial learner with their programme details.</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

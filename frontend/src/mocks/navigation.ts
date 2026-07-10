@@ -428,6 +428,7 @@ export const engagementNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
+  { id: 'delivery', label: 'delivery', icon: 'ri-briefcase-4-line', href: '/delivery', statusDot: 'amber' },
 ];
 
 // ============================================================================

@@ -78,7 +78,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'api',
+    'learner_api',
 ]
 
 MIDDLEWARE = [
@@ -116,8 +116,8 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Django's own tables (auth/sessions/admin/migrations) stay on local SQLite so we
 # never write framework tables into the client's Neon database. The enrolment
-# users table lives in Neon and is reached only through the `api` app models,
-# routed there by api.routers.EnrolmentRouter.
+# users table lives in Neon and is reached only through the `learner_api` app
+# models, routed there by learner_api.routers.EnrolmentRouter.
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -129,9 +129,9 @@ _database_url = ENV.get('Database_url') or ENV.get('DATABASE_URL')
 if _database_url:
     DATABASES['enrolment'] = _neon_config(_database_url)
 
-DATABASE_ROUTERS = ['api.routers.EnrolmentRouter']
+DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
-# CORS/CSRF: the Vite dev server (port 3000) proxies /api to this server, so
+# CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so
 # requests are same-origin in the browser. Allow the dev hosts explicitly.
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',

@@ -2,6 +2,7 @@
 // Enrolment Console — shared types
 // Frontend only. Every shape is named so it can be mapped to the API later.
 // ============================================================================
+import type { TrainingPlan } from '@/api/trainingPlan';
 
 // ---- Screen A: Users List ----
 export type UserType = 'User' | 'Employer' | 'Referrer' | 'Admin' | 'Caseowner';
@@ -182,6 +183,7 @@ export interface EnrolmentBoard {
   programme: {
     type: string;
     name: string;
+    cohort: string;
     status: ProgrammeStatus;
     startDate: string;
     endDate: string;
@@ -207,6 +209,7 @@ export interface EnrolmentBoard {
   competencies: CompetencyRow[];
   subscription: { startDate: string; endDate: string; status: string };
   auditTrail: AuditEntry[];
+  trainingPlan: TrainingPlan;
 }
 
 // ---- Wizard ----

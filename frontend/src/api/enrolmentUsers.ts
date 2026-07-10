@@ -1,10 +1,10 @@
 // ============================================================================
 // Enrolment users API client
-// Talks to the Django backend at /api (proxied to :8000 by Vite in dev).
+// Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
 // ============================================================================
 import type { UserListRow, EnrolmentBoard } from '@/pages/users/types';
 
-const BASE = '/api/enrolment-users';
+const BASE = '/learner_api/enrolment-users';
 
 // ---- Canonical option lists (mirror api/constants.py; validated server-side) ----
 export const STATUS_OPTIONS = ['FullUser', 'Invited', 'Prospect', 'Expired', 'Cancelled', 'Archived'];

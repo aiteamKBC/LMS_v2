@@ -1,8 +1,13 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { buildLearnerJourney, quizAggregateStats } from '@/utils/learnerJourney';
+import { EmptyState } from '@/pages/users/components/ui';
 import type React from 'react';
 
 const learnerNav = roleNavMap.learner;
@@ -75,6 +80,7 @@ function DonutRing({ progress, color, size = 40, stroke = 4.5 }: { progress: num
     emerald: '#10b981',
     amber: '#f59e0b',
     red: '#ef4444',
+    muted: '#9ca3af',
   };
 
   const strokeColor = colorMap[color] || '#10b981';
@@ -111,6 +117,27 @@ function DonutRing({ progress, color, size = 40, stroke = 4.5 }: { progress: num
    ───────────────────────────────────────────── */
 export default function LearnerOverview() {
   const p = LEARNER_PROFILE;
+
+  /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const myLearner = useMyLearner();
+  const kind = urlKind ?? myLearner?.kind;
+  const id = urlId ?? myLearner?.id;
+  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+
+  const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
+  const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
+  const heroProgramme = isRealMode ? (real?.programme || '') : p.programme;
+  const heroEmployer = isRealMode ? (real?.employer || '') : p.employer;
+  const heroCohort = isRealMode ? (real?.cohort || '') : p.cohort;
+  const subtitleParts = isRealMode
+    ? [heroProgramme, heroEmployer, heroCohort ? `Cohort ${heroCohort}` : ''].filter(Boolean)
+    : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
+
+  /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
+  const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
+  // Weekly_Quizzes rollup: each quiz's best attempt -> summed chosen time + union of KSBs.
+  const quizStats = useMemo(() => quizAggregateStats(real), [real]);
 
   /* ── Mark-as-complete state for timeline ── */
   const [userCompletions, setUserCompletions] = useState<Record<number, boolean>>({});
@@ -185,10 +212,10 @@ export default function LearnerOverview() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={`Good morning, ${p.firstName}`}
-      pageSubtitle={`${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
-      userName={p.fullName}
-      userRole={`${p.programme} Apprentice`}
+      pageTitle={isRealMode ? (loading ? 'Loading learner…' : `Good morning, ${heroName}`) : `Good morning, ${p.firstName}`}
+      pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
+      userName={isRealMode ? heroFullName : p.fullName}
+      userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
@@ -216,14 +243,19 @@ export default function LearnerOverview() {
             <div className="relative h-full flex flex-col justify-center p-6 md:p-8">
               <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
                 <div className="flex-1 min-w-0 max-w-xl">
-                  <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">Good morning, {p.firstName}</h1>
+                  <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">
+                    {isRealMode ? (loading ? 'Loading learner…' : `Good morning, ${heroName}`) : `Good morning, ${p.firstName}`}
+                  </h1>
                   <p className="text-[13px] text-white/50 max-w-lg">
-                    {p.programme} Level {p.programmeLevel} &middot; {p.employer} &middot; Cohort {p.cohort} &middot; Coach: {p.coach.name}
+                    {isRealMode
+                      ? (loadError ? loadError : subtitleParts.join(' · ') || 'No programme details yet')
+                      : <>{p.programme} Level {p.programmeLevel} &middot; {p.employer} &middot; Cohort {p.cohort} &middot; Coach: {p.coach.name}</>}
                   </p>
                 </div>
               </div>
             </div>
-            {/* Roadmap Icon Button */}
+            {/* Roadmap Icon Button — links to the logged-in learner's own journey, not applicable when viewing another learner's read-only profile */}
+            {!isRealMode && (
             <a
               href="/learner/modules"
               className="absolute top-4 right-4 lg:top-5 lg:right-5 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center transition-all duration-200 hover:scale-110 cursor-pointer group z-10"
@@ -231,6 +263,7 @@ export default function LearnerOverview() {
             >
               <i className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></i>
             </a>
+            )}
           </section>
         </SectionReveal>
 
@@ -240,6 +273,18 @@ export default function LearnerOverview() {
         <SectionReveal delay={80}>
           <section className="relative rounded-2xl overflow-hidden bg-background-50 border border-foreground-200/50 card-premium">
             <div className="absolute inset-0 bg-gradient-to-r from-background-100/60 via-transparent to-transparent pointer-events-none" />
+            {isRealMode ? (
+              <div className="relative p-5 md:p-6 flex items-center gap-5">
+                <div className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center shrink-0">
+                  <i className="ri-presentation-line text-foreground-400 text-2xl"></i>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-semibold text-foreground-400 uppercase tracking-widest mb-1 font-label">Today&apos;s Focus</p>
+                  <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-500 tracking-tight mb-1">Not tracked yet</h2>
+                  <p className="text-sm text-foreground-400">Live session scheduling isn&apos;t wired up for this learner yet.</p>
+                </div>
+              </div>
+            ) : (
             <div className="relative p-5 md:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-5">
               <div className="w-14 h-14 rounded-2xl bg-accent-500 flex items-center justify-center shrink-0 shadow-sm shadow-accent-500/20">
                 <i className="ri-presentation-line text-foreground-950 text-2xl"></i>
@@ -270,6 +315,7 @@ export default function LearnerOverview() {
                 Join Session <i className="ri-arrow-right-line"></i>
               </a>
             </div>
+            )}
           </section>
         </SectionReveal>
 
@@ -282,6 +328,7 @@ export default function LearnerOverview() {
               <h2 className="text-base font-heading font-semibold text-foreground-900">Learning Health</h2>
 
               {/* ── View Overdue ── */}
+              {!isRealMode && (
               <div className="flex items-center gap-2">
                 <a
                   href="/learner/training-plan?highlight=overdue"
@@ -292,45 +339,89 @@ export default function LearnerOverview() {
                   <i className="ri-arrow-right-line text-xs"></i>
                 </a>
               </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-              <HealthCard
-                icon="ri-calendar-check-line"
-                label="Attendance"
-                value={`${p.attendanceRate}%`}
-                detail={`${p.sessionsAttended}/${(p.sessionsAttended + p.sessionsMissed)} sessions`}
-                status={p.attendanceRate >= 90 ? 'green' : p.attendanceRate >= 80 ? 'amber' : 'red'}
-                progress={p.attendanceRate}
-                href="/learner/attendance"
-              />
-              <HealthCard
-                icon="ri-time-line"
-                label="OTJ Hours"
-                value={`${p.otjhCompleted} / ${p.otjhTarget}`}
-                detail={`${p.otjhValidated} validated · ${p.otjhPending} pending`}
-                status={p.otjhCompleted / p.otjhTarget >= 0.7 ? 'green' : p.otjhCompleted / p.otjhTarget >= 0.5 ? 'amber' : 'red'}
-                progress={(p.otjhCompleted / p.otjhTarget) * 100}
-                href="/learner/otjh"
-              />
-              <HealthCard
-                icon="ri-bar-chart-2-line"
-                label="KSB Progress"
-                value={`${p.ksbProgress}%`}
-                detail={`${p.ksbValidated} of ${p.ksbTotal} validated`}
-                status={p.ksbProgress >= 50 ? 'green' : p.ksbProgress >= 30 ? 'amber' : 'red'}
-                progress={p.ksbProgress}
-                href="/learner/ksbs"
-              />
-              <HealthCard
-                icon="ri-folder-check-line"
-                label="Evidence"
-                value={`${p.evidenceCount} Submitted`}
-                detail={`${p.evidenceValidated} approved · ${p.evidenceSubmitted} pending`}
-                status="green"
-                progress={Math.min((p.evidenceValidated / 12) * 100, 100)}
-                href="/learner/evidence"
-              />
+              {isRealMode ? (
+                <>
+                  <HealthCard icon="ri-calendar-check-line" label="Attendance" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                  {quizStats.quizzesTaken > 0 ? (
+                    <HealthCard
+                      icon="ri-time-line"
+                      label="OTJ Hours"
+                      value={`${quizStats.totalHours}h`}
+                      detail={`From ${quizStats.quizzesTaken} quiz${quizStats.quizzesTaken === 1 ? '' : 'zes'} · ${real?.totalExpectedOtjh ?? 0}h planned`}
+                      status="muted"
+                      progress={0}
+                      badgeLabel="Logged"
+                    />
+                  ) : (
+                    <HealthCard
+                      icon="ri-time-line"
+                      label="OTJ Hours"
+                      value={`${real?.totalExpectedOtjh ?? 0}h`}
+                      detail="Planned from saved training plan"
+                      status="muted"
+                      progress={0}
+                      badgeLabel="Planned"
+                    />
+                  )}
+                  {quizStats.quizzesTaken > 0 ? (
+                    <HealthCard
+                      icon="ri-bar-chart-2-line"
+                      label="KSB Progress"
+                      value={`${quizStats.ksbCount} evidenced`}
+                      detail={`Via quizzes · ${real?.ksbs.length || 0} defined`}
+                      status="muted"
+                      progress={real?.ksbs.length ? Math.round((quizStats.ksbCount / real.ksbs.length) * 100) : 0}
+                      badgeLabel="From quizzes"
+                    />
+                  ) : (
+                    <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="muted" progress={0} />
+                  )}
+                  <HealthCard icon="ri-folder-check-line" label="Evidence" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                </>
+              ) : (
+                <>
+                  <HealthCard
+                    icon="ri-calendar-check-line"
+                    label="Attendance"
+                    value={`${p.attendanceRate}%`}
+                    detail={`${p.sessionsAttended}/${(p.sessionsAttended + p.sessionsMissed)} sessions`}
+                    status={p.attendanceRate >= 90 ? 'green' : p.attendanceRate >= 80 ? 'amber' : 'red'}
+                    progress={p.attendanceRate}
+                    href="/learner/attendance"
+                  />
+                  <HealthCard
+                    icon="ri-time-line"
+                    label="OTJ Hours"
+                    value={`${p.otjhCompleted} / ${p.otjhTarget}`}
+                    detail={`${p.otjhValidated} validated · ${p.otjhPending} pending`}
+                    status={p.otjhCompleted / p.otjhTarget >= 0.7 ? 'green' : p.otjhCompleted / p.otjhTarget >= 0.5 ? 'amber' : 'red'}
+                    progress={(p.otjhCompleted / p.otjhTarget) * 100}
+                    href="/learner/otjh"
+                  />
+                  <HealthCard
+                    icon="ri-bar-chart-2-line"
+                    label="KSB Progress"
+                    value={`${p.ksbProgress}%`}
+                    detail={`${p.ksbValidated} of ${p.ksbTotal} validated`}
+                    status={p.ksbProgress >= 50 ? 'green' : p.ksbProgress >= 30 ? 'amber' : 'red'}
+                    progress={p.ksbProgress}
+                    href="/learner/ksbs"
+                  />
+                  <HealthCard
+                    icon="ri-folder-check-line"
+                    label="Evidence"
+                    value={`${p.evidenceCount} Submitted`}
+                    detail={`${p.evidenceValidated} approved · ${p.evidenceSubmitted} pending`}
+                    status="green"
+                    progress={Math.min((p.evidenceValidated / 12) * 100, 100)}
+                    href="/learner/evidence"
+                  />
+                </>
+              )}
             </div>
           </section>
         </SectionReveal>
@@ -342,12 +433,51 @@ export default function LearnerOverview() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
             <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4 md:mb-5">
-                <h2 className="text-base font-heading font-semibold text-foreground-900">This Week&apos;s Learning Journey</h2>
+                <h2 className="text-base font-heading font-semibold text-foreground-900">
+                  {isRealMode ? 'Training Plan' : "This Week's Learning Journey"}
+                </h2>
+                {isRealMode && real && journey.length > 0 && (
+                <a href={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  View full plan <i className="ri-arrow-right-line ml-0.5"></i>
+                </a>
+                )}
+                {!isRealMode && (
                 <a href="/learner/this-week" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                   View full plan <i className="ri-arrow-right-line ml-0.5"></i>
                 </a>
+                )}
               </div>
 
+              {isRealMode ? (
+                journey.length === 0 ? (
+                  <EmptyState text={loading ? 'Loading…' : 'No training plan built for this learner yet.'} />
+                ) : (
+                  <div className="space-y-3">
+                    {journey.map((mod) => (
+                      <div key={mod.module} className="rounded-xl border border-foreground-100 p-4">
+                        <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
+                          <i className="ri-book-2-line text-primary-600" />{mod.module}
+                        </p>
+                        {mod.weeks.length === 0 ? (
+                          <p className="text-[12px] text-foreground-400 italic mt-1">No weeks added yet</p>
+                        ) : (
+                          <ul className="mt-2 space-y-1.5">
+                            {mod.weeks.map((w) => (
+                              <li key={w.week} className="text-[12px] text-foreground-700">
+                                <span className="font-medium">{w.week}</span>
+                                {w.otjh > 0 && <span className="text-foreground-400"> ({w.otjh}h)</span>}
+                                {w.components.length > 0 && (
+                                  <span className="text-foreground-400"> — {w.components.map((c) => c.title).join(', ')}</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )
+              ) : (
               <div className="relative">
                 <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
 
@@ -366,24 +496,57 @@ export default function LearnerOverview() {
                   })}
                 </div>
               </div>
+              )}
             </div>
 
             <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
+                {!isRealMode && (
                 <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                   View Calendar <i className="ri-arrow-right-line ml-0.5"></i>
                 </a>
+                )}
               </div>
 
+              {isRealMode ? (
+                <EmptyState text="Not tracked yet." />
+              ) : (
               <div className="space-y-3">
                 {upcomingEvents.map((event, i) => (
                   <UpcomingEventCard key={i} {...event} />
                 ))}
               </div>
+              )}
             </div>
           </div>
         </SectionReveal>
+
+        {/* ================================================================
+            SECTION 4b — PROGRAMME KSBs (real learners only)
+            ================================================================ */}
+        {isRealMode && (
+        <SectionReveal delay={180}>
+          <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-heading font-semibold text-foreground-900">Programme KSBs</h2>
+              <span className="text-xs text-foreground-400">{real?.ksbs.length || 0} total</span>
+            </div>
+            {!real || real.ksbs.length === 0 ? (
+              <EmptyState text={loading ? 'Loading…' : 'No KSBs found for this programme yet.'} />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-80 overflow-y-auto pr-1">
+                {real.ksbs.map((k) => (
+                  <div key={k.code} className="rounded-lg border border-foreground-100 p-2.5">
+                    <span className="text-xs font-semibold text-primary-600">{k.code}</span>
+                    <p className="text-xs text-foreground-600 mt-0.5 line-clamp-3">{k.description}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </SectionReveal>
+        )}
 
         {/* ================================================================
             SECTION 5 — ACTIVITY FEED + ACHIEVEMENTS (two-column)
@@ -393,31 +556,43 @@ export default function LearnerOverview() {
             <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
+                {!isRealMode && (
                 <a href="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                   View All Activity <i className="ri-arrow-right-line ml-0.5"></i>
                 </a>
+                )}
               </div>
 
+              {isRealMode ? (
+                <EmptyState text="No activity tracked yet." />
+              ) : (
               <div className="space-y-3">
                 {activityFeed.map((item, i) => (
                   <ActivityFeedItem key={i} item={item} index={i} />
                 ))}
               </div>
+              )}
             </div>
 
             <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
+                {!isRealMode && (
                 <a href="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                   View Rewards <i className="ri-arrow-right-line ml-0.5"></i>
                 </a>
+                )}
               </div>
 
+              {isRealMode ? (
+                <EmptyState text="Points & achievements aren't tracked yet." />
+              ) : (
               <div className="space-y-2.5">
                 {achievements.map((ach, i) => (
                   <AchievementBadge key={i} {...ach} />
                 ))}
               </div>
+              )}
             </div>
           </div>
         </SectionReveal>
@@ -434,7 +609,11 @@ export default function LearnerOverview() {
                 </div>
                 <div>
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Need Help?</h2>
-                  <p className="text-sm text-foreground-500">Your coach {p.coach.name} and the support team are here to help you succeed.</p>
+                  <p className="text-sm text-foreground-500">
+                    {isRealMode
+                      ? 'The support team is here to help this learner succeed.'
+                      : <>Your coach {p.coach.name} and the support team are here to help you succeed.</>}
+                  </p>
                 </div>
               </div>
 
@@ -462,19 +641,20 @@ export default function LearnerOverview() {
    SUB-COMPONENTS
    ───────────────────────────────────────────── */
 
-function HealthCard({ icon, label, value, detail, status, progress, href }: {
+function HealthCard({ icon, label, value, detail, status, progress, href, badgeLabel }: {
   icon: string;
   label: string;
   value: string;
   detail: string;
-  status: 'green' | 'amber' | 'red';
+  status: 'green' | 'amber' | 'red' | 'muted';
   progress: number;
   href?: string;
+  badgeLabel?: string;
 }) {
-  const statusBg = status === 'green' ? 'bg-emerald-50' : status === 'amber' ? 'bg-amber-50' : 'bg-red-50';
-  const statusText = status === 'green' ? 'text-emerald-700' : status === 'amber' ? 'text-amber-700' : 'text-red-700';
-  const statusLabel = status === 'green' ? 'On Track' : status === 'amber' ? 'Needs Attention' : 'Action Required';
-  const iconBg = status === 'green' ? 'bg-emerald-100 text-emerald-600' : status === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600';
+  const statusBg = status === 'green' ? 'bg-emerald-50' : status === 'amber' ? 'bg-amber-50' : status === 'red' ? 'bg-red-50' : 'bg-background-100';
+  const statusText = status === 'green' ? 'text-emerald-700' : status === 'amber' ? 'text-amber-700' : status === 'red' ? 'text-red-700' : 'text-foreground-400';
+  const statusLabel = badgeLabel ?? (status === 'green' ? 'On Track' : status === 'amber' ? 'Needs Attention' : status === 'red' ? 'Action Required' : 'Not Tracked');
+  const iconBg = status === 'green' ? 'bg-emerald-100 text-emerald-600' : status === 'amber' ? 'bg-amber-100 text-amber-600' : status === 'red' ? 'bg-red-100 text-red-600' : 'bg-background-100 text-foreground-400';
 
   const Card = (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer">
@@ -490,7 +670,7 @@ function HealthCard({ icon, label, value, detail, status, progress, href }: {
       <div className="flex items-center gap-3">
         <DonutRing
           progress={progress}
-          color={status === 'green' ? 'emerald' : status === 'amber' ? 'amber' : 'red'}
+          color={status === 'green' ? 'emerald' : status === 'amber' ? 'amber' : status === 'red' ? 'red' : 'muted'}
           size={42}
           stroke={4.5}
         />

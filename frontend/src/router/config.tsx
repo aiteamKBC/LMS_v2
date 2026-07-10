@@ -28,8 +28,11 @@ import SettingsHub from "../pages/admin/settings/page";
 import UsersListPage from "../pages/users/page";
 import BoardPage from "../pages/users/BoardPage";
 import WizardPage from "../pages/users/wizard/WizardPage";
+import CommercialLearnersPage from "../pages/delivery/LearnersPage";
+import TrainingPlanBuilderPage from "../pages/delivery/TrainingPlanPage";
 import ThisWeekPage from "../pages/learner/this-week/page";
 import TrainingPlanPage from "../pages/learner/training-plan/page";
+import QuizTakePage from "../pages/learner/quiz-take/page";
 import ModulesPage from "../pages/learner/modules/page";
 import AttendancePage from "../pages/learner/attendance/page";
 import CatchUpPage from "../pages/learner/catchup/page";
@@ -267,6 +270,10 @@ const routes: RouteObject[] = [
     element: <LearnerOverview />,
   },
   {
+    path: "/workspace/learner/:kind/:id",
+    element: <LearnerOverview />,
+  },
+  {
     path: "/workspace/coach",
     element: <CoachDashboard />,
   },
@@ -363,7 +370,19 @@ const routes: RouteObject[] = [
     element: <WizardPage />,
   },
   {
+    path: "/delivery",
+    element: <CommercialLearnersPage />,
+  },
+  {
+    path: "/training-plan/:kind/:userId",
+    element: <TrainingPlanBuilderPage />,
+  },
+  {
     path: "/learner/this-week",
+    element: <ThisWeekPage />,
+  },
+  {
+    path: "/learner/this-week/:kind/:id",
     element: <ThisWeekPage />,
   },
   {
@@ -375,7 +394,19 @@ const routes: RouteObject[] = [
     element: <TrainingPlanPage />,
   },
   {
+    path: "/learner/training-plan/:kind/:id",
+    element: <TrainingPlanPage />,
+  },
+  {
+    path: "/learner/quiz/:kind/:id/:quizId",
+    element: <QuizTakePage />,
+  },
+  {
     path: "/learner/modules",
+    element: <ModulesPage />,
+  },
+  {
+    path: "/learner/modules/:kind/:id",
     element: <ModulesPage />,
   },
   {
@@ -404,6 +435,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/quizzes",
+    element: <QuizzesPage />,
+  },
+  {
+    path: "/learner/quizzes/:kind/:id",
     element: <QuizzesPage />,
   },
   {

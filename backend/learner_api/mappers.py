@@ -169,6 +169,7 @@ def to_board(u):
         "programme": {
             "type": "Delivery",
             "name": _s(u.programme),
+            "cohort": _s(u.cohort),
             "status": _s(u.programme_status) or "Non starter",
             "startDate": "",
             "endDate": _s(u.apprenticeship_end_date),
@@ -198,6 +199,7 @@ def to_board(u):
         "competencies": _competencies(u),
         "subscription": _subscription(u),
         "auditTrail": [],
+        "trainingPlan": _as_list(u.learning_plan),
     }
 
 
@@ -223,6 +225,123 @@ WRITABLE_FIELDS = {
     "onboardingStatus": "onboarding_status",
     "onboardingCompleted": "onboarding_completed",
 }
+
+
+# --------------------------------------------------------------------------- #
+# structured training plan (shared by apprenticeship + delivery learners)     #
+# --------------------------------------------------------------------------- #
+# Shape: [{moduleId, moduleTitle, weeks: [{weekId, weekTitle,
+#          components: [{componentId, componentTitle}]}]}, ...]
+# Written wholesale by the training-plan wizard (frontend owns the shape);
+# ids are curriculum.module_authoring_* primary keys, so downstream lookups
+# (KSBs, expected_otjh) can match exactly instead of by title.
+def _normalize_training_plan(value):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValidationError("trainingPlan must be a list.")
+    return value
+
+
+def flatten_training_plan(plan):
+    """Structured plan -> (module titles, week entries, component entries),
+    each entry carrying its curriculum id alongside its title for exact
+    downstream lookups (KSBs, expected_otjh) instead of fragile title matching.
+    """
+    modules, weeks, components = [], [], []
+    for m in _as_list(plan):
+        if not isinstance(m, dict):
+            continue
+        module_title = _s(m.get("moduleTitle"))
+        module_id = m.get("moduleId")
+        if module_title:
+            modules.append(module_title)
+        for w in _as_list(m.get("weeks")):
+            if not isinstance(w, dict):
+                continue
+            week_title = _s(w.get("weekTitle"))
+            week_id = w.get("weekId")
+            weeks.append({
+                "module": module_title or None, "week": week_title,
+                "moduleId": module_id, "weekId": week_id,
+            })
+            for c in _as_list(w.get("components")):
+                if not isinstance(c, dict):
+                    continue
+                components.append({
+                    "module": module_title or None, "week": week_title or None,
+                    "component": _s(c.get("componentTitle")),
+                    "moduleId": module_id, "weekId": week_id, "componentId": c.get("componentId"),
+                })
+    return modules, weeks, components
+
+
+def _split_csv(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
+def _legacy_plan_from_csv(source):
+    """Best-effort reconstruction of the structured plan shape from the old
+    comma-joined Modules/Weeks/Components text columns, for learners who
+    haven't re-saved their plan since the structured format was introduced.
+    No ids are available for this data, so expectedOtjh/KSB lookups downstream
+    fall back to title matching for these entries only."""
+    modules_csv = getattr(source, "modules", None)
+    weeks_csv = getattr(source, "weeks", None)
+    components_csv = getattr(source, "components", None)
+    if not (modules_csv or weeks_csv or components_csv):
+        return []
+
+    module_titles = _split_csv(modules_csv)
+
+    week_entries = []  # (module_title|None, week_title)
+    for entry in _split_csv(weeks_csv):
+        parts = [p.strip() for p in entry.split("·")]
+        if len(parts) >= 2:
+            week_entries.append((parts[0], " · ".join(parts[1:])))
+        elif parts and parts[0]:
+            week_entries.append((None, parts[0]))
+
+    component_entries = []  # (module_title|None, week_title|None, component_title)
+    for entry in _split_csv(components_csv):
+        parts = [p.strip() for p in entry.split("·")]
+        if len(parts) >= 3:
+            component_entries.append((parts[0], parts[1], " · ".join(parts[2:])))
+        elif len(parts) == 2:
+            component_entries.append((None, parts[0], parts[1]))
+        elif parts and parts[0]:
+            component_entries.append((None, None, parts[0]))
+
+    plan = []
+    for module_title in module_titles:
+        weeks = []
+        for mod, week_title in week_entries:
+            if mod != module_title:
+                continue
+            comps = [
+                {"componentId": None, "componentTitle": comp_title}
+                for cmod, cweek, comp_title in component_entries
+                if cmod == module_title and cweek == week_title
+            ]
+            weeks.append({"weekId": None, "weekTitle": week_title, "components": comps})
+        plan.append({"moduleId": None, "moduleTitle": module_title, "weeks": weeks})
+    return plan
+
+
+def get_training_plan(source):
+    """The structured plan for a CommercialUser or EnrolmentUser instance.
+    Falls back to reconstructing one from the legacy CSV columns if the
+    learner hasn't been re-saved since the structured format was introduced."""
+    plan = getattr(source, "training_plan", None)
+    if plan is None:
+        plan = getattr(source, "learning_plan", None)
+    if plan:
+        return plan
+    return _legacy_plan_from_csv(source)
 
 
 class ValidationError(Exception):
@@ -256,4 +375,101 @@ def write_fields(payload, *, require_create=False):
         if key in payload:
             val = payload[key]
             fields[attr] = None if val is None else str(val).strip()
+    if "trainingPlan" in payload:
+        fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     return fields
+
+
+# --------------------------------------------------------------------------- #
+# delivery (enrolment."Commercial_users")                         #
+# --------------------------------------------------------------------------- #
+# payload key -> model attribute
+COMMERCIAL_WRITABLE_FIELDS = {
+    "username": "username",
+    "email": "email",
+    "phone": "phone_number",
+    "employer": "employer",
+    "lineManager": "line_manager",
+    "organization": "organization",
+    "programmeStatus": "programme_status",
+    "programme": "programme",
+    "cohort": "cohort",
+    "group": "group",
+    "modules": "modules",
+    "weeks": "weeks",
+    "components": "components",
+}
+
+
+def to_commercial_row(u):
+    return {
+        "id": str(u.id),
+        "username": _s(u.username),
+        "email": _s(u.email),
+        "phone": _s(u.phone_number),
+        "employer": _s(u.employer),
+        "lineManager": _s(u.line_manager),
+        "organization": _s(u.organization),
+        "programmeStatus": _s(u.programme_status),
+        "programme": _s(u.programme),
+        "cohort": _s(u.cohort),
+        "group": _s(u.group),
+        "modules": _s(u.modules),
+        "weeks": _s(u.weeks),
+        "components": _s(u.components),
+        "trainingPlan": _as_list(u.training_plan),
+    }
+
+
+def write_commercial_fields(payload, *, require_create=False):
+    """Validate a payload and return {model_attr: value} for Commercial_users columns."""
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    if require_create:
+        if not _s(payload.get("username")):
+            raise ValidationError("username is required.")
+        if not _s(payload.get("email")):
+            raise ValidationError("email is required.")
+    ps = payload.get("programmeStatus")
+    if ps not in (None, "") and ps not in PROGRAMME_STATUS_CHOICES:
+        raise ValidationError(
+            f"Invalid programmeStatus: {ps!r}. Allowed: {', '.join(PROGRAMME_STATUS_CHOICES)}"
+        )
+    fields = {}
+    for key, attr in COMMERCIAL_WRITABLE_FIELDS.items():
+        if key in payload:
+            val = payload[key]
+            fields[attr] = None if val is None else str(val).strip()
+    if "trainingPlan" in payload:
+        fields["training_plan"] = _normalize_training_plan(payload["trainingPlan"])
+    return fields
+
+
+# --------------------------------------------------------------------------- #
+# outbound: learner detail (workspace/learner page)                           #
+# --------------------------------------------------------------------------- #
+def to_learner_detail(source, active):
+    """Shape a CommercialUser/EnrolmentUser (+ its ActiveUser mirror, if any)
+    for the learner workspace page. `active` is None when the learner isn't
+    currently Active (or has no mirrored row yet). The training plan itself
+    comes straight from the source record's structured plan column, so it's
+    visible even for learners who aren't currently Active; only KSBs (looked
+    up live by sync_active_user) depend on the Active_users mirror."""
+    modules, week, components = flatten_training_plan(get_training_plan(source))
+    return {
+        "id": str(source.id),
+        "name": _s(source.username),
+        "email": _s(source.email),
+        "phone": _s(source.phone_number),
+        "programme": _s(source.programme),
+        "programmeStatus": _s(source.programme_status),
+        "cohort": _s(source.cohort),
+        "group": _s(source.group),
+        "employer": _s(getattr(source, "employer", "")),
+        "isActive": active is not None,
+        "modules": modules,
+        "week": week,
+        "components": components,
+        "ksbs": _as_list(active.ksbs) if active else [],
+        "quizAttempts": _as_list(active.weekly_quizzes) if active else [],
+    }

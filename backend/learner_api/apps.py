@@ -1,5 +1,5 @@
 from django.apps import AppConfig
 
 
-class ApiConfig(AppConfig):
-    name = 'api'
+class LearnerApiConfig(AppConfig):
+    name = 'learner_api'
