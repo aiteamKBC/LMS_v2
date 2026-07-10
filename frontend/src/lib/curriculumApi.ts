@@ -319,7 +319,7 @@ export interface CurriculumCohortEndDatePreview {
   warnings: string[];
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
 
 interface CurriculumCollection<T> {
   schema: string;

@@ -15,7 +15,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_invalidates_curriculum_cache(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'New Programme', 'color': '#123456'}),
             content_type='application/json',
         )
@@ -30,7 +30,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_populates_required_sub_column(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'New Programme', 'standard': 'Standard Name', 'color': '#123456'}),
             content_type='application/json',
         )
@@ -45,7 +45,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_defaults_to_planned_status(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'New Programme', 'color': '#123456'}),
             content_type='application/json',
         )
@@ -60,7 +60,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_rejects_duplicate_name(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'Existing Programme'}),
             content_type='application/json',
         )
@@ -74,7 +74,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_allows_name_reuse_when_duplicate_is_archived(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'Archived Programme', 'color': '#123456'}),
             content_type='application/json',
         )
@@ -91,7 +91,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_programme_allows_name_reuse_when_existing_programme_view_is_archived(self):
         request = self.factory.post(
-            '/api/curriculum/programmes/',
+            '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'Archived Programme'}),
             content_type='application/json',
         )
@@ -106,7 +106,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_update_programme_accepts_full_editable_detail_payload(self):
         request = self.factory.patch(
-            '/api/curriculum/programmes/apm/',
+            '/curriculum_api/curriculum/programmes/apm/',
             data=json.dumps({
                 'name': 'APM Level 4',
                 'standard': 'Associate Project Manager',
@@ -135,7 +135,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(programme_update['owner'], 'Curriculum Team')
 
     def test_delete_programme_archives_config_and_training_rows(self):
-        request = self.factory.delete('/api/curriculum/programmes/apm/')
+        request = self.factory.delete('/curriculum_api/curriculum/programmes/apm/')
 
         with patch.object(views, 'rows_for_programme', return_value=({'sourceId': 'apm', 'name': 'APM'}, [{'id': 1}])), \
              patch.object(views, 'programme_config_by_identifier', return_value={'program_id': 'apm', 'name': 'APM'}), \
@@ -152,7 +152,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertTrue(config_update['is_archived'])
 
     def test_permanent_delete_programme_requires_archived_record(self):
-        request = self.factory.delete('/api/curriculum/programmes/apm/?permanent=true')
+        request = self.factory.delete('/curriculum_api/curriculum/programmes/apm/?permanent=true')
 
         with patch.object(views, 'rows_for_programme', return_value=({'sourceId': 'apm', 'name': 'APM', 'status': 'active'}, [{'id': 1, 'is_archived': False}])), \
              patch.object(views, 'programme_config_by_identifier', return_value={'program_id': 'apm', 'name': 'APM', 'status': 'active'}), \
@@ -164,7 +164,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertIn('overview:operational', views._CURRICULUM_CACHE)
 
     def test_permanent_delete_programme_removes_archived_config_and_training_rows(self):
-        request = self.factory.delete('/api/curriculum/programmes/apm/?permanent=true')
+        request = self.factory.delete('/curriculum_api/curriculum/programmes/apm/?permanent=true')
 
         with patch.object(views, 'rows_for_programme', return_value=({'sourceId': 'apm', 'name': 'APM', 'status': 'archived'}, [{'id': 1, 'is_archived': True}])), \
              patch.object(views, 'programme_config_by_identifier', return_value={'program_id': 'apm', 'name': 'APM', 'status': 'archived', 'is_archived': True}), \
@@ -182,7 +182,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(views._CURRICULUM_CACHE, {})
 
     def test_generated_session_delete_is_rejected_without_archiving_parent(self):
-        request = self.factory.delete('/api/curriculum/sessions/training-1-session-2/')
+        request = self.factory.delete('/curriculum_api/curriculum/sessions/training-1-session-2/')
 
         with patch.object(views, 'fetch_all', return_value=[{'id': 1}]):
             response = views.curriculum_session_detail(request, 'training-1-session-2')
@@ -192,7 +192,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_group_module_attachment_is_scoped_and_invalidates_cache(self):
         request = self.factory.patch(
-            '/api/curriculum/groups/group-1/modules/',
+            '/curriculum_api/curriculum/groups/group-1/modules/',
             data=json.dumps({'modules': [{'moduleName': 'Live Module', 'startDate': '2026-09-01'}]}),
             content_type='application/json',
         )
@@ -213,7 +213,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_preview_cohort_end_date_uses_curriculum_month_rule(self):
         request = self.factory.post(
-            '/api/curriculum/preview/cohort-end-date/',
+            '/curriculum_api/curriculum/preview/cohort-end-date/',
             data=json.dumps({'startDate': '2026-09-01', 'durationMonths': 24}),
             content_type='application/json',
         )
@@ -227,7 +227,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_preview_module_session_plan_skips_selected_holidays(self):
         request = self.factory.post(
-            '/api/curriculum/preview/module-session-plan/',
+            '/curriculum_api/curriculum/preview/module-session-plan/',
             data=json.dumps({
                 'startDate': '2026-09-07',
                 'numberOfSessions': 3,
@@ -247,7 +247,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_create_cohort_persists_selected_holiday_ids_in_notes(self):
         request = self.factory.post(
-            '/api/curriculum/cohorts/',
+            '/curriculum_api/curriculum/cohorts/',
             data=json.dumps({
                 'name': 'September 2026',
                 'programme': 'Programme',
@@ -300,7 +300,7 @@ class CurriculumMutationTests(SimpleTestCase):
         }
 
         with patch.object(views, 'get_cached_payload', return_value=payload):
-            response = views.curriculum_group_modules(self.factory.get('/api/curriculum/groups/group-a/modules/'), 'group-a')
+            response = views.curriculum_group_modules(self.factory.get('/curriculum_api/curriculum/groups/group-a/modules/'), 'group-a')
 
         body = json.loads(response.content)
         self.assertEqual(response.status_code, 200)
@@ -318,7 +318,7 @@ class CurriculumMutationTests(SimpleTestCase):
         }
 
         with patch.object(views, 'get_cached_payload', return_value=payload):
-            response = views.curriculum_programme_tree_detail(self.factory.get('/api/curriculum/programmes/apm/detail/'), 'apm')
+            response = views.curriculum_programme_tree_detail(self.factory.get('/curriculum_api/curriculum/programmes/apm/detail/'), 'apm')
 
         body = json.loads(response.content)
         self.assertEqual(response.status_code, 200)
@@ -339,8 +339,8 @@ class CurriculumMutationTests(SimpleTestCase):
         }
 
         with patch.object(views, 'get_cached_payload', return_value=payload):
-            cohort_response = views.curriculum_cohorts(self.factory.get('/api/curriculum/cohorts/?programme_id=program-programme-a'))
-            group_response = views.curriculum_groups(self.factory.get('/api/curriculum/groups/?cohort_id=programme-a-cohort-1'))
+            cohort_response = views.curriculum_cohorts(self.factory.get('/curriculum_api/curriculum/cohorts/?programme_id=program-programme-a'))
+            group_response = views.curriculum_groups(self.factory.get('/curriculum_api/curriculum/groups/?cohort_id=programme-a-cohort-1'))
 
         self.assertEqual(json.loads(cohort_response.content)['count'], 1)
         self.assertEqual(json.loads(cohort_response.content)['results'][0]['id'], 'programme-a-cohort-1')
@@ -386,7 +386,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_module_structure_patch_uses_scoped_authoring_save(self):
         request = self.factory.patch(
-            '/api/curriculum/modules/MOD-1/structure/',
+            '/curriculum_api/curriculum/modules/MOD-1/structure/',
             data=json.dumps({'catalogueId': 'MOD-1', 'title': 'Scoped Module', 'weekStructure': []}),
             content_type='application/json',
         )
@@ -401,7 +401,7 @@ class CurriculumMutationTests(SimpleTestCase):
         insert_row.assert_not_called()
 
     def test_module_structure_get_returns_404_when_no_authoring_structure_exists(self):
-        request = self.factory.get('/api/curriculum/modules/MOD-1/structure/')
+        request = self.factory.get('/curriculum_api/curriculum/modules/MOD-1/structure/')
 
         with patch.object(views, 'get_authoring_structure_payload', return_value=None):
             response = views.curriculum_module_structure(request, 'MOD-1')
@@ -410,7 +410,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_module_create_with_title_uses_authoring_module_not_training_plan(self):
         request = self.factory.post(
-            '/api/curriculum/modules/',
+            '/curriculum_api/curriculum/modules/',
             data=json.dumps({'title': 'New Authoring Module', 'programme': 'Programme A', 'weekStructure': []}),
             content_type='application/json',
         )
@@ -427,7 +427,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_module_create_with_explicit_authoring_type_does_not_depend_on_title_name_split(self):
         request = self.factory.post(
-            '/api/curriculum/modules/',
+            '/curriculum_api/curriculum/modules/',
             data=json.dumps({'moduleType': 'authoring', 'title': 'Authoring title', 'name': 'Legacy name', 'programme': 'Programme A'}),
             content_type='application/json',
         )
@@ -441,7 +441,7 @@ class CurriculumMutationTests(SimpleTestCase):
         insert_row.assert_not_called()
 
     def test_training_module_structure_get_uses_ensure_import_flow(self):
-        request = self.factory.get('/api/curriculum/modules/training-module-7/structure/')
+        request = self.factory.get('/curriculum_api/curriculum/modules/training-module-7/structure/')
 
         with patch.object(views, 'ensure_training_module_authoring_structure', return_value={'catalogueId': 'training-module-7', 'title': 'Imported'}) as ensure_import:
             response = views.curriculum_module_structure(request, 'training-module-7')
@@ -463,7 +463,7 @@ class CurriculumMutationTests(SimpleTestCase):
         save_structure.assert_not_called()
 
     def test_authoring_only_module_delete_does_not_query_modules_table(self):
-        request = self.factory.delete('/api/curriculum/modules/MOD-NEW/')
+        request = self.factory.delete('/curriculum_api/curriculum/modules/MOD-NEW/')
 
         with patch.object(views, 'authoring_module_exists', return_value={'module_catalogue_id': 'MOD-NEW'}), \
              patch.object(views, 'delete_module_authoring_structure', return_value=True) as delete_authoring, \
@@ -478,7 +478,7 @@ class CurriculumMutationTests(SimpleTestCase):
         fetch_all.assert_not_called()
 
     def test_training_module_delete_archives_delivery_without_deleting_authoring(self):
-        request = self.factory.delete('/api/curriculum/modules/training-module-7/')
+        request = self.factory.delete('/curriculum_api/curriculum/modules/training-module-7/')
 
         with patch.object(views, 'fetch_all', return_value=[{'id': 7, 'notes': ''}]), \
              patch.object(views, 'archive_training_rows') as archive_training, \
@@ -590,7 +590,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_component_collection_create_uses_authoring_component_store(self):
         request = self.factory.post(
-            '/api/curriculum/components/',
+            '/curriculum_api/curriculum/components/',
             data=json.dumps({
                 'title': 'New component',
                 'type': 'Quiz',
@@ -617,7 +617,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
     def test_component_detail_patch_updates_authoring_component(self):
         request = self.factory.patch(
-            '/api/curriculum/components/component-1/',
+            '/curriculum_api/curriculum/components/component-1/',
             data=json.dumps({'title': 'Updated component'}),
             content_type='application/json',
         )
@@ -633,7 +633,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(save_component.call_args.args[1], 'component-1')
 
     def test_component_detail_delete_removes_component_without_archiving_delivery(self):
-        request = self.factory.delete('/api/curriculum/components/component-1/')
+        request = self.factory.delete('/curriculum_api/curriculum/components/component-1/')
 
         with patch.object(views, 'authoring_fetch_all', return_value=[{'id': 'component-1'}]), \
              patch.object(views, 'authoring_delete') as authoring_delete, \

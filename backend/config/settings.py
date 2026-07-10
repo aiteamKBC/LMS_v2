@@ -177,7 +177,7 @@ LOGGING = {
         },
     },
     'loggers': {
-        'api': {
+        'curriculum_api': {
             'handlers': ['console'],
             'level': 'INFO',
         },

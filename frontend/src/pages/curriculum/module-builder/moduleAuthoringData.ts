@@ -116,7 +116,7 @@ export interface KsbOption {
 
 const STRUCTURE_STORE_KEY = 'lms.module-builder.structures.v1';
 const LOCAL_MODULE_STORE_KEY = 'lms.module-builder.local-modules.v1';
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
 const DEV_FALLBACK = Boolean(import.meta.env.DEV);
 
 export const MODULE_BUILDER_WIZARD_DRAFT_PREFIX = 'lms.module-builder.wizard-draft.';
