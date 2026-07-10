@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { RealQuizzesView } from '@/components/feature/RealQuizzesView';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMyLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import {
@@ -107,6 +110,12 @@ function getDueSoonQuizzes(): { quiz: QuizItem; days: number; urgency: 'critical
    PAGE COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export default function QuizzesPage() {
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const myLearner = useMyLearner();
+  const rKind = urlKind ?? myLearner?.kind;
+  const rId = urlId ?? myLearner?.id;
+  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(rKind, rId);
+
   const [activeSection, setActiveSection] = useState<'library' | 'history'>('library');
   const [activeQuizType, setActiveQuizType] = useState<'weekly' | 'monthly'>('weekly');
   const [quizSession, setQuizSession] = useState<QuizSession | null>(null);
@@ -144,6 +153,10 @@ export default function QuizzesPage() {
   };
 
   const currentTypeQuizzes = activeQuizType === 'weekly' ? weeklyQuizzes : monthlyQuizzes;
+
+  if (isRealMode) {
+    return <RealQuizzesView real={real} loading={loading} loadError={loadError} kind={rKind} learnerId={rId} />;
+  }
 
   return (
     <>

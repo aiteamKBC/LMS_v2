@@ -1,0 +1,317 @@
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { roleNavMap } from '@/mocks/navigation';
+import { fetchEnrolmentBoard } from '@/api/enrolmentUsers';
+import type { EnrolmentBoard, FsBlock } from './types';
+import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, FileList, Pagination, Hero, HeroStat, iconBtn, btnSecondary } from './components/ui';
+
+const enrolmentNav = roleNavMap.compliance;
+
+function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void }[] }) {
+  return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} />)}</>;
+}
+
+function FunctionalSkill({ subject, block }: { subject: string; block: FsBlock }) {
+  const [exempt, setExempt] = useState(block.exempt);
+  return (
+    <div className="border border-foreground-100 rounded-lg p-3">
+      <p className="text-[12px] font-semibold text-foreground-800 mb-2">{subject} Assessments</p>
+      {block.assessments.length === 0 ? <EmptyState text={`No ${subject} assessment records yet`} /> : (
+        <ul className="text-[12px] text-foreground-700 space-y-1">{block.assessments.map((a) => <li key={a.id}>{a.name} — {a.level} ({a.date})</li>)}</ul>
+      )}
+      <div className="mt-3 pt-3 border-t border-foreground-100">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[12px] font-medium text-foreground-700">{subject} Exemption from Functional Skills</span>
+          <button onClick={() => setExempt((e) => !e)} className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border cursor-pointer transition-smooth ${exempt ? 'bg-emerald-50 text-emerald-700 border-emerald-200/50' : 'bg-background-100 text-foreground-500 border-foreground-200/60'}`}>{exempt ? 'Exempt' : 'Not Exempt'}</button>
+        </div>
+        <p className="text-[11px] text-foreground-400 mb-1">Exemption evidence</p>
+        <FileList files={block.evidence.map((d) => ({ id: d.id, name: d.fileName ?? d.description, url: d.url }))} onDelete={() => {}} onAdd={() => {}} emptyText="No evidence" addLabel="Add file" />
+      </div>
+    </div>
+  );
+}
+
+export default function BoardPage() {
+  const { userId = '' } = useParams();
+  const [board, setBoard] = useState<EnrolmentBoard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    fetchEnrolmentBoard(userId)
+      .then(setBoard)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [userId]);
+
+  if (loading || error || !board) {
+    return (
+      <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle="" userName="Enrolment Officer" userRole="Enrolment Officer">
+        <div className="p-6 max-w-5xl mx-auto">
+          {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading profile…</div>}
+          {!loading && error && (
+            <div className="py-20 text-center text-[13px]">
+              <p className="text-red-600 mb-3"><i className="ri-error-warning-line mr-1.5" />{error}</p>
+              <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
+            </div>
+          )}
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
+  return <BoardView board={board} />;
+}
+
+function BoardView({ board }: { board: EnrolmentBoard }) {
+  const navigate = useNavigate();
+  const userId = board.user.id;
+  const [contactPage, setContactPage] = useState(1);
+
+  const CONTACTS_PER_PAGE = 5;
+  const contactPages = Math.max(1, Math.ceil(board.contacts.length / CONTACTS_PER_PAGE));
+  const contactRows = board.contacts.slice((contactPage - 1) * CONTACTS_PER_PAGE, contactPage * CONTACTS_PER_PAGE);
+  const showWizard = () => navigate(`/users/${userId}/wizard`);
+
+  return (
+    <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
+      <div className="p-6 max-w-5xl mx-auto">
+        {/* Hero */}
+        <div className="animate-fade-in-up mb-6">
+          <Hero
+            icon="ri-user-3-line"
+            title={board.user.reference ? `${board.user.name} · ${board.user.reference}` : board.user.name}
+            subtitle={<>Owner: {board.user.owner || '—'}{board.programme.name ? ` · ${board.programme.name}` : ''}</>}
+            right={
+              <>
+                <HeroStat value={board.programme.status} label="Programme" />
+                <HeroStat value={board.programme.onboardingStatus} label="Onboarding" />
+                <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
+                  <i className="ri-magic-line" />Show Wizard
+                </button>
+              </>
+            }
+          />
+        </div>
+
+        <div className="space-y-4 stagger-children">
+          {/* 3.1 Contact details */}
+          <SectionPanel title="Contact details" icon="ri-contacts-line" actions={<Actions items={[{ label: 'view profile in console' }, { label: 'communication report' }, { label: 'edit users details' }]} />}>
+            <FieldRow readonly label="User email address" value={board.contact.email} />
+            <FieldRow readonly label="Phone number" value={board.contact.phone} />
+            <FieldRow readonly label="Date of birth" value={board.contact.dob} />
+            <FieldRow readonly label="Group membership of user" value={board.contact.groupMembership} />
+            <FieldRow readonly label="Signature (no mandate)" value={
+              <div className="flex items-center gap-3 flex-wrap">
+                {board.contact.signatureUrl ? <img src={board.contact.signatureUrl} alt="Signature" className="h-12 border border-foreground-100 rounded" /> : <span className="text-foreground-300 italic">No signature</span>}
+                <ActionLink label="prepare mandate" /><ActionLink label="upload signed mandate" />
+              </div>
+            } />
+          </SectionPanel>
+
+          {/* 3.2 Activity Summary */}
+          <SectionPanel title="Activity Summary (last 30 days)" icon="ri-pulse-line" actions={<Actions items={[{ label: 'usage report' }, { label: 'view activity list' }, { label: 'view user tasks' }]} />}>
+            <FieldRow readonly label="Aptem usage" value={board.activity.aptemUsage} />
+            <FieldRow readonly label="Number of days till next reporting period" value={String(board.activity.daysTillNextReporting)} />
+            <FieldRow readonly label="Date last logged in" value={board.activity.lastLoggedIn} />
+            <FieldRow readonly label="Number of logins" value={String(board.activity.logins)} />
+            <FieldRow readonly label="Number of new tasks added by user" value={String(board.activity.tasksAddedByUser)} />
+            <FieldRow readonly label="Number of uncompleted tasks" value={<span className="inline-flex items-center gap-2">{board.activity.uncompletedTasks}<ActionLink label="add new task" /></span>} />
+            <FieldRow readonly label="Number of advice items accessed" value={String(board.activity.adviceItemsAccessed)} />
+            <FieldRow readonly label="Date advice centre last accessed" value={board.activity.adviceLastAccessed} />
+            <FieldRow readonly label="Action plans" value={board.activity.actionPlans} />
+          </SectionPanel>
+
+          {/* 3.3 Programme */}
+          <SectionPanel title="Programme" icon="ri-graduation-cap-line" actions={<Actions items={[{ label: 'learning plan overview' }, { label: 'show wizard', onClick: showWizard }, { label: 'stop' }]} />}>
+            <div className="border border-foreground-100 rounded-lg p-3 mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[12px] font-semibold text-foreground-800">Programme Details</p>
+                <button className={iconBtn} aria-label="Edit programme"><i className="ri-pencil-line text-sm" /></button>
+              </div>
+              <FieldRow readonly label="Programme Type" value={board.programme.type} />
+              <FieldRow readonly label="Programme" value={board.programme.name} />
+              <FieldRow readonly label="Status" value={<StatusBadge status={board.programme.status} />} />
+              <FieldRow readonly label="Start date" value={board.programme.startDate} />
+              <FieldRow readonly label="End date" value={board.programme.endDate} />
+              <FieldRow readonly label="Enrolled" value={`${board.programme.enrolledAt} by ${board.programme.enrolledBy}`} />
+            </div>
+            <div className="border border-foreground-100 rounded-lg p-3">
+              <p className="text-[12px] font-semibold text-foreground-800 mb-1">Onboarding</p>
+              <FieldRow readonly label="Onboarding status" value={<StatusBadge status={board.programme.onboardingStatus} />} />
+              <FieldRow readonly label="Onboarding completed" value={board.programme.onboardingCompletedAt} />
+            </div>
+          </SectionPanel>
+
+          {/* 3.4 Sub-programme */}
+          <SectionPanel title="Sub-programme" icon="ri-node-tree">
+            <Table headers={['Sub-programme', 'Start Date', 'End Date']}>
+              {board.subProgrammes.map((s, i) => (
+                <tr key={i} className="border-b border-foreground-100 last:border-0">
+                  <td className="py-2 px-3 text-foreground-700">{s.name}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{s.startDate}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{s.endDate}</td>
+                </tr>
+              ))}
+            </Table>
+          </SectionPanel>
+
+          {/* 3.5 Aims / Qualifications */}
+          <SectionPanel title="Aims / Qualifications" icon="ri-award-line">
+            <Table headers={['Aim ref number', 'Qualification', 'Start Date', 'End Date', 'Exempt?']}>
+              {board.aims.map((a, i) => (
+                <tr key={i} className="border-b border-foreground-100 last:border-0">
+                  <td className="py-2 px-3 text-foreground-700">{a.aimRef}</td><td className="py-2 px-3 text-foreground-700">{a.qualification}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{a.startDate}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{a.endDate}</td><td className="py-2 px-3 text-foreground-600">{a.exempt ? 'Yes' : 'No'}</td>
+                </tr>
+              ))}
+            </Table>
+            <p className="text-[12px] font-semibold text-foreground-500 mt-3 mb-1">Previous programmes:</p>
+            {board.previousProgrammes.length === 0 ? <EmptyState text="No previous programmes" /> : <ul className="text-[12px] text-foreground-700 list-disc pl-5">{board.previousProgrammes.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+          </SectionPanel>
+
+          {/* 3.6 Functional Skills */}
+          <SectionPanel title="Functional Skills" icon="ri-calculator-line">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <FunctionalSkill subject="English" block={board.functionalSkills.english} />
+              <FunctionalSkill subject="Maths" block={board.functionalSkills.maths} />
+              <FunctionalSkill subject="ICT" block={board.functionalSkills.ict} />
+            </div>
+          </SectionPanel>
+
+          {/* 3.7 Managed jobs */}
+          <SectionPanel title="Managed jobs and placements/workshops" icon="ri-briefcase-line" actions={<Actions items={[{ label: 'application report' }, { label: 'matching' }]} />}>
+            <Table headers={['Employer', 'Title', 'Categories', 'From', 'To', 'Planned/Logged', 'Status', 'Date', 'Notes', 'Actions']}>
+              {board.managedJobs.map((j) => (
+                <tr key={j.id} className="border-b border-foreground-100 last:border-0">
+                  <td className="py-2 px-3 text-foreground-700">{j.employer}</td><td className="py-2 px-3 text-foreground-700">{j.title}</td><td className="py-2 px-3 text-foreground-600">{j.categories}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{j.availableFrom}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{j.availableTo}</td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{j.hoursPlanned} / {j.hoursLogged}</td><td className="py-2 px-3"><StatusBadge status={j.status} /></td><td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{j.date}</td><td className="py-2 px-3 text-foreground-600">{j.comments}</td>
+                  <td className="py-2 px-3 whitespace-nowrap"><ActionLink label="Edit" /><span className="mx-1 text-foreground-200">·</span><ActionLink label={j.canUnverify ? 'Unverify' : 'Delete'} /></td>
+                </tr>
+              ))}
+            </Table>
+          </SectionPanel>
+
+          {/* 3.8 Tracker */}
+          <SectionPanel title="Tracker" icon="ri-map-pin-line" actions={<ActionLink label="add" icon="ri-add-line" />}>
+            {board.tracker.length === 0 ? <EmptyState text="No tracker items" /> : (
+              <Table headers={['Type', 'Status', 'Programme', 'Descripton', 'Documents', 'Edit', 'Print']}>{board.tracker.map((t) => <tr key={t.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{t.type}</td><td className="py-2 px-3">{t.status}</td><td className="py-2 px-3">{t.programme}</td><td className="py-2 px-3">{t.description}</td><td className="py-2 px-3">{t.documents}</td><td className="py-2 px-3" /><td className="py-2 px-3" /></tr>)}</Table>
+            )}
+          </SectionPanel>
+
+          {/* 3.9 Milestones */}
+          <SectionPanel title="Milestones" icon="ri-flag-line" actions={<ActionLink label="add" icon="ri-add-line" />}>
+            {board.milestones.length === 0 ? <EmptyState text="No milestones" /> : (
+              <Table headers={['Programme', 'Description', 'Date', 'Emp Wks left', 'Alw Wks left', 'Status', 'Claimed', 'Edit']}>{board.milestones.map((m) => <tr key={m.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{m.programme}</td><td className="py-2 px-3">{m.description}</td><td className="py-2 px-3">{m.date}</td><td className="py-2 px-3">{m.empWksLeft}</td><td className="py-2 px-3">{m.alwWksLeft}</td><td className="py-2 px-3">{m.status}</td><td className="py-2 px-3">{m.claimed}</td><td className="py-2 px-3" /></tr>)}</Table>
+            )}
+          </SectionPanel>
+
+          {/* 3.10 Notes */}
+          <SectionPanel title="Notes" icon="ri-sticky-note-line" actions={<ActionLink label="add new note" icon="ri-add-line" />}>
+            {board.notes.length === 0 ? <EmptyState text="No notes" /> : (
+              <Table headers={['text', 'administrator', 'date time']}>{board.notes.map((n) => <tr key={n.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{n.text}</td><td className="py-2 px-3">{n.administrator}</td><td className="py-2 px-3">{n.dateTime}</td></tr>)}</Table>
+            )}
+          </SectionPanel>
+
+          {/* 3.11 Course progress */}
+          <SectionPanel title="Course progress" icon="ri-book-open-line" actions={<ActionLink label="start course" icon="ri-play-line" />}>
+            {board.courseProgress.length === 0 ? <EmptyState text="No courses" /> : (
+              <Table headers={['Is locked', 'Course name', 'Completed steps / %', 'Status']}>{board.courseProgress.map((c) => <tr key={c.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{c.isLocked ? 'Yes' : 'No'}</td><td className="py-2 px-3">{c.courseName}</td><td className="py-2 px-3">{c.progress}</td><td className="py-2 px-3">{c.status}</td></tr>)}</Table>
+            )}
+          </SectionPanel>
+
+          {/* 3.12 Contacts */}
+          <SectionPanel title="Contacts" icon="ri-team-line" actions={<ActionLink label="add contact" icon="ri-add-line" />}>
+            <Table headers={['Name', 'Type', 'Phone', 'Email', 'Role', 'Notes', 'Edit', 'Delete']}>
+              {contactRows.map((c) => (
+                <tr key={c.id} className="border-b border-foreground-100 last:border-0">
+                  <td className="py-2 px-3"><a href="#" className="text-primary-600 hover:underline">{c.name}</a></td><td className="py-2 px-3 text-foreground-600">{c.type}</td><td className="py-2 px-3 text-foreground-600">{c.phone || '—'}</td><td className="py-2 px-3 text-foreground-600">{c.email}</td><td className="py-2 px-3 text-foreground-600">{c.role || '—'}</td><td className="py-2 px-3 text-foreground-600">{c.notes || '—'}</td>
+                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Edit contact"><i className="ri-pencil-line text-sm" /></button></td><td className="py-2 px-3"><button className={iconBtn} aria-label="Delete contact"><i className="ri-delete-bin-line text-sm" /></button></td>
+                </tr>
+              ))}
+            </Table>
+            <div className="border-t border-foreground-100 mt-2"><Pagination page={contactPage} totalPages={contactPages} onChange={setContactPage} /></div>
+          </SectionPanel>
+
+          {/* 3.13 Activities */}
+          <SectionPanel title="Activities" icon="ri-calendar-event-line" actions={<Actions items={[{ label: 'export', icon: 'ri-download-line' }, { label: 'add activity', icon: 'ri-add-line' }]} />}>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <input placeholder="Search…" className="px-3 py-1.5 text-[12px] bg-background-50 border border-foreground-200 rounded-lg outline-none focus:border-primary-400 w-40" />
+              <select className="px-3 py-1.5 text-[12px] bg-background-50 border border-foreground-200 rounded-lg outline-none focus:border-primary-400 cursor-pointer"><option>All types</option></select>
+              <button className="px-3 py-1.5 text-[12px] bg-primary-500 text-white rounded-lg cursor-pointer">Search</button>
+              <button className="px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg cursor-pointer">Reset</button>
+            </div>
+            <div className="flex items-center justify-between mb-3 text-[12px] text-foreground-600">
+              <div className="flex items-center gap-2"><span>Today</span><button className={iconBtn} aria-label="Previous"><i className="ri-arrow-left-s-line" /></button><button className={iconBtn} aria-label="Next"><i className="ri-arrow-right-s-line" /></button><span className="text-foreground-400">01/07/2026 → 31/07/2026</span></div>
+              <div className="flex items-center gap-1">{['Day', 'Week', 'Month', 'agenda'].map((v) => <button key={v} className="px-2 py-1 text-[11px] rounded-md border border-foreground-200 text-foreground-500 hover:bg-background-100 cursor-pointer">{v}</button>)}</div>
+            </div>
+            {board.activities.length === 0 ? <EmptyState text="No activities" /> : <Table headers={['Date', 'Time and status', 'Event']}>{board.activities.map((a) => <tr key={a.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{a.date}</td><td className="py-2 px-3">{a.timeAndStatus}</td><td className="py-2 px-3">{a.event}</td></tr>)}</Table>}
+          </SectionPanel>
+
+          {/* 3.14 Compliance documents */}
+          <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
+            <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">Programme Name</p>
+            <EmptyState text="No documents" />
+          </SectionPanel>
+
+          {/* 3.15 Review documents */}
+          <SectionPanel title="Review documents" icon="ri-file-list-3-line">
+            {board.reviewDocuments.map((g) => (
+              <div key={g.programme} className="mb-3 last:mb-0">
+                <p className="text-[12px] font-semibold text-foreground-800 mb-2">{g.programme}</p>
+                <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
+                  {g.reviews.map((r) => (
+                    <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5"><i className="ri-file-list-3-line text-foreground-400" />{r.label}</span>
+                      {r.action === 'create' && <ActionLink label="Create" />}
+                      {r.action === 'needs-signing' && <span className="flex items-center gap-2"><span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/50 px-2 py-0.5 rounded-full">needs signing</span><ActionLink label="Reset" /><ActionLink label="Update" /></span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </SectionPanel>
+
+          {/* 3.16 Documents */}
+          <SectionPanel title="Documents" icon="ri-folder-line" actions={<ActionLink label="upload" icon="ri-upload-2-line" />}>
+            {board.documents.length === 0 ? <EmptyState text="No documents" /> : <Table headers={['Uploaded', 'Description', 'Edit', 'Delete']}>{board.documents.map((d) => <tr key={d.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{d.uploaded}</td><td className="py-2 px-3">{d.description}</td><td className="py-2 px-3" /><td className="py-2 px-3" /></tr>)}</Table>}
+          </SectionPanel>
+
+          {/* 3.17 Competencies */}
+          <SectionPanel title="Competencies" icon="ri-medal-line" actions={<ActionLink label="add competency" icon="ri-add-line" />}>
+            <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
+              {board.competencies.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <a href="#" className="text-[12px] text-primary-600 hover:underline">{c.name} [{c.version}]</a>
+                  <span className="flex items-center gap-2 shrink-0"><ActionLink label="Dashboard" /><ActionLink label="Delete" /><ActionLink label="Report" /></span>
+                </div>
+              ))}
+            </div>
+          </SectionPanel>
+
+          {/* 3.18 Subscription details */}
+          <SectionPanel title="Subscription details" icon="ri-vip-crown-line" actions={<ActionLink label="cancel user" icon="ri-close-circle-line" />}>
+            <FieldRow readonly label="Subscription start date" value={board.subscription.startDate} />
+            <FieldRow readonly label="Subscription end date" value={board.subscription.endDate} />
+            <FieldRow readonly label="Subscription status" value={board.subscription.status} />
+          </SectionPanel>
+
+          {/* 3.19 Audit trail */}
+          <SectionPanel title="Audit trail" icon="ri-history-line" defaultOpen={false}>
+            <Table headers={['Date', 'Admin', 'Action', 'Changes']}>
+              {board.auditTrail.map((e) => (
+                <tr key={e.id} className="border-b border-foreground-100 last:border-0 align-top">
+                  <td className="py-2 px-3 text-foreground-600 whitespace-nowrap">{e.date}</td><td className="py-2 px-3 text-foreground-600">{e.admin}</td><td className="py-2 px-3 text-foreground-700">{e.action}</td>
+                  <td className="py-2 px-3">
+                    <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg overflow-hidden">{e.changes.map((c, i) => <div key={i} className="grid grid-cols-2 gap-2 px-2 py-1 text-[11px]"><span className="text-foreground-500">{c.property}</span><span className="text-foreground-800">{c.value}</span></div>)}</div>
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          </SectionPanel>
+        </div>
+      </div>
+    </WorkspaceShell>
+  );
+}

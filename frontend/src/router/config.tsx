@@ -258,6 +258,253 @@ const WeekDetailPage = lazy(() => import("../pages/learner/week-detail/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const UserGuidePage = lazy(() => import("../pages/user-guide/page"));
 const StarredMessagesPage = lazy(() => import("../pages/starred-messages/page"));
+import NotFound from "../pages/NotFound";
+import Home from "../pages/home/page";
+import ForgotPasswordPage from "../pages/forgot-password/page";
+import LearnerOverview from "../pages/workspace/learner/page";
+import CoachDashboard from "../pages/workspace/coach/page";
+import AdminUsersPage from "../pages/admin/users/page";
+import AdminRolesPage from "../pages/admin/roles/page";
+import AdminPermissionsPage from "../pages/admin/permissions/page";
+import AdminTenantsPage from "../pages/admin/tenants/page";
+import AdminOrganisationsPage from "../pages/admin/organisations/page";
+import AdminEmployersPage from "../pages/admin/employers/page";
+import AdminProgrammesPage from "../pages/admin/programmes/page";
+import AdminCohortsPage from "../pages/admin/cohorts/page";
+import AdminFormsPage from "../pages/admin/forms/page";
+import AdminTemplatesPage from "../pages/admin/templates/page";
+import AdminDocumentsPage from "../pages/admin/documents/page";
+import AdminAutomationsPage from "../pages/admin/automations/page";
+import AdminNotificationsPage from "../pages/admin/notifications/page";
+import AdminMessagesPage from "../pages/admin/messages/page";
+import AdminReportsPage from "../pages/admin/reports/page";
+import AdminAtRiskPage from "../pages/admin/at-risk/page";
+import AdminDashboard from "../pages/workspace/admin/page";
+import InternalPanelPage from "../pages/internal-panel/page";
+import OnboardingPage from "../pages/onboarding/page";
+import SettingsHub from "../pages/admin/settings/page";
+import UsersListPage from "../pages/users/page";
+import BoardPage from "../pages/users/BoardPage";
+import WizardPage from "../pages/users/wizard/WizardPage";
+import CommercialLearnersPage from "../pages/delivery/LearnersPage";
+import TrainingPlanBuilderPage from "../pages/delivery/TrainingPlanPage";
+import ThisWeekPage from "../pages/learner/this-week/page";
+import TrainingPlanPage from "../pages/learner/training-plan/page";
+import QuizTakePage from "../pages/learner/quiz-take/page";
+import ModulesPage from "../pages/learner/modules/page";
+import AttendancePage from "../pages/learner/attendance/page";
+import CatchUpPage from "../pages/learner/catchup/page";
+import ReportAbsencePage from "../pages/learner/report-absence/page";
+import OTJHPage from "../pages/learner/otjh/page";
+import KSBsPage from "../pages/learner/ksbs/page";
+import EvidencePage from "../pages/learner/evidence/page";
+import QuizzesPage from "../pages/learner/quizzes/page";
+import MonthlyCyclePage from "../pages/learner/monthly-cycle/page";
+import MonthlyCoachingPage from "../pages/learner/monthly-coaching/page";
+import ProgressReviewsPage from "../pages/learner/progress-reviews/page";
+import RewardsPage from "../pages/learner/rewards/page";
+import BadgeDetailPage from "../pages/learner/rewards/badge-detail/page";
+import ClubsPage from "../pages/learner/clubs/page";
+import ClubDetailPage from "../pages/learner/clubs/detail/page";
+import ClubBadgeDetailPage from "../pages/learner/clubs/badge-detail/page";
+import ClubDiscussionDetailPage from "../pages/learner/clubs/discussion-detail/page";
+import ClubEventsPage from "../pages/learner/clubs/events/page";
+import EventDetailPage from "../pages/learner/clubs/events/detail/page";
+import MySchedulePage from "../pages/learner/clubs/events/schedule/page";
+import LearnerCalendarPage from "../pages/learner/calendar/page";
+import GatewayReadinessPage from "../pages/learner/gateway/page";
+import LearnerProfilePage from "../pages/learner/profile/page";
+import SupportPage from "../pages/learner/support/page";
+import MessagesPage from "../pages/learner/messages/page";
+import GeneralNotificationsPage from "../pages/notifications/page";
+import GeneralTasksPage from "../pages/tasks/page";
+import GeneralMessagesPage from "../pages/messages/page";
+import EmployerDashboard from "../pages/workspace/employer/page";
+import MISDashboard from "../pages/workspace/mis/page";
+import QADashboard from "../pages/workspace/qa/page";
+import TutorDashboard from "../pages/workspace/tutor/page";
+import EngagementDashboard from "../pages/workspace/engagement/page";
+import LeadershipDashboard from "../pages/workspace/leadership/page";
+import CurriculumDashboard from "../pages/workspace/curriculum/page";
+import CoachCaseload from "../pages/coach/caseload/page";
+import CoachCaseFiles from "../pages/coach/case-files/page";
+import CoachAttendance from "../pages/coach/attendance/page";
+import CoachAbsenceReports from "../pages/coach/absence-reports/page";
+import CoachCatchupQueue from "../pages/coach/catchup-queue/page";
+import CoachMarkingQueue from "../pages/coach/marking-queue/page";
+import CoachAiMarking from "../pages/coach/ai-marking/page";
+import CoachMeetings from "../pages/coach/meetings/page";
+import CoachTimetable from "../pages/coach/timetable/page";
+import CoachMonthlyCycle from "../pages/coach/monthly-cycle/page";
+import CoachProgressReviews from "../pages/coach/progress-reviews/page";
+import CoachKsbImpact from "../pages/coach/ksb-impact/page";
+import CoachOtjhReports from "../pages/coach/otjh-reports/page";
+import CoachEvidenceValidation from "../pages/coach/evidence-validation/page";
+import CoachEmployerActions from "../pages/coach/employer-actions/page";
+import AdminAuditLogsPage from "../pages/admin/audit-logs/page";
+import AdminAccessLogsPage from "../pages/admin/access-logs/page";
+import AdminIntegrationsPage from "../pages/admin/integrations/page";
+import AdminSystemSettingsPage from "../pages/admin/system/page";
+import EmployerApprentices from "../pages/employer/apprentices/page";
+import EmployerOTJHConfirmation from "../pages/employer/otjh-confirm/page";
+import EmployerProgressReviewsPage from "../pages/employer/progress-reviews/page";
+import EmployerDocumentsToSign from "../pages/employer/documents/page";
+import ManualModeSettings from "../pages/admin/manual-mode/page";
+import StandaloneAiSettings from "../pages/admin/ai-settings/page";
+import LearnerCaseFile from "../pages/coach/learner-case-file/page";
+import CurriculumProgrammes from "../pages/curriculum/programmes/page";
+import ModuleBuilder from "../pages/curriculum/module-builder/page";
+import KSBMapping from "../pages/curriculum/ksb-mapping/page";
+import CurriculumStandards from "../pages/curriculum/standards/page";
+import CurriculumWeekBuilder from "../pages/curriculum/week-builder/page";
+import ComponentBuilderPage from "../pages/curriculum/component-builder/page";
+import QuizXmlWorkspace from "../pages/curriculum/quiz-xml/page";
+import QuizEditPage from "../pages/curriculum/quiz-xml/edit/page";
+import QuestionBankPage from "../pages/curriculum/question-bank/page";
+import CheckpointsPage from "../pages/curriculum/checkpoints/page";
+import TutorSessionsPage from "../pages/tutor/sessions/page";
+import TutorEvidenceReview from "../pages/tutor/evidence-review/page";
+import TutorAssignmentMarking from "../pages/tutor/assignment-marking/page";
+import TutorQuizResults from "../pages/tutor/quiz-results/page";
+import TutorLearnersPage from "../pages/tutor/learners/page";
+import TutorKsbValidationPage from "../pages/tutor/ksb-validation/page";
+import TutorOtjhValidationPage from "../pages/tutor/otjh-validation/page";
+import TutorFeedbackQueuePage from "../pages/tutor/feedback-queue/page";
+import TutorAiMarkingPage from "../pages/tutor/ai-marking/page";
+import TutorResourcesPage from "../pages/tutor/resources/page";
+import TutorReportsPage from "../pages/tutor/reports/page";
+import ProgrammeDetailPage from "../pages/curriculum/programme-detail/page";
+import CohortDetailPage from "../pages/curriculum/cohort-detail/page";
+import LearnerAllocationPage from "../pages/curriculum/learner-allocation/page";
+import SessionCalendarPage from "../pages/curriculum/session-calendar/page";
+import IfateStandardPage from "../pages/curriculum/ifate-standard/page";
+import CurriculumMisAllocationPage from "../pages/curriculum/mis-allocation/page";
+import CurriculumReportsPage from "../pages/curriculum/reports/page";
+import CommunicationPage from "../pages/communication/page";
+import SharedCommunicationPage from "../pages/engagement/communication/page";
+import CurriculumQAPage from "../pages/curriculum/curriculum-qa/page";
+import FinanceWorkspace from "../pages/workspace/finance/page";
+import FundingOverviewPage from "../pages/finance/funding/page";
+import InvoicingPage from "../pages/finance/invoices/page";
+import PaymentsPage from "../pages/finance/payments/page";
+import BudgetsPage from "../pages/finance/budgets/page";
+import FinanceReportsPage from "../pages/finance/reports/page";
+import AuditorWorkspace from "../pages/workspace/auditor/page";
+import MisCohortsPage from "../pages/mis/cohorts/page";
+import MisLearnerAllocationPage from "../pages/mis/learner-allocation/page";
+import MisProgrammeAllocationPage from "../pages/mis/programme-allocation/page";
+import MisModuleAllocationPage from "../pages/mis/module-allocation/page";
+import MisTimetablesPage from "../pages/mis/timetables/page";
+import MisTeamsSessionsPage from "../pages/mis/teams-sessions/page";
+import MisAttendanceModesPage from "../pages/mis/attendance-modes/page";
+import MisCoachAssignmentPage from "../pages/mis/coach-assignment/page";
+import MisTutorAssignmentPage from "../pages/mis/tutor-assignment/page";
+import MisCalendarPage from "../pages/mis/calendar/page";
+import MisDeliveryDatesPage from "../pages/mis/delivery-dates/page";
+import MisDataQualityPage from "../pages/mis/data-quality/page";
+import MisDeliveryTimelinePage from "../pages/mis/delivery-timeline/page";
+import MisReportsPage from "../pages/mis/reports/page";
+import QaPreActive from "../pages/qa/pre-active/page";
+import QaModule from "../pages/qa/module/page";
+import QaEvidence from "../pages/qa/evidence/page";
+import QaOtjh from "../pages/qa/otjh/page";
+import QaKsb from "../pages/qa/ksb/page";
+import QaProgressReview from "../pages/qa/progress-review/page";
+import QaReport from "../pages/qa/report/page";
+import QaRejected from "../pages/qa/rejected/page";
+import QaEscalations from "../pages/qa/escalations/page";
+import QaSampling from "../pages/qa/sampling/page";
+import QaFindings from "../pages/qa/findings/page";
+import QaReports from "../pages/qa/reports/page";
+import QaEmployerContracting from "../pages/qa/employer-contracting/page";
+import QaEligibility from "../pages/qa/eligibility/page";
+import QaInitialAssessment from "../pages/qa/initial-assessment/page";
+import QaRpl from "../pages/qa/rpl/page";
+import QaDeliverySetup from "../pages/qa/delivery-setup/page";
+import QaGatewayEpa from "../pages/qa/gateway-epa/page";
+import LearnerEngagementPage from "../pages/engagement/learner-engagement/page";
+import AttendanceRiskPage from "../pages/engagement/attendance-risk/page";
+import AbsenceQueuePage from "../pages/engagement/absence-queue/page";
+import CatchupOverduePage from "../pages/engagement/catchup-overdue/page";
+import CallLogsPage from "../pages/engagement/call-logs/page";
+import WhatsAppLogsPage from "../pages/engagement/whatsapp-logs/page";
+import EmailLogsPage from "../pages/engagement/email-logs/page";
+import EmployerEscalationsPage from "../pages/engagement/employer-escalations/page";
+import PointsRulesPage from "../pages/engagement/points-rules/page";
+import RewardsShopPage from "../pages/engagement/rewards-shop/page";
+import VoucherClaimsPage from "../pages/engagement/voucher-claims/page";
+import EventsPage from "../pages/engagement/events/page";
+import EngagementClubsPage from "../pages/engagement/clubs/page";
+import RecognitionPage from "../pages/engagement/recognition/page";
+import EngagementReportsPage from "../pages/engagement/reports/page";
+import EmployerApprenticeRisk from '@/pages/employer/apprentice-risk/page';
+import EmployerApprenticeProgress from '@/pages/employer/apprentice-progress/page';
+import EmployerReviewActions from '@/pages/employer/review-actions/page';
+import EmployerEvidenceSummary from '@/pages/employer/evidence-summary/page';
+import EmployerGatewayEPA from '@/pages/employer/gateway-epa/page';
+import EmployerEmployerClubs from '@/pages/employer/employer-clubs/page';
+import EmployerLearnerClubs from '@/pages/employer/learner-clubs/page';
+import EmployerEvents from '@/pages/employer/events/page';
+import EmployerCommunityActivity from '@/pages/employer/community-activity/page';
+import EmployerWorkplaceConfirmations from '@/pages/employer/workplace-confirm/page';
+import EmployerKSBProgress from '@/pages/employer/ksb-progress/page';
+import EmployerReports from '@/pages/employer/reports/page';
+import EmployerSupportRequests from '@/pages/employer/support/page';
+import CoachAtRiskPage from "../pages/coach/at-risk/page";
+import CoachMessagesPage from "../pages/coach/messages/page";
+import CoachReportsPage from "../pages/coach/reports/page";
+import CurriculumKsbFrameworksPage from "../pages/curriculum/ksb-frameworks/page";
+import CurriculumVersionControlPage from "../pages/curriculum/version-control/page";
+import CurriculumPublishedPage from "../pages/curriculum/published/page";
+import AuditorEvidencePage from "../pages/auditor/evidence/page";
+import AuditorTrailPage from "../pages/auditor/trail/page";
+import AuditorCompliancePage from "../pages/auditor/compliance/page";
+import AuditorOfstedPage from "../pages/auditor/ofsted/page";
+import AuditorReportsPage from "../pages/auditor/reports/page";
+import LeadershipCohortPerformancePage from '@/pages/leadership/cohort-performance/page';
+import LeadershipProgrammePerformancePage from '@/pages/leadership/programme-performance/page';
+import LeadershipLearnerProgressPage from '@/pages/leadership/learner-progress/page';
+import LeadershipAchievementPipelinePage from '@/pages/leadership/achievement-pipeline/page';
+import LeadershipAttendanceTrendsPage from '@/pages/leadership/attendance-trends/page';
+import LeadershipEngagementTrendsPage from '@/pages/leadership/engagement-trends/page';
+import LeadershipEmployerEngagementPage from '@/pages/leadership/employer-engagement/page';
+import LeadershipOtjhTrendsPage from '@/pages/leadership/otjh-trends/page';
+import LeadershipKsbProgressPage from '@/pages/leadership/ksb-progress/page';
+import LeadershipGatewayEpaProgressPage from '@/pages/leadership/gateway-epa-progress/page';
+import LeadershipTutorSlaPage from '@/pages/leadership/tutor-sla/page';
+import LeadershipCoachWorkloadPage from '@/pages/leadership/coach-workload/page';
+import LeadershipDeliveryPerformancePage from '@/pages/leadership/delivery-performance/page';
+import LeadershipComplianceRiskPage from '@/pages/leadership/compliance-risk/page';
+import LeadershipQaSamplingPage from '@/pages/leadership/qa-sampling/page';
+import LeadershipOfstedPage from '@/pages/leadership/ofsted/page';
+import LeadershipSarQipPage from '@/pages/leadership/sar-qip/page';
+import LeadershipReportsPage from '@/pages/leadership/reports/page';
+import PlatformReportPage from '@/pages/admin/platform-report/page';
+import TenantOnboardingWizard from '@/pages/admin/tenant-onboarding/page';
+import BulkUserImportPage from '@/pages/admin/bulk-user-import/page';
+import SupportDashboard from '@/pages/workspace/support/page';
+import SupportTicketQueue from '@/pages/support/ticket-queue/page';
+import SupportEscalations from '@/pages/support/escalations/page';
+import SupportResolved from '@/pages/support/resolved/page';
+import SupportReports from '@/pages/support/reports/page';
+import SupportMyTickets from '@/pages/support/my-tickets/page';
+import SupportKnowledgeBase from '@/pages/support/knowledge-base/page';
+import AdminSupportSettingsPage from '@/pages/admin/support-settings/page';
+import SafeguardingDashboard from '@/pages/workspace/safeguarding/page';
+import SafeguardingOpenCases from '@/pages/safeguarding/open-cases/page';
+import SafeguardingNewConcerns from '@/pages/safeguarding/new-concerns/page';
+import SafeguardingHighRiskCases from '@/pages/safeguarding/high-risk-cases/page';
+import SafeguardingClosedCases from '@/pages/safeguarding/closed-cases/page';
+import SafeguardingLearnerWellbeing from '@/pages/safeguarding/learner-wellbeing/page';
+import SafeguardingReferrals from '@/pages/safeguarding/referrals/page';
+import SafeguardingPreventRisk from '@/pages/safeguarding/prevent-risk/page';
+import SafeguardingCommunication from '@/pages/safeguarding/communication/page';
+import SafeguardingQAAudit from '@/pages/safeguarding/qa-audit/page';
+import SafeguardingReports from '@/pages/safeguarding/reports/page';
+import WeekDetailPage from "../pages/learner/week-detail/page";
+import LearnerKnowledgeBase from "../pages/learner/knowledge-base/page";
+import UserGuidePage from "../pages/user-guide/page";
+import StarredMessagesPage from "../pages/starred-messages/page";
 
 const routes: RouteObject[] = [
   {
@@ -279,6 +526,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/workspace/learner",
+    element: <LearnerOverview />,
+  },
+  {
+    path: "/workspace/learner/:kind/:id",
     element: <LearnerOverview />,
   },
   {
@@ -362,35 +613,35 @@ const routes: RouteObject[] = [
     element: <OnboardingPage />,
   },
   {
-    path: "/compliance/pre-active",
-    element: <PreActiveLearnerJourney />,
+    path: "/users",
+    element: <UsersListPage />,
   },
   {
-    path: "/compliance/employer-contracting",
-    element: <EmployerContracting />,
+    path: "/users/:userId",
+    element: <BoardPage />,
   },
   {
-    path: "/compliance/self-onboarding",
-    element: <SelfOnboardingPage />,
+    path: "/users/:userId/wizard",
+    element: <WizardPage />,
   },
   {
-    path: "/compliance/enrolment-review",
-    element: <EnrolmentReviewPage />,
+    path: "/users/:userId/wizard/:stepSlug",
+    element: <WizardPage />,
   },
   {
-    path: "/compliance/eligibility",
-    element: <EligibilityReviewPage />,
+    path: "/delivery",
+    element: <CommercialLearnersPage />,
   },
   {
-    path: "/compliance/initial-assessment",
-    element: <InitialAssessmentPage />,
-  },
-  {
-    path: "/compliance/rpl-review",
-    element: <RPLReviewPage />,
+    path: "/training-plan/:kind/:userId",
+    element: <TrainingPlanBuilderPage />,
   },
   {
     path: "/learner/this-week",
+    element: <ThisWeekPage />,
+  },
+  {
+    path: "/learner/this-week/:kind/:id",
     element: <ThisWeekPage />,
   },
   {
@@ -402,7 +653,19 @@ const routes: RouteObject[] = [
     element: <TrainingPlanPage />,
   },
   {
+    path: "/learner/training-plan/:kind/:id",
+    element: <TrainingPlanPage />,
+  },
+  {
+    path: "/learner/quiz/:kind/:id/:quizId",
+    element: <QuizTakePage />,
+  },
+  {
     path: "/learner/modules",
+    element: <ModulesPage />,
+  },
+  {
+    path: "/learner/modules/:kind/:id",
     element: <ModulesPage />,
   },
   {
@@ -431,6 +694,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/quizzes",
+    element: <QuizzesPage />,
+  },
+  {
+    path: "/learner/quizzes/:kind/:id",
     element: <QuizzesPage />,
   },
   {
@@ -508,10 +775,6 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/employer",
     element: <EmployerDashboard />,
-  },
-  {
-    path: "/workspace/compliance",
-    element: <ComplianceDashboard />,
   },
   {
     path: "/workspace/mis",
@@ -690,8 +953,12 @@ const routes: RouteObject[] = [
     element: <QuizXmlWorkspace />,
   },
   {
-    path: "/curriculum/test-banks",
-    element: <TestBanksPage />,
+    path: "/curriculum/question-bank",
+    element: <QuestionBankPage />,
+  },
+  {
+    path: "/curriculum/quiz-xml/:quizId/edit",
+    element: <QuizEditPage />,
   },
   {
     path: "/curriculum/checkpoints",
@@ -916,46 +1183,6 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
-  },
-  {
-    path: "/compliance/new-starters",
-    element: <NewStartersPage />,
-  },
-  {
-    path: "/compliance/documents",
-    element: <DocumentsPage />,
-  },
-  {
-    path: "/compliance/signatures",
-    element: <SignaturesPage />,
-  },
-  {
-    path: "/compliance/das",
-    element: <DASPage />,
-  },
-  {
-    path: "/compliance/ilr",
-    element: <ILRPage />,
-  },
-  {
-    path: "/compliance/evidence-packs",
-    element: <EvidencePacksPage />,
-  },
-  {
-    path: "/compliance/funding-risk",
-    element: <FundingRiskPage />,
-  },
-  {
-    path: "/compliance/aptem-sync",
-    element: <AptemSyncPage />,
-  },
-  {
-    path: "/compliance/audit-reports",
-    element: <AuditReportsPage />,
-  },
-  {
-    path: "/compliance/reports",
-    element: <EnrolmentReportsPage />,
   },
   {
     path: "/mis/delivery-timeline",

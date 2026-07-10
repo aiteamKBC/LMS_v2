@@ -1557,4 +1557,26 @@ table tbody td:last-child {
   .kbc-swal-toast-popup {
     width: calc(100vw - 24px) !important;
   }
+.quiz-preview-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #b8a8df #eef2f7;
+}
+
+.quiz-preview-scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.quiz-preview-scroll::-webkit-scrollbar-track {
+  background: #eef2f7;
+  border-radius: 999px;
+}
+
+.quiz-preview-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #c9bdf0, #a795d4);
+  border: 2px solid #eef2f7;
+  border-radius: 999px;
+}
+
+.quiz-preview-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #b8a8df, #8f7bc8);
 }

@@ -14,7 +14,7 @@ const ALL_ROLES: RoleOption[] = [
   { slug: 'coach', label: 'Coach', icon: 'ri-user-heart-line', workspacePath: '/workspace/coach' },
   { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', workspacePath: '/workspace/tutor' },
   { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', workspacePath: '/workspace/employer' },
-  { slug: 'compliance', label: 'Compliance', icon: 'ri-shield-check-line', workspacePath: '/workspace/compliance' },
+  { slug: 'compliance', label: 'Enrolment', icon: 'ri-user-add-line', workspacePath: '/users' },
   { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', workspacePath: '/workspace/qa' },
   { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', workspacePath: '/workspace/mis' },
   { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-2-line', workspacePath: '/workspace/curriculum' },

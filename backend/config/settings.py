@@ -12,7 +12,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse, unquote
+from urllib.parse import parse_qsl, urlparse
+from urllib.parse import urlparse, unquote, parse_qs
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -74,20 +75,29 @@ def database_from_url(database_url):
 SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    if host.strip()
+]
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'quiz_api',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'learner_api',
 ]
 
 MIDDLEWARE = [
@@ -123,13 +133,42 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
-DATABASES = {
-    'default': database_from_url(DATABASE_URL) if DATABASE_URL else {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if DATABASE_URL:
+    parsed_db = urlparse(DATABASE_URL)
+    db_options = dict(parse_qsl(parsed_db.query))
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": parsed_db.path.lstrip("/"),
+            "USER": parsed_db.username,
+            "PASSWORD": parsed_db.password,
+            "HOST": parsed_db.hostname,
+            "PORT": parsed_db.port or "5432",
+            "OPTIONS": db_options,
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+
+_database_url = ENV.get('Database_url') or ENV.get('DATABASE_URL')
+if _database_url:
+    DATABASES['enrolment'] = _neon_config(_database_url)
+
+DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
+
+# CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so
+# requests are same-origin in the browser. Allow the dev hosts explicitly.
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
 
 
 # Password validation
