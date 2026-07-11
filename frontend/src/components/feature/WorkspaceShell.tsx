@@ -20,6 +20,7 @@ interface WorkspaceShellProps {
 interface BreadcrumbItem {
   label: string;
   href: string;
+  isLink: boolean;
 }
 
 function buildBreadcrumbs(pathname: string, navItems: SidebarNavItem[], workspaceLabel: string, roleLabel: string): BreadcrumbItem[] {
@@ -29,35 +30,52 @@ function buildBreadcrumbs(pathname: string, navItems: SidebarNavItem[], workspac
   const isInWorkspace = pathname.startsWith('/workspace/');
 
   if (!isInWorkspace) {
-    // Try to find matching nav item to build breadcrumb
-    const allItems: SidebarNavItem[] = [];
-    navItems.forEach(item => {
-      allItems.push(item);
-      if (item.children) item.children.forEach(c => allItems.push(c));
-    });
-
-    const dashboardItem = navItems.find(i => i.href.includes('/workspace/'));
+    const dashboardItem = navItems.find(i => i.href && i.href.includes('/workspace/'));
     if (dashboardItem) {
-      crumbs.push({ label: workspaceLabel, href: dashboardItem.href });
+      crumbs.push({ label: workspaceLabel, href: dashboardItem.href, isLink: true });
     }
 
-    const matched = allItems.find(i => pathname === i.href || pathname.startsWith(i.href + '/'));
-    if (matched && matched.href !== (dashboardItem?.href ?? '')) {
-      crumbs.push({ label: matched.label, href: matched.href });
-    } else if (!matched) {
+    // Find the deepest matching item, tracking its parent group (if any).
+    // Items with an empty href (group headers) are never matched directly —
+    // pathname.startsWith('' + '/') would otherwise match every route.
+    let matched: SidebarNavItem | undefined;
+    let matchedParent: SidebarNavItem | undefined;
+    for (const item of navItems) {
+      if (item.href && (pathname === item.href || pathname.startsWith(item.href + '/'))) {
+        matched = item;
+        break;
+      }
+      if (item.children) {
+        const child = item.children.find(c => c.href && (pathname === c.href || pathname.startsWith(c.href + '/')));
+        if (child) {
+          matched = child;
+          matchedParent = item;
+          break;
+        }
+      }
+    }
+
+    if (matched) {
+      if (matchedParent && matchedParent.label) {
+        crumbs.push({ label: matchedParent.label, href: '', isLink: false });
+      }
+      if (matched.href !== (dashboardItem?.href ?? '')) {
+        crumbs.push({ label: matched.label, href: matched.href, isLink: true });
+      }
+    } else {
       // Derive from path segments
       const segments = pathname.split('/').filter(Boolean);
       if (segments.length >= 2) {
         const parentLabel = segments[0].charAt(0).toUpperCase() + segments[0].slice(1).replace(/-/g, ' ');
         const childLabel = segments.slice(1).map(s => s.charAt(0).toUpperCase() + s.slice(1).replace(/-/g, ' ')).join(' — ');
         if (dashboardItem) {
-          crumbs.push({ label: parentLabel, href: `/${segments[0]}` });
+          crumbs.push({ label: parentLabel, href: `/${segments[0]}`, isLink: true });
         }
-        crumbs.push({ label: childLabel, href: pathname });
+        crumbs.push({ label: childLabel, href: pathname, isLink: true });
       }
     }
   } else {
-    crumbs.push({ label: workspaceLabel, href: pathname });
+    crumbs.push({ label: workspaceLabel, href: pathname, isLink: true });
   }
 
   return crumbs;
@@ -141,12 +159,16 @@ export function WorkspaceShell({
               </Link>
               <i className="ri-arrow-right-s-line text-foreground-200 text-xs"></i>
               {breadcrumbs.map((crumb, index) => (
-                <span key={crumb.href} className="flex items-center gap-1.5">
+                <span key={`${crumb.href}-${index}`} className="flex items-center gap-1.5">
                   {index < breadcrumbs.length - 1 ? (
                     <>
-                      <Link to={crumb.href} className="text-foreground-400 hover:text-foreground-600 transition-smooth whitespace-nowrap">
-                        {crumb.label}
-                      </Link>
+                      {crumb.isLink ? (
+                        <Link to={crumb.href} className="text-foreground-400 hover:text-foreground-600 transition-smooth whitespace-nowrap">
+                          {crumb.label}
+                        </Link>
+                      ) : (
+                        <span className="text-foreground-400 whitespace-nowrap">{crumb.label}</span>
+                      )}
                       <i className="ri-arrow-right-s-line text-foreground-200 text-xs"></i>
                     </>
                   ) : (

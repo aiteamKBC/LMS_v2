@@ -2,35 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { roleNavMap } from '@/mocks/navigation';
+import { RECOGNITIONS, countByProgramme, filterByProgramme, type ProgrammeFilterValue } from '@/mocks/engagement-data';
 
 const engagementNav = roleNavMap.engagement;
-
-interface Recognition {
-  id: string;
-  learner: string;
-  programme: string;
-  cohort: string;
-  type: 'badge' | 'certificate' | 'spotlight' | 'milestone' | 'achievement';
-  title: string;
-  description: string;
-  awardedBy: string;
-  awardedAt: string;
-  category: string;
-  points: number;
-  public: boolean;
-}
-
-const RECOGNITIONS: Recognition[] = [
-  { id: 'rec-01', learner: 'Emily Watson', programme: 'Digital Marketer L3', cohort: 'Cohort B', type: 'badge', title: 'Perfect Attendance', description: 'Attended all sessions for 4 consecutive weeks', awardedBy: 'Sarah Chen', awardedAt: 'Today', category: 'Attendance', points: 50, public: true },
-  { id: 'rec-02', learner: 'Olivia Park', programme: 'Marketing Executive L4', cohort: 'Cohort B', type: 'spotlight', title: 'Top Club Contributor', description: 'Led 3 successful Marketing Club activities this month', awardedBy: 'Rebecca Okonkwo', awardedAt: 'Yesterday', category: 'Clubs', points: 100, public: true },
-  { id: 'rec-03', learner: 'David Chen', programme: 'Software Developer L4', cohort: 'Cohort F', type: 'certificate', title: 'Coding Excellence', description: 'Completed advanced coding challenge with 98% score', awardedBy: 'James Harrington', awardedAt: '8 Jun 2026', category: 'Assessment', points: 150, public: true },
-  { id: 'rec-04', learner: 'Liam Foster', programme: 'Project Manager L4', cohort: 'Cohort A', type: 'milestone', title: '50% Programme Complete', description: 'Reached the halfway point of the programme with strong performance', awardedBy: 'Sarah Chen', awardedAt: '7 Jun 2026', category: 'Progress', points: 200, public: true },
-  { id: 'rec-05', learner: 'Sophie Williams', programme: 'Marketing Executive L4', cohort: 'Cohort C', type: 'achievement', title: 'Evidence Master', description: 'Submitted 15 pieces of evidence with 100% first-time approval', awardedBy: 'Med Maher', awardedAt: '6 Jun 2026', category: 'Evidence', points: 100, public: true },
-  { id: 'rec-06', learner: 'Maya Kapoor', programme: 'HR Consultant L5', cohort: 'Cohort E', type: 'badge', title: 'First Catch-up', description: 'Successfully completed first catch-up session after absence', awardedBy: 'James Harrington', awardedAt: '5 Jun 2026', category: 'Attendance', points: 25, public: false },
-  { id: 'rec-07', learner: 'Sarah Mitchell', programme: 'Business Admin L3', cohort: 'Cohort A', type: 'spotlight', title: 'Peer Mentor', description: 'Helped 3 fellow learners with evidence submissions', awardedBy: 'Sarah Chen', awardedAt: '4 Jun 2026', category: 'Support', points: 75, public: true },
-  { id: 'rec-08', learner: 'Lucas Nguyen', programme: 'Software Developer L4', cohort: 'Cohort F', type: 'badge', title: 'Quick Responder', description: 'Responded to all coach messages within 2 hours for 2 weeks', awardedBy: 'James Harrington', awardedAt: '3 Jun 2026', category: 'Communication', points: 30, public: false },
-];
 
 const typeConfig: Record<string, { icon: string; bg: string; text: string }> = {
   badge: { icon: 'ri-award-line', bg: 'bg-primary-100', text: 'text-primary-700' },
@@ -44,7 +20,9 @@ export default function RecognitionPage() {
   const navigate = useNavigate();
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [publicOnly, setPublicOnly] = useState(false);
-  const filtered = RECOGNITIONS.filter(r => {
+  const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
+  const programmeCounts = countByProgramme(RECOGNITIONS);
+  const filtered = filterByProgramme(RECOGNITIONS, programmeFilter).filter(r => {
     const matchType = typeFilter === 'all' || r.type === typeFilter;
     const matchPublic = !publicOnly || r.public;
     return matchType && matchPublic;
@@ -84,10 +62,13 @@ export default function RecognitionPage() {
           </button>
         </div>
 
+        {/* Programme Filter */}
+        <ProgrammeFilter value={programmeFilter} onChange={setProgrammeFilter} counts={programmeCounts} />
+
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'badge', 'certificate', 'spotlight', 'milestone', 'achievement'].map(t => (
-              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 <i className={`${t === 'all' ? 'ri-list-check' : typeConfig[t]?.icon || 'ri-award-line'} text-sm`}></i>
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
