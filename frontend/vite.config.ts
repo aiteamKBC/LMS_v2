@@ -89,6 +89,10 @@ export default defineConfig({
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      "/coach_api": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
       "/quiz_api": {
         target: process.env.VITE_API_PROXY || "http://127.0.0.1:8000",
         changeOrigin: true,
