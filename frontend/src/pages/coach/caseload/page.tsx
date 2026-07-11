@@ -1,53 +1,25 @@
-import { useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import SparklineChart from '@/components/feature/SparklineChart';
 import { roleNavMap } from '@/mocks/navigation';
-import { COHORTS, PER_LEARNER_ATTENDANCE, PER_LEARNER_KSB } from '@/mocks/coach-charts';
-
-const coachNav = roleNavMap.coach;
-
-const CURRENT_DATE = new Date('2026-06-20');
-
-function getDaysSince(dateStr: string): number {
-  const d = new Date(dateStr + ' 2026');
-  return Math.floor((CURRENT_DATE.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
-}
-
-function dateSeverity(days: number, thresholds: { amber: number; red: number }): 'normal' | 'amber' | 'red' {
-  if (days >= thresholds.red) return 'red';
-  if (days >= thresholds.amber) return 'amber';
-  return 'normal';
-}
-
-const DATE_THRESHOLDS = {
-  lastAttendance: { amber: 5, red: 10 },
-  lastCoaching: { amber: 21, red: 35 },
-  lastReview: { amber: 45, red: 75 },
-  lastEvidence: { amber: 14, red: 28 },
-};
-
-const DATE_COLORS = {
-  normal: 'text-foreground-900',
-  amber: 'text-amber-600',
-  red: 'text-red-600',
-};
-
-const DATE_BG = {
-  normal: '',
-  amber: 'bg-amber-50/50 rounded px-1.5 py-0.5',
-  red: 'bg-red-50/50 rounded px-1.5 py-0.5',
-};
 
 type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
-type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn';
+type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
+type SummaryFilter =
+  | 'all'
+  | 'active'
+  | 'withdrawn'
+  | 'break'
+  | 'ready-to-enrol'
+  | 'on-track'
+  | 'need-attention'
+  | 'at-risk';
 
 interface Learner {
   id: string;
   name: string;
   initials: string;
-  programme: string;
   employer: string;
   cohortId: string;
   cohortName: string;
@@ -59,6 +31,10 @@ interface Learner {
   attendanceRate: number;
   otjhCompleted: number;
   otjhTarget: number;
+  otjhStatus?: string;
+  ksbCompleted?: number;
+  ksbTarget?: number;
+  ksbStatus?: string;
   ksbProgress: number;
   evidenceCount: number;
   nextCoaching: string;
@@ -70,94 +46,238 @@ interface Learner {
   lastCoachingSession: string;
   lastSubmittedEvidence: string;
   recentFlag: string | null;
-  attendanceHistory: number[];
-  ksbHistory: number[];
+  progressVariance: string;
+  startDate: string;
+  gatewayReviewDate: string;
+  plannedEndDate: string;
+  coachName?: string;
+  coachEmail?: string;
+  rawProgramStatus?: string;
+  coachRag?: string;
   email?: string;
   employerEmail?: string;
   employerPhone?: string;
 }
 
-const LEARNERS: Learner[] = [
-  { id: '1', name: 'Sophie Williams', initials: 'SW', programme: 'Marketing Executive L4', employer: 'Tim Hortons UK', cohortId: 'coh-001', cohortName: 'MKT-L4-2025A', group: 'Group A', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['Attendance 86%', 'OTJH behind pace', 'KSB Amber'], overallProgress: 42, attendanceRate: 86, otjhCompleted: 74, otjhTarget: 120, ksbProgress: 38, evidenceCount: 12, nextCoaching: '18 Jun 2026', nextReview: '25 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '4 Jun 2026', lastProgressReview: '18 Apr 2026', lastReview: '18 Apr 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '2 Jun 2026', recentFlag: 'OTJH pace concern', attendanceHistory: PER_LEARNER_ATTENDANCE['lrn-001'] || [86, 86, 86, 86, 86, 86], ksbHistory: PER_LEARNER_KSB['lrn-001'] || [38, 38, 38, 38, 38, 38], email: 'sophie.williams@example.com', employerEmail: 'hr@timhortons.co.uk', employerPhone: '+44 20 7946 0958' },
-  { id: '2', name: 'James Okonkwo', initials: 'JO', programme: 'Data Analyst L4', employer: 'Medway NHS Trust', cohortId: 'coh-003', cohortName: 'DA-L4-2025A', group: 'Group A', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['Attendance 78%', 'Evidence overdue', 'OTJH Red'], overallProgress: 28, attendanceRate: 78, otjhCompleted: 22, otjhTarget: 100, ksbProgress: 25, evidenceCount: 5, nextCoaching: '12 Jun 2026', nextReview: '19 Jun 2026', lastContact: '5 Jun 2026', lastAttendanceDate: '3 Jun 2026', lastProgressReview: '15 Mar 2026', lastReview: '15 Mar 2026', lastCoachingSession: '2 Jun 2026', lastSubmittedEvidence: '28 May 2026', recentFlag: 'Missed last 2 sessions', attendanceHistory: [85, 82, 80, 79, 78, 78], ksbHistory: [20, 21, 22, 23, 24, 25], email: 'james.okonkwo@example.com', employerEmail: 'workforce@medway.nhs.uk', employerPhone: '+44 1634 825000' },
-  { id: '3', name: 'Aisha Patel', initials: 'AP', programme: 'Accountancy L3', employer: 'Ashford Accounting', cohortId: 'coh-010', cohortName: 'ACC-L3-2025A', group: 'Group A', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['KSB stagnant', 'Low engagement'], overallProgress: 31, attendanceRate: 83, otjhCompleted: 30, otjhTarget: 100, ksbProgress: 22, evidenceCount: 4, nextCoaching: '14 Jun 2026', nextReview: '21 Jun 2026', lastContact: '8 Jun 2026', lastAttendanceDate: '5 Jun 2026', lastProgressReview: '20 Apr 2026', lastReview: '20 Apr 2026', lastCoachingSession: '6 Jun 2026', lastSubmittedEvidence: '15 May 2026', recentFlag: '3 weeks no evidence', attendanceHistory: [88, 86, 85, 84, 83, 83], ksbHistory: [18, 19, 20, 21, 21, 22], email: 'aisha.patel@example.com', employerEmail: 'contact@ashfordaccounting.co.uk', employerPhone: '+44 1233 610000' },
-  { id: '4', name: 'Sarah Mitchell', initials: 'SM', programme: 'Business Admin L3', employer: 'Kent County Council', cohortId: 'coh-005', cohortName: 'BA-L3-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 68, attendanceRate: 94, otjhCompleted: 88, otjhTarget: 120, ksbProgress: 72, evidenceCount: 22, nextCoaching: '13 Jun 2026', nextReview: '20 Jun 2026', lastContact: '6 Jun 2026', lastAttendanceDate: '5 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '4 Jun 2026', lastSubmittedEvidence: '30 May 2026', recentFlag: null, attendanceHistory: [92, 93, 94, 94, 95, 94], ksbHistory: [62, 64, 66, 68, 70, 72], email: 'sarah.mitchell@example.com', employerEmail: 'apprenticeships@kent.gov.uk', employerPhone: '+44 300 041 4141' },
-  { id: '5', name: 'Emily Watson', initials: 'EW', programme: 'Digital Marketer L3', employer: 'Canterbury Creative', cohortId: 'coh-007', cohortName: 'DM-L3-2025A', group: 'Group A', status: 'high', enrollmentStatus: 'active', riskFlags: [], overallProgress: 85, attendanceRate: 100, otjhCompleted: 110, otjhTarget: 120, ksbProgress: 92, evidenceCount: 28, nextCoaching: '11 Jun 2026', nextReview: '18 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '7 Jun 2026', lastProgressReview: '12 May 2026', lastReview: '12 May 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '1 Jun 2026', recentFlag: null, attendanceHistory: [100, 100, 100, 100, 100, 100], ksbHistory: [78, 82, 85, 88, 90, 92], email: 'emily.watson@example.com', employerEmail: 'team@canterburycreative.co.uk', employerPhone: '+44 1227 788000' },
-  { id: '6', name: 'David Chen', initials: 'DC', programme: 'Software Developer L4', employer: 'Tech Kent Ltd', cohortId: 'coh-008', cohortName: 'SD-L4-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 55, attendanceRate: 94, otjhCompleted: 62, otjhTarget: 110, ksbProgress: 58, evidenceCount: 16, nextCoaching: '16 Jun 2026', nextReview: '23 Jun 2026', lastContact: '4 Jun 2026', lastAttendanceDate: '3 Jun 2026', lastProgressReview: '10 May 2026', lastReview: '10 May 2026', lastCoachingSession: '2 Jun 2026', lastSubmittedEvidence: '29 May 2026', recentFlag: null, attendanceHistory: [93, 94, 94, 95, 94, 94], ksbHistory: [48, 50, 52, 54, 56, 58], email: 'david.chen@example.com', employerEmail: 'hello@techkent.co.uk', employerPhone: '+44 20 7946 0123' },
-  { id: '7', name: 'Liam Foster', initials: 'LF', programme: 'Project Manager L4', employer: 'BAM Construction', cohortId: 'coh-004', cohortName: 'PM-L4-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 60, attendanceRate: 91, otjhCompleted: 72, otjhTarget: 120, ksbProgress: 64, evidenceCount: 18, nextCoaching: '15 Jun 2026', nextReview: '22 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '6 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '30 May 2026', recentFlag: null, attendanceHistory: [90, 91, 91, 92, 91, 91], ksbHistory: [54, 56, 58, 60, 62, 64], email: 'liam.foster@example.com', employerEmail: 'hr@bam.co.uk', employerPhone: '+44 20 7636 1000' },
-  { id: '8', name: 'Maya Kapoor', initials: 'MK', programme: 'HR Consultant L5', employer: 'Southend Council', cohortId: 'coh-009', cohortName: 'HR-L5-2025A', group: 'Group A', status: 'new-starter', enrollmentStatus: 'active', riskFlags: [], overallProgress: 12, attendanceRate: 100, otjhCompleted: 8, otjhTarget: 80, ksbProgress: 10, evidenceCount: 2, nextCoaching: '17 Jun 2026', nextReview: '24 Jun 2026', lastContact: '9 Jun 2026', lastAttendanceDate: '9 Jun 2026', lastProgressReview: '5 Jun 2026', lastReview: '5 Jun 2026', lastCoachingSession: '8 Jun 2026', lastSubmittedEvidence: '7 Jun 2026', recentFlag: 'Onboarding week 2', attendanceHistory: [100, 100, 100, 100, 100, 100], ksbHistory: [4, 6, 7, 8, 9, 10], email: 'maya.kapoor@example.com', employerEmail: 'workforce@southend.gov.uk', employerPhone: '+44 1702 215000' },
-  { id: '9', name: 'Oliver Thompson', initials: 'OT', programme: 'Business Admin L3', employer: 'Dartford Council', cohortId: 'coh-006', cohortName: 'BA-L3-2025B', group: 'Group B', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 45, attendanceRate: 96, otjhCompleted: 52, otjhTarget: 110, ksbProgress: 48, evidenceCount: 14, nextCoaching: '20 Jun 2026', nextReview: '27 Jun 2026', lastContact: '10 Jun 2026', lastAttendanceDate: '9 Jun 2026', lastProgressReview: '10 May 2026', lastReview: '10 May 2026', lastCoachingSession: '8 Jun 2026', lastSubmittedEvidence: '1 Jun 2026', recentFlag: null, attendanceHistory: [95, 95, 96, 96, 96, 96], ksbHistory: [38, 40, 42, 44, 46, 48], email: 'oliver.thompson@example.com', employerEmail: 'apprentices@dartford.gov.uk', employerPhone: '+44 1322 343000' },
-  { id: '10', name: 'Grace Liu', initials: 'GL', programme: 'Data Analyst L4', employer: 'Invicta Health', cohortId: 'coh-003', cohortName: 'DA-L4-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 52, attendanceRate: 92, otjhCompleted: 58, otjhTarget: 110, ksbProgress: 54, evidenceCount: 17, nextCoaching: '19 Jun 2026', nextReview: '26 Jun 2026', lastContact: '9 Jun 2026', lastAttendanceDate: '8 Jun 2026', lastProgressReview: '12 May 2026', lastReview: '12 May 2026', lastCoachingSession: '7 Jun 2026', lastSubmittedEvidence: '25 May 2026', recentFlag: null, attendanceHistory: [91, 92, 92, 93, 92, 92], ksbHistory: [44, 46, 48, 50, 52, 54], email: 'grace.liu@example.com', employerEmail: 'talent@invicta.health', employerPhone: '+44 1622 721000' },
-  { id: '11', name: 'Noah Bennett', initials: 'NB', programme: 'Marketing Executive L4', employer: 'Canterbury Creative', cohortId: 'coh-002', cohortName: 'MKT-L4-2025B', group: 'Group B', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['Attendance 82%'], overallProgress: 35, attendanceRate: 82, otjhCompleted: 38, otjhTarget: 120, ksbProgress: 32, evidenceCount: 7, nextCoaching: '21 Jun 2026', nextReview: '28 Jun 2026', lastContact: '8 Jun 2026', lastAttendanceDate: '5 Jun 2026', lastProgressReview: '10 Apr 2026', lastReview: '10 Apr 2026', lastCoachingSession: '6 Jun 2026', lastSubmittedEvidence: '20 May 2026', recentFlag: 'Attendance dropping', attendanceHistory: [88, 86, 84, 83, 82, 82], ksbHistory: [26, 27, 28, 30, 31, 32], email: 'noah.bennett@example.com', employerEmail: 'team@canterburycreative.co.uk', employerPhone: '+44 1227 788000' },
-  { id: '12', name: 'Isla Morgan', initials: 'IM', programme: 'Business Admin L3', employer: 'Tonbridge Council', cohortId: 'coh-006', cohortName: 'BA-L3-2025B', group: 'Group B', status: 'high', enrollmentStatus: 'active', riskFlags: [], overallProgress: 78, attendanceRate: 100, otjhCompleted: 92, otjhTarget: 110, ksbProgress: 82, evidenceCount: 25, nextCoaching: '15 Jun 2026', nextReview: '22 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '7 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '31 May 2026', recentFlag: null, attendanceHistory: [98, 99, 100, 100, 100, 100], ksbHistory: [68, 72, 74, 76, 80, 82], email: 'isla.morgan@example.com', employerEmail: 'apprentices@tonbridge.gov.uk', employerPhone: '+44 1732 844522' },
-  { id: '13', name: 'Jacob Hayes', initials: 'JH', programme: 'Digital Marketer L3', employer: 'Gravesham Ltd', cohortId: 'coh-007', cohortName: 'DM-L3-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 50, attendanceRate: 93, otjhCompleted: 55, otjhTarget: 120, ksbProgress: 46, evidenceCount: 13, nextCoaching: '18 Jun 2026', nextReview: '25 Jun 2026', lastContact: '6 Jun 2026', lastAttendanceDate: '5 Jun 2026', lastProgressReview: '10 May 2026', lastReview: '10 May 2026', lastCoachingSession: '4 Jun 2026', lastSubmittedEvidence: '28 May 2026', recentFlag: null, attendanceHistory: [92, 92, 93, 93, 93, 93], ksbHistory: [36, 38, 40, 42, 44, 46], email: 'jacob.hayes@example.com', employerEmail: 'hr@gravesham.co.uk', employerPhone: '+44 1474 337000' },
-  { id: '14', name: 'Amara Osei', initials: 'AO', programme: 'Software Developer L4', employer: 'Medway Tech', cohortId: 'coh-008', cohortName: 'SD-L4-2025A', group: 'Group A', status: 'new-starter', enrollmentStatus: 'active', riskFlags: [], overallProgress: 15, attendanceRate: 100, otjhCompleted: 10, otjhTarget: 80, ksbProgress: 12, evidenceCount: 3, nextCoaching: '22 Jun 2026', nextReview: '29 Jun 2026', lastContact: '10 Jun 2026', lastAttendanceDate: '10 Jun 2026', lastProgressReview: '5 Jun 2026', lastReview: '5 Jun 2026', lastCoachingSession: '9 Jun 2026', lastSubmittedEvidence: '8 Jun 2026', recentFlag: 'Just started week 1', attendanceHistory: [100, 100, 100, 100, 100, 100], ksbHistory: [4, 6, 8, 10, 11, 12], email: 'amara.osei@example.com', employerEmail: 'careers@medwaytech.co.uk', employerPhone: '+44 1634 791000' },
-  { id: '15', name: 'Harper Singh', initials: 'HS', programme: 'Accountancy L3', employer: 'Kent Accountants', cohortId: 'coh-010', cohortName: 'ACC-L3-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'break', riskFlags: [], overallProgress: 58, attendanceRate: 95, otjhCompleted: 66, otjhTarget: 110, ksbProgress: 56, evidenceCount: 19, nextCoaching: '17 Jun 2026', nextReview: '24 Jun 2026', lastContact: '8 Jun 2026', lastAttendanceDate: '7 Jun 2026', lastProgressReview: '15 Apr 2026', lastReview: '15 Apr 2026', lastCoachingSession: '6 Jun 2026', lastSubmittedEvidence: '25 May 2026', recentFlag: null, attendanceHistory: [94, 94, 95, 95, 96, 95], ksbHistory: [46, 48, 50, 52, 54, 56], email: 'harper.singh@example.com', employerEmail: 'info@kentaccountants.co.uk', employerPhone: '+44 1622 678000' },
-  { id: '16', name: 'Finn Murphy', initials: 'FM', programme: 'Project Manager L4', employer: 'BAM Construction', cohortId: 'coh-004', cohortName: 'PM-L4-2025A', group: 'Group A', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['OTJH behind', 'Low evidence'], overallProgress: 33, attendanceRate: 85, otjhCompleted: 34, otjhTarget: 100, ksbProgress: 28, evidenceCount: 6, nextCoaching: '16 Jun 2026', nextReview: '23 Jun 2026', lastContact: '5 Jun 2026', lastAttendanceDate: '3 Jun 2026', lastProgressReview: '20 Apr 2026', lastReview: '20 Apr 2026', lastCoachingSession: '2 Jun 2026', lastSubmittedEvidence: '15 May 2026', recentFlag: '2 months behind', attendanceHistory: [90, 88, 86, 85, 85, 85], ksbHistory: [22, 23, 24, 26, 27, 28], email: 'finn.murphy@example.com', employerEmail: 'hr@bam.co.uk', employerPhone: '+44 20 7636 1000' },
-  { id: '17', name: 'Zara Ahmed', initials: 'ZA', programme: 'HR Consultant L5', employer: 'Canterbury NHS', cohortId: 'coh-009', cohortName: 'HR-L5-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 62, attendanceRate: 97, otjhCompleted: 70, otjhTarget: 120, ksbProgress: 60, evidenceCount: 20, nextCoaching: '19 Jun 2026', nextReview: '26 Jun 2026', lastContact: '9 Jun 2026', lastAttendanceDate: '8 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '7 Jun 2026', lastSubmittedEvidence: '30 May 2026', recentFlag: null, attendanceHistory: [96, 96, 97, 97, 97, 97], ksbHistory: [50, 52, 54, 56, 58, 60], email: 'zara.ahmed@example.com', employerEmail: 'workforce@canterbury.nhs.uk', employerPhone: '+44 1227 766877' },
-  { id: '18', name: 'Elias Wright', initials: 'EW', programme: 'Data Analyst L4', employer: 'Ashford Data', cohortId: 'coh-003', cohortName: 'DA-L4-2025A', group: 'Group A', status: 'high', enrollmentStatus: 'active', riskFlags: [], overallProgress: 90, attendanceRate: 100, otjhCompleted: 102, otjhTarget: 110, ksbProgress: 88, evidenceCount: 30, nextCoaching: '12 Jun 2026', nextReview: '19 Jun 2026', lastContact: '8 Jun 2026', lastAttendanceDate: '8 Jun 2026', lastProgressReview: '10 May 2026', lastReview: '10 May 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '1 Jun 2026', recentFlag: null, attendanceHistory: [100, 100, 100, 100, 100, 100], ksbHistory: [74, 78, 80, 83, 86, 88], email: 'elias.wright@example.com', employerEmail: 'team@ashforddata.co.uk', employerPhone: '+44 1233 610000' },
-  { id: '19', name: 'Luna Rivera', initials: 'LR', programme: 'Marketing Executive L4', employer: 'Southend Media', cohortId: 'coh-002', cohortName: 'MKT-L4-2025B', group: 'Group B', status: 'on-track', enrollmentStatus: 'break', riskFlags: [], overallProgress: 48, attendanceRate: 91, otjhCompleted: 54, otjhTarget: 120, ksbProgress: 44, evidenceCount: 15, nextCoaching: '21 Jun 2026', nextReview: '28 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '6 Jun 2026', lastProgressReview: '10 Apr 2026', lastReview: '10 Apr 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '20 May 2026', recentFlag: null, attendanceHistory: [90, 91, 91, 91, 92, 91], ksbHistory: [34, 36, 38, 40, 42, 44], email: 'luna.rivera@example.com', employerEmail: 'careers@southendmedia.co.uk', employerPhone: '+44 1702 215000' },
-  { id: '20', name: 'Theo Park', initials: 'TP', programme: 'Business Admin L3', employer: 'Dartford Council', cohortId: 'coh-006', cohortName: 'BA-L3-2025B', group: 'Group B', status: 'new-starter', enrollmentStatus: 'active', riskFlags: [], overallProgress: 18, attendanceRate: 100, otjhCompleted: 14, otjhTarget: 80, ksbProgress: 16, evidenceCount: 4, nextCoaching: '20 Jun 2026', nextReview: '27 Jun 2026', lastContact: '10 Jun 2026', lastAttendanceDate: '10 Jun 2026', lastProgressReview: '5 Jun 2026', lastReview: '5 Jun 2026', lastCoachingSession: '9 Jun 2026', lastSubmittedEvidence: '8 Jun 2026', recentFlag: 'Onboarding week 3', attendanceHistory: [100, 100, 100, 100, 100, 100], ksbHistory: [6, 8, 10, 12, 14, 16], email: 'theo.park@example.com', employerEmail: 'apprentices@dartford.gov.uk', employerPhone: '+44 1322 343000' },
-  { id: '21', name: 'Mia Duncan', initials: 'MD', programme: 'Digital Marketer L3', employer: 'Kent Digital', cohortId: 'coh-007', cohortName: 'DM-L3-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 54, attendanceRate: 93, otjhCompleted: 60, otjhTarget: 120, ksbProgress: 50, evidenceCount: 16, nextCoaching: '18 Jun 2026', nextReview: '25 Jun 2026', lastContact: '6 Jun 2026', lastAttendanceDate: '5 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '4 Jun 2026', lastSubmittedEvidence: '28 May 2026', recentFlag: null, attendanceHistory: [92, 93, 93, 94, 93, 93], ksbHistory: [40, 42, 44, 46, 48, 50], email: 'mia.duncan@example.com', employerEmail: 'hello@kentdigital.co.uk', employerPhone: '+44 1622 678000' },
-  { id: '22', name: 'Lucas Graham', initials: 'LG', programme: 'Software Developer L4', employer: 'Tech Kent Ltd', cohortId: 'coh-008', cohortName: 'SD-L4-2025A', group: 'Group A', status: 'at-risk', enrollmentStatus: 'active', riskFlags: ['Attendance 80%'], overallProgress: 30, attendanceRate: 80, otjhCompleted: 28, otjhTarget: 110, ksbProgress: 26, evidenceCount: 8, nextCoaching: '14 Jun 2026', nextReview: '21 Jun 2026', lastContact: '5 Jun 2026', lastAttendanceDate: '3 Jun 2026', lastProgressReview: '20 Apr 2026', lastReview: '20 Apr 2026', lastCoachingSession: '2 Jun 2026', lastSubmittedEvidence: '15 May 2026', recentFlag: 'Attendance concern', attendanceHistory: [86, 84, 82, 81, 80, 80], ksbHistory: [20, 21, 22, 23, 24, 26], email: 'lucas.graham@example.com', employerEmail: 'hello@techkent.co.uk', employerPhone: '+44 20 7946 0123' },
-  { id: '23', name: 'Chloe Adams', initials: 'CA', programme: 'Accountancy L3', employer: 'Canterbury Accounting', cohortId: 'coh-010', cohortName: 'ACC-L3-2025A', group: 'Group A', status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 65, attendanceRate: 96, otjhCompleted: 72, otjhTarget: 110, ksbProgress: 62, evidenceCount: 21, nextCoaching: '17 Jun 2026', nextReview: '24 Jun 2026', lastContact: '9 Jun 2026', lastAttendanceDate: '8 Jun 2026', lastProgressReview: '10 May 2026', lastReview: '10 May 2026', lastCoachingSession: '7 Jun 2026', lastSubmittedEvidence: '30 May 2026', recentFlag: null, attendanceHistory: [95, 95, 96, 96, 97, 96], ksbHistory: [52, 54, 56, 58, 60, 62], email: 'chloe.adams@example.com', employerEmail: 'contact@canterburyaccounting.co.uk', employerPhone: '+44 1227 788000' },
-  { id: '24', name: 'Ryan Cooper', initials: 'RC', programme: 'Project Manager L4', employer: 'BAM Construction', cohortId: 'coh-004', cohortName: 'PM-L4-2025A', group: 'Group A', status: 'high', enrollmentStatus: 'withdrawn', riskFlags: [], overallProgress: 82, attendanceRate: 98, otjhCompleted: 96, otjhTarget: 120, ksbProgress: 86, evidenceCount: 27, nextCoaching: '13 Jun 2026', nextReview: '20 Jun 2026', lastContact: '7 Jun 2026', lastAttendanceDate: '7 Jun 2026', lastProgressReview: '15 May 2026', lastReview: '15 May 2026', lastCoachingSession: '5 Jun 2026', lastSubmittedEvidence: '25 May 2026', recentFlag: null, attendanceHistory: [97, 98, 98, 98, 99, 98], ksbHistory: [72, 76, 78, 80, 84, 86], email: 'ryan.cooper@example.com', employerEmail: 'hr@bam.co.uk', employerPhone: '+44 20 7636 1000' },
-];
+interface CaseloadApiLearner {
+  id: string;
+  name: string;
+  initials: string;
+  employer: string;
+  cohortId: string;
+  cohortName: string;
+  group: string;
+  status: PerformanceStatus;
+  enrollmentStatus: Exclude<EnrollmentStatus, 'all'>;
+  riskFlags: string[];
+  overallProgress: number;
+  attendanceRate: number;
+  otjhCompleted: number;
+  otjhTarget: number;
+  otjhStatus?: string;
+  ksbCompleted?: number;
+  ksbTarget?: number;
+  ksbStatus?: string;
+  ksbProgress: number;
+  evidenceCount: number;
+  nextCoaching: string;
+  nextReview: string;
+  lastContact: string;
+  lastAttendanceDate: string;
+  lastProgressReview: string;
+  lastReview: string;
+  lastCoachingSession: string;
+  lastSubmittedEvidence: string;
+  recentFlag: string | null;
+  progressVariance?: string;
+  startDate?: string;
+  gatewayReviewDate?: string;
+  plannedEndDate?: string;
+  coachName?: string;
+  coachEmail?: string;
+  rawProgramStatus?: string;
+  coachRag?: string;
+  email?: string | null;
+  employerEmail?: string | null;
+  employerPhone?: string | null;
+}
 
-const THREAD_MAP: Record<string, string> = {
-  'Sophie Williams': 'th-01',
-  'Tom Richards': 'th-02',
-  'James Okonkwo': 'th-11',
-  'Aisha Patel': 'th-12',
-  'Sarah Mitchell': 'th-13',
-  'Emily Watson': 'th-07',
-  'David Chen': 'th-04',
-  'Liam Foster': 'th-10',
-  'Maya Kapoor': 'th-09',
-  'Oliver Thompson': 'th-14',
-  'Grace Liu': 'th-15',
-  'Noah Bennett': 'th-16',
-  'Isla Morgan': 'th-17',
-  'Jacob Hayes': 'th-18',
-  'Amara Osei': 'th-19',
-  'Harper Singh': 'th-20',
-  'Finn Murphy': 'th-21',
-  'Zara Ahmed': 'th-22',
-  'Elias Wright': 'th-23',
-  'Luna Rivera': 'th-24',
-  'Theo Park': 'th-25',
-  'Mia Duncan': 'th-26',
-  'Lucas Graham': 'th-27',
-  'Chloe Adams': 'th-28',
-  'Ryan Cooper': 'th-29',
-};
+interface CaseloadApiResponse {
+  owner?: {
+    name?: string;
+    email?: string;
+  };
+  learners?: CaseloadApiLearner[];
+}
 
-const EMPLOYER_THREAD_MAP: Record<string, string> = {
-  'Tim Hortons UK': 'th-03',
-  'Medway NHS Trust': 'th-31',
-  'Ashford Accounting': 'th-30',
-  'Kent County Council': 'th-32',
-  'Canterbury Creative': 'th-33',
-  'Tech Kent Ltd': 'th-34',
-  'BAM Construction': 'th-08',
-  'Southend Council': 'th-35',
-  'Dartford Council': 'th-36',
-  'Tonbridge Council': 'th-37',
-  'Gravesham Ltd': 'th-38',
-  'Medway Tech': 'th-39',
-  'Kent Accountants': 'th-40',
-  'Invicta Health': 'th-50',
-  'Kent Digital': 'th-46',
-  'Canterbury Accounting': 'th-48',
-  'Southend Media': 'th-52',
-  'Ashford Data': 'th-51',
-  'Canterbury NHS': 'th-53',
-};
-
-const PROGRAMMES = [...new Set(LEARNERS.map(l => l.programme))].sort();
-const GROUPS = [...new Set(LEARNERS.map(l => l.group))].sort();
-
+const coachNav = roleNavMap.coach;
+const THREAD_MAP: Record<string, string> = {};
+const EMPLOYER_THREAD_MAP: Record<string, string> = {};
 const PAGE_SIZE = 10;
+const DEFAULT_COACH_NAME = 'Med Maher';
+const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
+const EMPTY_VALUE = '--';
+const API_ENDPOINT = '/coach_api/coach/caseload';
+
+function displayValue(value?: string | null): string {
+  if (!value) return EMPTY_VALUE;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === 'â€”' || trimmed === '—') return EMPTY_VALUE;
+  return trimmed;
+}
+
+function normalizeLearner(learner: CaseloadApiLearner): Learner {
+  const startDate = displayValue(learner.startDate || learner.lastAttendanceDate);
+  const gatewayReviewDate = displayValue(
+    learner.gatewayReviewDate || learner.lastProgressReview || learner.lastReview || learner.nextReview,
+  );
+  const plannedEndDate = displayValue(
+    learner.plannedEndDate || learner.nextCoaching || learner.lastCoachingSession,
+  );
+
+  return {
+    ...learner,
+    nextCoaching: displayValue(learner.nextCoaching),
+    nextReview: displayValue(learner.nextReview),
+    lastContact: displayValue(learner.lastContact),
+    lastAttendanceDate: startDate,
+    lastProgressReview: gatewayReviewDate,
+    lastReview: gatewayReviewDate,
+    lastCoachingSession: plannedEndDate,
+    lastSubmittedEvidence: displayValue(learner.lastSubmittedEvidence),
+    progressVariance: displayValue(learner.progressVariance || '0%'),
+    startDate,
+    gatewayReviewDate,
+    plannedEndDate,
+    coachName: displayValue(learner.coachName || DEFAULT_COACH_NAME),
+    coachEmail: displayValue(learner.coachEmail || DEFAULT_COACH_EMAIL),
+    rawProgramStatus: displayValue(learner.rawProgramStatus),
+    coachRag: displayValue(learner.coachRag),
+    otjhStatus: displayValue(learner.otjhStatus),
+    ksbStatus: displayValue(learner.ksbStatus),
+    email: learner.email || undefined,
+    employerEmail: learner.employerEmail || undefined,
+    employerPhone: learner.employerPhone || undefined,
+  };
+}
+
+function parseVariance(value: string): number {
+  const match = value.match(/-?\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function hasActiveTextSelection(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return Boolean(window.getSelection()?.toString().trim());
+}
+
+function getProgramStatusStyle(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'withdrawn') {
+    return { bg: 'bg-foreground-100 border-foreground-200/50', text: 'text-foreground-500' };
+  }
+  if (normalized === 'break' || normalized === 'onbreak') {
+    return { bg: 'bg-amber-50 border-amber-200/50', text: 'text-amber-700' };
+  }
+  if (normalized === 'readytoenrol') {
+    return { bg: 'bg-primary-50 border-primary-200/50', text: 'text-primary-700' };
+  }
+  if (normalized === 'active') {
+    return { bg: 'bg-emerald-50 border-emerald-200/50', text: 'text-emerald-700' };
+  }
+  return { bg: 'bg-background-100 border-foreground-200/50', text: 'text-foreground-600' };
+}
+
+function getProgramStatusKey(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'active') return 'active';
+  if (normalized === 'withdrawn') return 'withdrawn';
+  if (normalized === 'break' || normalized === 'onbreak') return 'break';
+  if (normalized === 'readytoenrol') return 'ready-to-enrol';
+  return 'other';
+}
+
+function getCoachRagStyle(value?: string) {
+  const normalized = displayValue(value).toLowerCase();
+  if (normalized === 'red') {
+    return { bg: 'bg-red-50 border-red-200/50', text: 'text-red-700' };
+  }
+  if (normalized === 'amber') {
+    return { bg: 'bg-amber-50 border-amber-200/50', text: 'text-amber-700' };
+  }
+  if (normalized === 'green') {
+    return { bg: 'bg-emerald-50 border-emerald-200/50', text: 'text-emerald-700' };
+  }
+  return { bg: 'bg-background-100 border-foreground-200/50', text: 'text-foreground-600' };
+}
+
+function getOtjhStatusKey(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'ontrack') return 'on-track';
+  if (normalized === 'needattention') return 'need-attention';
+  if (normalized === 'atrisk') return 'at-risk';
+  return 'other';
+}
+
+function getOtjhStatusRank(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'needattention') return 0;
+  if (normalized === 'ontrack') return 1;
+  return 2;
+}
+
+function getOtjhStatusMeta(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'ontrack') {
+    return { dot: 'bg-emerald-500', text: 'text-emerald-700' };
+  }
+  if (normalized === 'needattention') {
+    return { dot: 'bg-amber-500', text: 'text-amber-700' };
+  }
+  return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
+}
+
+function getOtjhSortValue(status?: string, variance?: string) {
+  return (getOtjhStatusRank(status) * 1000) + parseVariance(variance || '0%');
+}
+
+function getKsbStatusMeta(value?: string) {
+  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
+  if (normalized === 'completed') {
+    return { dot: 'bg-emerald-500', text: 'text-emerald-700' };
+  }
+  if (normalized === 'inprogress') {
+    return { dot: 'bg-amber-500', text: 'text-amber-700' };
+  }
+  if (normalized === 'notstarted') {
+    return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
+  }
+  return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
+}
+
+function formatRatio(completed?: number, target?: number) {
+  const safeCompleted = typeof completed === 'number' ? completed : null;
+  const safeTarget = typeof target === 'number' ? target : null;
+  if (safeCompleted === null || safeTarget === null || safeTarget <= 0) {
+    return EMPTY_VALUE;
+  }
+  return `${safeCompleted}/${safeTarget}`;
+}
+
+function sortCoachRagOptions(values: string[]) {
+  const priority: Record<string, number> = {
+    Red: 0,
+    Amber: 1,
+    Green: 2,
+    '--': 3,
+  };
+  return [...values].sort((a, b) => {
+    const priorityDiff = (priority[a] ?? 99) - (priority[b] ?? 99);
+    return priorityDiff !== 0 ? priorityDiff : a.localeCompare(b);
+  });
+}
 
 function DonutChart({ percentage, size = 72, strokeWidth = 6, color = 'primary', label }: { percentage: number; size?: number; strokeWidth?: number; color?: string; label?: string }) {
   const radius = (size - strokeWidth) / 2;
@@ -210,27 +330,148 @@ function DonutChart({ percentage, size = 72, strokeWidth = 6, color = 'primary',
 
 export default function CoachCaseload() {
   const navigate = useNavigate();
+  const [ownerName, setOwnerName] = useState(DEFAULT_COACH_NAME);
+  const [ownerEmail, setOwnerEmail] = useState(DEFAULT_COACH_EMAIL);
+  const [learners, setLearners] = useState<Learner[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [cohortFilter, setCohortFilter] = useState('all');
-  const [programmeFilter, setProgrammeFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
-  const [enrollmentStatusFilter, setEnrollmentStatusFilter] = useState<EnrollmentStatus>('all');
-  const [ragFilter, setRagFilter] = useState<PerformanceStatus | 'all'>('all');
+  const [programStatusFilter, setProgramStatusFilter] = useState('all');
+  const [coachRagFilter, setCoachRagFilter] = useState('all');
+  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<'name' | 'progress' | 'attendance' | 'ksb' | 'otjh'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showEmployerDropdown, setShowEmployerDropdown] = useState(false);
+  const [isTableDragging, setIsTableDragging] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const tableDragStateRef = useRef({
+    isPointerDown: false,
+    isDragging: false,
+    pointerId: null as number | null,
+    startX: 0,
+    scrollLeft: 0,
+  });
+  const suppressRowClickRef = useRef(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadCaseload() {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch(API_ENDPOINT, { signal: controller.signal });
+        if (!response.ok) {
+          throw new Error(`Request failed with status ${response.status}`);
+        }
+
+        const data: CaseloadApiResponse = await response.json();
+        setOwnerName(data.owner?.name || DEFAULT_COACH_NAME);
+        setOwnerEmail(data.owner?.email || DEFAULT_COACH_EMAIL);
+        setLearners((data.learners || []).map(normalizeLearner));
+      } catch (err) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        console.error('Unable to load coach caseload', err);
+        setError('Unable to load live learner data right now.');
+        setLearners([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadCaseload();
+
+    return () => controller.abort();
+  }, []);
+
+  const cohortOptions = useMemo(
+    () =>
+      Array.from(new Map(learners.map(learner => [learner.cohortId, learner.cohortName])).entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [learners],
+  );
+
+  const groupOptions = useMemo(
+    () =>
+      [...new Set(learners.map(learner => learner.group))]
+        .sort((a, b) => a.localeCompare(b))
+        .map(group => ({ value: group, label: group })),
+    [learners],
+  );
+
+  const programStatusOptions = useMemo(
+    () =>
+      [...new Set(learners.map(learner => displayValue(learner.rawProgramStatus)))]
+        .sort((a, b) => a.localeCompare(b))
+        .map(status => ({ value: status, label: status })),
+    [learners],
+  );
+
+  const coachRagOptions = useMemo(
+    () =>
+      sortCoachRagOptions([...new Set(learners.map(learner => displayValue(learner.coachRag)))])
+        .map(status => ({ value: status, label: status })),
+    [learners],
+  );
+
+  const summaryCounts = useMemo(
+    () => ({
+      total: learners.length,
+      active: learners.filter(learner => getProgramStatusKey(learner.rawProgramStatus) === 'active').length,
+      withdrawn: learners.filter(learner => getProgramStatusKey(learner.rawProgramStatus) === 'withdrawn').length,
+      break: learners.filter(learner => getProgramStatusKey(learner.rawProgramStatus) === 'break').length,
+      readyToEnrol: learners.filter(learner => getProgramStatusKey(learner.rawProgramStatus) === 'ready-to-enrol').length,
+      onTrack: learners.filter(learner => getOtjhStatusKey(learner.otjhStatus) === 'on-track').length,
+      needAttention: learners.filter(learner => getOtjhStatusKey(learner.otjhStatus) === 'need-attention').length,
+      atRisk: learners.filter(learner => getOtjhStatusKey(learner.otjhStatus) === 'at-risk').length,
+    }),
+    [learners],
+  );
+
+  const applySummaryFilter = (list: Learner[]) => {
+    switch (summaryFilter) {
+      case 'active':
+      case 'withdrawn':
+      case 'break':
+      case 'ready-to-enrol':
+        return list.filter(learner => getProgramStatusKey(learner.rawProgramStatus) === summaryFilter);
+      case 'on-track':
+      case 'need-attention':
+      case 'at-risk':
+        return list.filter(learner => getOtjhStatusKey(learner.otjhStatus) === summaryFilter);
+      default:
+        return list;
+    }
+  };
 
   const filtered = useMemo(() => {
-    let list = [...LEARNERS];
-    if (enrollmentStatusFilter !== 'all') list = list.filter(l => l.enrollmentStatus === enrollmentStatusFilter);
-    if (ragFilter !== 'all') list = list.filter(l => l.status === ragFilter);
+    let list = [...learners];
+    list = applySummaryFilter(list);
+    if (programStatusFilter !== 'all') list = list.filter(l => displayValue(l.rawProgramStatus) === programStatusFilter);
+    if (coachRagFilter !== 'all') list = list.filter(l => displayValue(l.coachRag) === coachRagFilter);
     if (cohortFilter !== 'all') list = list.filter(l => l.cohortId === cohortFilter);
-    if (programmeFilter !== 'all') list = list.filter(l => l.programme === programmeFilter);
     if (groupFilter !== 'all') list = list.filter(l => l.group === groupFilter);
-    if (search) list = list.filter(l => l.name.toLowerCase().includes(search.toLowerCase()) || l.programme.toLowerCase().includes(search.toLowerCase()) || l.employer.toLowerCase().includes(search.toLowerCase()));
+    if (search) {
+      const normalizedSearch = search.toLowerCase();
+      list = list.filter(l =>
+        l.name.toLowerCase().includes(normalizedSearch)
+        || l.cohortName.toLowerCase().includes(normalizedSearch)
+        || l.group.toLowerCase().includes(normalizedSearch)
+        || l.employer.toLowerCase().includes(normalizedSearch)
+      );
+    }
     list.sort((a, b) => {
       let va: number | string = 0, vb: number | string = 0;
       switch (sortKey) {
@@ -238,13 +479,13 @@ export default function CoachCaseload() {
         case 'progress': va = a.overallProgress; vb = b.overallProgress; break;
         case 'attendance': va = a.attendanceRate; vb = b.attendanceRate; break;
         case 'ksb': va = a.ksbProgress; vb = b.ksbProgress; break;
-        case 'otjh': va = a.otjhCompleted / a.otjhTarget; vb = b.otjhCompleted / b.otjhTarget; break;
+        case 'otjh': va = getOtjhSortValue(a.otjhStatus, a.progressVariance); vb = getOtjhSortValue(b.otjhStatus, b.progressVariance); break;
       }
       if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb as string) : (vb as string).localeCompare(va);
       return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number);
     });
     return list;
-  }, [enrollmentStatusFilter, ragFilter, cohortFilter, programmeFilter, groupFilter, search, sortKey, sortDir]);
+  }, [learners, summaryFilter, programStatusFilter, coachRagFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -253,14 +494,97 @@ export default function CoachCaseload() {
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, safePage]);
 
-  const selectedLearner = LEARNERS.find(l => l.id === selectedLearnerId) || null;
-
-  const activeCount = LEARNERS.filter(l => l.enrollmentStatus === 'active').length;
-  const breakCount = LEARNERS.filter(l => l.enrollmentStatus === 'break').length;
-  const withdrawnCount = LEARNERS.filter(l => l.enrollmentStatus === 'withdrawn').length;
+  const selectedLearner = learners.find(learner => learner.id === selectedLearnerId) || null;
 
   const handleSort = (key: typeof sortKey) => {
     if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc'); } else { setSortKey(key); setSortDir('asc'); }
+  };
+
+  const handleSummaryCardClick = (filter: SummaryFilter) => {
+    setSummaryFilter(current => current === filter ? 'all' : filter);
+    setCurrentPage(1);
+  };
+
+  const endTableDrag = () => {
+    const dragState = tableDragStateRef.current;
+    const wasDragging = dragState.isDragging;
+    dragState.isPointerDown = false;
+    dragState.isDragging = false;
+    dragState.pointerId = null;
+    setIsTableDragging(false);
+
+    if (wasDragging) {
+      suppressRowClickRef.current = true;
+      window.setTimeout(() => {
+        suppressRowClickRef.current = false;
+      }, 0);
+    }
+  };
+
+  const handleTablePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const container = tableScrollRef.current;
+    if (!container || container.scrollWidth <= container.clientWidth) {
+      return;
+    }
+
+    if (event.button !== 0) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, input, select, textarea, label')) {
+      return;
+    }
+    if (target.closest('[data-allow-selection="true"]')) {
+      return;
+    }
+
+    tableDragStateRef.current = {
+      isPointerDown: true,
+      isDragging: false,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: container.scrollLeft,
+    };
+
+    container.setPointerCapture(event.pointerId);
+  };
+
+  const handleTablePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const container = tableScrollRef.current;
+    const dragState = tableDragStateRef.current;
+    if (!container || !dragState.isPointerDown) {
+      return;
+    }
+
+    const deltaX = event.clientX - dragState.startX;
+    if (!dragState.isDragging && Math.abs(deltaX) > 6) {
+      dragState.isDragging = true;
+      setIsTableDragging(true);
+    }
+
+    if (dragState.isDragging) {
+      container.scrollLeft = dragState.scrollLeft - deltaX;
+      event.preventDefault();
+    }
+  };
+
+  const handleTablePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const container = tableScrollRef.current;
+    if (container && tableDragStateRef.current.pointerId !== null) {
+      container.releasePointerCapture(event.pointerId);
+    }
+    endTableDrag();
+  };
+
+  const handleRowSelection = (learnerId: string, isSelected: boolean) => {
+    if (suppressRowClickRef.current) {
+      return;
+    }
+    if (hasActiveTextSelection()) {
+      return;
+    }
+    setSelectedLearnerId(isSelected ? null : learnerId);
   };
 
   const handleSendMessage = () => {
@@ -313,14 +637,8 @@ export default function CoachCaseload() {
     'new-starter': { bg: 'bg-primary-50 border-primary-200/50', text: 'text-primary-700', label: 'New Starter' },
   };
 
-  const enrollmentConfig: Record<string, { bg: string; text: string; label: string }> = {
-    'active': { bg: 'bg-emerald-50 border-emerald-200/50', text: 'text-emerald-700', label: 'Active' },
-    'break': { bg: 'bg-amber-50 border-amber-200/50', text: 'text-amber-700', label: 'Break' },
-    'withdrawn': { bg: 'bg-foreground-100 border-foreground-200/50', text: 'text-foreground-500', label: 'Withdrawn' },
-  };
-
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Learner Overview" pageSubtitle="Complete caseload with filters by cohort, programme, and group" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Learner Overview" pageSubtitle="Complete caseload with filters by cohort, group, and live status data" userName={ownerName} userRole="Progress Coach">
       <div className="p-3 md:p-6 space-y-4 md:space-y-5">
 
         {/* Hero Banner — Professional */}
@@ -329,29 +647,13 @@ export default function CoachCaseload() {
           <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
           <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
           
-          {/* Right side image */}
-          <div className="absolute right-8 bottom-0 top-0 w-1/2 hidden md:flex items-end justify-end pointer-events-none">
-            <img
-              src="https://public.readdy.ai/ai/img_res/a2a00f53-9475-4f34-8fa2-a5787da489ce.png"
-              alt="Learners"
-              className="h-full w-auto object-contain object-bottom"
-              style={{ maxHeight: '115%', transform: 'translateY(8%)' }}
-            />
-          </div>
-          
           <div className="relative h-full flex flex-col justify-end p-6 md:p-8">
             <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-6">
               {/* Left: Title & subtitle */}
               <div className="flex-1 min-w-0 max-w-xl">
-                <div className="flex items-center gap-2.5 mb-2">
-                  <span className="w-8 h-8 rounded-lg bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                    <i className="ri-folder-user-line text-white text-sm"></i>
-                  </span>
-                  <span className="text-[10px] font-semibold text-white/50 uppercase tracking-widest">Learner Overview</span>
-                </div>
                 <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">My Learners</h1>
                 <p className="text-[13px] text-white/50 max-w-lg">
-                  Manage your complete caseload. Filter by cohort, programme, group, and enrollment status to track progress.
+                  Manage your complete caseload. Filter by cohort, group, and enrollment status to track progress.
                 </p>
               </div>
             </div>
@@ -359,13 +661,15 @@ export default function CoachCaseload() {
         </section>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-3">
-          <MiniStatCard label="Total" value={String(LEARNERS.length)} icon="ri-group-line" color="primary" />
-          <MiniStatCard label="Active" value={String(activeCount)} icon="ri-check-double-line" color="emerald" />
-          <MiniStatCard label="At Risk" value={String(LEARNERS.filter(l => l.status === 'at-risk').length)} icon="ri-alarm-warning-line" color="red" />
-          <MiniStatCard label="On Track" value={String(LEARNERS.filter(l => l.status === 'on-track').length)} icon="ri-thumb-up-line" color="emerald" />
-          <MiniStatCard label="High Perf." value={String(LEARNERS.filter(l => l.status === 'high').length)} icon="ri-star-line" color="accent" />
-          <MiniStatCard label="New Starters" value={String(LEARNERS.filter(l => l.status === 'new-starter').length)} icon="ri-user-add-line" color="primary" />
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2 md:gap-3">
+          <MiniStatCard label="Total" value={String(summaryCounts.total)} icon="ri-group-line" color="primary" active={summaryFilter === 'all'} onClick={() => handleSummaryCardClick('all')} />
+          <MiniStatCard label="Active" value={String(summaryCounts.active)} icon="ri-check-double-line" color="emerald" active={summaryFilter === 'active'} onClick={() => handleSummaryCardClick('active')} />
+          <MiniStatCard label="Withdrawn" value={String(summaryCounts.withdrawn)} icon="ri-user-unfollow-line" color="foreground" active={summaryFilter === 'withdrawn'} onClick={() => handleSummaryCardClick('withdrawn')} />
+          <MiniStatCard label="Break" value={String(summaryCounts.break)} icon="ri-pause-circle-line" color="amber" active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
+          <MiniStatCard label="Ready to Enrol" value={String(summaryCounts.readyToEnrol)} icon="ri-user-add-line" color="primary" active={summaryFilter === 'ready-to-enrol'} onClick={() => handleSummaryCardClick('ready-to-enrol')} />
+          <MiniStatCard label="On Track" value={String(summaryCounts.onTrack)} icon="ri-thumb-up-line" color="emerald" active={summaryFilter === 'on-track'} onClick={() => handleSummaryCardClick('on-track')} />
+          <MiniStatCard label="Need Attention" value={String(summaryCounts.needAttention)} icon="ri-error-warning-line" color="amber" active={summaryFilter === 'need-attention'} onClick={() => handleSummaryCardClick('need-attention')} />
+          <MiniStatCard label="At Risk" value={String(summaryCounts.atRisk)} icon="ri-alarm-warning-line" color="red" active={summaryFilter === 'at-risk'} onClick={() => handleSummaryCardClick('at-risk')} />
         </div>
 
         {/* Filters Bar */}
@@ -385,42 +689,26 @@ export default function CoachCaseload() {
                 label="Cohort"
                 value={cohortFilter}
                 onChange={(v) => { setCohortFilter(v); setCurrentPage(1); }}
-                options={COHORTS.map(c => ({ value: c.id, label: c.name }))}
-              />
-              <FilterDropdown
-                label="Programme"
-                value={programmeFilter}
-                onChange={(v) => { setProgrammeFilter(v); setCurrentPage(1); }}
-                options={PROGRAMMES.map(p => ({ value: p, label: p }))}
+                options={cohortOptions}
               />
               <FilterDropdown
                 label="Group"
                 value={groupFilter}
                 onChange={(v) => { setGroupFilter(v); setCurrentPage(1); }}
-                options={GROUPS.map(g => ({ value: g, label: g }))}
+                options={groupOptions}
               />
               <FilterDropdown
-                label="Status"
-                value={enrollmentStatusFilter}
-                onChange={(v) => { setEnrollmentStatusFilter(v as EnrollmentStatus); setCurrentPage(1); }}
-                options={[
-                  { value: 'active', label: `Active (${activeCount})` },
-                  { value: 'break', label: `Break (${breakCount})` },
-                  { value: 'withdrawn', label: `Withdrawn (${withdrawnCount})` },
-                ]}
+                label="Program Status"
+                value={programStatusFilter}
+                onChange={(v) => { setProgramStatusFilter(v); setCurrentPage(1); }}
+                options={programStatusOptions}
               />
               <div className="w-px h-5 bg-background-200/70"></div>
-              {/* RAG Filter Dropdown */}
               <FilterDropdown
-                label="RAG"
-                value={ragFilter}
-                onChange={(v) => { setRagFilter(v as PerformanceStatus | 'all'); setCurrentPage(1); }}
-                options={[
-                  { value: 'at-risk', label: `At Risk (${LEARNERS.filter(l => l.status === 'at-risk').length})` },
-                  { value: 'on-track', label: `On Track (${LEARNERS.filter(l => l.status === 'on-track').length})` },
-                  { value: 'high', label: `High Perf. (${LEARNERS.filter(l => l.status === 'high').length})` },
-                  { value: 'new-starter', label: `New Starters (${LEARNERS.filter(l => l.status === 'new-starter').length})` },
-                ]}
+                label="Coach RAG"
+                value={coachRagFilter}
+                onChange={(v) => { setCoachRagFilter(v); setCurrentPage(1); }}
+                options={coachRagOptions}
               />
             </div>
           </div>
@@ -428,176 +716,226 @@ export default function CoachCaseload() {
 
         {/* Data Table */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="border-b border-foreground-200/60">
-                  <ThSort label="Learner" sortKey="name" current={sortKey} dir={sortDir} onClick={() => handleSort('name')} className="pl-4 pr-3 py-3" />
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Programme</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Cohort</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Group</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Enrol. Status</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Perf. Status</th>
-                  <ThSort label="Progress" sortKey="progress" current={sortKey} dir={sortDir} onClick={() => handleSort('progress')} />
-                  <ThSort label="KSB" sortKey="ksb" current={sortKey} dir={sortDir} onClick={() => handleSort('ksb')} />
-                  <ThSort label="Att." sortKey="attendance" current={sortKey} dir={sortDir} onClick={() => handleSort('attendance')} />
-                  <ThSort label="OTJH" sortKey="otjh" current={sortKey} dir={sortDir} onClick={() => handleSort('otjh')} />
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Last Attendance</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Last Progress Review</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Trend</th>
-                  <th className="pr-4 py-3"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-background-200/30">
-                {paginated.map(learner => {
-                  const sc = statusConfig[learner.status] || statusConfig['on-track'];
-                  const ec = enrollmentConfig[learner.enrollmentStatus] || enrollmentConfig['active'];
-                  const isSel = selectedLearnerId === learner.id;
-                  const lastAttDays = getDaysSince(learner.lastAttendanceDate);
-                  const lastAttSev = dateSeverity(lastAttDays, DATE_THRESHOLDS.lastAttendance);
-                  const lastAttBg = lastAttDays >= DATE_THRESHOLDS.lastAttendance.amber ? DATE_BG[lastAttSev] : '';
-                  const lastAttColor = lastAttDays >= DATE_THRESHOLDS.lastAttendance.amber ? DATE_COLORS[lastAttSev] : '';
-                  const lastAttDotColor = lastAttDays >= DATE_THRESHOLDS.lastAttendance.amber ? (lastAttDays >= DATE_THRESHOLDS.lastAttendance.red ? 'bg-red-500' : 'bg-amber-500') : '';
-                  const lastReviewDays = getDaysSince(learner.lastProgressReview || learner.lastReview);
-                  const lastReviewSev = dateSeverity(lastReviewDays, DATE_THRESHOLDS.lastReview);
-                  const lastReviewBg = lastReviewSev !== 'normal' ? DATE_BG[lastReviewSev] : '';
-                  const lastReviewColor = lastReviewSev !== 'normal' ? DATE_COLORS[lastReviewSev] : '';
-                  const lastReviewDot = lastReviewSev !== 'normal' ? (lastReviewSev === 'red' ? 'bg-red-500' : 'bg-amber-500') : '';
-                  return (
-                    <tr
-                      key={learner.id}
-                      onClick={() => setSelectedLearnerId(isSel ? null : learner.id)}
-                      className={`transition-smooth cursor-pointer ${isSel ? 'bg-primary-50/30' : 'hover:bg-background-100/50'}`}
-                    >
-                      <td className="pl-4 pr-3 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div
-                            onClick={(e) => { e.stopPropagation(); navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } }); }}
-                            className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ring-1.5 cursor-pointer hover:scale-110 transition-transform ${learner.status === 'at-risk' ? 'bg-red-100 text-red-700 ring-red-200' : learner.status === 'high' ? 'bg-accent-100 text-accent-700 ring-accent-200' : learner.status === 'new-starter' ? 'bg-primary-100 text-primary-700 ring-primary-200' : 'bg-emerald-100 text-emerald-700 ring-emerald-200'}`}
-                            title="View profile"
-                          >
-                            <span className="text-[11px] font-bold">{learner.initials}</span>
-                          </div>
-                          <div className="min-w-0">
-                            <p
-                              onClick={(e) => { e.stopPropagation(); navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } }); }}
-                              className="text-[12px] font-semibold text-foreground-900 truncate cursor-pointer hover:text-primary-600 hover:underline transition-colors"
-                              title="View profile"
-                            >
-                              {learner.name}
-                            </p>
-                            <p className="text-[10px] text-foreground-400 truncate">{learner.employer}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-600 whitespace-nowrap max-w-[140px] truncate">{learner.programme}</td>
-                      <td className="px-3 py-2.5">
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500 whitespace-nowrap">{learner.cohortName}</span>
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{learner.group}</td>
-                      <td className="px-3 py-2.5">
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${ec.bg} ${ec.text} whitespace-nowrap`}>{ec.label}</span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${sc.bg} ${sc.text} whitespace-nowrap`}>{sc.label}</span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-10 bg-background-200 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
-                          </div>
-                          <span className="text-[11px] font-semibold text-foreground-700 w-7 text-right">{learner.overallProgress}%</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`text-[11px] font-semibold ${learner.ksbProgress >= 70 ? 'text-emerald-600' : learner.ksbProgress >= 40 ? 'text-foreground-700' : 'text-red-600'}`}>{learner.ksbProgress}%</span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className={`text-[11px] font-semibold ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{learner.attendanceRate}%</span>
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <span className="text-[11px] font-medium text-foreground-600 whitespace-nowrap">{learner.otjhCompleted}/{learner.otjhTarget}</span>
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1 ${lastAttBg}`}>
-                          {lastAttDays >= DATE_THRESHOLDS.lastAttendance.amber && <span className={`inline-block w-1.5 h-1.5 rounded-full ${lastAttDotColor}`}></span>}
-                          <span className={`font-medium ${lastAttColor}`}>{learner.lastAttendanceDate}</span>
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">
-                        {(() => {
-                          const sev = dateSeverity(getDaysSince(learner.lastProgressReview || learner.lastReview), DATE_THRESHOLDS.lastReview);
-                          const val = learner.lastProgressReview || learner.lastReview;
-                          return (
-                            <span className={`inline-flex items-center gap-1 ${sev !== 'normal' ? DATE_BG[sev] : ''}`}>
-                              {sev !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${sev === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                              <span className={`font-medium ${sev !== 'normal' ? DATE_COLORS[sev] : ''}`}>{val}</span>
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <SparklineChart data={learner.attendanceHistory} width={60} height={22} color={learner.attendanceRate >= 90 ? 'emerald' : learner.attendanceRate >= 80 ? 'amber' : 'red'} strokeWidth={1.2} showDots={false} showFill />
-                      </td>
-                      <td className="pr-4 py-2.5">
-                        <i className={`text-foreground-300 text-sm ${isSel ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {filtered.length === 0 && (
+          {loading ? (
             <div className="py-12 text-center">
-              <i className="ri-search-line text-foreground-300 text-3xl mb-2 block"></i>
-              <p className="text-sm text-foreground-400">No learners match your filters</p>
-              <button onClick={() => { setEnrollmentStatusFilter('all'); setCohortFilter('all'); setProgrammeFilter('all'); setGroupFilter('all'); setSearch(''); setCurrentPage(1); }} className="mt-2 text-[11px] font-medium text-primary-600 hover:text-primary-700 cursor-pointer">
-                Clear all filters
-              </button>
+              <i className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></i>
+              <p className="text-sm text-foreground-500">Loading live learner data...</p>
             </div>
-          )}
+          ) : error ? (
+            <div className="py-12 text-center">
+              <i className="ri-error-warning-line text-red-500 text-3xl mb-2 block"></i>
+              <p className="text-sm text-foreground-600">{error}</p>
+              <p className="text-[11px] text-foreground-400 mt-1">{ownerEmail}</p>
+            </div>
+          ) : (
+            <>
+              <div
+                ref={tableScrollRef}
+                className={`overflow-x-auto ${isTableDragging ? 'cursor-grabbing select-none' : ''}`}
+                onPointerDown={handleTablePointerDown}
+                onPointerMove={handleTablePointerMove}
+                onPointerUp={handleTablePointerUp}
+                onPointerLeave={endTableDrag}
+                onPointerCancel={endTableDrag}
+                style={{ touchAction: 'pan-y' }}
+              >
+                <table className="w-full table-fixed text-left">
+                  <thead>
+                    <tr className="border-b border-foreground-200/60">
+                      <ThSort label="Learner" sortKey="name" current={sortKey} dir={sortDir} onClick={() => handleSort('name')} className="sticky left-0 z-20 w-[220px] bg-background-50 pl-3 pr-2 py-2.5 text-[9px]" />
+                      <th className="w-[170px] px-2 py-2.5 text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Cohort</th>
+                      <th className="w-[185px] px-2 py-2.5 text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Group</th>
+                      <th className="w-[88px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Coach RAG</th>
+                      <th className="w-[108px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Program Status</th>
+                      <ThSort label="OTJH" sortKey="otjh" current={sortKey} dir={sortDir} onClick={() => handleSort('otjh')} className="w-[102px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="KSB" sortKey="ksb" current={sortKey} dir={sortDir} onClick={() => handleSort('ksb')} className="w-[80px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="Components" sortKey="attendance" current={sortKey} dir={sortDir} onClick={() => handleSort('attendance')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="Progress" sortKey="progress" current={sortKey} dir={sortDir} onClick={() => handleSort('progress')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
+                      <th className="w-[88px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Start Date</th>
+                      <th className="w-[96px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Gateway Review</th>
+                      <th className="w-[48px] pr-3 py-2.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-background-200/30">
+                    {paginated.map(learner => {
+                      const isSel = selectedLearnerId === learner.id;
+                      const variance = parseVariance(learner.progressVariance);
+                      const varianceTextClass = variance < 0
+                        ? 'text-red-600'
+                        : variance > 0
+                          ? 'text-emerald-600'
+                          : 'text-foreground-700';
+                      const programStatusStyle = getProgramStatusStyle(learner.rawProgramStatus);
+                      const coachRagStyle = getCoachRagStyle(learner.coachRag);
+                      const ksbStatusMeta = getKsbStatusMeta(learner.ksbStatus);
+                      const otjhStatusMeta = getOtjhStatusMeta(learner.otjhStatus);
 
-          {/* Pagination */}
-          {filtered.length > 0 && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-foreground-200/60 bg-background-100/30">
-              <span className="text-[11px] text-foreground-400">
-                Showing <strong className="text-foreground-700">{Math.min((safePage - 1) * PAGE_SIZE + 1, filtered.length)}&ndash;{Math.min(safePage * PAGE_SIZE, filtered.length)}</strong> of <strong className="text-foreground-700">{filtered.length}</strong> learners
-              </span>
-
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
-                >
-                  <i className="ri-arrow-left-s-line text-sm"></i>
-                </button>
-
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold cursor-pointer transition-smooth ${safePage === page ? 'bg-primary-500 text-white' : 'text-foreground-500 hover:bg-background-200/50'}`}
-                  >
-                    {page}
-                  </button>
-                ))}
-
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
-                >
-                  <i className="ri-arrow-right-s-line text-sm"></i>
-                </button>
+                      return (
+                        <tr
+                          key={learner.id}
+                          onClick={() => handleRowSelection(learner.id, isSel)}
+                          className={`group transition-smooth ${isTableDragging ? 'cursor-grabbing' : 'cursor-grab'} ${isSel ? 'bg-primary-50/30' : 'hover:bg-background-100/50'}`}
+                        >
+                          <td className={`sticky left-0 z-10 pl-3 pr-2 py-2 ${isSel ? 'bg-primary-50/30' : 'bg-background-50 group-hover:bg-background-100/50'}`}>
+                            <div className="flex items-center gap-2">
+                              <div
+                                onClick={(e) => { e.stopPropagation(); navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } }); }}
+                                className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ring-1.5 cursor-pointer hover:scale-110 transition-transform ${learner.status === 'at-risk' ? 'bg-red-100 text-red-700 ring-red-200' : learner.status === 'high' ? 'bg-accent-100 text-accent-700 ring-accent-200' : learner.status === 'new-starter' ? 'bg-primary-100 text-primary-700 ring-primary-200' : 'bg-emerald-100 text-emerald-700 ring-emerald-200'}`}
+                                title="View profile"
+                              >
+                                <span className="text-[10px] font-bold">{learner.initials}</span>
+                              </div>
+                              <div className="min-w-0">
+                                <p
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (hasActiveTextSelection()) {
+                                      return;
+                                    }
+                                    navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } });
+                                  }}
+                                  data-allow-selection="true"
+                                  className="select-text text-[11px] font-semibold text-foreground-900 truncate cursor-pointer hover:text-primary-600 hover:underline transition-colors"
+                                  title="View profile"
+                                >
+                                  {learner.name}
+                                </p>
+                                <p data-allow-selection="true" className="cursor-text select-text text-[9px] text-foreground-400 truncate">{learner.employer}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-[10px] text-foreground-600">
+                            <span data-allow-selection="true" className="inline-flex max-w-[220px] cursor-text rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-medium text-foreground-500">
+                              <OverflowRevealText text={learner.cohortName} maxWidthClass="max-w-[205px]" />
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-[10px] text-foreground-500">
+                            <OverflowRevealText text={learner.group} maxWidthClass="max-w-[175px]" />
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${coachRagStyle.bg} ${coachRagStyle.text} whitespace-nowrap`}>
+                              {displayValue(learner.coachRag)}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${programStatusStyle.bg} ${programStatusStyle.text} whitespace-nowrap`}>
+                              {displayValue(learner.rawProgramStatus)}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <div data-allow-selection="true" className="flex min-w-[96px] flex-col items-center gap-0.5 leading-none text-center">
+                              <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
+                                {learner.progressVariance}
+                              </span>
+                              <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
+                                {displayValue(learner.otjhStatus)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <div data-allow-selection="true" className="flex min-w-[72px] flex-col items-center gap-0.5 leading-none text-center">
+                              <span className="cursor-text select-text text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap">
+                                {formatRatio(learner.ksbCompleted, learner.ksbTarget)}
+                              </span>
+                              <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${ksbStatusMeta.text}`}>
+                                <span className={`h-1.5 w-1.5 rounded-full ${ksbStatusMeta.dot}`}></span>
+                                {displayValue(learner.ksbStatus)}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <span data-allow-selection="true" className={`cursor-text select-text text-[10px] font-semibold ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{learner.attendanceRate}%</span>
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <div className="w-8 bg-background-200 rounded-full h-1.5">
+                                <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
+                              </div>
+                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-700 w-6 text-right">{learner.overallProgress}%</span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-2 text-center text-[10px] text-foreground-600 whitespace-nowrap">
+                            <span data-allow-selection="true" className="cursor-text select-text">{learner.startDate}</span>
+                          </td>
+                          <td className="px-2 py-2 text-center text-[10px] text-foreground-600 whitespace-nowrap">
+                            <span data-allow-selection="true" className="cursor-text select-text">{learner.gatewayReviewDate}</span>
+                          </td>
+                          <td className="pr-3 py-2 text-center">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedLearnerId(learner.id);
+                              }}
+                              className={`inline-flex h-7 w-7 items-center justify-center rounded-lg border transition-smooth cursor-pointer ${
+                                isSel
+                                  ? 'border-primary-200 bg-primary-50 text-primary-600'
+                                  : 'border-foreground-200/60 bg-background-50 text-foreground-400 hover:border-primary-200 hover:text-primary-600'
+                              }`}
+                              title="View details"
+                              aria-label={`View details for ${learner.name}`}
+                            >
+                              <i className={`${isSel ? 'ri-eye-fill' : 'ri-eye-line'} text-sm`}></i>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              <span className="text-[11px] text-foreground-400">
-                Page {safePage} of {totalPages}
-              </span>
-            </div>
+              {filtered.length === 0 && (
+                <div className="py-12 text-center">
+                  <i className="ri-search-line text-foreground-300 text-3xl mb-2 block"></i>
+                  <p className="text-sm text-foreground-400">No learners match your filters</p>
+                  <button onClick={() => { setSummaryFilter('all'); setProgramStatusFilter('all'); setCohortFilter('all'); setGroupFilter('all'); setCoachRagFilter('all'); setSearch(''); setCurrentPage(1); }} className="mt-2 text-[11px] font-medium text-primary-600 hover:text-primary-700 cursor-pointer">
+                    Clear all filters
+                  </button>
+                </div>
+              )}
+
+              {filtered.length > 0 && (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t border-foreground-200/60 bg-background-100/30">
+                  <span className="text-[11px] text-foreground-400">
+                    Showing <strong className="text-foreground-700">{Math.min((safePage - 1) * PAGE_SIZE + 1, filtered.length)}&ndash;{Math.min(safePage * PAGE_SIZE, filtered.length)}</strong> of <strong className="text-foreground-700">{filtered.length}</strong> learners
+                  </span>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
+                    >
+                      <i className="ri-arrow-left-s-line text-sm"></i>
+                    </button>
+
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                      <button
+                        key={page}
+                        onClick={() => setCurrentPage(page)}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold cursor-pointer transition-smooth ${safePage === page ? 'bg-primary-500 text-white' : 'text-foreground-500 hover:bg-background-200/50'}`}
+                      >
+                        {page}
+                      </button>
+                    ))}
+
+                    <button
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={safePage >= totalPages}
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
+                    >
+                      <i className="ri-arrow-right-s-line text-sm"></i>
+                    </button>
+                  </div>
+
+                  <span className="text-[11px] text-foreground-400">
+                    Page {safePage} of {totalPages}
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -617,19 +955,19 @@ export default function CoachCaseload() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${enrollmentConfig[selectedLearner.enrollmentStatus].bg} ${enrollmentConfig[selectedLearner.enrollmentStatus].text}`}>
-                      {enrollmentConfig[selectedLearner.enrollmentStatus].label}
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getProgramStatusStyle(selectedLearner.rawProgramStatus).bg} ${getProgramStatusStyle(selectedLearner.rawProgramStatus).text}`}>
+                      {displayValue(selectedLearner.rawProgramStatus)}
                     </span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[selectedLearner.status].bg} ${statusConfig[selectedLearner.status].text}`}>
-                      {statusConfig[selectedLearner.status].label}
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getCoachRagStyle(selectedLearner.coachRag).bg} ${getCoachRagStyle(selectedLearner.coachRag).text}`}>
+                      {displayValue(selectedLearner.coachRag)}
                     </span>
                     {selectedLearner.recentFlag && (
                       <span className="text-[10px] font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded-full">{selectedLearner.recentFlag}</span>
                     )}
                   </div>
-                  <p className="text-[12px] text-foreground-400">{selectedLearner.programme}</p>
+                  <p className="text-[12px] text-foreground-400">{selectedLearner.cohortName}</p>
                   <p className="text-[12px] text-foreground-400">{selectedLearner.employer}</p>
-                  <p className="text-[11px] text-foreground-300 mt-0.5">{selectedLearner.cohortName} &middot; {selectedLearner.group}</p>
+                  <p className="text-[11px] text-foreground-300 mt-0.5">{selectedLearner.group}</p>
                 </div>
               </div>
 
@@ -660,15 +998,15 @@ export default function CoachCaseload() {
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
                   <DonutChart percentage={selectedLearner.attendanceRate} size={64} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} />
                   <div>
-                    <p className="text-[10px] text-foreground-400">Attendance</p>
+                    <p className="text-[10px] text-foreground-400">Components</p>
                     <p className="text-lg font-bold text-foreground-900">{selectedLearner.attendanceRate}%</p>
-                    <p className="text-[9px] text-foreground-300">{selectedLearner.attendanceRate >= 90 ? 'Excellent' : selectedLearner.attendanceRate >= 80 ? 'Good' : 'At Risk'}</p>
+                    <p className="text-[9px] text-foreground-300">{selectedLearner.attendanceRate >= 90 ? 'Strong completion' : selectedLearner.attendanceRate >= 80 ? 'Steady pace' : 'Needs attention'}</p>
                   </div>
                 </div>
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
                   <DonutChart percentage={Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)} size={64} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} />
                   <div>
-                    <p className="text-[10px] text-foreground-400">OTJH</p>
+                    <p className="text-[10px] text-foreground-400">OTJH Hours</p>
                     <p className="text-lg font-bold text-foreground-900">{selectedLearner.otjhCompleted}<span className="text-sm text-foreground-400">/{selectedLearner.otjhTarget}</span></p>
                     <p className="text-[9px] text-foreground-300">{Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)}% of target</p>
                   </div>
@@ -690,51 +1028,40 @@ export default function CoachCaseload() {
                   <span className="text-foreground-900 font-medium">{selectedLearner.evidenceCount} items</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Next Coaching</span>
-                  <span className="text-foreground-900 font-medium">{selectedLearner.nextCoaching}</span>
+                  <span className="text-foreground-400">Coach</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.coachName || ownerName}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Next Review</span>
-                  <span className="text-foreground-900 font-medium">{selectedLearner.nextReview}</span>
+                  <span className="text-foreground-400">Coach Email</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.coachEmail || ownerEmail}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Last Contact</span>
-                  <span className="text-foreground-900 font-medium">{selectedLearner.lastContact}</span>
+                  <span className="text-foreground-400">Program Status</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.rawProgramStatus || selectedLearner.enrollmentStatus}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Last Progress Review</span>
-                  <span className={`font-medium inline-flex items-center gap-1 ${DATE_BG[dateSeverity(getDaysSince(selectedLearner.lastProgressReview || selectedLearner.lastReview), DATE_THRESHOLDS.lastReview)]}`}>
-                    {dateSeverity(getDaysSince(selectedLearner.lastProgressReview || selectedLearner.lastReview), DATE_THRESHOLDS.lastReview) !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dateSeverity(getDaysSince(selectedLearner.lastProgressReview || selectedLearner.lastReview), DATE_THRESHOLDS.lastReview) === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                    <span className={DATE_COLORS[dateSeverity(getDaysSince(selectedLearner.lastProgressReview || selectedLearner.lastReview), DATE_THRESHOLDS.lastReview)]}>{selectedLearner.lastProgressReview || selectedLearner.lastReview}</span>
-                  </span>
+                  <span className="text-foreground-400">OTJH Status</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.otjhStatus}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Last Attendance Date</span>
-                  <span className={`font-medium inline-flex items-center gap-1 ${DATE_BG[dateSeverity(getDaysSince(selectedLearner.lastAttendanceDate), DATE_THRESHOLDS.lastAttendance)]}`}>
-                    {dateSeverity(getDaysSince(selectedLearner.lastAttendanceDate), DATE_THRESHOLDS.lastAttendance) !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dateSeverity(getDaysSince(selectedLearner.lastAttendanceDate), DATE_THRESHOLDS.lastAttendance) === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                    <span className={DATE_COLORS[dateSeverity(getDaysSince(selectedLearner.lastAttendanceDate), DATE_THRESHOLDS.lastAttendance)]}>{selectedLearner.lastAttendanceDate}</span>
-                  </span>
+                  <span className="text-foreground-400">Start Date</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.startDate}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Last Review</span>
-                  <span className={`font-medium inline-flex items-center gap-1 ${DATE_BG[dateSeverity(getDaysSince(selectedLearner.lastReview), DATE_THRESHOLDS.lastReview)]}`}>
-                    {dateSeverity(getDaysSince(selectedLearner.lastReview), DATE_THRESHOLDS.lastReview) !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dateSeverity(getDaysSince(selectedLearner.lastReview), DATE_THRESHOLDS.lastReview) === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                    <span className={DATE_COLORS[dateSeverity(getDaysSince(selectedLearner.lastReview), DATE_THRESHOLDS.lastReview)]}>{selectedLearner.lastReview}</span>
-                  </span>
+                  <span className="text-foreground-400">Planned End Date</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.plannedEndDate}</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
-                  <span className="text-foreground-400">Last Coaching Session</span>
-                  <span className={`font-medium inline-flex items-center gap-1 ${DATE_BG[dateSeverity(getDaysSince(selectedLearner.lastCoachingSession), DATE_THRESHOLDS.lastCoaching)]}`}>
-                    {dateSeverity(getDaysSince(selectedLearner.lastCoachingSession), DATE_THRESHOLDS.lastCoaching) !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dateSeverity(getDaysSince(selectedLearner.lastCoachingSession), DATE_THRESHOLDS.lastCoaching) === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                    <span className={DATE_COLORS[dateSeverity(getDaysSince(selectedLearner.lastCoachingSession), DATE_THRESHOLDS.lastCoaching)]}>{selectedLearner.lastCoachingSession}</span>
-                  </span>
+                  <span className="text-foreground-400">Gateway Review</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.gatewayReviewDate}</span>
+                </div>
+                <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]">
+                  <span className="text-foreground-400">Variance</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.progressVariance}</span>
                 </div>
                 <div className="flex justify-between py-2 text-[12px]">
-                  <span className="text-foreground-400">Last Submitted Evidence</span>
-                  <span className={`font-medium inline-flex items-center gap-1 ${DATE_BG[dateSeverity(getDaysSince(selectedLearner.lastSubmittedEvidence), DATE_THRESHOLDS.lastEvidence)]}`}>
-                    {dateSeverity(getDaysSince(selectedLearner.lastSubmittedEvidence), DATE_THRESHOLDS.lastEvidence) !== 'normal' && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dateSeverity(getDaysSince(selectedLearner.lastSubmittedEvidence), DATE_THRESHOLDS.lastEvidence) === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}></span>}
-                    <span className={DATE_COLORS[dateSeverity(getDaysSince(selectedLearner.lastSubmittedEvidence), DATE_THRESHOLDS.lastEvidence)]}>{selectedLearner.lastSubmittedEvidence}</span>
-                  </span>
+                  <span className="text-foreground-400">Latest Evidence Marker</span>
+                  <span className="text-foreground-900 font-medium">{selectedLearner.lastSubmittedEvidence}</span>
                 </div>
               </div>
 
@@ -743,7 +1070,7 @@ export default function CoachCaseload() {
                 <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">Contact Info</p>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
                   <i className="ri-mail-line text-foreground-300 text-xs"></i>
-                  <span>{selectedLearner.email || 'sophie.williams@example.com'}</span>
+                  <span>{selectedLearner.email || 'No learner email available'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
                   <i className="ri-building-line text-foreground-300 text-xs"></i>
@@ -751,7 +1078,7 @@ export default function CoachCaseload() {
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
                   <i className="ri-mail-send-line text-foreground-300 text-xs"></i>
-                  <span>{selectedLearner.employerEmail || 'hr@employer.co.uk'}</span>
+                  <span>{selectedLearner.employerEmail || 'No employer email available'}</span>
                 </div>
                 {selectedLearner.employerPhone && (
                   <div className="flex items-center gap-2 text-[11px] text-foreground-600">
@@ -790,7 +1117,7 @@ export default function CoachCaseload() {
                         <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center text-accent-600"><i className="ri-mail-send-line text-xs"></i></span>
                         <div>
                           <p className="font-medium">Email</p>
-                          <p className="text-[10px] text-foreground-400">{selectedLearner.employerEmail || 'hr@employer.co.uk'}</p>
+                          <p className="text-[10px] text-foreground-400">{selectedLearner.employerEmail || 'No employer email available'}</p>
                         </div>
                       </button>
                       <button onClick={handleZoomCall} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
@@ -829,7 +1156,7 @@ export default function CoachCaseload() {
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-foreground-900">Learner Progress Report</h3>
-                    <p className="text-[11px] text-foreground-400">{selectedLearner.name} &middot; {selectedLearner.programme} &middot; Generated {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                    <p className="text-[11px] text-foreground-400">{selectedLearner.name} &middot; {selectedLearner.cohortName} &middot; Generated {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -854,9 +1181,9 @@ export default function CoachCaseload() {
                 {/* Top Summary Bar */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <SummaryPill label="Overall Progress" value={`${selectedLearner.overallProgress}%`} color={selectedLearner.status === 'at-risk' ? 'red' : selectedLearner.status === 'high' ? 'accent' : 'primary'} />
-                  <SummaryPill label="Attendance" value={`${selectedLearner.attendanceRate}%`} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} />
+                  <SummaryPill label="Components" value={`${selectedLearner.attendanceRate}%`} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} />
                   <SummaryPill label="KSB Progress" value={`${selectedLearner.ksbProgress}%`} color={selectedLearner.ksbProgress >= 70 ? 'emerald' : selectedLearner.ksbProgress >= 40 ? 'primary' : 'red'} />
-                  <SummaryPill label="OTJH" value={`${selectedLearner.otjhCompleted}/${selectedLearner.otjhTarget}`} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} />
+                  <SummaryPill label="OTJH Hours" value={`${selectedLearner.otjhCompleted}/${selectedLearner.otjhTarget}`} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} />
                 </div>
 
                 {/* Executive Summary */}
@@ -865,8 +1192,8 @@ export default function CoachCaseload() {
                     <i className="ri-file-list-3-line text-primary-500"></i> Executive Summary
                   </h4>
                   <p className="text-[12px] text-foreground-600 leading-relaxed">
-                    {selectedLearner.name} is currently enrolled on the <strong>{selectedLearner.programme}</strong> programme
-                    with {selectedLearner.employer} ({selectedLearner.cohortName}, {selectedLearner.group}).
+                    {selectedLearner.name} is currently enrolled on the <strong>{selectedLearner.cohortName}</strong> cohort
+                    with {selectedLearner.employer} (group: {selectedLearner.group}).
                     {selectedLearner.status === 'at-risk' && (
                       <> They are currently flagged as <strong className="text-red-600">At Risk</strong> due to {selectedLearner.riskFlags.join(', ')}. Immediate coaching intervention is recommended within 48 hours.</>
                     )}
@@ -889,11 +1216,11 @@ export default function CoachCaseload() {
                     <p className="text-[10px] text-foreground-400 mt-1">{selectedLearner.overallProgress >= 70 ? 'Excellent' : selectedLearner.overallProgress >= 40 ? 'On Track' : 'Needs Support'}</p>
                   </div>
                   <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col items-center">
-                    <DonutChart percentage={selectedLearner.attendanceRate} size={80} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} label="Attendance" />
-                    <p className="text-[10px] text-foreground-400 mt-1">{selectedLearner.attendanceRate >= 90 ? 'Excellent' : selectedLearner.attendanceRate >= 80 ? 'Good' : 'At Risk'}</p>
+                    <DonutChart percentage={selectedLearner.attendanceRate} size={80} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} label="Components" />
+                    <p className="text-[10px] text-foreground-400 mt-1">{selectedLearner.attendanceRate >= 90 ? 'Strong completion' : selectedLearner.attendanceRate >= 80 ? 'Steady pace' : 'Needs attention'}</p>
                   </div>
                   <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col items-center">
-                    <DonutChart percentage={Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)} size={80} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} label="OTJH" />
+                    <DonutChart percentage={Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)} size={80} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} label="OTJH Hours" />
                     <p className="text-[10px] text-foreground-400 mt-1">{selectedLearner.otjhCompleted} of {selectedLearner.otjhTarget} hours</p>
                   </div>
                   <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col items-center">
@@ -909,11 +1236,11 @@ export default function CoachCaseload() {
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <MetricRow label="Overall Progress" value={`${selectedLearner.overallProgress}%`} bar={selectedLearner.overallProgress} color={selectedLearner.status === 'at-risk' ? 'red' : selectedLearner.status === 'high' ? 'accent' : 'primary'} />
-                    <MetricRow label="Attendance Rate" value={`${selectedLearner.attendanceRate}%`} bar={selectedLearner.attendanceRate} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} />
+                    <MetricRow label="Component Completion" value={`${selectedLearner.attendanceRate}%`} bar={selectedLearner.attendanceRate} color={selectedLearner.attendanceRate >= 90 ? 'emerald' : selectedLearner.attendanceRate >= 80 ? 'amber' : 'red'} />
                     <MetricRow label="KSB Progress" value={`${selectedLearner.ksbProgress}%`} bar={selectedLearner.ksbProgress} color={selectedLearner.ksbProgress >= 70 ? 'emerald' : selectedLearner.ksbProgress >= 40 ? 'primary' : 'red'} />
-                    <MetricRow label="OTJH Completion" value={`${Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)}%`} bar={Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} />
+                    <MetricRow label="OTJH Hours Completion" value={`${Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)}%`} bar={Math.round((selectedLearner.otjhCompleted / selectedLearner.otjhTarget) * 100)} color={selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.7 ? 'emerald' : selectedLearner.otjhCompleted / selectedLearner.otjhTarget >= 0.4 ? 'amber' : 'red'} />
                     <MetricRow label="Evidence Submitted" value={`${selectedLearner.evidenceCount} items`} bar={Math.min(100, (selectedLearner.evidenceCount / 25) * 100)} color={selectedLearner.evidenceCount >= 15 ? 'emerald' : selectedLearner.evidenceCount >= 8 ? 'amber' : 'red'} />
-                    <MetricRow label="Enrollment Status" value={selectedLearner.enrollmentStatus.charAt(0).toUpperCase() + selectedLearner.enrollmentStatus.slice(1)} bar={selectedLearner.enrollmentStatus === 'active' ? 100 : selectedLearner.enrollmentStatus === 'break' ? 50 : 20} color={selectedLearner.enrollmentStatus === 'active' ? 'emerald' : selectedLearner.enrollmentStatus === 'break' ? 'amber' : 'foreground'} />
+                    <MetricRow label="Program Status" value={displayValue(selectedLearner.rawProgramStatus)} bar={selectedLearner.enrollmentStatus === 'active' ? 100 : selectedLearner.enrollmentStatus === 'break' ? 50 : 20} color={selectedLearner.enrollmentStatus === 'active' ? 'emerald' : selectedLearner.enrollmentStatus === 'break' ? 'amber' : 'foreground'} />
                   </div>
                 </div>
 
@@ -932,12 +1259,15 @@ export default function CoachCaseload() {
                           <div>
                             <p className="text-[12px] font-semibold text-red-700">{flag}</p>
                             <p className="text-[11px] text-red-500/70 mt-0.5">
-                              {flag.includes('Attendance') && 'Attendance rate is below the 90% target. This may impact progression and gateway readiness. Consider scheduling a catch-up plan.'}
+                              {flag.includes('Coach RAG') && 'The coach RAG on the source table is not green, so this learner needs a focused review and a clear intervention plan.'}
+                              {flag.includes('Hours') && 'Tracked hours are behind pace. Review workplace opportunities and agree a short recovery target with the employer.'}
                               {flag.includes('OTJH') && 'On-the-job hours are behind the expected pace. Coordinate with the employer to identify additional workplace opportunities.'}
-                              {flag.includes('KSB') && 'Knowledge, Skills & Behaviours progress is stagnant. Review evidence mapping and provide targeted coaching support.'}
+                              {flag.includes('KSB') && 'Knowledge, Skills & Behaviours progress is behind the expected pace. Review evidence mapping and provide targeted coaching support.'}
+                              {flag.includes('Components') && 'Component completion is behind target. Check which units are blocked and agree the next submission milestone.'}
+                              {flag.includes('Variance') && 'Progress variance is below plan. Compare completed hours to target and set a realistic catch-up plan.'}
                               {flag.includes('Evidence') && 'Evidence submissions are overdue or insufficient. Set weekly evidence targets and provide clear guidance on requirements.'}
                               {flag.includes('engagement') && 'Learner engagement levels have dropped. Reach out to understand barriers and re-establish motivation.'}
-                              {!flag.includes('Attendance') && !flag.includes('OTJH') && !flag.includes('KSB') && !flag.includes('Evidence') && !flag.includes('engagement') && 'This area requires attention. Review with the learner and employer to create an improvement plan.'}
+                              {!flag.includes('Coach RAG') && !flag.includes('Hours') && !flag.includes('OTJH') && !flag.includes('KSB') && !flag.includes('Components') && !flag.includes('Variance') && !flag.includes('Evidence') && !flag.includes('engagement') && 'This area requires attention. Review with the learner and employer to create an improvement plan.'}
                             </p>
                           </div>
                         </div>
@@ -961,16 +1291,16 @@ export default function CoachCaseload() {
                   <div className="space-y-2">
                     {selectedLearner.status === 'high' && (
                       <>
-                        <StrengthItem icon="ri-star-line" text="Consistently high performance across all key metrics" subtext="Overall progress at 85%+ with excellent attendance and evidence quality" />
-                        <StrengthItem icon="ri-rocket-line" text="Gateway-ready KSB coverage" subtext={`${selectedLearner.ksbProgress}% completion — on track for EPA`} />
+                        <StrengthItem icon="ri-star-line" text="Consistently high performance across all key metrics" subtext="Overall progress is strong with healthy component completion and evidence quality" />
+                        <StrengthItem icon="ri-rocket-line" text="Gateway-ready KSB coverage" subtext={`${selectedLearner.ksbProgress}% completion - on track for EPA`} />
                         <StrengthItem icon="ri-trophy-line" text="Strong employer engagement" subtext="Workplace supervision and OTJH hours are well supported" />
-                        <StrengthItem icon="ri-medal-line" text="Self-directed learner" subtext="Proactively submits evidence and attends all sessions without prompting" />
+                        <StrengthItem icon="ri-medal-line" text="Self-directed learner" subtext="Proactively submits evidence and keeps steady momentum without repeated prompting" />
                       </>
                     )}
                     {selectedLearner.status === 'on-track' && (
                       <>
                         <StrengthItem icon="ri-check-double-line" text="Steady and consistent progress" subtext={`Maintaining ${selectedLearner.overallProgress}% overall with regular submissions`} />
-                        <StrengthItem icon="ri-group-line" text="Good attendance record" subtext={`${selectedLearner.attendanceRate}% attendance — meets programme expectations`} />
+                        <StrengthItem icon="ri-group-line" text="Healthy component completion" subtext={`${selectedLearner.attendanceRate}% of tracked components are complete or on pace`} />
                         <StrengthItem icon="ri-hand-heart-line" text="Responsive to coaching support" subtext="Engages well in 1:1 sessions and implements feedback" />
                       </>
                     )}
@@ -984,7 +1314,7 @@ export default function CoachCaseload() {
                     {selectedLearner.status === 'new-starter' && (
                       <>
                         <StrengthItem icon="ri-emotion-happy-line" text="Positive onboarding attitude" subtext="Learner is enthusiastic and engaged with induction materials" />
-                        <StrengthItem icon="ri-shield-check-line" text="100% attendance so far" subtext="Perfect attendance record in first weeks of programme" />
+                        <StrengthItem icon="ri-shield-check-line" text="Early completion signals look strong" subtext="Initial tracked components are progressing well for a new starter" />
                         <StrengthItem icon="ri-lightbulb-line" text="Quick learner" subtext="Demonstrates good understanding of early module content" />
                       </>
                     )}
@@ -997,10 +1327,10 @@ export default function CoachCaseload() {
                     <i className="ri-time-line text-primary-500"></i> Recent Activity Timeline
                   </h4>
                   <div className="space-y-3">
-                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.nextCoaching} title="Next Coaching Session" desc="Scheduled 1:1 progress coaching" />
-                    <TimelineItem icon="ri-file-chart-line" color="primary" date={selectedLearner.nextReview} title="Next Progress Review" desc="Monthly formal review meeting" />
-                    <TimelineItem icon="ri-mail-line" color="secondary" date={selectedLearner.lastContact} title="Last Contact" desc="Most recent communication with learner" />
-                    <TimelineItem icon="ri-folder-upload-line" color="accent" date="Recent" title={`${selectedLearner.evidenceCount} Evidence Items`} desc={`${selectedLearner.status === 'at-risk' ? 'Some overdue — catch-up plan needed' : 'On track with programme requirements'}`} />
+                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the Aptem extraction table" />
+                    <TimelineItem icon="ri-file-chart-line" color="primary" date={selectedLearner.gatewayReviewDate} title="Gateway Review" desc="Current gateway review date from the source table" />
+                    <TimelineItem icon="ri-mail-line" color="secondary" date={selectedLearner.coachEmail || ownerEmail} title="Assigned Coach" desc={selectedLearner.coachName || ownerName} />
+                    <TimelineItem icon="ri-folder-upload-line" color="accent" date={selectedLearner.progressVariance} title={`${selectedLearner.evidenceCount} Evidence Items`} desc={selectedLearner.status === 'at-risk' ? 'Variance is behind target - catch-up planning recommended' : 'Evidence volume looks healthy against current progress'} />
                   </div>
                 </div>
 
@@ -1049,7 +1379,7 @@ export default function CoachCaseload() {
                 {/* Footer */}
                 <div className="flex items-center justify-between pt-2 border-t border-foreground-200/60">
                   <p className="text-[10px] text-foreground-400">
-                    Report generated by Med Maher, Progress Coach &middot; {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    Report generated by {ownerName}, Progress Coach &middot; {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                   </p>
                   <button
                     onClick={() => { window.print(); }}
@@ -1071,7 +1401,7 @@ export default function CoachCaseload() {
 
 /* Sub-components */
 
-function MiniStatCard({ label, value, icon, color }: { label: string; value: string; icon: string; color: string }) {
+function MiniStatCard({ label, value, icon, color, active = false, onClick }: { label: string; value: string; icon: string; color: string; active?: boolean; onClick?: () => void }) {
   const colorMap: Record<string, { bg: string; text: string }> = {
     primary: { bg: 'bg-primary-100', text: 'text-primary-600' },
     accent: { bg: 'bg-accent-50', text: 'text-accent-700' },
@@ -1083,7 +1413,15 @@ function MiniStatCard({ label, value, icon, color }: { label: string; value: str
   };
   const c = colorMap[color] || colorMap.primary;
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 card-premium cursor-pointer">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full rounded-xl border p-3 text-left card-premium cursor-pointer transition-smooth ${
+        active
+          ? 'border-primary-300 bg-primary-50/40 shadow-sm'
+          : 'border-foreground-200/60 bg-background-50 hover:border-primary-200/80'
+      }`}
+    >
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-foreground-400 font-medium">{label}</span>
         <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${c.bg} ${c.text}`}>
@@ -1091,12 +1429,20 @@ function MiniStatCard({ label, value, icon, color }: { label: string; value: str
         </span>
       </div>
       <p className="text-lg font-heading font-bold text-foreground-900 mt-1">{value}</p>
-    </div>
+    </button>
   );
 }
 
 function FilterDropdown({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
-  const allLabel = label === 'Status' ? 'All Status' : `All ${label}s`;
+  const allLabelMap: Record<string, string> = {
+    Status: 'All Status',
+    Cohort: 'All Cohorts',
+    Group: 'All Groups',
+    'Program Status': 'All Program Status',
+    'Coach RAG': 'All Coach RAG',
+    RAG: 'All RAG',
+  };
+  const allLabel = allLabelMap[label] || `All ${label}`;
   return (
     <div className="relative">
       <select
@@ -1114,10 +1460,10 @@ function FilterDropdown({ label, value, onChange, options }: { label: string; va
   );
 }
 
-function ThSort({ label, sortKey, current, dir, onClick, className = '' }: { label: string; sortKey: string; current: string; dir: string; onClick: () => void; className?: string }) {
+function ThSort({ label, sortKey, current, dir, onClick, className = '', contentClassName = '' }: { label: string; sortKey: string; current: string; dir: string; onClick: () => void; className?: string; contentClassName?: string }) {
   return (
     <th className={`px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-foreground-600 transition-smooth ${className}`} onClick={onClick}>
-      <span className="flex items-center gap-1">
+      <span className={`flex items-center gap-1 ${contentClassName}`}>
         {label}
         <i className={`text-[8px] ${current === sortKey ? (dir === 'asc' ? 'ri-arrow-up-line text-primary-500' : 'ri-arrow-down-line text-primary-500') : 'ri-arrow-up-down-line text-foreground-300'}`}></i>
       </span>
@@ -1148,6 +1494,17 @@ function ActivityRow({ icon, color, text, subtext }: { icon: string; color: stri
       <div>
         <p className="text-[12px] font-medium text-foreground-900">{text}</p>
         <p className="text-[10px] text-foreground-400">{subtext}</p>
+      </div>
+    </div>
+  );
+}
+
+function OverflowRevealText({ text, maxWidthClass = 'max-w-[240px]' }: { text: string; maxWidthClass?: string }) {
+  return (
+    <div data-allow-selection="true" className={`group/overflow relative w-fit cursor-text ${maxWidthClass}`}>
+      <span className="block cursor-text truncate whitespace-nowrap select-text">{text}</span>
+      <div data-allow-selection="true" className="absolute left-0 top-full z-30 mt-1 hidden min-w-full max-w-[420px] cursor-text rounded-lg border border-foreground-200/80 bg-background-50 px-3 py-2 text-[11px] leading-relaxed text-foreground-700 shadow-xl group-hover/overflow:block select-text">
+        {text}
       </div>
     </div>
   );

@@ -1,7 +1,10 @@
-import { useState, useMemo } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
+import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
+import { updateCurriculumSession, type CurriculumSession } from '@/lib/curriculumApi';
 
 // ─────────────────── Types ───────────────────
 
@@ -22,35 +25,6 @@ interface CalSession {
   week: number;
   status: 'scheduled' | 'completed' | 'cancelled' | 'pending';
 }
-
-// ─────────────────── Mock Data ───────────────────
-
-const ALL_SESSIONS: CalSession[] = [
-  // Cohort A — Group A1 sessions
-  { id: 'sc-1', title: 'Welcome & Cohort Induction', type: 'Live Session', date: '2024-09-02', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-2', title: 'Marketing Environment & PESTLE', type: 'Workshop', date: '2024-09-04', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-3', title: 'Self-study: Marketing Frameworks', type: 'Self-study', date: '2024-09-05', day: 'Thu', startTime: '14:00', endTime: '15:30', tutor: 'Self-directed', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-4', title: 'Weekly OTJH Log & Reflection', type: 'OTJH', date: '2024-09-06', day: 'Fri', startTime: '16:00', endTime: '16:30', tutor: 'Sarah Mitchell', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-5', title: 'Quiz — Marketing Foundations', type: 'Quiz', date: '2024-09-06', day: 'Fri', startTime: '11:00', endTime: '11:30', tutor: 'Auto-marked', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-6', title: 'Customer Journey Mapping', type: 'Live Session', date: '2024-09-09', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 2, status: 'completed' },
-  { id: 'sc-7', title: 'Segmentation Workshop', type: 'Workshop', date: '2024-09-11', day: 'Wed', startTime: '09:30', endTime: '12:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 305', module: 'M1', week: 2, status: 'completed' },
-  { id: 'sc-8', title: 'Research Methods & Data Collection', type: 'Live Session', date: '2024-09-30', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Mark Williams', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M2', week: 5, status: 'completed' },
-  { id: 'sc-9', title: 'Survey Design Workshop', type: 'Workshop', date: '2024-10-02', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M2', week: 5, status: 'completed' },
-  // Cohort B
-  { id: 'sc-10', title: 'Welcome & Cohort Induction (B)', type: 'Live Session', date: '2025-03-03', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'B1, B2', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-11', title: 'Marketing Environment & PESTLE', type: 'Workshop', date: '2025-03-05', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M1', week: 1, status: 'completed' },
-  { id: 'sc-12', title: 'Campaign Planning Overview', type: 'Live Session', date: '2025-05-19', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 9, status: 'scheduled' },
-  { id: 'sc-13', title: 'Campaign Planning Workshop', type: 'Workshop', date: '2025-05-21', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Room 310', module: 'M3', week: 9, status: 'scheduled' },
-  // Upcoming — Cohort A
-  { id: 'sc-14', title: 'Digital Channels Strategy', type: 'Live Session', date: '2026-06-15', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 10, status: 'scheduled' },
-  { id: 'sc-15', title: 'Channel Strategy Workshop', type: 'Workshop', date: '2026-06-17', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 305', module: 'M3', week: 10, status: 'scheduled' },
-  { id: 'sc-16', title: 'Content Strategy Principles', type: 'Live Session', date: '2026-06-22', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 11, status: 'scheduled' },
-  { id: 'sc-17', title: 'Content Planning Workshop', type: 'Workshop', date: '2026-06-24', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M3', week: 11, status: 'scheduled' },
-  { id: 'sc-18', title: 'Evaluation Frameworks', type: 'Live Session', date: '2026-06-29', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M4', week: 13, status: 'scheduled' },
-  { id: 'sc-19', title: 'KPI Workshop', type: 'Workshop', date: '2026-07-01', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M4', week: 13, status: 'scheduled' },
-  { id: 'sc-20', title: 'Improvement Methodologies', type: 'Live Session', date: '2026-07-06', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M4', week: 14, status: 'scheduled' },
-  { id: 'sc-21', title: 'A/B Testing Workshop', type: 'Workshop', date: '2026-07-08', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M4', week: 14, status: 'scheduled' },
-];
 
 // ─────────────────── Colour maps ───────────────────
 
@@ -82,6 +56,44 @@ const statusColors: Record<string, string> = {
   cancelled: 'bg-red-100 text-red-700',
   pending: 'bg-amber-100 text-amber-700',
 };
+
+const validSessionTypes = new Set<CalSession['type']>([
+  'Live Session',
+  'Workshop',
+  'Self-study',
+  'Assignment',
+  'Quiz',
+  'OTJH',
+  'Collaboration',
+  'Review',
+]);
+
+const validSessionStatuses = new Set<CalSession['status']>([
+  'scheduled',
+  'completed',
+  'cancelled',
+  'pending',
+]);
+
+function normalizeApiSession(session: CurriculumSession): CalSession {
+  return {
+    id: session.id,
+    title: session.title || 'Untitled session',
+    type: validSessionTypes.has(session.type as CalSession['type']) ? session.type as CalSession['type'] : 'Live Session',
+    date: session.date,
+    day: session.day,
+    startTime: session.startTime || '09:00',
+    endTime: session.endTime || '10:00',
+    tutor: session.tutor || 'Unassigned',
+    group: session.group || 'All groups',
+    cohort: session.cohort || 'Unassigned cohort',
+    programme: session.programme || 'Unassigned programme',
+    venue: session.venue || 'LMS',
+    module: session.module || 'Unassigned module',
+    week: session.week || 1,
+    status: validSessionStatuses.has(session.status as CalSession['status']) ? session.status as CalSession['status'] : 'scheduled',
+  };
+}
 
 // ─────────────────── Helpers ───────────────────
 
@@ -125,17 +137,33 @@ function formatDateFull(d: Date): string {
 // ─────────────────── Component ───────────────────
 
 export default function SessionCalendarPage() {
-  const [sessions, setSessions] = useState<CalSession[]>(ALL_SESSIONS);
+  const { sessions: apiSessions, loading, error, reload } = useCurriculumSessions();
+  const [sessions, setSessions] = useState<CalSession[]>([]);
   const [view, setView] = useState<'week' | 'month'>('week');
-  const [currentDate, setCurrentDate] = useState(new Date('2026-06-10'));
+  const [currentDate, setCurrentDate] = useState(new Date());
   const [dragOverDate, setDragOverDate] = useState<string | null>(null);
   const [draggedSession, setDraggedSession] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<CalSession | null>(null);
+  const [editingSession, setEditingSession] = useState<CalSession | null>(null);
+  const [sessionForm, setSessionForm] = useState({ startTime: '', endTime: '', tutor: '' });
+  const [savingSession, setSavingSession] = useState(false);
   const [filters, setFilters] = useState<{ cohort: string; group: string; type: string; tutor: string }>({ cohort: 'all', group: 'all', type: 'all', tutor: 'all' });
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    if (!apiSessions.length) return;
+
+    const liveSessions = apiSessions.map(normalizeApiSession);
+    setSessions(liveSessions);
+
+    const firstSession = liveSessions.find(session => session.date);
+    if (firstSession) {
+      setCurrentDate(new Date(firstSession.date));
+    }
+  }, [apiSessions]);
 
   const weekStart = view === 'week' ? getWeekStart(currentDate) : getMonthStart(currentDate);
   const daysInWeek = 7;
@@ -205,8 +233,7 @@ export default function SessionCalendarPage() {
     const newDate = formatDate(date);
     if (newDate === session.date) return;
 
-    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, date: newDate } : s));
-    setNotification({ type: 'success', message: `"${session.title}" rescheduled to ${formatDateFull(date)}` });
+    setNotification({ type: 'error', message: `"${session.title}" is generated from a training-plan row. Drag/drop rescheduling is disabled to avoid changing the wider delivery series.` });
     setDraggedSession(null);
     setTimeout(() => setNotification(null), 3500);
   };
@@ -224,8 +251,30 @@ export default function SessionCalendarPage() {
   };
 
   const goToday = () => {
-    setCurrentDate(new Date('2026-06-10'));
+    setCurrentDate(new Date());
     setView('week');
+  };
+
+  const openEditSession = (session: CalSession) => {
+    setEditingSession(session);
+    setSessionForm({ startTime: session.startTime, endTime: session.endTime, tutor: session.tutor });
+  };
+
+  const saveSession = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingSession) return;
+    setSavingSession(true);
+    try {
+      await updateCurriculumSession(editingSession.id, sessionForm);
+      setNotification({ type: 'success', message: `"${editingSession.title}" was updated.` });
+      setEditingSession(null);
+      reload();
+    } catch (err) {
+      setNotification({ type: 'error', message: err instanceof Error ? err.message : 'Unable to update session.' });
+    } finally {
+      setSavingSession(false);
+      setTimeout(() => setNotification(null), 3500);
+    }
   };
 
   // Get unique filter options
@@ -235,7 +284,7 @@ export default function SessionCalendarPage() {
   const uniqueTutors = useMemo(() => [...new Set(sessions.map(s => s.tutor))], [sessions]);
 
   const isToday = (d: Date) => {
-    const today = new Date('2026-06-10');
+    const today = new Date();
     return formatDate(d) === formatDate(today);
   };
 
@@ -244,7 +293,7 @@ export default function SessionCalendarPage() {
   };
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={`${filteredSessions.length} sessions · Drag & drop to reschedule`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={loading ? 'Loading live LMS sessions...' : `${filteredSessions.length} sessions · Drag & drop to reschedule`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-6 space-y-5">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
@@ -258,6 +307,13 @@ export default function SessionCalendarPage() {
           <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-medium ${notification.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' : 'bg-red-50 text-red-700 border border-red-200/50'}`}>
             <i className={`${notification.type === 'success' ? 'ri-check-line' : 'ri-close-line'} text-sm`}></i>
             {notification.message}
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-medium bg-amber-50 text-amber-700 border border-amber-200/50">
+            <i className="ri-wifi-off-line text-sm"></i>
+            Live LMS data is unavailable, so no generated session schedule is shown.
           </div>
         )}
 
@@ -301,7 +357,7 @@ export default function SessionCalendarPage() {
                 <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary-500 text-white text-[9px]">{Object.values(filters).filter(v => v !== 'all').length}</span>
               )}
             </button>
-            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+            <button disabled title="Sessions are generated from scoped training-plan allocations. Create the parent cohort/group/module allocation first." className="px-3 py-1.5 bg-background-100 text-foreground-400 border border-background-200 rounded-lg text-[11px] font-semibold cursor-not-allowed whitespace-nowrap">
               <i className="ri-add-line mr-1"></i> New Session
             </button>
           </div>
@@ -328,12 +384,14 @@ export default function SessionCalendarPage() {
               {type}
             </span>
           ))}
-          <span className="text-[10px] text-foreground-300 ml-2"><i className="ri-drag-move-line mr-1"></i>Drag sessions to reschedule</span>
+          <span className="text-[10px] text-foreground-300 ml-2"><i className="ri-lock-line mr-1"></i>Generated sessions cannot be drag-rescheduled individually</span>
         </div>
 
         {/* Calendar Grid */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          {view === 'week' ? (
+          {loading ? (
+            <CalendarGridSkeleton view={view} />
+          ) : view === 'week' ? (
             /* ── WEEK VIEW ── */
             <div>
               {/* Day Headers */}
@@ -366,7 +424,7 @@ export default function SessionCalendarPage() {
                           {slotSessions.map(s => (
                             <div
                               key={s.id}
-                              draggable
+                              draggable={false}
                               onDragStart={(e) => handleDragStart(e, s.id)}
                               onClick={() => setSelectedSession(selectedSession?.id === s.id ? null : s)}
                               className={`p-1.5 rounded-md border text-[9px] leading-tight mb-1 cursor-pointer hover:shadow-sm transition-smooth ${typeColors[s.type] || 'bg-foreground-100 border-foreground-200 text-foreground-700'} ${draggedSession === s.id ? 'opacity-40' : ''}`}
@@ -417,7 +475,7 @@ export default function SessionCalendarPage() {
                         {daySessions.slice(0, 3).map(s => (
                           <div
                             key={s.id}
-                            draggable
+                              draggable={false}
                             onDragStart={(e) => handleDragStart(e, s.id)}
                             onClick={() => setSelectedSession(selectedSession?.id === s.id ? null : s)}
                             className={`px-1.5 py-0.5 rounded text-[8px] font-medium truncate cursor-pointer border ${typeColors[s.type] || 'bg-foreground-100 border-foreground-200 text-foreground-700'} ${draggedSession === s.id ? 'opacity-40' : ''}`}
@@ -464,13 +522,33 @@ export default function SessionCalendarPage() {
               <div><span className="text-foreground-400">Venue</span><p className="font-semibold text-foreground-800">{selectedSession.venue}</p></div>
             </div>
             <div className="flex items-center gap-2 mt-4 pt-3 border-t border-background-200/30">
-              <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+              <button onClick={() => openEditSession(selectedSession)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                 <i className="ri-edit-line mr-1"></i> Edit Session
               </button>
-              <button className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200/50 rounded-lg text-[11px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
+              <button disabled title="Individual generated sessions cannot be cancelled safely without a stored session row." className="px-3 py-1.5 bg-background-100 text-foreground-400 border border-background-200 rounded-lg text-[11px] font-medium cursor-not-allowed whitespace-nowrap">
                 <i className="ri-delete-bin-line mr-1"></i> Cancel Session
               </button>
             </div>
+          </div>
+        )}
+
+        {editingSession && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setEditingSession(null)}>
+            <form onSubmit={saveSession} className="bg-background-50 rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+              <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
+                <h3 className="text-sm font-heading font-semibold text-foreground-900">Edit Session</h3>
+                <button type="button" onClick={() => setEditingSession(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
+              </div>
+              <div className="p-6 space-y-4">
+                <SessionField label="Start time" type="time" value={sessionForm.startTime} onChange={value => setSessionForm(prev => ({ ...prev, startTime: value }))} />
+                <SessionField label="End time" type="time" value={sessionForm.endTime} onChange={value => setSessionForm(prev => ({ ...prev, endTime: value }))} />
+                <SessionField label="Tutor" value={sessionForm.tutor} onChange={value => setSessionForm(prev => ({ ...prev, tutor: value }))} />
+              </div>
+              <div className="px-6 py-4 border-t border-background-200/60 flex justify-end gap-2">
+                <button type="button" onClick={() => setEditingSession(null)} disabled={savingSession} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                <button type="submit" disabled={savingSession} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingSession ? 'Saving...' : 'Save Session'}</button>
+              </div>
+            </form>
           </div>
         )}
       </div>
@@ -494,6 +572,64 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
           <option key={o} value={o}>{o}</option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function SessionField({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
+    </label>
+  );
+}
+
+function CalendarGridSkeleton({ view }: { view: 'week' | 'month' }) {
+  if (view === 'month') {
+    return (
+      <div className="animate-pulse">
+        <div className="grid grid-cols-7 border-b border-foreground-300/50">
+          {Array.from({ length: 7 }).map((_, index) => (
+            <div key={index} className="py-3 px-2 border-l border-background-200/30 first:border-l-0">
+              <SkeletonBlock className="h-2.5 w-8 mx-auto" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7">
+          {Array.from({ length: 35 }).map((_, index) => (
+            <div key={index} className="min-h-[90px] border border-background-200/20 p-2 space-y-2">
+              <SkeletonBlock className="h-3 w-5" />
+              <SkeletonBlock className="h-4 w-full" />
+              <SkeletonBlock className="h-4 w-4/5" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="animate-pulse">
+      <div className="grid grid-cols-[70px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-foreground-300/50">
+        <div className="py-3 px-2"></div>
+        {Array.from({ length: 7 }).map((_, index) => (
+          <div key={index} className="py-3 px-2 border-l border-background-200/30">
+            <SkeletonBlock className="h-2.5 w-8 mx-auto mb-2" />
+            <SkeletonBlock className="h-4 w-5 mx-auto" />
+          </div>
+        ))}
+      </div>
+      {Array.from({ length: 8 }).map((_, rowIndex) => (
+        <div key={rowIndex} className="grid grid-cols-[70px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] border-b border-background-200/20">
+          <div className="py-3 px-2"><SkeletonBlock className="h-2.5 w-9" /></div>
+          {Array.from({ length: 7 }).map((_, columnIndex) => (
+            <div key={columnIndex} className="py-2 px-1 border-l border-background-200/20 min-h-[54px]">
+              {(rowIndex + columnIndex) % 3 === 0 && <SkeletonBlock className="h-9 w-full rounded-md" />}
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

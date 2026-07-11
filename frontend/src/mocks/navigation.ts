@@ -108,11 +108,8 @@ export const coachNavItems: SidebarNavItem[] = [
     id: 'coach-group-learners',
     label: 'My Learners',
     icon: 'ri-group-line',
-    href: '',
-    children: [
-      { id: 'coach-learner-overview', label: 'Learner Overview', icon: 'ri-folder-user-line', href: '/coach/caseload', badge: 24 },
-      { id: 'coach-at-risk', label: 'At-risk Learners', icon: 'ri-alert-line', href: '/coach/at-risk', badge: 3 },
-    ],
+    href: '/coach/caseload',
+    badge: 24,
   },
   {
     id: 'coach-group-attendance',
@@ -330,8 +327,9 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-question-answer-line',
     href: '',
     children: [
-      { id: 'curriculum-quiz-xml', label: 'Quiz XML Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
-      { id: 'curriculum-test-banks', label: 'Test Banks', icon: 'ri-database-2-line', href: '/curriculum/test-banks' },
+      { id: 'curriculum-quiz-xml', label: 'Quiz Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
+      { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
+      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=trash' },
       { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
     ],
   },
@@ -403,80 +401,8 @@ export const engagementNavItems: SidebarNavItem[] = [
 // ENROLMENT WORKSPACE — Grouped sidebar (7 groups, status dots only, no counters)
 // ============================================================================
 export const enrolmentNavItems: SidebarNavItem[] = [
-  // Command Centre
-  { id: 'enrolment-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/compliance', statusDot: 'blue' },
-
-  // Onboarding Journey
-  {
-    id: 'enrolment-group-onboarding',
-    label: 'Onboarding Journey',
-    icon: 'ri-road-map-line',
-    children: [
-      { id: 'enrolment-onboarding-journey', label: 'Onboarding Journey', icon: 'ri-git-branch-line', href: '/compliance/pre-active', statusDot: 'green' },
-      { id: 'enrolment-new-starters', label: 'New Starters', icon: 'ri-user-add-line', href: '/compliance/new-starters', statusDot: 'blue' },
-      { id: 'enrolment-self-onboarding', label: 'Self-Onboarding', icon: 'ri-user-received-line', href: '/compliance/self-onboarding', statusDot: 'amber' },
-      { id: 'enrolment-employer-contracting', label: 'Employer Contracting', icon: 'ri-file-text-line', href: '/compliance/employer-contracting', statusDot: 'red' },
-      { id: 'enrolment-enrolment-review', label: 'Enrolment Review', icon: 'ri-search-eye-line', href: '/compliance/enrolment-review', statusDot: 'amber' },
-    ],
-  },
-
-  // Eligibility & Assessment
-  {
-    id: 'enrolment-group-eligibility',
-    label: 'Eligibility & Assessment',
-    icon: 'ri-checkbox-circle-line',
-    children: [
-      { id: 'enrolment-eligibility', label: 'Eligibility', icon: 'ri-checkbox-circle-line', href: '/compliance/eligibility', statusDot: 'amber' },
-      { id: 'enrolment-initial-assessment', label: 'Initial Assessment', icon: 'ri-clipboard-line', href: '/compliance/initial-assessment', statusDot: 'green' },
-      { id: 'enrolment-rpl-review', label: 'RPL Review', icon: 'ri-file-search-line', href: '/compliance/rpl-review', statusDot: 'blue' },
-    ],
-  },
-
-  // Documents & Signatures
-  {
-    id: 'enrolment-group-documents',
-    label: 'Documents & Signatures',
-    icon: 'ri-folder-line',
-    children: [
-      { id: 'enrolment-documents', label: 'Documents', icon: 'ri-folder-line', href: '/compliance/documents', statusDot: 'red' },
-      { id: 'enrolment-signatures', label: 'Digital Signatures', icon: 'ri-pen-nib-line', href: '/compliance/signatures', statusDot: 'red' },
-      { id: 'enrolment-evidence-packs', label: 'Evidence Packs', icon: 'ri-folder-upload-line', href: '/compliance/evidence-packs', statusDot: 'amber' },
-    ],
-  },
-
-  // Funding & Data Readiness
-  {
-    id: 'enrolment-group-funding',
-    label: 'Funding & Data Readiness',
-    icon: 'ri-money-pound-circle-line',
-    children: [
-      { id: 'enrolment-das', label: 'DAS Tracker', icon: 'ri-money-pound-circle-line', href: '/compliance/das', statusDot: 'amber' },
-      { id: 'enrolment-ilr', label: 'ILR Readiness', icon: 'ri-database-2-line', href: '/compliance/ilr', statusDot: 'red' },
-      { id: 'enrolment-funding-risk', label: 'Funding Risk', icon: 'ri-alert-line', href: '/compliance/funding-risk', statusDot: 'red' },
-      { id: 'enrolment-aptem-sync', label: 'Aptem Sync', icon: 'ri-refresh-line', href: '/compliance/aptem-sync', statusDot: 'green' },
-    ],
-  },
-
-  // Audit & Reporting
-  {
-    id: 'enrolment-group-audit',
-    label: 'Audit & Reporting',
-    icon: 'ri-history-line',
-    children: [
-      { id: 'enrolment-audit-reports', label: 'Audit Reports', icon: 'ri-history-line', href: '/compliance/audit-reports', statusDot: 'blue' },
-      { id: 'enrolment-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/compliance/reports', statusDot: 'green' },
-    ],
-  },
-
-  // Communication
-  {
-    id: 'enrolment-group-communication',
-    label: 'Communication',
-    icon: 'ri-mail-line',
-    children: [
-      { id: 'enrolment-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
-    ],
-  },
+  { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
+  { id: 'delivery', label: 'delivery', icon: 'ri-briefcase-4-line', href: '/delivery', statusDot: 'amber' },
 ];
 
 // ============================================================================
