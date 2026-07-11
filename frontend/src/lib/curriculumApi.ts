@@ -1,0 +1,604 @@
+export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
+
+interface CurriculumRequestInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+}
+
+export interface CurriculumProgramme {
+  id: string;
+  sourceId: string;
+  name: string;
+  standard: string;
+  level: string;
+  status: CurriculumStatus;
+  modules: number;
+  weeks: number;
+  ksbMapped: number;
+  ksbTotal: number;
+  learners: number;
+  cohorts: number;
+  groups?: number;
+  lastUpdated: string;
+  owner: string;
+  color: string;
+  description: string;
+}
+
+export interface CurriculumModule {
+  id: string;
+  sourceId: number | string;
+  catalogueId?: string;
+  name: string;
+  programmeId?: string;
+  programme: string;
+  cohortId?: string;
+  cohort?: string;
+  groupId?: string;
+  group?: string;
+  weeks: number;
+  sessionsNumber?: number;
+  startDate?: string;
+  endDate?: string;
+  ksbCount: number;
+  lessons: number;
+  quizzes: number;
+  assignments: number;
+  status: 'published' | 'draft' | 'review' | string;
+  authoringStatus?: 'published' | 'draft' | 'review' | string;
+  sourceType?: string;
+  importedFromTrainingPlanId?: string;
+  deliveryStatus?: string;
+  author: string;
+  tutor?: string;
+  coach?: string;
+  lastUpdated: string;
+  color: string;
+  notes: string;
+  sessionNames: string[];
+  ksbCodes: string[];
+}
+
+export interface CurriculumComponent {
+  id: string;
+  moduleCatalogueId?: string;
+  moduleId?: string;
+  weekId?: string;
+  title: string;
+  type: string;
+  module: string;
+  programme: string;
+  week: string;
+  duration: number;
+  ksbRefs: string[];
+  status: 'published' | 'draft' | 'review';
+  lastEdited: string;
+  contentSections: number;
+  quizQuestions?: number | null;
+  hasResources: boolean;
+}
+
+export interface CurriculumKsbActivity {
+  activityType: string;
+  weight: number;
+}
+
+export interface CurriculumKsbEntry {
+  id: string;
+  code: string;
+  rawCode?: string;
+  fullCode?: string;
+  parentCode?: string;
+  parentId?: string | number | null;
+  displayOrder?: number;
+  title: string;
+  description: string;
+  type: 'Knowledge' | 'Skill' | 'Behaviour';
+  standard: string;
+  activities: CurriculumKsbActivity[];
+  modules: string[];
+  assessmentMethod: string;
+  mappedBy: string;
+  status: 'mapped' | 'partial' | 'unmapped';
+  lastUpdated: string;
+}
+
+export interface CurriculumKsbSet {
+  frameworkId?: string;
+  profileId?: string | number;
+  programmeId: string;
+  programmeName: string;
+  standard: string;
+  notes?: string;
+  status?: string;
+  ksbs: CurriculumKsbEntry[];
+}
+
+export interface CurriculumKsbFramework {
+  id: string;
+  profileId?: string | number;
+  name: string;
+  standard: string;
+  programmeName?: string;
+  notes?: string;
+  ifateRef: string;
+  level: number;
+  totalKsbs: number;
+  knowledgeCount: number;
+  skillCount: number;
+  behaviourCount: number;
+  modulesCount: number;
+  mapped: number;
+  status: 'draft' | 'review' | 'published' | 'archived';
+  lastModified: string;
+  modifiedBy: string;
+  version: string;
+  programmes: string[];
+}
+
+export interface CurriculumStandardKsb {
+  id?: string | number;
+  code: string;
+  type: 'Knowledge' | 'Skill' | 'Behaviour';
+  description: string;
+}
+
+export interface CurriculumStandard {
+  id: string;
+  code: string;
+  standardRef: string;
+  version: string;
+  name: string;
+  status: string;
+  level: string;
+  levelValue: string;
+  degree: string;
+  route: string;
+  duration: string;
+  minimumHours: string;
+  maxFunding: string;
+  larsCode: string;
+  eqaProvider: string;
+  sourceUrl: string;
+  approvedForDelivery: string;
+  dateUpdated: string;
+  lastSynced: string;
+  knowledge: number;
+  skills: number;
+  behaviours: number;
+  total: number;
+  sampleKsbs?: CurriculumStandardKsb[];
+  ksbs?: CurriculumStandardKsb[];
+}
+
+export type CurriculumKsbItemInput = {
+  id?: string | number;
+  type: 'K' | 'S' | 'B';
+  code: string;
+  parentCode?: string;
+  title: string;
+  description?: string;
+  displayOrder?: number;
+};
+
+export type CurriculumKsbFrameworkInput = {
+  name?: string;
+  programmeName?: string;
+  programme?: string;
+  description?: string;
+  notes?: string;
+  isActive?: boolean;
+  ksbItems?: CurriculumKsbItemInput[];
+  knowledgeCodes?: string[];
+  skillCodes?: string[];
+  behaviourCodes?: string[];
+};
+
+export interface CurriculumCohort {
+  id: string;
+  name: string;
+  programme: string;
+  programmeId: string;
+  startDate: string;
+  endDate: string;
+  status: 'active' | 'planned' | 'completed' | 'archived' | string;
+  learners: number;
+  groups: string[];
+  modules: string[];
+  sessions: number;
+  color: string;
+  progress: number;
+  attendance: number;
+  holidayIds?: Array<string | number>;
+}
+
+export interface CurriculumGroup {
+  id: string;
+  name: string;
+  cohortId: string;
+  cohort: string;
+  programme: string;
+  learners: number;
+  coach: string;
+  tutor: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  schedule: string;
+  mode: string;
+  modules: string[];
+  sessions: number;
+}
+
+export interface CurriculumSession {
+  id: string;
+  trainingPlanId: number;
+  title: string;
+  type: string;
+  date: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  tutor: string;
+  group: string;
+  cohort: string;
+  programme: string;
+  venue: string;
+  module: string;
+  week: number;
+  status: 'scheduled' | 'completed' | 'cancelled' | 'pending' | string;
+  ksbCodes: string[];
+}
+
+export interface CurriculumHoliday {
+  id: string | number;
+  label: string;
+  startDate: string;
+  endDate: string;
+  type?: string;
+  color?: string;
+}
+
+export interface CurriculumStaffProfile {
+  id?: string | number;
+  name?: string;
+  email?: string;
+  [key: string]: unknown;
+}
+
+export interface CurriculumOverview {
+  schema: string;
+  stats: {
+    programmes: number;
+    activeProgrammes: number;
+    cohorts: number;
+    groups: number;
+    modules: number;
+    ksbFrameworks: number;
+    sessions: number;
+  };
+  programmes: CurriculumProgramme[];
+  modules: CurriculumModule[];
+  ksbFrameworks: CurriculumKsbFramework[];
+  ksbSets: CurriculumKsbSet[];
+  cohorts: CurriculumCohort[];
+  groups: CurriculumGroup[];
+  sessions: CurriculumSession[];
+  components?: CurriculumComponent[];
+  holidays?: CurriculumHoliday[];
+  tutors?: CurriculumStaffProfile[];
+  coaches?: CurriculumStaffProfile[];
+}
+
+export interface CurriculumProgrammeDetail {
+  schema: string;
+  programme: CurriculumProgramme;
+  cohorts: Array<CurriculumCohort & { groups: Array<CurriculumGroup & { modules: CurriculumModule[] }> }>;
+  flat: {
+    cohorts: CurriculumCohort[];
+    groups: CurriculumGroup[];
+    groupIds: string[];
+    modules: CurriculumModule[];
+    sessions: CurriculumSession[];
+  };
+}
+
+export interface CurriculumSessionPlanPreview {
+  sessions: Array<{ sessionNumber: number; date: string; day: string }>;
+  skippedHolidays: string[];
+  finalEndDate: string;
+  warnings: string[];
+}
+
+export interface CurriculumCohortEndDatePreview {
+  endDate: string;
+  autoCalculated: boolean;
+  rule: string;
+  warnings: string[];
+}
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
+
+interface CurriculumCollection<T> {
+  schema: string;
+  count: number;
+  results: T[];
+}
+
+async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.headers || {}),
+    },
+  });
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const payload = await response.json();
+      detail = payload?.error ? `: ${payload.error}` : '';
+    } catch {
+      detail = '';
+    }
+    throw new Error(`Curriculum API returned ${response.status} for ${path}${detail}`);
+  }
+  return response.json();
+}
+
+async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): Promise<T[]> {
+  const payload = await fetchJson<CurriculumCollection<T>>(path, init);
+  return payload.results;
+}
+
+export function fetchCurriculumModules(signal?: AbortSignal): Promise<CurriculumModule[]> {
+  return fetchCollection<CurriculumModule>('/curriculum/modules/', { signal });
+}
+
+export function fetchCurriculumComponents(signal?: AbortSignal): Promise<CurriculumComponent[]> {
+  return fetchCollection<CurriculumComponent>('/curriculum/components/', { signal });
+}
+
+export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
+  return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
+}
+
+export function fetchCurriculumProgrammes(signal?: AbortSignal): Promise<CurriculumProgramme[]> {
+  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/?include_archived=true', { signal });
+}
+
+export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<CurriculumKsbFramework[]> {
+  return fetchCollection<CurriculumKsbFramework>('/curriculum/ksb-frameworks/', { signal });
+}
+
+export function fetchCurriculumKsbSets(signal?: AbortSignal): Promise<CurriculumKsbSet[]> {
+  return fetchCollection<CurriculumKsbSet>('/curriculum/ksb-sets/', { signal });
+}
+
+export function fetchCurriculumStandards(signal?: AbortSignal): Promise<CurriculumStandard[]> {
+  return fetchCollection<CurriculumStandard>('/curriculum/standards/', { signal });
+}
+
+export function fetchCurriculumStandardDetail(id: string, signal?: AbortSignal): Promise<CurriculumStandard> {
+  return fetchJson<CurriculumStandard>(`/curriculum/standards/${encodeURIComponent(id)}/`, { signal });
+}
+
+export function createCurriculumKsbFramework(input: CurriculumKsbFrameworkInput) {
+  return postJson<{ created: boolean; framework: CurriculumKsbFramework }>('/curriculum/ksb-frameworks/', input);
+}
+
+export function updateCurriculumKsbFramework(id: string, input: CurriculumKsbFrameworkInput) {
+  return patchJson<{ updated: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumKsbFramework(id: string) {
+  return deleteJson<{ archived: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
+}
+
+export function fetchCurriculumSessions(signal?: AbortSignal): Promise<CurriculumSession[]> {
+  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal });
+}
+
+export function fetchCurriculumTutors(signal?: AbortSignal): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/tutors/', { signal });
+}
+
+export function fetchCurriculumCoaches(signal?: AbortSignal): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal });
+}
+
+export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<CurriculumHoliday[]> {
+  return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal });
+}
+
+export function fetchCurriculumOverview(signal?: AbortSignal): Promise<CurriculumOverview> {
+  return fetchJson<CurriculumOverview>('/curriculum/overview/', { signal });
+}
+
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/`, { signal });
+}
+
+export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
+
+function postJson<T>(path: string, body: unknown): Promise<T> {
+  return fetchJson<T>(path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return fetchJson<T>(path, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+function deleteJson<T>(path: string): Promise<T> {
+  return fetchJson<T>(path, { method: 'DELETE' });
+}
+
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description'>>;
+export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
+  startDate?: string;
+  endDate?: string;
+  tutor?: string;
+  coach?: string;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
+  ksbMappings?: unknown[];
+};
+export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
+export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
+export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number };
+export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
+export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string };
+export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
+export type CurriculumModuleAttachmentInput = {
+  moduleName: string;
+  programmeId?: string;
+  cohortId?: string;
+  groupId?: string;
+  catalogueId?: string | number;
+  color?: string;
+  startDate?: string;
+  endDate?: string;
+  coach?: string;
+  tutor?: string;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
+  sessionsNumber?: number;
+  weeks?: number;
+  notes?: string;
+  holidays?: unknown[];
+  linkedHolidays?: unknown[];
+};
+
+export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
+  return postJson<{ created: boolean; programme: CurriculumProgramme }>('/curriculum/programmes/', input);
+}
+
+export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
+  return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumProgramme(id: string) {
+  return deleteJson<{ archived: boolean; id: string }>(`/curriculum/programmes/${encodeURIComponent(id)}/`);
+}
+
+export const deleteCurriculumProgramme = archiveCurriculumProgramme;
+
+export function permanentlyDeleteCurriculumProgramme(id: string) {
+  return deleteJson<{ deleted: boolean; permanent: boolean; id: string }>(`/curriculum/programmes/${encodeURIComponent(id)}/?permanent=true`);
+}
+
+export function createCurriculumCohort(input: CurriculumCohortInput) {
+  return postJson('/curriculum/cohorts/', input);
+}
+
+export function createProgrammeCohort(programmeId: string, input: Omit<CurriculumCohortInput, 'programme'>) {
+  return postJson(`/curriculum/programmes/${encodeURIComponent(programmeId)}/cohorts/`, input);
+}
+
+export function updateCurriculumCohort(id: string, input: CurriculumCohortInput) {
+  return patchJson(`/curriculum/cohorts/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumCohort(id: string) {
+  return deleteJson(`/curriculum/cohorts/${encodeURIComponent(id)}/`);
+}
+
+export function createCurriculumGroup(input: CurriculumGroupInput) {
+  return postJson('/curriculum/groups/', input);
+}
+
+export function createCohortGroup(cohortId: string, input: Omit<CurriculumGroupInput, 'cohortId'>) {
+  return postJson(`/curriculum/cohorts/${encodeURIComponent(cohortId)}/groups/`, input);
+}
+
+export function updateCurriculumGroup(id: string, input: CurriculumGroupInput) {
+  return patchJson(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumGroup(id: string) {
+  return deleteJson(`/curriculum/groups/${encodeURIComponent(id)}/`);
+}
+
+export function attachCurriculumModulesToGroup(groupId: string, modules: CurriculumModuleAttachmentInput[]) {
+  return patchJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, { modules });
+}
+
+export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {
+  return postJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, input);
+}
+
+export function fetchGroupModules(groupId: string, signal?: AbortSignal): Promise<CurriculumModule[]> {
+  return fetchCollection<CurriculumModule>(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, { signal });
+}
+
+export function previewCohortEndDate(input: { startDate?: string; durationMonths?: number }) {
+  return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
+}
+
+export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
+  return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
+}
+
+export function createCurriculumModule(input: CurriculumModuleInput) {
+  return postJson<{ created: boolean; module: CurriculumModule }>('/curriculum/modules/', input);
+}
+
+export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
+  return patchJson<{ updated: boolean; module: CurriculumModule }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumModule(id: string) {
+  return deleteJson<{ archived: boolean; id: string }>(`/curriculum/modules/${encodeURIComponent(id)}/`);
+}
+
+export function createCurriculumComponent(input: CurriculumComponentInput) {
+  return postJson<{ created: boolean; component: CurriculumComponent }>('/curriculum/components/', input);
+}
+
+export function updateCurriculumComponent(id: string, input: CurriculumComponentInput) {
+  return patchJson<{ updated: boolean; component: CurriculumComponent }>(`/curriculum/components/${encodeURIComponent(id)}/`, input);
+}
+
+export function deleteCurriculumComponent(id: string) {
+  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/components/${encodeURIComponent(id)}/`);
+}
+
+export function createCurriculumSession(input: CurriculumSessionInput) {
+  return postJson('/curriculum/sessions/', input);
+}
+
+export function updateCurriculumSession(id: string, input: CurriculumSessionInput) {
+  return patchJson(`/curriculum/sessions/${encodeURIComponent(id)}/`, input);
+}
+
+export function archiveCurriculumSession(id: string) {
+  return deleteJson(`/curriculum/sessions/${encodeURIComponent(id)}/`);
+}
+
+export function createStaffingAssignment(input: CurriculumStaffingInput) {
+  return postJson('/curriculum/staffing/', input);
+}
+
+export function updateStaffingAssignment(id: string, input: CurriculumStaffingInput) {
+  return patchJson(`/curriculum/staffing/${encodeURIComponent(id)}/`, input);
+}
+
+export function deleteStaffingAssignment(id: string) {
+  return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
+}
+
+export function createCurriculumHoliday(input: CurriculumHolidayInput) {
+  return postJson('/curriculum/holidays/', input);
+}
+
+export function updateCurriculumHoliday(id: string | number, input: CurriculumHolidayInput) {
+  return patchJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`, input);
+}
+
+export function archiveCurriculumHoliday(id: string | number) {
+  return deleteJson(`/curriculum/holidays/${encodeURIComponent(String(id))}/`);
+}
