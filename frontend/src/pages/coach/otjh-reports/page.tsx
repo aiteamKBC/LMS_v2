@@ -4,11 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
-<<<<<<< HEAD
 const API_ENDPOINT = '/coach_api/coach/caseload';
-=======
-const API_ENDPOINT = '/api/coach/caseload';
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 type FilterKey = 'all' | 'behind' | 'need-attention' | 'on-track';
 type OtjhRowStatus = 'behind' | 'on-track' | 'ahead' | 'need-attention' | 'unknown';

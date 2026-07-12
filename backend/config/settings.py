@@ -9,20 +9,15 @@ https://docs.djangoproject.com/en/6.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
-<<<<<<< HEAD
 
 import os
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
-from urllib.parse import urlparse, unquote, parse_qs
-=======
-from pathlib import Path
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
+from urllib.parse import parse_qsl, urlparse, unquote
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-<<<<<<< HEAD
 
 def load_env_file(path):
     if not path.exists():
@@ -73,8 +68,6 @@ def database_from_url(database_url):
     }
 
 
-=======
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
@@ -82,7 +75,6 @@ def database_from_url(database_url):
 SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-<<<<<<< HEAD
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -93,32 +85,21 @@ ALLOWED_HOSTS = [
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if host.strip()
 ]
-=======
-DEBUG = True
-ALLOWED_HOSTS = []
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 
 # Application definition
 
 INSTALLED_APPS = [
-<<<<<<< HEAD
     'quiz_api',
-=======
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-<<<<<<< HEAD
     'coach_api',
     'learner_api',
     'curriculum_api',
-=======
-    'api',
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 ]
 
 MIDDLEWARE = [
@@ -154,7 +135,6 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-<<<<<<< HEAD
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL:
@@ -192,14 +172,6 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
-=======
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
-}
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 
 # Password validation
@@ -237,7 +209,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
-<<<<<<< HEAD
 
 LOGGING = {
     'version': 1,
@@ -254,5 +225,3 @@ LOGGING = {
         },
     },
 }
-=======
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

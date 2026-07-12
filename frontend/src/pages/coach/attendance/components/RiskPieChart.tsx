@@ -108,30 +108,6 @@ export default function RiskPieChart({
             );
           })}
 
-<<<<<<< HEAD
-          {/* Center text */}
-          <text x={center} y={center - 6} textAnchor="middle" className="fill-foreground-900" style={{ fontSize: '22px', fontWeight: 700, fontFamily: 'var(--font-heading)' }}>
-            {total}
-          </text>
-          <text x={center} y={center + 12} textAnchor="middle" className="fill-foreground-400" style={{ fontSize: '10px' }}>
-            Learners
-          </text>
-        </svg>
-
-        {/* Center hover highlight */}
-        {hoveredIndex !== null && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center">
-              <p className="text-xl font-heading font-bold" style={{ color: slices[hoveredIndex].color }}>
-                {slices[hoveredIndex].value}
-              </p>
-              <p className="text-[10px] text-foreground-500 font-medium">
-                {slices[hoveredIndex].label}
-              </p>
-            </div>
-          </div>
-        )}
-=======
         </svg>
 
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -147,7 +123,6 @@ export default function RiskPieChart({
             </p>
           </div>
         </div>
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       </div>
 
       {/* Legend */}
@@ -167,8 +142,4 @@ export default function RiskPieChart({
       </div>
     </div>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

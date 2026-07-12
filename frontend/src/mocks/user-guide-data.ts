@@ -647,11 +647,7 @@ export const USER_GUIDES: GuideSection[] = [
       { step: 2, title: 'Design Programmes', description: 'The Programmes section shows all learning programmes. Click to create a new programme, edit an existing one, or view its structure (modules, weeks, components).', icon: 'ri-stack-line', action: 'Navigate to Programmes' },
       { step: 3, title: 'Build Modules', description: 'The Module Builder allows you to create modules with titles, descriptions, learning outcomes, KSB mappings, and week structures. Click to start building.', icon: 'ri-layout-4-line', action: 'Navigate to Module Builder' },
       { step: 4, title: 'Map KSBs', description: 'The KSB Mapping section shows the KSB framework for each standard. Click to link KSBs to modules, components, and assessments. This mapping drives the learner tracker.', icon: 'ri-link', action: 'Navigate to KSB Mapping' },
-<<<<<<< HEAD
-      { step: 5, title: 'Create Assessments', description: 'The Assessment Design section shows the Quiz Workspace, Question Bank, and Checkpoints. Click to create quiz questions, reuse saved questions, and design checkpoint assessments.', icon: 'ri-question-answer-line', action: 'Navigate to Quiz Workspace or Question Bank' },
-=======
-      { step: 5, title: 'Create Assessments', description: 'The Assessment Design section shows the Quiz XML Workspace, Test Banks, and Checkpoints. Click to create quiz questions, build test banks, and design checkpoint assessments.', icon: 'ri-question-answer-line', action: 'Navigate to Quiz XML or Test Banks' },
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
+      { step: 5, title: 'Create Assessments', description: 'The Assessment Design section shows the Quiz Workspace, Question Bank, Test Banks, and Checkpoints. Click to create quiz questions, reuse saved questions, build test banks, and design checkpoint assessments.', icon: 'ri-question-answer-line', action: 'Navigate to Quiz Workspace, Question Bank, or Test Banks' },
       { step: 6, title: 'Publish Curriculum', description: 'The Quality & Publishing section shows version control, QA status, and published curriculum. Click to review, approve, and publish curriculum to production.', icon: 'ri-book-open-line', action: 'Navigate to Published' },
     ],
   },
@@ -801,8 +797,4 @@ export const ALL_ROLES = [
   { key: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line' },
   { key: 'auditor', label: 'Auditor', icon: 'ri-file-search-line' },
   { key: 'safeguarding', label: 'Safeguarding', icon: 'ri-shield-line' },
-<<<<<<< HEAD
 ];
-=======
-];
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

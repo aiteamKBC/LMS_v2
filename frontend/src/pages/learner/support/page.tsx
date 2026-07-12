@@ -143,11 +143,7 @@ const KB_ARTICLES: KnowledgeArticle[] = [
   { id: 'kb-a07', title: 'Understanding your funding and what it covers', category: 'kb-funding', excerpt: 'How apprenticeship funding works, what the levy covers, and what costs you might incur.', content: 'Your apprenticeship is fully funded through the apprenticeship levy. This covers: all training and assessment costs, access to the KBC LearningOS platform, coaching and tutoring support, and End-Point Assessment fees. You do not pay anything towards your apprenticeship. Your employer pays your wages as normal. If you leave your apprenticeship early, you will not be asked to repay any training costs.' },
   { id: 'kb-a08', title: 'Who to contact for safeguarding concerns', category: 'kb-safeguarding', excerpt: 'Safeguarding contacts, how to report concerns, and what happens when you make a report.', content: 'If you have a safeguarding concern about yourself or another learner: contact the Designated Safeguarding Lead at safeguarding@kbc.ac.uk or call 01227 811 250 (24/7). All concerns are treated confidentially. You can also speak to your coach Med Maher in confidence. In an emergency, always call 999 first. The safeguarding team will assess the concern, contact you within 24 hours, and agree next steps.' },
   { id: 'kb-a09', title: 'Troubleshooting common platform issues', category: 'kb-tech', excerpt: 'Quick fixes for common technical problems — clear cache, browser compatibility, and connectivity checks.', content: 'Common fixes: 1. Clear your browser cache (Settings > Privacy > Clear browsing data). 2. Use Chrome or Edge (Firefox has known issues with file uploads). 3. Check your internet connection — minimum 5 Mbps recommended. 4. Disable browser extensions that might interfere. 5. Log out and back in to refresh your session. 6. If using a work device, check if your IT department blocks any required domains.' },
-<<<<<<< HEAD
   { id: 'kb-a10', title: 'Preparing for End-Point Assessment (EPA)', category: 'kb-epa', excerpt: 'What to expect from EPA, how to prepare, and the assessment components you will face.', content: 'Your EPA consists of: 1. Professional Discussion (60 min) — based on your portfolio of evidence. 2. Project Presentation (30 min + Q&A) — presenting a workplace project. 3. Knowledge Test (90 min) — multiple choice and short answer. Preparation: start 3 months before EPA, review all KSB criteria, organise your portfolio logically, practice your presentation with your coach, and complete mock tests available in the Question Bank.' },
-=======
-  { id: 'kb-a10', title: 'Preparing for End-Point Assessment (EPA)', category: 'kb-epa', excerpt: 'What to expect from EPA, how to prepare, and the assessment components you will face.', content: 'Your EPA consists of: 1. Professional Discussion (60 min) — based on your portfolio of evidence. 2. Project Presentation (30 min + Q&A) — presenting a workplace project. 3. Knowledge Test (90 min) — multiple choice and short answer. Preparation: start 3 months before EPA, review all KSB criteria, organise your portfolio logically, practice your presentation with your coach, and complete mock tests available in the Test Banks.' },
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 ];
 
 const AI_SUGGESTIONS = [
@@ -222,11 +218,7 @@ export default function SupportPage() {
       }
       setTimeout(() => setTicketModalOpen(true), 100);
     }
-<<<<<<< HEAD
   }, [searchParams]);
-=======
-  }, []);
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
   // Knowledge Base
   const [kbCategory, setKbCategory] = useState<string | null>(null);
@@ -1301,8 +1293,4 @@ export default function SupportPage() {
       </div>
     </WorkspaceShell>
   );
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

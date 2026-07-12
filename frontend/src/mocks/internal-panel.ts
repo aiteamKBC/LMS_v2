@@ -101,11 +101,8 @@ export const INTERNAL_PANEL_TILES = [
       { label: 'Standards', id: 'standards', icon: 'ri-file-list-3-line', description: 'Browse IfATE standards, import assessment plans, and map KSB requirements.' },
       { label: 'Module Builder', id: 'module-builder', icon: 'ri-layout-4-line', description: 'Design and build curriculum modules with learning objectives and assessments.' },
       { label: 'KSB Mapping', id: 'ksb-mapping', icon: 'ri-link', description: 'Map knowledge, skills, and behaviours to curriculum modules and assessment methods.' },
-<<<<<<< HEAD
       { label: 'Question Bank', id: 'question-bank', icon: 'ri-questionnaire-line', description: 'Review, search, and reuse saved quiz questions across programmes.' },
-=======
       { label: 'Test Banks', id: 'test-banks', icon: 'ri-database-2-line', description: 'Create and manage question banks for quizzes, exams, and knowledge assessments.' },
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     ],
   },
   {
@@ -289,8 +286,4 @@ const DEFAULT_CUSTOM_PAGES: CustomPage[] = [
       { label: 'Session Notes', type: 'textarea' },
     ],
   },
-<<<<<<< HEAD
 ];
-=======
-];
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

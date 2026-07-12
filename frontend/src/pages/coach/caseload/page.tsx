@@ -117,11 +117,7 @@ const PAGE_SIZE = 10;
 const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
-<<<<<<< HEAD
 const API_ENDPOINT = '/coach_api/coach/caseload';
-=======
-const API_ENDPOINT = '/api/coach/caseload';
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 function displayValue(value?: string | null): string {
   if (!value) return EMPTY_VALUE;

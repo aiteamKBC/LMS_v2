@@ -1,14 +1,9 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-<<<<<<< HEAD
 import { useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RealLearnerPlanView } from '@/components/feature/RealLearnerPlanView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useMyLearner } from '@/hooks/useMyLearner';
-=======
-import { useSearchParams } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, QUIZ_1_DATA, READING_1_DATA, PODCAST_1_DATA } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES, TRAINING_MONTH_GROUPS, ACTIVITY_TYPE_META, TrainingActivity, ActivityType, ActivityStatus, WeekGroup, MonthGroup } from '@/mocks/training-plan';
@@ -34,14 +29,11 @@ type FilterStatus = '' | ActivityStatus;
    MAIN PAGE
    ═══════════════════════════════════════════════════════ */
 export default function TrainingPlanPage() {
-<<<<<<< HEAD
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const myLearner = useMyLearner();
   const kind = urlKind ?? myLearner?.kind;
   const id = urlId ?? myLearner?.id;
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
-=======
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const { warning } = useToast();
   const [searchParams] = useSearchParams();
   const highlightParam = searchParams.get('highlight');
@@ -166,7 +158,6 @@ export default function TrainingPlanPage() {
     }).filter(g => g.weeks.length > 0);
   }, [hasActiveFilters, searchQuery, filterType, filterStatus, filterMonth, filterWeek]);
 
-<<<<<<< HEAD
   if (isRealMode) {
     return (
       <RealLearnerPlanView
@@ -180,8 +171,6 @@ export default function TrainingPlanPage() {
     );
   }
 
-=======
->>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   return (
     <WorkspaceShell
       role="learner"
