@@ -84,14 +84,14 @@ export default function EngagementReportsPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'Overview', 'Risk', 'Attendance', 'Communication', 'Employer', 'Rewards', 'Clubs', 'Events', 'Compliance'].map(cat => (
-              <button key={cat} onClick={() => setCategoryFilter(cat)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${categoryFilter === cat ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={cat} onClick={() => setCategoryFilter(cat)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${categoryFilter === cat ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {cat === 'all' ? 'All' : cat}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'dashboard', 'summary', 'detailed', 'export'].map(t => (
-              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 <i className={`${t === 'all' ? 'ri-list-check' : typeConfig[t]?.icon || 'ri-file-line'} text-sm`}></i>
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>

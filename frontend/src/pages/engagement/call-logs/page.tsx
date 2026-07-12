@@ -65,15 +65,6 @@ export default function CallLogsPage() {
         {/* Related Pages Navigation */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
-          <button onClick={() => navigate('/engagement/communication')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-message-2-line text-sm"></i> Communication Centre
-          </button>
-          <button onClick={() => navigate('/engagement/employer-escalations')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-building-2-line text-sm"></i> Employer Escalations
-          </button>
-          <button onClick={() => navigate('/engagement/whatsapp-logs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-whatsapp-line text-sm"></i> WhatsApp Logs
-          </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
             <i className="ri-heart-line text-sm"></i> Learner Engagement
           </button>
@@ -87,7 +78,7 @@ export default function CallLogsPage() {
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'Attendance', 'Absence', 'Employer', 'Catch-up', 'Evidence', 'Escalation', 'Wellbeing', 'Progress'].map(cat => (
-              <button key={cat} onClick={() => setCategoryFilter(cat)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${categoryFilter === cat ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={cat} onClick={() => setCategoryFilter(cat)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${categoryFilter === cat ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {cat === 'all' ? 'All' : cat}
               </button>
             ))}

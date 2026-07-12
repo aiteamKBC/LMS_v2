@@ -379,30 +379,6 @@ export const engagementNavItems: SidebarNavItem[] = [
     children: [
       { id: 'engagement-learner-engagement', label: 'Learner Engagement', icon: 'ri-heart-line', href: '/engagement/learner-engagement' },
       { id: 'engagement-attendance-risk', label: 'Attendance Risk', icon: 'ri-alert-line', href: '/engagement/attendance-risk', badge: 4 },
-      { id: 'engagement-catchup-overdue', label: 'Catch-up Overdue', icon: 'ri-timer-line', href: '/engagement/catchup-overdue', badge: 9 },
-    ],
-  },
-  {
-    id: 'engagement-group-absence',
-    label: 'Absence & Recovery',
-    icon: 'ri-error-warning-line',
-    href: '',
-    children: [
-      { id: 'engagement-absence-queue', label: 'Absence Reporting Queue', icon: 'ri-error-warning-line', href: '/engagement/absence-queue', badge: 7 },
-      { id: 'engagement-employer-escalations', label: 'Employer Escalations', icon: 'ri-building-2-line', href: '/engagement/employer-escalations', badge: 1 },
-    ],
-  },
-  {
-    id: 'engagement-group-communication',
-    label: 'Communication Hub',
-    icon: 'ri-message-2-line',
-    href: '',
-    children: [
-      { id: 'engagement-communication', label: 'Communication Centre', icon: 'ri-message-2-line', href: '/engagement/communication' },
-      { id: 'engagement-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', badge: 2 },
-      { id: 'engagement-call-logs', label: 'Call Logs', icon: 'ri-phone-line', href: '/engagement/call-logs' },
-      { id: 'engagement-whatsapp-logs', label: 'WhatsApp Logs', icon: 'ri-whatsapp-line', href: '/engagement/whatsapp-logs' },
-      { id: 'engagement-email-logs', label: 'Email Logs', icon: 'ri-mail-line', href: '/engagement/email-logs' },
     ],
   },
   {

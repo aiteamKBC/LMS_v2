@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -44,7 +43,6 @@ const statusConfig: Record<string, { color: string; bg: string }> = {
 };
 
 export default function EmailLogsPage() {
-  const navigate = useNavigate();
   const [typeFilter, setTypeFilter] = useState<'all' | 'automated' | 'manual'>('all');
   const [search, setSearch] = useState('');
   const filtered = EMAIL_LOGS.filter(e => {
@@ -71,23 +69,6 @@ export default function EmailLogsPage() {
           stats={[{ label: 'Sent', value: String(EMAIL_LOGS.length) }, { label: 'Open Rate', value: `${openRate}%` }, { label: 'Failures', value: String(EMAIL_LOGS.filter(e => e.status === 'bounced' || e.status === 'failed').length), variant: 'danger' }]}
         />
 
-        {/* Quick access */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
-          <button onClick={() => navigate('/engagement/communication')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-message-2-line text-sm"></i> Communication Centre
-          </button>
-          <button onClick={() => navigate('/engagement/whatsapp-logs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-whatsapp-line text-sm"></i> WhatsApp Logs
-          </button>
-          <button onClick={() => navigate('/engagement/call-logs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-phone-line text-sm"></i> Call Logs
-          </button>
-          <button onClick={() => navigate('/engagement/employer-escalations')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-building-2-line text-sm"></i> Employer Escalations
-          </button>
-        </div>
-
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
@@ -96,7 +77,7 @@ export default function EmailLogsPage() {
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
             {(['all', 'automated', 'manual'] as const).map(t => (
-              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 <i className={`${t === 'automated' ? 'ri-robot-line' : t === 'manual' ? 'ri-user-line' : 'ri-list-check'} text-sm`}></i>
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>

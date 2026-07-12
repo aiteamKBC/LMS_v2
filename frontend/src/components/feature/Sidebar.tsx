@@ -30,6 +30,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
   const location = useLocation();
   const { canSeeNavItem } = useAuth();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [hoverExpanded, setHoverExpanded] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
@@ -84,7 +85,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
   // Desktop sidebar (collapsed)
   const desktopSidebar = (
     <aside
-      className="w-[56px] flex flex-col h-screen text-white relative overflow-visible"
+      className="w-full flex flex-col h-screen text-white relative overflow-visible"
       style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
     >
       {/* Liquid blob decorations */}
@@ -174,10 +175,10 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
     </aside>
   );
 
-  // Mobile sidebar (expanded)
+  // Expanded sidebar (used for mobile drawer and desktop hover-expand)
   const mobileSidebar = (
     <aside
-      className="w-[264px] flex flex-col h-screen text-white relative overflow-hidden"
+      className="w-full flex flex-col h-screen text-white relative overflow-hidden"
       style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
     >
       {/* Liquid blobs */}
@@ -284,9 +285,16 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
   return (
     <>
-      {/* Desktop sidebar */}
-      <div className="hidden lg:block fixed left-0 top-0 z-40 h-screen">
-        {desktopSidebar}
+      {/* Desktop sidebar — expands on hover */}
+      <div
+        className={`hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${hoverExpanded ? 'w-[264px] shadow-2xl' : 'w-[56px]'}`}
+        onMouseEnter={() => setHoverExpanded(true)}
+        onMouseLeave={() => {
+          setHoverExpanded(false);
+          setActiveDropdown(null);
+        }}
+      >
+        {hoverExpanded ? mobileSidebar : desktopSidebar}
       </div>
 
       {/* Mobile overlay */}
@@ -298,7 +306,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       )}
 
       {/* Mobile sidebar */}
-      <div className={`lg:hidden fixed left-0 top-0 z-50 h-screen transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`lg:hidden fixed left-0 top-0 z-50 h-screen w-[264px] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {mobileSidebar}
         <button
           onClick={onCloseMobile}
