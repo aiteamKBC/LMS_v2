@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -5,6 +6,12 @@ import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
 import { updateCurriculumSession, type CurriculumSession } from '@/lib/curriculumApi';
+=======
+import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { curriculumNavItems } from '@/mocks/navigation';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 // ─────────────────── Types ───────────────────
 
@@ -26,6 +33,38 @@ interface CalSession {
   status: 'scheduled' | 'completed' | 'cancelled' | 'pending';
 }
 
+<<<<<<< HEAD
+=======
+// ─────────────────── Mock Data ───────────────────
+
+const ALL_SESSIONS: CalSession[] = [
+  // Cohort A — Group A1 sessions
+  { id: 'sc-1', title: 'Welcome & Cohort Induction', type: 'Live Session', date: '2024-09-02', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-2', title: 'Marketing Environment & PESTLE', type: 'Workshop', date: '2024-09-04', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-3', title: 'Self-study: Marketing Frameworks', type: 'Self-study', date: '2024-09-05', day: 'Thu', startTime: '14:00', endTime: '15:30', tutor: 'Self-directed', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-4', title: 'Weekly OTJH Log & Reflection', type: 'OTJH', date: '2024-09-06', day: 'Fri', startTime: '16:00', endTime: '16:30', tutor: 'Sarah Mitchell', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-5', title: 'Quiz — Marketing Foundations', type: 'Quiz', date: '2024-09-06', day: 'Fri', startTime: '11:00', endTime: '11:30', tutor: 'Auto-marked', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'LMS', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-6', title: 'Customer Journey Mapping', type: 'Live Session', date: '2024-09-09', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 2, status: 'completed' },
+  { id: 'sc-7', title: 'Segmentation Workshop', type: 'Workshop', date: '2024-09-11', day: 'Wed', startTime: '09:30', endTime: '12:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 305', module: 'M1', week: 2, status: 'completed' },
+  { id: 'sc-8', title: 'Research Methods & Data Collection', type: 'Live Session', date: '2024-09-30', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Mark Williams', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M2', week: 5, status: 'completed' },
+  { id: 'sc-9', title: 'Survey Design Workshop', type: 'Workshop', date: '2024-10-02', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M2', week: 5, status: 'completed' },
+  // Cohort B
+  { id: 'sc-10', title: 'Welcome & Cohort Induction (B)', type: 'Live Session', date: '2025-03-03', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'B1, B2', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-11', title: 'Marketing Environment & PESTLE', type: 'Workshop', date: '2025-03-05', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M1', week: 1, status: 'completed' },
+  { id: 'sc-12', title: 'Campaign Planning Overview', type: 'Live Session', date: '2025-05-19', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 9, status: 'scheduled' },
+  { id: 'sc-13', title: 'Campaign Planning Workshop', type: 'Workshop', date: '2025-05-21', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'B1', cohort: 'Cohort B', programme: 'Marketing Executive L4', venue: 'Room 310', module: 'M3', week: 9, status: 'scheduled' },
+  // Upcoming — Cohort A
+  { id: 'sc-14', title: 'Digital Channels Strategy', type: 'Live Session', date: '2026-06-15', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 10, status: 'scheduled' },
+  { id: 'sc-15', title: 'Channel Strategy Workshop', type: 'Workshop', date: '2026-06-17', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Emily Roberts', group: 'A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 305', module: 'M3', week: 10, status: 'scheduled' },
+  { id: 'sc-16', title: 'Content Strategy Principles', type: 'Live Session', date: '2026-06-22', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M3', week: 11, status: 'scheduled' },
+  { id: 'sc-17', title: 'Content Planning Workshop', type: 'Workshop', date: '2026-06-24', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M3', week: 11, status: 'scheduled' },
+  { id: 'sc-18', title: 'Evaluation Frameworks', type: 'Live Session', date: '2026-06-29', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M4', week: 13, status: 'scheduled' },
+  { id: 'sc-19', title: 'KPI Workshop', type: 'Workshop', date: '2026-07-01', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'Mark Williams', group: 'A1, A2', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M4', week: 13, status: 'scheduled' },
+  { id: 'sc-20', title: 'Improvement Methodologies', type: 'Live Session', date: '2026-07-06', day: 'Mon', startTime: '09:30', endTime: '11:00', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Teams', module: 'M4', week: 14, status: 'scheduled' },
+  { id: 'sc-21', title: 'A/B Testing Workshop', type: 'Workshop', date: '2026-07-08', day: 'Wed', startTime: '09:30', endTime: '11:30', tutor: 'James Thompson', group: 'A1', cohort: 'Cohort A', programme: 'Marketing Executive L4', venue: 'Room 302', module: 'M4', week: 14, status: 'scheduled' },
+];
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 // ─────────────────── Colour maps ───────────────────
 
 const typeColors: Record<string, string> = {
@@ -57,6 +96,7 @@ const statusColors: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-700',
 };
 
+<<<<<<< HEAD
 const validSessionTypes = new Set<CalSession['type']>([
   'Live Session',
   'Workshop',
@@ -95,6 +135,8 @@ function normalizeApiSession(session: CurriculumSession): CalSession {
   };
 }
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 // ─────────────────── Helpers ───────────────────
 
 function getWeekStart(date: Date): Date {
@@ -137,6 +179,7 @@ function formatDateFull(d: Date): string {
 // ─────────────────── Component ───────────────────
 
 export default function SessionCalendarPage() {
+<<<<<<< HEAD
   const { sessions: apiSessions, loading, error, reload } = useCurriculumSessions();
   const [sessions, setSessions] = useState<CalSession[]>([]);
   const [view, setView] = useState<'week' | 'month'>('week');
@@ -147,12 +190,21 @@ export default function SessionCalendarPage() {
   const [editingSession, setEditingSession] = useState<CalSession | null>(null);
   const [sessionForm, setSessionForm] = useState({ startTime: '', endTime: '', tutor: '' });
   const [savingSession, setSavingSession] = useState(false);
+=======
+  const [sessions, setSessions] = useState<CalSession[]>(ALL_SESSIONS);
+  const [view, setView] = useState<'week' | 'month'>('week');
+  const [currentDate, setCurrentDate] = useState(new Date('2026-06-10'));
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+  const [draggedSession, setDraggedSession] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<CalSession | null>(null);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const [filters, setFilters] = useState<{ cohort: string; group: string; type: string; tutor: string }>({ cohort: 'all', group: 'all', type: 'all', tutor: 'all' });
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Filter state
   const [showFilters, setShowFilters] = useState(false);
 
+<<<<<<< HEAD
   useEffect(() => {
     if (!apiSessions.length) return;
 
@@ -165,6 +217,8 @@ export default function SessionCalendarPage() {
     }
   }, [apiSessions]);
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const weekStart = view === 'week' ? getWeekStart(currentDate) : getMonthStart(currentDate);
   const daysInWeek = 7;
   const weeksToShow = view === 'week' ? 1 : 5;
@@ -233,7 +287,12 @@ export default function SessionCalendarPage() {
     const newDate = formatDate(date);
     if (newDate === session.date) return;
 
+<<<<<<< HEAD
     setNotification({ type: 'error', message: `"${session.title}" is generated from a training-plan row. Drag/drop rescheduling is disabled to avoid changing the wider delivery series.` });
+=======
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, date: newDate } : s));
+    setNotification({ type: 'success', message: `"${session.title}" rescheduled to ${formatDateFull(date)}` });
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     setDraggedSession(null);
     setTimeout(() => setNotification(null), 3500);
   };
@@ -251,6 +310,7 @@ export default function SessionCalendarPage() {
   };
 
   const goToday = () => {
+<<<<<<< HEAD
     setCurrentDate(new Date());
     setView('week');
   };
@@ -277,6 +337,12 @@ export default function SessionCalendarPage() {
     }
   };
 
+=======
+    setCurrentDate(new Date('2026-06-10'));
+    setView('week');
+  };
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   // Get unique filter options
   const uniqueCohorts = useMemo(() => [...new Set(sessions.map(s => s.cohort))], [sessions]);
   const uniqueGroups = useMemo(() => [...new Set(sessions.flatMap(s => s.group.split(', ').map(g => g.trim())))], [sessions]);
@@ -284,7 +350,11 @@ export default function SessionCalendarPage() {
   const uniqueTutors = useMemo(() => [...new Set(sessions.map(s => s.tutor))], [sessions]);
 
   const isToday = (d: Date) => {
+<<<<<<< HEAD
     const today = new Date();
+=======
+    const today = new Date('2026-06-10');
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     return formatDate(d) === formatDate(today);
   };
 
@@ -293,7 +363,11 @@ export default function SessionCalendarPage() {
   };
 
   return (
+<<<<<<< HEAD
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={loading ? 'Loading live LMS sessions...' : `${filteredSessions.length} sessions · Drag & drop to reschedule`} userName="Rachel Myers" userRole="Curriculum Designer">
+=======
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={`${filteredSessions.length} sessions · Drag & drop to reschedule`} userName="Rachel Myers" userRole="Curriculum Designer">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       <div className="p-6 space-y-5">
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
@@ -310,6 +384,7 @@ export default function SessionCalendarPage() {
           </div>
         )}
 
+<<<<<<< HEAD
         {error && (
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-medium bg-amber-50 text-amber-700 border border-amber-200/50">
             <i className="ri-wifi-off-line text-sm"></i>
@@ -317,6 +392,8 @@ export default function SessionCalendarPage() {
           </div>
         )}
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         {/* Controls Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -357,7 +434,11 @@ export default function SessionCalendarPage() {
                 <span className="ml-1 px-1.5 py-0.5 rounded-full bg-primary-500 text-white text-[9px]">{Object.values(filters).filter(v => v !== 'all').length}</span>
               )}
             </button>
+<<<<<<< HEAD
             <button disabled title="Sessions are generated from scoped training-plan allocations. Create the parent cohort/group/module allocation first." className="px-3 py-1.5 bg-background-100 text-foreground-400 border border-background-200 rounded-lg text-[11px] font-semibold cursor-not-allowed whitespace-nowrap">
+=======
+            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <i className="ri-add-line mr-1"></i> New Session
             </button>
           </div>
@@ -384,14 +465,22 @@ export default function SessionCalendarPage() {
               {type}
             </span>
           ))}
+<<<<<<< HEAD
           <span className="text-[10px] text-foreground-300 ml-2"><i className="ri-lock-line mr-1"></i>Generated sessions cannot be drag-rescheduled individually</span>
+=======
+          <span className="text-[10px] text-foreground-300 ml-2"><i className="ri-drag-move-line mr-1"></i>Drag sessions to reschedule</span>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         </div>
 
         {/* Calendar Grid */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+<<<<<<< HEAD
           {loading ? (
             <CalendarGridSkeleton view={view} />
           ) : view === 'week' ? (
+=======
+          {view === 'week' ? (
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             /* ── WEEK VIEW ── */
             <div>
               {/* Day Headers */}
@@ -424,7 +513,11 @@ export default function SessionCalendarPage() {
                           {slotSessions.map(s => (
                             <div
                               key={s.id}
+<<<<<<< HEAD
                               draggable={false}
+=======
+                              draggable
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                               onDragStart={(e) => handleDragStart(e, s.id)}
                               onClick={() => setSelectedSession(selectedSession?.id === s.id ? null : s)}
                               className={`p-1.5 rounded-md border text-[9px] leading-tight mb-1 cursor-pointer hover:shadow-sm transition-smooth ${typeColors[s.type] || 'bg-foreground-100 border-foreground-200 text-foreground-700'} ${draggedSession === s.id ? 'opacity-40' : ''}`}
@@ -475,7 +568,11 @@ export default function SessionCalendarPage() {
                         {daySessions.slice(0, 3).map(s => (
                           <div
                             key={s.id}
+<<<<<<< HEAD
                               draggable={false}
+=======
+                            draggable
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                             onDragStart={(e) => handleDragStart(e, s.id)}
                             onClick={() => setSelectedSession(selectedSession?.id === s.id ? null : s)}
                             className={`px-1.5 py-0.5 rounded text-[8px] font-medium truncate cursor-pointer border ${typeColors[s.type] || 'bg-foreground-100 border-foreground-200 text-foreground-700'} ${draggedSession === s.id ? 'opacity-40' : ''}`}
@@ -522,15 +619,23 @@ export default function SessionCalendarPage() {
               <div><span className="text-foreground-400">Venue</span><p className="font-semibold text-foreground-800">{selectedSession.venue}</p></div>
             </div>
             <div className="flex items-center gap-2 mt-4 pt-3 border-t border-background-200/30">
+<<<<<<< HEAD
               <button onClick={() => openEditSession(selectedSession)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                 <i className="ri-edit-line mr-1"></i> Edit Session
               </button>
               <button disabled title="Individual generated sessions cannot be cancelled safely without a stored session row." className="px-3 py-1.5 bg-background-100 text-foreground-400 border border-background-200 rounded-lg text-[11px] font-medium cursor-not-allowed whitespace-nowrap">
+=======
+              <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <i className="ri-edit-line mr-1"></i> Edit Session
+              </button>
+              <button className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200/50 rounded-lg text-[11px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 <i className="ri-delete-bin-line mr-1"></i> Cancel Session
               </button>
             </div>
           </div>
         )}
+<<<<<<< HEAD
 
         {editingSession && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setEditingSession(null)}>
@@ -551,6 +656,8 @@ export default function SessionCalendarPage() {
             </form>
           </div>
         )}
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       </div>
     </WorkspaceShell>
   );
@@ -574,6 +681,7 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
       </select>
     </div>
   );
+<<<<<<< HEAD
 }
 
 function SessionField({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
@@ -633,3 +741,6 @@ function CalendarGridSkeleton({ view }: { view: 'week' | 'month' }) {
     </div>
   );
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

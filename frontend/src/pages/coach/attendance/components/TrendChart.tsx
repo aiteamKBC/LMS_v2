@@ -173,6 +173,16 @@ export default function TrendChart({
     setTooltip(null);
   };
 
+<<<<<<< HEAD
+=======
+  const getTooltipPeriodLabel = (point: TrendPoint) => {
+    if (point.week) return `Week ${point.week}`;
+    if (/^W\d+$/i.test(point.label)) return `Week ${point.label.slice(1)}`;
+    if (/^\d{4}$/.test(point.label)) return `Year ${point.label}`;
+    return point.label;
+  };
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   return (
     <div ref={containerRef} className="w-full">
       <div className="relative w-full overflow-x-auto overflow-y-visible">
@@ -325,9 +335,15 @@ export default function TrendChart({
         {/* Rich Tooltip — light background, clean layout, always visible */}
         {tooltip && (
           <div
+<<<<<<< HEAD
             className="absolute pointer-events-none z-20 bg-background-50 border border-background-200 rounded-xl shadow-2xl text-[12px] font-medium min-w-[190px]"
             style={{
               left: `${((tooltip.x / chartWidth) * 100).toFixed(1)}%`,
+=======
+            className="absolute pointer-events-none z-20 bg-background-50 border border-background-200 rounded-xl shadow-2xl text-[12px] font-medium w-[260px] max-w-[calc(100vw-32px)]"
+            style={{
+              left: `clamp(130px, ${((tooltip.x / chartWidth) * 100).toFixed(1)}%, calc(100% - 130px))`,
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               top: `${((tooltip.y / chartHeight) * 100).toFixed(1)}%`,
               transform: tooltip.y < 100 ? 'translate(-50%, 14px)' : 'translate(-50%, -108%)',
             }}
@@ -336,7 +352,11 @@ export default function TrendChart({
               {/* Header row */}
               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-foreground-200">
                 <span className="text-[10px] font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+<<<<<<< HEAD
                   Week {tooltip.week || tooltip.label}
+=======
+                  {getTooltipPeriodLabel(tooltip)}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </span>
                 <span className="text-[10px] text-foreground-500">
                   {tooltip.month || tooltip.label}
@@ -396,4 +416,8 @@ export default function TrendChart({
       </div>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

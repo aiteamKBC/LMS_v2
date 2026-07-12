@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -20,6 +21,12 @@ import {
   updateCurriculumProgramme,
   updateStaffingAssignment,
 } from '@/lib/curriculumApi';
+=======
+import { useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { curriculumNavItems } from '@/mocks/navigation';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — Full Programme Hierarchy
@@ -48,7 +55,10 @@ interface Week {
   startDate: string;
   endDate: string;
   otjh: number;
+<<<<<<< HEAD
   components?: CurriculumComponent[];
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   sessions: Session[];
 }
 
@@ -56,8 +66,11 @@ interface Module {
   id: string;
   name: string;
   description: string;
+<<<<<<< HEAD
   cohort?: string;
   group?: string;
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   weeks: number;
   otjh: number;
   version: string;
@@ -75,7 +88,11 @@ interface Group {
   tutor: string;
   startDate: string;
   endDate: string;
+<<<<<<< HEAD
   status: 'active' | 'planned' | 'completed';
+=======
+  status: 'active' | 'pending' | 'completed';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   modules: Module[];
   schedule: string;
   mode: string;
@@ -98,9 +115,13 @@ interface Programme {
   name: string;
   standard: string;
   level: string;
+<<<<<<< HEAD
   status: string;
   owner: string;
   color: string;
+=======
+  status: 'published' | 'approved' | 'in-review' | 'draft';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   description: string;
   duration: string;
   intent: string;
@@ -118,6 +139,7 @@ interface Programme {
   staffing: { coach: string; tutor: string; groups: string; cohorts: string; status: string; role: string }[];
 }
 
+<<<<<<< HEAD
 type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description'>>;
 type SelectOption = { value: string; label: string };
 
@@ -128,6 +150,8 @@ const PROGRAMME_STATUS_OPTIONS = [
   { value: 'archived', label: 'Archived' },
 ];
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 // ─────────────────────────────────────────────────────────────────────────────
 // Mock Data — Marketing Executive Level 4
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,8 +162,11 @@ const PROGRAMME: Programme = {
   standard: 'ST0094',
   level: 'Level 4',
   status: 'published',
+<<<<<<< HEAD
   owner: 'Curriculum Team',
   color: '#6941c6',
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   description: '16-month L4 apprenticeship preparing learners for the Marketing Executive standard and CIM L4 Diploma.',
   duration: '16 months',
   intent: 'Build a confident, evidence-led marketing executive who can plan, deliver and evaluate campaigns aligned to employer goals.',
@@ -247,7 +274,11 @@ const PROGRAMME: Programme = {
           tutor: 'Unassigned',
           startDate: 'Sep 2025',
           endDate: 'Mar 2027',
+<<<<<<< HEAD
           status: 'planned',
+=======
+          status: 'pending',
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
           schedule: 'TBD',
           mode: 'Blended',
           modules: [],
@@ -612,6 +643,7 @@ const moduleStatusColors: Record<string, string> = {
   draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/50',
 };
 
+<<<<<<< HEAD
 const EMPTY_MODULE: Module = {
   id: 'no-modules',
   name: 'No modules found',
@@ -1039,20 +1071,27 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   };
 }
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
+<<<<<<< HEAD
   const { data, loading, error, reload } = useCurriculumData();
   const { programme: PROGRAMME, found } = useMemo(() => buildLiveProgramme(data, id || ''), [data, id]);
   const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('cohorts');
+=======
+  const [tab, setTab] = useState<'overview' | 'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('overview');
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
   const [selectedWeek, setSelectedWeek] = useState<string>(PROGRAMME.modules[0]?.weeksData[0]?.id || '');
   const [sessionFilter, setSessionFilter] = useState<string>('all');
+<<<<<<< HEAD
   const [cohortSearch, setCohortSearch] = useState<string>('');
   const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
   const [groupSearch, setGroupSearch] = useState<string>('');
@@ -1296,6 +1335,27 @@ export default function ProgrammeDetailPage() {
   };
 
   const tabs = [
+=======
+  const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [assignMode, setAssignMode] = useState<string | null>(null);
+
+  const cohort = PROGRAMME.cohorts.find(c => c.id === selectedCohort) || PROGRAMME.cohorts[0];
+  const module = PROGRAMME.modules.find(m => m.id === selectedModule) || PROGRAMME.modules[0];
+  const week = module?.weeksData.find(w => w.id === selectedWeek) || module?.weeksData[0];
+
+  const allSessions = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.sessions));
+  const filteredSessions = sessionFilter === 'all' ? allSessions : allSessions.filter(s => s.status === sessionFilter);
+
+  const totalSessions = allSessions.length;
+  const completedSessions = allSessions.filter(s => s.status === 'completed').length;
+  const totalOtjh = PROGRAMME.modules.reduce((a, m) => a + m.otjh, 0);
+  const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
+  const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
+
+  const tabs = [
+    { key: 'overview' as const, label: 'Overview & Intent', icon: 'ri-file-info-line' },
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     { key: 'cohorts' as const, label: 'Cohorts', icon: 'ri-group-line' },
     { key: 'groups' as const, label: 'Groups', icon: 'ri-team-line' },
     { key: 'modules' as const, label: 'Modules', icon: 'ri-stack-line' },
@@ -1304,6 +1364,7 @@ export default function ProgrammeDetailPage() {
     { key: 'ksb' as const, label: 'KSB Heatmap', icon: 'ri-bar-chart-line' },
     { key: 'staffing' as const, label: 'Staffing', icon: 'ri-user-settings-line' },
   ];
+<<<<<<< HEAD
   const tabContext = {
     cohorts: { title: 'Cohort delivery map', description: 'Track each cohort, its live groups, schedule health and learner allocation.', count: `${filteredCohorts.length} visible` },
     groups: { title: 'Groups and weekly delivery', description: 'Manage delivery teams, timetable patterns and module links for every group.', count: `${filteredGroups.length} visible` },
@@ -1405,6 +1466,13 @@ export default function ProgrammeDetailPage() {
         </section>
 
         {false && (
+=======
+
+  return (
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={`${PROGRAMME.name} ${PROGRAMME.level}`} pageSubtitle={`${PROGRAMME.standard} · ${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
+      <div className="p-6 space-y-6">
+        {/* ── Programme Header ── */}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 sm:p-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -1412,6 +1480,7 @@ export default function ProgrammeDetailPage() {
                 <span className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">{PROGRAMME.cohorts.length} cohorts · {PROGRAMME.modules.length} modules · {PROGRAMME.standard} · {PROGRAMME.level}</span>
                 <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-primary-500 text-white">{PROGRAMME.status}</span>
               </div>
+<<<<<<< HEAD
               <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name}</h1>
               <p className="text-[13px] text-foreground-500 mt-1">{PROGRAMME.description}</p>
               {PROGRAMME.owner && <p className="text-[11px] text-foreground-400 mt-2">Owner: {PROGRAMME.owner}</p>}
@@ -1424,6 +1493,16 @@ export default function ProgrammeDetailPage() {
                 <i className="ri-edit-line mr-1"></i> Edit Programme
               </button>
               <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/standards/${encodeURIComponent(PROGRAMME.standard || PROGRAMME.id)}`)} className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+=======
+              <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name} {PROGRAMME.level}</h1>
+              <p className="text-[13px] text-foreground-500 mt-1">{PROGRAMME.description}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                <i className="ri-edit-line mr-1"></i> Edit Programme
+              </button>
+              <button className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 <i className="ri-file-list-3-line mr-1"></i> View Standard
               </button>
             </div>
@@ -1438,6 +1517,7 @@ export default function ProgrammeDetailPage() {
             <StatPill icon="ri-time-line" value={totalOtjh} label="Total OTJH" />
           </div>
         </div>
+<<<<<<< HEAD
         )}
 
         {/* Programme Navigation */}
@@ -1453,10 +1533,24 @@ export default function ProgrammeDetailPage() {
               {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
               {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
               {t.key === 'staffing' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{staffingCoverage}%</span>}
+=======
+
+        {/* ── Tabs ── */}
+        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer shrink-0 ${tab === t.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <i className={`${t.icon} text-[13px]`}></i>
+              {t.label}
+              {t.key === 'modules' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{PROGRAMME.modules.length}</span>}
+              {t.key === 'cohorts' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{PROGRAMME.cohorts.length}</span>}
+              {t.key === 'groups' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{totalGroups}</span>}
+              {t.key === 'sessions' && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{totalSessions}</span>}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             </button>
           ))}
         </div>
 
+<<<<<<< HEAD
         <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary-500">Current workspace</p>
@@ -1476,6 +1570,15 @@ export default function ProgrammeDetailPage() {
           <div className="space-y-5">
             {/* Programme Intent */}
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+        {/* ═══════════════════════════════════════════════════════════════════════
+            TAB: Overview & Intent
+        ═══════════════════════════════════════════════════════════════════════ */}
+        {tab === 'overview' && (
+          <div className="space-y-5">
+            {/* Programme Intent */}
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Programme Intent</h3>
               <div className="space-y-4">
                 <IntentBlock label="Intent" text={PROGRAMME.intent} />
@@ -1495,19 +1598,35 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {/* KSB Groups */}
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">KSB Groups</h3>
               <p className="text-[12px] text-foreground-400 mb-3">Main and secondary KSBs covered at programme level.</p>
               <div className="mb-4">
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Main ({PROGRAMME.mainKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
+<<<<<<< HEAD
                   <KsbGroupedTags codes={PROGRAMME.mainKsbs} />
+=======
+                  {PROGRAMME.mainKsbs.map(k => (
+                    <span key={k} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-primary-50 text-primary-700 border border-primary-200/50">{k}</span>
+                  ))}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
               </div>
               <div>
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Secondary ({PROGRAMME.secondaryKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
+<<<<<<< HEAD
                   <KsbGroupedTags codes={PROGRAMME.secondaryKsbs} />
+=======
+                  {PROGRAMME.secondaryKsbs.map(k => (
+                    <span key={k} className="text-[11px] font-semibold px-2 py-1 rounded-md bg-secondary-100 text-secondary-700 border border-secondary-200/50">{k}</span>
+                  ))}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
               </div>
             </div>
@@ -1519,6 +1638,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'cohorts' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
                 <div className="relative">
@@ -1545,6 +1665,10 @@ export default function ProgrammeDetailPage() {
 
             {filteredCohorts.map(c => (
               <div key={c.id} className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+            {PROGRAMME.cohorts.map(c => (
+              <div key={c.id} className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 {/* Cohort Header — Clickable */}
                 <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
@@ -1576,7 +1700,11 @@ export default function ProgrammeDetailPage() {
                   <div className="px-4 pb-4 border-t border-background-200/30">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                       {c.groups.map(g => (
+<<<<<<< HEAD
                         <div key={g.id} className="rounded-2xl border border-background-200/80 bg-background-100 p-4 shadow-sm">
+=======
+                        <div key={g.id} className="bg-background-100 rounded-xl border border-foreground-200/60 p-4">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                           <div className="flex items-center justify-between mb-2">
                             <p className="text-[13px] font-semibold text-foreground-900">{g.name}</p>
                             <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
@@ -1592,6 +1720,7 @@ export default function ProgrammeDetailPage() {
                             <span className="text-[10px] text-foreground-400">{g.startDate} — {g.endDate}</span>
                           </div>
                           <div className="flex items-center gap-2 mt-3">
+<<<<<<< HEAD
                             <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                               {expandedGroup === g.id ? 'Hide Details' : 'View Full Details'}
                             </button>
@@ -1646,14 +1775,26 @@ export default function ProgrammeDetailPage() {
                               )}
                             </div>
                           )}
+=======
+                            <Link to={`/curriculum/cohorts/${c.id}`} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">View Full Details</Link>
+                            <button className="px-2.5 py-1 bg-background-50 border border-background-200 rounded-md text-[10px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">Assign Staff</button>
+                          </div>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         </div>
                       ))}
                     </div>
                     <div className="flex items-center gap-2 mt-3">
+<<<<<<< HEAD
                       <button onClick={() => showCurriculumAlert({ title: 'Learner allocation is resource-scoped', text: `${c.name} is live in this programme view. Learner allocation should use the live MIS workflow instead of the legacy mock page.`, icon: 'info' })} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                         <i className="ri-user-add-line mr-1"></i> Allocate Learners
                       </button>
                       <button onClick={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+=======
+                      <Link to={`/curriculum/cohorts/${c.id}/allocate`} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                        <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                      </Link>
+                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         <i className="ri-add-line mr-1"></i> New Group
                       </button>
                     </div>
@@ -1669,6 +1810,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'groups' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
@@ -1698,13 +1840,21 @@ export default function ProgrammeDetailPage() {
             )}
 
             {PROGRAMME.cohorts.filter(c => c.groups.some(g => filteredGroups.some(item => item.group.id === g.id))).map(c => (
+=======
+            {PROGRAMME.cohorts.map(c => (
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <div key={c.id} className="space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[12px] font-semibold text-foreground-700">{c.name}</span>
                   <span className="text-[10px] text-foreground-400">{c.groups.length} groups · {c.learners} learners</span>
                 </div>
+<<<<<<< HEAD
                 {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
                   <div key={g.id} className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+                {c.groups.map(g => (
+                  <div key={g.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4">
                       <div className="w-12 h-12 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
                         <i className="ri-team-line text-secondary-700 text-lg"></i>
@@ -1724,10 +1874,17 @@ export default function ProgrammeDetailPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+<<<<<<< HEAD
                         <button onClick={() => openAssign(g)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                           <i className="ri-user-add-line mr-1"></i> Assign Staff
                         </button>
                         <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+=======
+                        <button onClick={() => setAssignMode(assignMode === g.id ? null : g.id)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                          <i className="ri-user-add-line mr-1"></i> Assign Staff
+                        </button>
+                        <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                           <i className="ri-edit-line mr-1"></i> Edit
                         </button>
                       </div>
@@ -1735,6 +1892,7 @@ export default function ProgrammeDetailPage() {
 
                     {/* Assign Staff Panel */}
                     {assignMode === g.id && (
+<<<<<<< HEAD
                       <div className="mt-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
                         <h4 className="text-[12px] font-semibold text-foreground-700 mb-3">Assign Coach & Tutor</h4>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
@@ -1753,6 +1911,34 @@ export default function ProgrammeDetailPage() {
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={() => saveAssignment(g.id)} disabled={savingAction === g.id} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">{savingAction === g.id ? 'Saving...' : 'Save Assignment'}</button>
+=======
+                      <div className="mt-4 p-4 bg-background-100 rounded-xl border border-foreground-200/60">
+                        <h4 className="text-[12px] font-semibold text-foreground-700 mb-3">Assign Coach & Tutor</h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                          <div>
+                            <label className="text-[11px] font-medium text-foreground-500 mb-1 block">Coach</label>
+                            <select className="w-full px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                              <option>{g.coach}</option>
+                              <option>Sarah Mitchell</option>
+                              <option>David Chen</option>
+                              <option>Lisa Park</option>
+                              <option>Michael Brown</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-medium text-foreground-500 mb-1 block">Tutor</label>
+                            <select className="w-full px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                              <option>{g.tutor}</option>
+                              <option>James Thompson</option>
+                              <option>Emily Roberts</option>
+                              <option>Mark Williams</option>
+                              <option>Jessica Adams</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Save Assignment</button>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                           <button onClick={() => setAssignMode(null)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
                         </div>
                       </div>
@@ -1769,6 +1955,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'modules' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
@@ -1824,6 +2011,10 @@ export default function ProgrammeDetailPage() {
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {filteredModules.map((mod, idx) => (
               <div key={mod.id} className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
+=======
+            {PROGRAMME.modules.map((mod, idx) => (
+              <div key={mod.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 card-premium">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
@@ -1840,8 +2031,15 @@ export default function ProgrammeDetailPage() {
                 </div>
 
                 {/* KSB Tags */}
+<<<<<<< HEAD
                 <div className="mb-2">
                   <KsbGroupedTags codes={mod.ksbTags} />
+=======
+                <div className="flex items-center gap-2 flex-wrap mb-3">
+                  {mod.ksbTags.map(ksb => (
+                    <span key={ksb} className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-secondary-100 text-secondary-700">{ksb}</span>
+                  ))}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
 
                 {/* Module Info Row */}
@@ -1852,13 +2050,30 @@ export default function ProgrammeDetailPage() {
                 </div>
 
                 {/* KSB Mapping Bars */}
+<<<<<<< HEAD
                 <div className="mb-3">
                   <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSB Coverage</p>
                   <KsbCoverageGroups mapping={mod.ksbMapping} />
+=======
+                <div className="mb-4">
+                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSB Coverage</p>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    {mod.ksbMapping.map(km => (
+                      <div key={km.ksb} className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-semibold text-foreground-500 w-8">{km.ksb}</span>
+                        <div className="w-16 h-1.5 bg-background-200 rounded-full overflow-hidden">
+                          <div className="h-full bg-primary-500 rounded-full" style={{ width: `${km.weight}%` }}></div>
+                        </div>
+                        <span className="text-[10px] font-semibold text-foreground-500">{km.weight}%</span>
+                      </div>
+                    ))}
+                  </div>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 pt-3 border-t border-background-200/30">
+<<<<<<< HEAD
                   <button
                     onClick={() => {
                       setSelectedModule(mod.id);
@@ -1882,12 +2097,24 @@ export default function ProgrammeDetailPage() {
                     }}
                     className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                   >
+=======
+                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                    <i className="ri-eye-line mr-1"></i> View Module
+                  </button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <i className="ri-arrow-right-line mr-1"></i> Open Module Builder
+                  </button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     <i className="ri-link mr-1"></i> KSB Mapping
                   </button>
                 </div>
               </div>
             ))}
+<<<<<<< HEAD
             </div>
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
           </div>
         )}
 
@@ -1896,6 +2123,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'weeks' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
                 <div className="space-y-3">
@@ -1937,6 +2165,19 @@ export default function ProgrammeDetailPage() {
               </div>
             </div>
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+            {/* Module Selector */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-semibold text-foreground-400 uppercase">Select Module:</span>
+              {PROGRAMME.modules.map(m => (
+                <button key={m.id} onClick={() => { setSelectedModule(m.id); setSelectedWeek(m.weeksData[0]?.id || ''); }} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${selectedModule === m.id ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600 hover:bg-background-200'}`}>
+                  {m.name.split('—')[0].trim()}
+                </button>
+              ))}
+            </div>
+
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{module.name}</h3>
@@ -1946,21 +2187,30 @@ export default function ProgrammeDetailPage() {
               </div>
 
               <div className="space-y-3">
+<<<<<<< HEAD
                 {filteredWeeks.map(w => {
                   const weekComponents = w.components ?? [];
                   return (
+=======
+                {module.weeksData.map(w => (
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                   <div key={w.id} className="border border-foreground-200/60 rounded-xl overflow-hidden">
                     <button onClick={() => setSelectedWeek(selectedWeek === w.id ? '' : w.id)} className="w-full flex items-center gap-3 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                       <span className="text-[10px] font-semibold text-foreground-300 w-8">W{w.number}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-[13px] font-semibold text-foreground-900">{w.title}</p>
+<<<<<<< HEAD
                         <p className="text-[11px] text-foreground-400">{w.startDate} - {w.endDate} · {w.otjh}h OTJH · {weekComponents.length} components</p>
+=======
+                        <p className="text-[11px] text-foreground-400">{w.startDate} — {w.endDate} · {w.otjh}h OTJH · {w.sessions.length} sessions</p>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       </div>
                       <i className={`ri-arrow-down-s-line text-foreground-400 transition-smooth ${selectedWeek === w.id ? 'rotate-180' : ''}`}></i>
                     </button>
                     {selectedWeek === w.id && (
                       <div className="px-4 pb-4 border-t border-background-200/30">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+<<<<<<< HEAD
                           {weekComponents.length > 0 ? weekComponents.map((component, i) => (
                             <div key={component.id} className="flex items-center gap-3 p-3 bg-background-100 rounded-lg border border-foreground-200/60">
                               <span className="text-[10px] font-semibold text-foreground-300 w-5">{i + 1}</span>
@@ -1981,12 +2231,32 @@ export default function ProgrammeDetailPage() {
                               No module-builder components are attached to this week yet.
                             </div>
                           )}
+=======
+                          {w.sessions.map((s, i) => (
+                            <div key={s.id} className="flex items-center gap-3 p-3 bg-background-100 rounded-lg border border-foreground-200/60">
+                              <span className="text-[10px] font-semibold text-foreground-300 w-5">{i + 1}</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
+                                <div className="flex items-center gap-2 flex-wrap mt-1">
+                                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${typeColors[s.type] || 'bg-foreground-100 text-foreground-500'}`}>{s.type}</span>
+                                  <span className="text-[10px] text-foreground-400">{s.day} {s.date} · {s.startTime}—{s.endTime}</span>
+                                  <span className="text-[10px] text-foreground-400"><i className="ri-user-line mr-0.5 text-[9px]"></i>{s.tutor}</span>
+                                </div>
+                              </div>
+                              <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sessionStatusColors[s.status]}`}>{s.status}</span>
+                            </div>
+                          ))}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         </div>
                       </div>
                     )}
                   </div>
+<<<<<<< HEAD
                   );
                 })}
+=======
+                ))}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               </div>
             </div>
           </div>
@@ -1997,6 +2267,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'sessions' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3 items-center">
                 <div className="relative">
@@ -2011,6 +2282,8 @@ export default function ProgrammeDetailPage() {
               </div>
             </div>
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             {/* Filters */}
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[11px] font-semibold text-foreground-400 uppercase">Filter:</span>
@@ -2020,6 +2293,7 @@ export default function ProgrammeDetailPage() {
                 </button>
               ))}
               <span className="text-[11px] text-foreground-400 ml-2">{filteredSessions.length} of {totalSessions} sessions</span>
+<<<<<<< HEAD
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-[11px] font-semibold text-foreground-400 uppercase">Show</span>
                 <select value={sessionPageSize} onChange={event => setSessionPageSize(Number(event.target.value))} className="h-8 px-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 outline-none cursor-pointer">
@@ -2035,6 +2309,12 @@ export default function ProgrammeDetailPage() {
                   Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}-{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
                 </p>
               </div>
+=======
+            </div>
+
+            {/* Sessions Table */}
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <div className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                 <span>Session</span>
                 <span className="text-center">Type</span>
@@ -2045,7 +2325,11 @@ export default function ProgrammeDetailPage() {
                 <span className="text-center">Status</span>
               </div>
               <div className="divide-y divide-background-200/30">
+<<<<<<< HEAD
                 {pagedSessions.map((s, i) => (
+=======
+                {filteredSessions.map((s, i) => (
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                   <div key={s.id} className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
                     <div className="min-w-0">
                       <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
@@ -2064,6 +2348,7 @@ export default function ProgrammeDetailPage() {
                   </div>
                 ))}
               </div>
+<<<<<<< HEAD
               <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60 bg-background-50">
                 <div className="flex items-center gap-1">
                   <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -2081,6 +2366,8 @@ export default function ProgrammeDetailPage() {
                   </button>
                 </div>
               </div>
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             </div>
           </div>
         )}
@@ -2089,11 +2376,16 @@ export default function ProgrammeDetailPage() {
             TAB: KSB Heatmap
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'ksb' && (
+<<<<<<< HEAD
           <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             <div className="mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
               <p className="text-[12px] text-foreground-400 mt-1">Weight of each KSB within each module. Empty cells indicate the KSB is not addressed in that module.</p>
             </div>
+<<<<<<< HEAD
             <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center">
                 <div className="relative">
@@ -2104,6 +2396,8 @@ export default function ProgrammeDetailPage() {
               </div>
               <p className="text-[11px] text-foreground-400 mt-3">{filteredKsbHeatmap.length} of {PROGRAMME.ksbHeatmap.length} KSBs</p>
             </div>
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             <div className="overflow-x-auto">
               <table className="w-full text-[11px]">
                 <thead>
@@ -2116,11 +2410,17 @@ export default function ProgrammeDetailPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-background-200/30">
+<<<<<<< HEAD
                   {filteredKsbHeatmap.map((row, i) => (
                     <tr key={i} className="hover:bg-background-100/30 transition-smooth">
                       <td className="py-2.5 px-3 font-semibold text-foreground-700">
                         <KsbBadge code={row.ksb} />
                       </td>
+=======
+                  {PROGRAMME.ksbHeatmap.map((row, i) => (
+                    <tr key={i} className="hover:bg-background-100/30 transition-smooth">
+                      <td className="py-2.5 px-3 font-semibold text-foreground-700">{row.ksb}</td>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       {PROGRAMME.moduleNames.map(mn => {
                         const val = row.coverage[mn];
                         return (
@@ -2147,20 +2447,29 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'staffing' && (
           <div className="space-y-4">
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+=======
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Coach & Tutor Assignment</h3>
                   <p className="text-[12px] text-foreground-400 mt-1">Manage staff allocation across cohorts and groups.</p>
                 </div>
+<<<<<<< HEAD
                 <button onClick={() => {
                   const target = unassignedGroups[0]?.group || allGroups[0]?.group;
                   if (target) openAssign(target);
                 }} disabled={allGroups.length === 0} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+=======
+                <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                   <i className="ri-add-line mr-1"></i> New Assignment
                 </button>
               </div>
 
+<<<<<<< HEAD
               <div className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
                 <div className="border-b border-foreground-200/60 p-4">
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
@@ -2177,6 +2486,9 @@ export default function ProgrammeDetailPage() {
                   </div>
                   <p className="text-[11px] text-foreground-400 mt-3">{filteredStaffing.length} of {PROGRAMME.staffing.length} assignments</p>
                 </div>
+=======
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 <div className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                   <span>Coach</span>
                   <span>Tutor</span>
@@ -2186,7 +2498,11 @@ export default function ProgrammeDetailPage() {
                   <span className="text-center">Action</span>
                 </div>
                 <div className="divide-y divide-background-200/30">
+<<<<<<< HEAD
                   {filteredStaffing.map((s, i) => (
+=======
+                  {PROGRAMME.staffing.map((s, i) => (
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     <div key={i} className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                       <div className="flex items-center gap-2">
                         <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-[10px] font-bold">
@@ -2206,6 +2522,7 @@ export default function ProgrammeDetailPage() {
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{s.status}</span>
                       </div>
                       <div className="flex justify-center gap-1">
+<<<<<<< HEAD
                         <button
                           title="Open the group-level assignment editor"
                           onClick={() => {
@@ -2215,6 +2532,13 @@ export default function ProgrammeDetailPage() {
                           className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700 transition-smooth hover:bg-primary-100"
                         >
                           <i className="ri-arrow-right-up-line text-xs"></i>
+=======
+                        <button className="w-7 h-7 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center hover:bg-primary-200 transition-smooth cursor-pointer">
+                          <i className="ri-edit-line text-xs"></i>
+                        </button>
+                        <button className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 flex items-center justify-center hover:bg-red-100 hover:text-red-600 transition-smooth cursor-pointer">
+                          <i className="ri-delete-bin-line text-xs"></i>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         </button>
                       </div>
                     </div>
@@ -2224,6 +2548,7 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {/* Unassigned Groups */}
+<<<<<<< HEAD
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Unassigned Groups</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -2343,11 +2668,27 @@ export default function ProgrammeDetailPage() {
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setAssignMode(null)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
                   <button type="button" onClick={() => saveAssignment(assignmentTarget.group.id)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === assignmentTarget.group.id ? 'Saving...' : 'Save Assignment'}</button>
+=======
+            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Unassigned Groups</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <i className="ri-alert-line text-amber-600 text-sm"></i>
+                    <p className="text-[13px] font-semibold text-amber-800">Group C1</p>
+                    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Cohort C</span>
+                  </div>
+                  <p className="text-[11px] text-amber-700 mb-3">No coach or tutor assigned. Programme starts Sep 2025.</p>
+                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                    <i className="ri-user-add-line mr-1"></i> Assign Now
+                  </button>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
               </div>
             </div>
           </div>
         )}
+<<<<<<< HEAD
         <AddCurriculumStructureWizard
           isOpen={wizardOpen}
           onClose={() => setWizardOpen(false)}
@@ -2357,6 +2698,8 @@ export default function ProgrammeDetailPage() {
           initialGroupId={wizardContext.groupId}
           startStep={wizardContext.startStep || 'cohort'}
         />
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       </div>
     </WorkspaceShell>
   );
@@ -2366,6 +2709,7 @@ export default function ProgrammeDetailPage() {
 // Helper Components
 // ─────────────────────────────────────────────────────────────────────────────
 
+<<<<<<< HEAD
 function StaffAssignmentSelect({
   label,
   value,
@@ -2441,12 +2785,21 @@ function LoadingStatPill({ label }: { label: string }) {
       <span className="w-4 h-4 rounded bg-background-200 animate-pulse" />
       <div className="min-w-0 flex-1">
         <div className="h-4 w-10 rounded bg-background-200 animate-pulse mb-1" />
+=======
+function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
+  return (
+    <div className="flex items-center gap-2 bg-background-100 rounded-lg p-3">
+      <i className={`${icon} text-foreground-400 text-sm`}></i>
+      <div>
+        <p className="text-sm font-bold text-foreground-900">{value}</p>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
       </div>
     </div>
   );
 }
 
+<<<<<<< HEAD
 function ModuleTooltipMetric({ icon, label, value }: { icon: string; label: string; value: number | string }) {
   return (
     <span className="flex items-center gap-2 rounded-lg bg-background-100 border border-foreground-200/60 px-2.5 py-2">
@@ -2532,6 +2885,8 @@ function KsbCoverageGroups({ mapping }: { mapping: { ksb: string; weight: number
   );
 }
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 function IntentBlock({ label, text }: { label: string; text: string }) {
   return (
     <div>
@@ -2539,4 +2894,8 @@ function IntentBlock({ label, text }: { label: string; text: string }) {
       <p className="text-[13px] text-foreground-700 leading-relaxed">{text}</p>
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

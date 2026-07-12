@@ -1,34 +1,70 @@
+<<<<<<< HEAD
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+=======
+﻿import { useState, useMemo, useCallback, useEffect } from 'react';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
+<<<<<<< HEAD
 
 /* ────────────────────────────────────────────────────────────
    Types
    ──────────────────────────────────────────────────────────── */
+=======
+const API_ENDPOINT = '/api/coach/timetable';
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Types
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 interface TimetableEvent {
   id: string;
   title: string;
   type: 'coaching' | 'live-session' | 'review' | 'employer-meeting' | 'welfare' | 'admin' | 'personal';
+<<<<<<< HEAD
+=======
+  date?: string;
+  year: number;
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   dayOfMonth: number;
   month: number;
   startHour: number;
   endHour: number;
+<<<<<<< HEAD
   learner?: string;
   employer?: string;
+=======
+  timeLabel?: string;
+  isTimeEstimated?: boolean;
+  learner?: string;
+  email?: string;
+  employer?: string;
+  managerEmail?: string;
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   programme?: string;
   tutor?: string;
   location?: string;
   platform?: string;
   priority: 'normal' | 'urgent' | 'high';
+<<<<<<< HEAD
   status: 'confirmed' | 'pending' | 'cancelled';
+=======
+  status: 'completed' | 'scheduled' | 'in-progress' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
+  source?: 'mcr' | 'progress-review' | string;
+  sourceStatus?: string;
+  sequence?: number;
+  rawPlanned?: string;
+  rawStatus?: string;
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   notes?: string;
   cohort?: string;
 }
 
+<<<<<<< HEAD
 /* ────────────────────────────────────────────────────────────
    Data — June 2026 (spans 4 weeks)
    ──────────────────────────────────────────────────────────── */
@@ -104,6 +140,64 @@ const ALL_EVENTS: TimetableEvent[] = [
 /* ────────────────────────────────────────────────────────────
    Helpers
    ──────────────────────────────────────────────────────────── */
+=======
+interface TimetableSummaryMetrics {
+  totalEvents: number;
+  completedEvents: number;
+  scheduledEvents: number;
+  inProgressEvents: number;
+  needsScheduling: number;
+  completionRate: number;
+  coachingEvents: number;
+  reviewEvents: number;
+  supportEvents: number;
+}
+
+interface TimetableSummary extends TimetableSummaryMetrics {
+  timeAvailability?: string;
+  sourceBreakdown?: {
+    mcr: TimetableSummaryMetrics;
+    progressReview: TimetableSummaryMetrics;
+  };
+}
+
+interface TimetableResponse {
+  owner?: {
+    name?: string;
+    email?: string;
+  };
+  summary?: TimetableSummary;
+  events?: TimetableEvent[];
+}
+
+const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
+  totalEvents: 0,
+  completedEvents: 0,
+  scheduledEvents: 0,
+  inProgressEvents: 0,
+  needsScheduling: 0,
+  completionRate: 0,
+  coachingEvents: 0,
+  reviewEvents: 0,
+  supportEvents: 0,
+};
+
+const EMPTY_SUMMARY: TimetableSummary = {
+  ...EMPTY_SUMMARY_METRICS,
+  sourceBreakdown: {
+    mcr: { ...EMPTY_SUMMARY_METRICS },
+    progressReview: { ...EMPTY_SUMMARY_METRICS },
+  },
+};
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Data â€” June 2026 (spans 4 weeks)
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 07:00 â€“ 20:00
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 function typeConfig(type: TimetableEvent['type']) {
   const map: Record<TimetableEvent['type'], { label: string; bg: string; border: string; text: string; icon: string; dot: string; barBg: string }> = {
     coaching: { label: 'Coaching', bg: 'bg-primary-100', border: 'border-primary-300', text: 'text-primary-800', icon: 'ri-chat-smile-2-line', dot: 'bg-primary-500', barBg: 'bg-primary-500' },
@@ -117,6 +211,73 @@ function typeConfig(type: TimetableEvent['type']) {
   return map[type];
 }
 
+<<<<<<< HEAD
+=======
+function eventConfig(event: TimetableEvent) {
+  const base = typeConfig(event.type);
+  const statusThemeMap: Partial<Record<TimetableEvent['status'], Pick<ReturnType<typeof typeConfig>, 'bg' | 'border' | 'text' | 'dot' | 'barBg'>>> = {
+    completed: {
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-300',
+      text: 'text-emerald-800',
+      dot: 'bg-emerald-500',
+      barBg: 'bg-emerald-500',
+    },
+    confirmed: {
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-300',
+      text: 'text-emerald-800',
+      dot: 'bg-emerald-500',
+      barBg: 'bg-emerald-500',
+    },
+    scheduled: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    pending: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    'not-scheduled': {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    'in-progress': {
+      bg: 'bg-secondary-50',
+      border: 'border-secondary-300',
+      text: 'text-secondary-800',
+      dot: 'bg-secondary-500',
+      barBg: 'bg-secondary-500',
+    },
+    cancelled: {
+      bg: 'bg-red-50',
+      border: 'border-red-300',
+      text: 'text-red-800',
+      dot: 'bg-red-500',
+      barBg: 'bg-red-500',
+    },
+  };
+
+  const statusTheme = statusThemeMap[event.status];
+  if (statusTheme) {
+    return {
+      ...base,
+      ...statusTheme,
+    };
+  }
+  return base;
+}
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 function priorityBadge(p: TimetableEvent['priority']) {
   if (p === 'urgent') return 'bg-red-100 text-red-700 border-red-200';
   if (p === 'high') return 'bg-amber-100 text-amber-700 border-amber-200';
@@ -129,7 +290,130 @@ function formatTime(h: number) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
+<<<<<<< HEAD
 /* ─── Month calendar helpers ─── */
+=======
+function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 'dayOfMonth'>) {
+  if (event.date) {
+    const parsed = new Date(event.date);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date(event.year, event.month, event.dayOfMonth);
+}
+
+function getPreferredDisplayDate(events: TimetableEvent[], now: Date) {
+  if (!events.length) return now;
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sortedEvents = [...events].sort((a, b) => parseEventDate(a).getTime() - parseEventDate(b).getTime());
+  const upcomingEvent = sortedEvents.find(event => parseEventDate(event).getTime() >= today.getTime());
+  return parseEventDate(upcomingEvent || sortedEvents[sortedEvents.length - 1]);
+}
+
+function statusBadge(status: TimetableEvent['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (status === 'in-progress') return 'bg-primary-50 text-primary-700 border-primary-200';
+  return 'bg-red-50 text-red-700 border-red-200';
+}
+
+function statusLabel(status: TimetableEvent['status']) {
+  if (status === 'completed') return 'Completed';
+  if (status === 'scheduled') return 'Scheduled';
+  if (status === 'not-scheduled') return 'Not Scheduled';
+  if (status === 'in-progress') return 'In Progress';
+  if (status === 'confirmed') return 'Confirmed';
+  if (status === 'pending') return 'Pending';
+  return 'Cancelled';
+}
+
+function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics {
+  const totalEvents = events.length;
+  const completedEvents = events.filter(event => event.status === 'completed' || event.status === 'confirmed').length;
+  const scheduledEvents = events.filter(event => event.status === 'scheduled').length;
+  const inProgressEvents = events.filter(event => event.status === 'in-progress').length;
+  const needsScheduling = events.filter(event => event.status === 'pending' || event.status === 'not-scheduled').length;
+  const activeEvents = events.filter(event => event.status !== 'not-scheduled');
+
+  return {
+    totalEvents,
+    completedEvents,
+    scheduledEvents,
+    inProgressEvents,
+    needsScheduling,
+    completionRate: totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0,
+    coachingEvents: activeEvents.filter(event => event.type === 'coaching').length,
+    reviewEvents: activeEvents.filter(event => event.type === 'review').length,
+    supportEvents: activeEvents.filter(event => event.type === 'welfare').length,
+  };
+}
+
+function buildFallbackSummary(events: TimetableEvent[]): TimetableSummary {
+  return {
+    ...buildSummaryMetrics(events),
+    sourceBreakdown: {
+      mcr: buildSummaryMetrics(events.filter(event => event.source === 'mcr')),
+      progressReview: buildSummaryMetrics(events.filter(event => event.source === 'progress-review')),
+    },
+  };
+}
+
+function normalizeSummary(summary: TimetableSummary, events: TimetableEvent[]): TimetableSummary {
+  if (summary.sourceBreakdown) return summary;
+  return {
+    ...summary,
+    sourceBreakdown: buildFallbackSummary(events).sourceBreakdown,
+  };
+}
+
+type HeroMetricTone = 'emerald' | 'amber' | 'secondary' | 'accent' | 'red' | 'white';
+type HeroMetricItem = { label: string; value: number; tone: HeroMetricTone };
+
+const HERO_METRIC_TONES: Record<HeroMetricTone, string> = {
+  emerald: 'text-emerald-300',
+  amber: 'text-amber-300',
+  secondary: 'text-secondary-300',
+  accent: 'text-accent-300',
+  red: 'text-red-300',
+  white: 'text-white',
+};
+
+function HeroMetric({ label, value, tone }: { label: string; value: number; tone: HeroMetricTone }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-white/8 px-3 py-2 text-center backdrop-blur-sm">
+      <p className={`font-heading text-lg font-bold leading-none ${HERO_METRIC_TONES[tone]}`}>{value}</p>
+      <p className="mt-1 truncate text-[10px] font-medium leading-tight text-white/55">{label}</p>
+    </div>
+  );
+}
+
+function HeroSourcePanel({ title, summary, typeMetrics }: { title: string; summary: TimetableSummaryMetrics; typeMetrics: HeroMetricItem[] }) {
+  const statusMetrics: HeroMetricItem[] = [
+    { label: 'Completed', value: summary.completedEvents, tone: 'emerald' },
+    { label: 'Scheduled', value: summary.scheduledEvents, tone: 'amber' },
+    { label: 'In Progress', value: summary.inProgressEvents, tone: 'secondary' },
+    { label: 'Needs Plan', value: summary.needsScheduling, tone: 'amber' },
+  ];
+
+  return (
+    <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-white/55">{title}</p>
+        <p className="shrink-0 font-heading text-sm font-bold text-white">
+          {summary.totalEvents}<span className="ml-1 text-[10px] font-normal text-white/35">events</span>
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {[...statusMetrics, ...typeMetrics].map(metric => (
+          <HeroMetric key={`${title}-${metric.label}`} {...metric} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* â”€â”€â”€ Month calendar helpers â”€â”€â”€ */
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 function getMonthData(year: number, month: number) {
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -148,16 +432,28 @@ function getWeekDates(year: number, month: number, selectedDay: number) {
   const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const monday = new Date(date);
   monday.setDate(date.getDate() - mondayOffset);
+<<<<<<< HEAD
   const week: { day: number; month: number; monthName: string }[] = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     week.push({ day: d.getDate(), month: d.getMonth(), monthName: MONTH_NAMES[d.getMonth()] });
+=======
+  const week: { day: number; month: number; year: number; monthName: string }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    week.push({ day: d.getDate(), month: d.getMonth(), year: d.getFullYear(), monthName: MONTH_NAMES[d.getMonth()] });
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   }
   return week;
 }
 
+<<<<<<< HEAD
 /* ─── Donut Ring ─── */
+=======
+/* â”€â”€â”€ Donut Ring â”€â”€â”€ */
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white/10' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -173,6 +469,7 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white
 
 type ViewMode = 'month' | 'week' | 'day';
 
+<<<<<<< HEAD
 /* ────────────────────────────────────────────────────────────
    Page
    ──────────────────────────────────────────────────────────── */
@@ -181,10 +478,28 @@ export default function CoachTimetablePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   const [viewYear, setViewYear] = useState(2026);
   const [viewMonth, setViewMonth] = useState(5); // June
+=======
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Page
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+export default function CoachTimetablePage() {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const [viewMode, setViewMode] = useState<ViewMode>('month');
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const [selectedDay, setSelectedDay] = useState(now.getDate());
   const [selectedEvent, setSelectedEvent] = useState<TimetableEvent | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+<<<<<<< HEAD
+=======
+  const [events, setEvents] = useState<TimetableEvent[]>([]);
+  const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -195,11 +510,60 @@ export default function CoachTimetablePage() {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
 
+<<<<<<< HEAD
   const getEventsForDay = useCallback((day: number, month: number): TimetableEvent[] => {
     return ALL_EVENTS.filter(ev => ev.dayOfMonth === day && ev.month === month);
   }, []);
 
   const filteredEvents = ALL_EVENTS.filter(e => {
+=======
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTimetable() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(API_ENDPOINT);
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+
+        const data: TimetableResponse = await response.json();
+        if (cancelled) return;
+
+        const nextEvents = data.events || [];
+        const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
+        const anchorDate = getPreferredDisplayDate(nextEvents, new Date());
+
+        setEvents(nextEvents);
+        setSummary(nextSummary);
+        setViewYear(anchorDate.getFullYear());
+        setViewMonth(anchorDate.getMonth());
+        setSelectedDay(anchorDate.getDate());
+        setSelectedEvent(null);
+      } catch (err) {
+        if (cancelled) return;
+
+        setError(err instanceof Error ? err.message : 'Unable to load timetable data');
+        setEvents([]);
+        setSummary(EMPTY_SUMMARY);
+        setSelectedEvent(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadTimetable();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const getEventsForDay = useCallback((day: number, month: number, year: number): TimetableEvent[] => {
+    return events.filter(ev => ev.dayOfMonth === day && ev.month === month && ev.year === year);
+  }, [events]);
+
+  const filteredEvents = events.filter(e => {
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     if (filterType !== 'all' && e.type !== filterType) return false;
     if (searchTerm && !(
       e.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -213,6 +577,7 @@ export default function CoachTimetablePage() {
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
+<<<<<<< HEAD
   const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth), [selectedDay, viewMonth, getEventsForDay]);
 
   const totalEvents = ALL_EVENTS.length;
@@ -220,6 +585,14 @@ export default function CoachTimetablePage() {
   const urgentEvents = ALL_EVENTS.filter(e => e.priority === 'urgent').length;
   const coachingHours = ALL_EVENTS.filter(e => e.type === 'coaching').reduce((s, e) => s + (e.endHour - e.startHour), 0);
   const completionRate = totalEvents > 0 ? Math.round((confirmedEvents / totalEvents) * 100) : 0;
+=======
+  const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth, viewYear), [selectedDay, viewMonth, viewYear, getEventsForDay]);
+
+  const totalEvents = summary.totalEvents;
+  const completionRate = summary.completionRate;
+  const mcrSummary = summary.sourceBreakdown?.mcr || EMPTY_SUMMARY_METRICS;
+  const progressReviewSummary = summary.sourceBreakdown?.progressReview || EMPTY_SUMMARY_METRICS;
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
   const handlePrev = () => {
     if (viewMode === 'month') { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
@@ -241,39 +614,65 @@ export default function CoachTimetablePage() {
   const titleLabel = viewMode === 'month'
     ? `${MONTH_NAMES[viewMonth]} ${viewYear}`
     : viewMode === 'week'
+<<<<<<< HEAD
       ? `${weekDates[0].monthName} ${weekDates[0].day} – ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
+=======
+      ? `${weekDates[0].monthName} ${weekDates[0].day} â€“ ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       : `${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
   return (
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
+<<<<<<< HEAD
       pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings — all in one place"
+=======
+      pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings â€” all in one place"
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       userName="Med Maher" userRole="Progress Coach"
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
+<<<<<<< HEAD
         {/* ═══════════ HERO BANNER ═══════════ */}
+=======
+        {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute opacity-20" style={{ width: '50%', height: '40%', left: '-5%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute opacity-15" style={{ width: '60%', height: '30%', right: '-10%', top: '20%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
+<<<<<<< HEAD
           <div className="relative flex flex-col lg:flex-row items-stretch min-h-[150px]">
             <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
                 <span className="text-xs font-medium text-white/40">June 2026</span>
+=======
+          <div className="relative flex flex-col xl:flex-row items-stretch min-h-[150px]">
+            <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
+                <span className="text-xs font-medium text-white/40">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
               </div>
               <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1">My Calendar</h1>
               <p className="text-sm text-white/40 max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
             </div>
+<<<<<<< HEAD
             <div className="lg:w-[380px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex items-center">
               <div className="flex items-center gap-6 w-full">
+=======
+            <div className="xl:w-[860px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t xl:border-t-0 xl:border-l border-accent-400/10 flex items-center">
+              <div className="flex w-full flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:gap-5">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="relative">
                     <DonutRing pct={completionRate} size={68} stroke={6} color="emerald" />
                     <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-lg font-heading font-bold text-white leading-none">{completionRate}%</span></div>
                   </div>
+<<<<<<< HEAD
                   <div>
                     <p className="text-xs text-white/40 mb-0.5">Completion</p>
                     <p className="text-base font-heading font-bold text-white">{totalEvents}<span className="text-white/30 text-sm font-normal"> events</span></p>
@@ -285,13 +684,51 @@ export default function CoachTimetablePage() {
                   <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-accent-300">{Math.round(coachingHours)}h</p><p className="text-[10px] text-white/50">Coaching</p></div>
                   <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-red-300">{urgentEvents}</p><p className="text-[10px] text-white/50">Urgent</p></div>
                   <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-amber-300">{ALL_EVENTS.filter(e => e.status === 'pending').length}</p><p className="text-[10px] text-white/50">Pending</p></div>
+=======
+                  <div className="min-w-0">
+                    <p className="text-xs text-white/40 mb-0.5">Completion</p>
+                    <p className="text-base font-heading font-bold text-white leading-tight">{totalEvents}<span className="text-white/30 text-sm font-normal"> events</span></p>
+                  </div>
+                </div>
+                <div className="hidden h-28 w-px shrink-0 bg-accent-400/10 2xl:block" />
+                <div className="grid w-full flex-1 grid-cols-1 gap-3 md:grid-cols-2">
+                  <HeroSourcePanel
+                    title="MCR"
+                    summary={mcrSummary}
+                    typeMetrics={[{ label: 'Coaching', value: mcrSummary.coachingEvents, tone: 'accent' }]}
+                  />
+                  <HeroSourcePanel
+                    title="Progress Reviews"
+                    summary={progressReviewSummary}
+                    typeMetrics={[
+                      { label: 'Reviews', value: progressReviewSummary.reviewEvents, tone: 'secondary' },
+                      { label: 'Support', value: progressReviewSummary.supportEvents, tone: 'red' },
+                    ]}
+                  />
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 </div>
               </div>
             </div>
           </div>
         </section>
 
+<<<<<<< HEAD
         {/* ═══════════ CONTROLS BAR ═══════════ */}
+=======
+        {/* â•â•â•â•â•â•â•â•â•â•â• CONTROLS BAR â•â•â•â•â•â•â•â•â•â•â• */}
+        {loading && (
+          <div className="rounded-xl border border-primary-200/60 bg-primary-50 px-4 py-3 text-sm text-primary-700">
+            Loading timetable data...
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
             {([
@@ -344,9 +781,15 @@ export default function CoachTimetablePage() {
           </div>
         </div>
 
+<<<<<<< HEAD
         {/* ═══════════ MAIN CONTENT ═══════════ */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
           {/* ── Calendar Area (2/3) ── */}
+=======
+        {/* â•â•â•â•â•â•â•â•â•â•â• MAIN CONTENT â•â•â•â•â•â•â•â•â•â•â• */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* â”€â”€ Calendar Area (2/3) â”€â”€ */}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
           <div className="lg:col-span-2 space-y-4">
 
             {/* MONTH VIEW */}
@@ -362,7 +805,11 @@ export default function CoachTimetablePage() {
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
                     if (day === null) return <div key={`empty-${idx}`} className="aspect-[4/3] bg-background-50/30 border-b border-r border-background-100/50" />;
+<<<<<<< HEAD
                     const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth);
+=======
+                    const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
                     return (
@@ -376,7 +823,11 @@ export default function CoachTimetablePage() {
                         </span>
                         <div className="flex-1 w-full overflow-hidden space-y-0.5">
                           {eventsForDay.slice(0, 3).map(ev => {
+<<<<<<< HEAD
                             const tc = typeConfig(ev.type);
+=======
+                            const tc = eventConfig(ev);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                             return (
                               <div
                                 key={ev.id}
@@ -405,14 +856,24 @@ export default function CoachTimetablePage() {
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {
+<<<<<<< HEAD
                     const isTdy = isToday(wd.day, wd.month, viewYear);
                     const isSel = wd.day === selectedDay && wd.month === viewMonth;
                     const weekdayIdx = new Date(viewYear, wd.month, wd.day).getDay();
+=======
+                    const isTdy = isToday(wd.day, wd.month, wd.year);
+                    const isSel = wd.day === selectedDay && wd.month === viewMonth && wd.year === viewYear;
+                    const weekdayIdx = new Date(wd.year, wd.month, wd.day).getDay();
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     const mappedDow = weekdayIdx === 0 ? 6 : weekdayIdx - 1;
                     return (
                       <button
                         key={`wh-${wd.day}-${wd.month}`}
+<<<<<<< HEAD
                         onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
+=======
+                        onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         className={`px-2 py-2.5 text-center cursor-pointer transition-smooth ${isSel ? 'bg-primary-50/60' : 'hover:bg-background-100/50'}`}
                       >
                         <span className="text-xs font-semibold text-foreground-400 block">{DAYS_OF_WEEK[mappedDow]}</span>
@@ -425,26 +886,45 @@ export default function CoachTimetablePage() {
                 </div>
                 <div className="overflow-y-auto max-h-[600px]">
                   {HOURS.map(hour => {
+<<<<<<< HEAD
                     const isCurrentRow = currentHour === hour && weekDates.some(wd => isToday(wd.day, wd.month, viewYear));
+=======
+                    const isCurrentRow = currentHour === hour && weekDates.some(wd => isToday(wd.day, wd.month, wd.year));
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     return (
                       <div key={`h-${hour}`} className={`grid grid-cols-8 border-b border-background-100/50 min-h-[56px] ${isCurrentRow ? 'bg-primary-50/20' : ''}`}>
                         <div className="px-3 py-2 text-right border-r border-background-100/50">
                           <span className="text-[11px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map(wd => {
+<<<<<<< HEAD
                           const eventsInSlot = getEventsForDay(wd.day, wd.month).filter(ev => {
                             const startH = ev.startHour;
                             return startH >= hour && startH < hour + 1;
                           });
                           const isSel = wd.day === selectedDay && wd.month === viewMonth;
+=======
+                          const eventsInSlot = getEventsForDay(wd.day, wd.month, wd.year).filter(ev => {
+                            const startH = ev.startHour;
+                            return startH >= hour && startH < hour + 1;
+                          });
+                          const isSel = wd.day === selectedDay && wd.month === viewMonth && wd.year === viewYear;
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                           return (
                             <div
                               key={`ws-${wd.day}-${wd.month}-${hour}`}
                               className={`p-1 border-r border-background-100/50 cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-primary-50/30' : ''}`}
+<<<<<<< HEAD
                               onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
                             >
                               {eventsInSlot.map(ev => {
                                 const tc = typeConfig(ev.type);
+=======
+                              onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}
+                            >
+                              {eventsInSlot.map(ev => {
+                                const tc = eventConfig(ev);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                                 const duration = ev.endHour - ev.startHour;
                                 const heightPx = Math.max(24, duration * 48);
                                 return (
@@ -455,7 +935,11 @@ export default function CoachTimetablePage() {
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
+<<<<<<< HEAD
                                     <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</p>
+=======
+                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</p>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                                     {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
                                       <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
@@ -505,7 +989,11 @@ export default function CoachTimetablePage() {
                           {isCurrentRow && <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-400 rounded-full" />}
                           <div className="space-y-1.5">
                             {eventsInSlot.map(ev => {
+<<<<<<< HEAD
                               const tc = typeConfig(ev.type);
+=======
+                              const tc = eventConfig(ev);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                               return (
                                 <div
                                   key={ev.id}
@@ -520,13 +1008,22 @@ export default function CoachTimetablePage() {
                                           {ev.priority === 'urgent' ? 'Urgent' : 'High'}
                                         </span>
                                       )}
+<<<<<<< HEAD
                                       <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${ev.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ev.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
                                         {ev.status === 'confirmed' ? 'Confirmed' : ev.status === 'pending' ? 'Pending' : 'Cancelled'}
+=======
+                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${statusBadge(ev.status)}`}>
+                                        {statusLabel(ev.status)}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                                       </span>
                                     </div>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-500">
+<<<<<<< HEAD
                                     <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</span>
+=======
+                                    <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                                     {ev.platform && <span><i className="ri-video-line mr-0.5"></i>{ev.platform}</span>}
                                     {ev.location && <span><i className="ri-map-pin-line mr-0.5"></i>{ev.location}</span>}
                                     {ev.learner && <span className="font-medium text-foreground-600">{ev.learner}</span>}
@@ -550,7 +1047,11 @@ export default function CoachTimetablePage() {
               </div>
             )}
 
+<<<<<<< HEAD
             {/* ── Day events list when in month view ── */}
+=======
+            {/* â”€â”€ Day events list when in month view â”€â”€ */}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             {viewMode === 'month' && (
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -571,7 +1072,11 @@ export default function CoachTimetablePage() {
                 ) : (
                   <div className="space-y-2">
                     {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
+<<<<<<< HEAD
                       const tc = typeConfig(ev.type);
+=======
+                      const tc = eventConfig(ev);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       return (
                         <div
                           key={ev.id}
@@ -584,9 +1089,15 @@ export default function CoachTimetablePage() {
                           <div className="flex-1 min-w-0">
                             <p className={`text-sm font-semibold ${tc.text}`}>{ev.title}</p>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
+<<<<<<< HEAD
                               <span>{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</span>
                               {ev.learner && <span className="text-foreground-400">· {ev.learner}</span>}
                               {ev.employer && <span className="text-foreground-400">· {ev.employer}</span>}
+=======
+                              <span>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
+                              {ev.learner && <span className="text-foreground-400">Â· {ev.learner}</span>}
+                              {ev.employer && <span className="text-foreground-400">Â· {ev.employer}</span>}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -606,7 +1117,11 @@ export default function CoachTimetablePage() {
             )}
           </div>
 
+<<<<<<< HEAD
           {/* ── Sidebar (1/3) ── */}
+=======
+          {/* â”€â”€ Sidebar (1/3) â”€â”€ */}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
           <div className="space-y-4">
             {/* Event Detail */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
@@ -619,8 +1134,13 @@ export default function CoachTimetablePage() {
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mb-4">
+<<<<<<< HEAD
                     <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${typeConfig(selectedEvent.type).bg}`}>
                       <i className={`${typeConfig(selectedEvent.type).icon} ${typeConfig(selectedEvent.type).text} text-sm`}></i>
+=======
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${eventConfig(selectedEvent).bg}`}>
+                      <i className={`${eventConfig(selectedEvent).icon} ${eventConfig(selectedEvent).text} text-sm`}></i>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                     </span>
                     <div>
                       <h4 className="text-sm font-heading font-semibold text-foreground-900">{selectedEvent.title}</h4>
@@ -636,14 +1156,22 @@ export default function CoachTimetablePage() {
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-time-line text-foreground-400 w-4 text-center"></i>
+<<<<<<< HEAD
                       <span className="font-medium">{formatTime(selectedEvent.startHour)} – {formatTime(selectedEvent.endHour)}</span>
+=======
+                      <span className="font-medium">{formatTime(selectedEvent.startHour)} â€“ {formatTime(selectedEvent.endHour)}</span>
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       <span className="text-foreground-300">({selectedEvent.endHour - selectedEvent.startHour}h)</span>
                     </div>
                     {selectedEvent.learner && (
                       <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                         <i className="ri-user-line text-foreground-400 w-4 text-center"></i>
                         <span className="font-medium">{selectedEvent.learner}</span>
+<<<<<<< HEAD
                         {selectedEvent.programme && <span className="text-foreground-300">— {selectedEvent.programme}</span>}
+=======
+                        {selectedEvent.programme && <span className="text-foreground-300">â€” {selectedEvent.programme}</span>}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       </div>
                     )}
                     {selectedEvent.employer && (
@@ -673,8 +1201,13 @@ export default function CoachTimetablePage() {
                     )}
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-checkbox-circle-line text-foreground-400 w-4 text-center"></i>
+<<<<<<< HEAD
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${selectedEvent.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedEvent.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
                         {selectedEvent.status === 'confirmed' ? 'Confirmed' : selectedEvent.status === 'pending' ? 'Pending' : 'Cancelled'}
+=======
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusBadge(selectedEvent.status)}`}>
+                        {statusLabel(selectedEvent.status)}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                       </span>
                     </div>
                     {selectedEvent.notes && (
@@ -709,6 +1242,7 @@ export default function CoachTimetablePage() {
               )}
             </div>
 
+<<<<<<< HEAD
             {/* Quick Links */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
@@ -733,12 +1267,15 @@ export default function CoachTimetablePage() {
               </div>
             </div>
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
             {/* Upcoming Events */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
                 <i className="ri-calendar-todo-line text-accent-500"></i>Upcoming
               </h3>
               <div className="space-y-2">
+<<<<<<< HEAD
                 {ALL_EVENTS
                   .filter(ev => {
                     const evDate = new Date(2026, ev.month, ev.dayOfMonth);
@@ -751,22 +1288,47 @@ export default function CoachTimetablePage() {
                       <div
                         key={ev.id}
                         onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setSelectedEvent(ev); }}
+=======
+                {events
+                  .filter(ev => {
+                    const evDate = parseEventDate(ev);
+                    return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
+                  })
+                  .slice(0, 5)
+                  .map(ev => {
+                    const tc = eventConfig(ev);
+                    return (
+                      <div
+                        key={ev.id}
+                        onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setViewYear(ev.year); setSelectedEvent(ev); }}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                         className="flex items-start gap-2.5 p-2 -mx-2 rounded-lg cursor-pointer transition-smooth hover:bg-background-100"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${tc.dot}`}></span>
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] font-semibold text-foreground-800 leading-tight truncate">{ev.title}</p>
                           <p className="text-[10px] text-foreground-400">
+<<<<<<< HEAD
                             {ev.dayOfMonth} {MONTH_NAMES[ev.month]} · {formatTime(ev.startHour)}
                             {ev.learner && <span> · {ev.learner}</span>}
+=======
+                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} Â· {formatTime(ev.startHour)}
+                            {ev.learner && <span> Â· {ev.learner}</span>}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                           </p>
                         </div>
                       </div>
                     );
                   })}
+<<<<<<< HEAD
                 {ALL_EVENTS.filter(ev => {
                   const evDate = new Date(2026, ev.month, ev.dayOfMonth);
                   return evDate >= now && ev.status !== 'cancelled';
+=======
+                {events.filter(ev => {
+                  const evDate = parseEventDate(ev);
+                  return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
                 }).length === 0 && (
                   <p className="text-[11px] text-foreground-400 text-center py-3">No upcoming events</p>
                 )}
@@ -777,4 +1339,9 @@ export default function CoachTimetablePage() {
       </div>
     </WorkspaceShell>
   );
+<<<<<<< HEAD
 }
+=======
+}
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

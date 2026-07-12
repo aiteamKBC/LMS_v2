@@ -22,7 +22,12 @@ const WORKSPACE_SECTIONS: WorkspaceSection[] = [
   { slug: 'coach', label: 'Coach', icon: 'ri-user-heart-line', email: 'coach@kbc.test', workspacePath: '/workspace/coach', highlighted: true },
   { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
   { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
+<<<<<<< HEAD
   { slug: 'enrolment', label: 'Enrolment', icon: 'ri-user-add-line', email: 'compliance@kbc.test', workspacePath: '/users', highlighted: true },
+=======
+  { slug: 'enrolment', label: 'Enrolment', icon: 'ri-user-add-line', email: 'compliance@kbc.test', workspacePath: '/compliance/enrolment-review', highlighted: true },
+  { slug: 'compliance', label: 'Compliance', icon: 'ri-shield-check-line', email: 'compliance@kbc.test', workspacePath: '/workspace/compliance' },
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
   { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
   { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-2-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
@@ -81,6 +86,7 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 export default function Home() {
   const { login } = useAuth();
   const navigate = useNavigate();
+<<<<<<< HEAD
   const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
 
   // Enter a section directly — sign in as its demo account, then route in.
@@ -89,10 +95,16 @@ export default function Home() {
       setEnrolmentChoiceOpen(true);
       return;
     }
+=======
+
+  // Enter a section directly — sign in as its demo account, then route in.
+  const enterWorkspace = (section: WorkspaceSection) => {
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     login(section.email);
     navigate(section.workspacePath);
   };
 
+<<<<<<< HEAD
   const chooseApprenticeshipEnrolment = () => {
     setEnrolmentChoiceOpen(false);
     login('compliance@kbc.test');
@@ -105,6 +117,8 @@ export default function Home() {
     navigate('/delivery');
   };
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   const scrollToWorkspaces = () => {
     document.getElementById('workspaces')?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -524,6 +538,7 @@ export default function Home() {
           </div>
         </div>
       </footer>
+<<<<<<< HEAD
 
       {/* ============ ENROLMENT TYPE CHOICE MODAL ============ */}
       {enrolmentChoiceOpen && (
@@ -568,6 +583,8 @@ export default function Home() {
           </div>
         </div>
       )}
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     </div>
   );
 }

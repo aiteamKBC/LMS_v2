@@ -18,9 +18,14 @@ from django.contrib import admin
 from django.urls import include, path
 
 urlpatterns = [
+<<<<<<< HEAD
     path('curriculum_api/', include('curriculum_api.urls')),
     path('admin/', admin.site.urls),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),
     path('learner_api/', include('learner_api.urls')),
+=======
+    path('admin/', admin.site.urls),
+    path('api/', include('api.urls')),
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 ]

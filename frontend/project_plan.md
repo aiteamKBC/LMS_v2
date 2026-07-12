@@ -386,7 +386,11 @@ AI must never: validate KSBs, accept OTJH, approve evidence, approve eligibility
 - [x] Coach Workspace (18 items): Dashboard, Learner Caseload, Learner Case Files, Attendance & Catch-up, Absence Reports, Catch-up Queue, Marking Queue, AI-assisted Marking, Coaching Meetings, Monthly Cycle, Progress Reviews, Monthly KSB Impact, OTJH Reports, Evidence Validation, Employer Actions, At-risk Learners, Messages, Reports
 - [x] Tutor Workspace (12 items): Dashboard, Teaching Sessions, Learners, Evidence Review, Assignment Marking, Quiz Results, KSB Validation, OTJH Validation, Feedback Queue, AI Marking, Resources, Reports
 - [x] Employer Workspace (11 items): Dashboard, My Apprentices, Actions Required, Progress Reviews, Documents to Sign, Workplace Confirmations, OTJH Confirmation, KSB Progress, Messages, Reports, Support Requests
+<<<<<<< HEAD
 - [x] Curriculum Studio (15 items): Dashboard, Programmes, Standards, KSB Frameworks, Module Builder, Week Builder, Component Builder, KSB Mapping, Quiz Workspace, Test Banks, Checkpoint Assessments, Version Control, Curriculum QA, MIS Allocation, Published Curriculum
+=======
+- [x] Curriculum Studio (15 items): Dashboard, Programmes, Standards, KSB Frameworks, Module Builder, Week Builder, Component Builder, KSB Mapping, Quiz XML Workspace, Test Banks, Checkpoint Assessments, Version Control, Curriculum QA, MIS Allocation, Published Curriculum
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 - [x] Engagement Command Centre (17 items): Dashboard, Learner Engagement, Attendance Risk, Absence Reporting Queue, Catch-up Overdue, Communication Centre, Call Logs, WhatsApp Logs, Email Logs, Employer Escalations, Points Rules, Rewards Shop, Voucher Claims, Events, Learner Clubs, Recognition, Engagement Reports
 - [x] Compliance Control Centre (16 items): Dashboard, New Starters, Onboarding, Employer Contracting, Eligibility, Initial Assessment, RPL Review, Documents, Digital Signatures, DAS Tracker, ILR Readiness, Evidence Packs, Funding Risk, Aptem Sync, Audit Reports, Reports
 - [x] MIS Operations Centre (14 items): Dashboard, Cohorts, Learner Allocation, Programme Allocation, Module Allocation, Timetables, Teams Sessions, Attendance Modes, Coach Assignment, Tutor Assignment, Calendar, Delivery Dates, Data Quality, Reports

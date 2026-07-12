@@ -12,9 +12,13 @@
     "react-dom": "^19.1.0",
     "react-i18next": "^15.6.0",
     "react-router-dom": "^7.6.3",
+<<<<<<< HEAD
     "recharts": "3.2.0",
     "sweetalert2": "^11.26.25",
     "xlsx": "^0.18.5"
+=======
+    "recharts": "3.2.0"
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
@@ -46,4 +50,8 @@
   },
   "type": "module",
   "version": "0.0.0"
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
