@@ -1,5 +1,9 @@
 import { useState, useEffect } from 'react';
+<<<<<<< HEAD
 import { useNavigate } from 'react-router-dom';
+=======
+import { useNavigate, useSearchParams } from 'react-router-dom';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -41,6 +45,17 @@ export default function LearnerCaseFile() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [stickyVisible, setStickyVisible] = useState(false);
   const navigate = useNavigate();
+<<<<<<< HEAD
+=======
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+
+  useEffect(() => {
+    if (TABS.some(tab => tab.id === requestedTab)) {
+      setActiveTab(requestedTab as TabId);
+    }
+  }, [requestedTab]);
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 
   useEffect(() => {
     const onScroll = () => {
@@ -347,4 +362,8 @@ export default function LearnerCaseFile() {
       `}</style>
     </WorkspaceShell>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

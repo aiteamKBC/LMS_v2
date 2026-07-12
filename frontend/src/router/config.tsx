@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 import { lazy } from "react";
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
 import NotFound from "../pages/NotFound";
@@ -259,6 +262,7 @@ import LearnerKnowledgeBase from "../pages/learner/knowledge-base/page";
 import UserGuidePage from "../pages/user-guide/page";
 import StarredMessagesPage from "../pages/starred-messages/page";
 
+<<<<<<< HEAD
 const NotFound = lazy(() => import("../pages/NotFound"));
 const Home = lazy(() => import("../pages/home/page"));
 const ForgotPasswordPage = lazy(() => import("../pages/forgot-password/page"));
@@ -528,6 +532,8 @@ const QuestionBankPage = lazy(() => import("../pages/curriculum/question-bank/pa
 const CohortDetailPage = lazy(() => import("../pages/curriculum/cohort-detail/page"));
 const LearnerAllocationPage = lazy(() => import("../pages/curriculum/learner-allocation/page"));
 
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 const routes: RouteObject[] = [
   {
     path: "/",
@@ -538,7 +544,11 @@ const routes: RouteObject[] = [
     element: <InternalPanelPage />,
   },
   {
+<<<<<<< HEAD
     // Login removed â€” entry is now the workspace launcher on the home page.
+=======
+    // Login removed — entry is now the workspace launcher on the home page.
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/login",
     element: <Navigate to="/" replace />,
   },
@@ -551,10 +561,13 @@ const routes: RouteObject[] = [
     element: <LearnerOverview />,
   },
   {
+<<<<<<< HEAD
     path: "/workspace/learner/:kind/:id",
     element: <LearnerOverview />,
   },
   {
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/workspace/coach",
     element: <CoachDashboard />,
   },
@@ -635,6 +648,7 @@ const routes: RouteObject[] = [
     element: <OnboardingPage />,
   },
   {
+<<<<<<< HEAD
     path: "/users",
     element: <UsersListPage />,
   },
@@ -657,16 +671,47 @@ const routes: RouteObject[] = [
   {
     path: "/training-plan/:kind/:userId",
     element: <TrainingPlanBuilderPage />,
+=======
+    path: "/compliance/pre-active",
+    element: <PreActiveLearnerJourney />,
+  },
+  {
+    path: "/compliance/employer-contracting",
+    element: <EmployerContracting />,
+  },
+  {
+    path: "/compliance/self-onboarding",
+    element: <SelfOnboardingPage />,
+  },
+  {
+    path: "/compliance/enrolment-review",
+    element: <EnrolmentReviewPage />,
+  },
+  {
+    path: "/compliance/eligibility",
+    element: <EligibilityReviewPage />,
+  },
+  {
+    path: "/compliance/initial-assessment",
+    element: <InitialAssessmentPage />,
+  },
+  {
+    path: "/compliance/rpl-review",
+    element: <RPLReviewPage />,
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   },
   {
     path: "/learner/this-week",
     element: <ThisWeekPage />,
   },
   {
+<<<<<<< HEAD
     path: "/learner/this-week/:kind/:id",
     element: <ThisWeekPage />,
   },
   {
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
   },
@@ -675,6 +720,7 @@ const routes: RouteObject[] = [
     element: <TrainingPlanPage />,
   },
   {
+<<<<<<< HEAD
     path: "/learner/training-plan/:kind/:id",
     element: <TrainingPlanPage />,
   },
@@ -683,14 +729,19 @@ const routes: RouteObject[] = [
     element: <QuizTakePage />,
   },
   {
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/learner/modules",
     element: <ModulesPage />,
   },
   {
+<<<<<<< HEAD
     path: "/learner/modules/:kind/:id",
     element: <ModulesPage />,
   },
   {
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/learner/attendance",
     element: <AttendancePage />,
   },
@@ -719,10 +770,13 @@ const routes: RouteObject[] = [
     element: <QuizzesPage />,
   },
   {
+<<<<<<< HEAD
     path: "/learner/quizzes/:kind/:id",
     element: <QuizzesPage />,
   },
   {
+=======
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/learner/monthly-cycle",
     element: <MonthlyCyclePage />,
   },
@@ -799,6 +853,13 @@ const routes: RouteObject[] = [
     element: <EmployerDashboard />,
   },
   {
+<<<<<<< HEAD
+=======
+    path: "/workspace/compliance",
+    element: <ComplianceDashboard />,
+  },
+  {
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/workspace/mis",
     element: <MISDashboard />,
   },
@@ -975,12 +1036,17 @@ const routes: RouteObject[] = [
     element: <QuizXmlWorkspace />,
   },
   {
+<<<<<<< HEAD
     path: "/curriculum/question-bank",
     element: <QuestionBankPage />,
   },
   {
     path: "/curriculum/quiz-xml/:quizId/edit",
     element: <QuizEditPage />,
+=======
+    path: "/curriculum/test-banks",
+    element: <TestBanksPage />,
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   },
   {
     path: "/curriculum/checkpoints",
@@ -988,11 +1054,19 @@ const routes: RouteObject[] = [
   },
   {
     path: "/curriculum/cohorts/:id/allocate",
+<<<<<<< HEAD
     element: <Navigate to="/curriculum/programmes" replace />,
   },
   {
     path: "/curriculum/cohorts/:id",
     element: <Navigate to="/curriculum/programmes" replace />,
+=======
+    element: <LearnerAllocationPage />,
+  },
+  {
+    path: "/curriculum/cohorts/:id",
+    element: <CohortDetailPage />,
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   },
   {
     path: "/curriculum/session-calendar",
@@ -1203,6 +1277,49 @@ const routes: RouteObject[] = [
     element: <EngagementReportsPage />,
   },
   {
+<<<<<<< HEAD
+=======
+    path: "/compliance/new-starters",
+    element: <NewStartersPage />,
+  },
+  {
+    path: "/compliance/documents",
+    element: <DocumentsPage />,
+  },
+  {
+    path: "/compliance/signatures",
+    element: <SignaturesPage />,
+  },
+  {
+    path: "/compliance/das",
+    element: <DASPage />,
+  },
+  {
+    path: "/compliance/ilr",
+    element: <ILRPage />,
+  },
+  {
+    path: "/compliance/evidence-packs",
+    element: <EvidencePacksPage />,
+  },
+  {
+    path: "/compliance/funding-risk",
+    element: <FundingRiskPage />,
+  },
+  {
+    path: "/compliance/aptem-sync",
+    element: <AptemSyncPage />,
+  },
+  {
+    path: "/compliance/audit-reports",
+    element: <AuditReportsPage />,
+  },
+  {
+    path: "/compliance/reports",
+    element: <EnrolmentReportsPage />,
+  },
+  {
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     path: "/mis/delivery-timeline",
     element: <MisDeliveryTimelinePage />,
   },

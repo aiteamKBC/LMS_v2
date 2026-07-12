@@ -81,7 +81,11 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
+<<<<<<< HEAD
     <div className="fixed bottom-24 right-5 z-[9999] flex flex-col gap-2.5 pointer-events-none">
+=======
+    <div className="fixed bottom-5 right-5 z-[9999] flex flex-col gap-2.5 pointer-events-none">
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
       {toasts.map(t => (
         <div key={t.id} className="pointer-events-auto">
           <ToastCard item={t} onDismiss={() => dismiss(t.id)} />
@@ -89,4 +93,8 @@ export function ToastContainer() {
       ))}
     </div>
   );
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

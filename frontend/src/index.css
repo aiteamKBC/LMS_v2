@@ -942,6 +942,7 @@ table tbody td:last-child {
 .tooltip-bg {
   background: linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 100%);
   border: 1px solid oklch(var(--primary-800) / 0.4);
+<<<<<<< HEAD
 }
 
 /* ===== SweetAlert2 - LMS premium confirmations ===== */
@@ -1582,3 +1583,6 @@ table tbody td:last-child {
 .quiz-preview-scroll::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #b8a8df, #8f7bc8);
 }
+=======
+}
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)

@@ -26,6 +26,10 @@
     "strictPropertyInitialization": false,
     "noImplicitThis": false,
     "useUnknownInCatchVariables": false,
+<<<<<<< HEAD
+=======
+    "alwaysStrict": false,
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": false,
     "noUncheckedSideEffectImports": false,

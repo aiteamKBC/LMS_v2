@@ -1,9 +1,14 @@
 import { useState, useRef } from 'react';
+<<<<<<< HEAD
 import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RealLearningJourneyView } from '@/components/feature/RealLearningJourneyView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useMyLearner } from '@/hooks/useMyLearner';
+=======
+import { Link } from 'react-router-dom';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import RoadJourneyView from './components/RoadJourneyView';
@@ -379,6 +384,7 @@ function TimelineView({
    PAGE COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export default function ModulesPage() {
+<<<<<<< HEAD
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const myLearner = useMyLearner();
   const kind = urlKind ?? myLearner?.kind;
@@ -392,6 +398,11 @@ export default function ModulesPage() {
     return <RealLearningJourneyView real={real} loading={loading} loadError={loadError} />;
   }
 
+=======
+  const [viewMode, setViewMode] = useState<'road' | 'timeline'>('road');
+  const heroColor = overallProgress >= 70 ? 'emerald' : overallProgress >= 45 ? 'amber' : 'red';
+
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   return (
     <WorkspaceShell
       role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}

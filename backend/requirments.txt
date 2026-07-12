@@ -1,5 +1,6 @@
 asgiref==3.11.1
 Django==6.0.6
+<<<<<<< HEAD
 openpyxl==3.1.5
 openai>=1.86.0
 pypdf>=6.4.1
@@ -8,5 +9,8 @@ python-docx>=1.2.0
 python-pptx>=1.0.2
 psycopg==3.3.4
 psycopg-binary==3.3.4
+=======
+psycopg[binary]==3.2.9
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
 sqlparse==0.5.5
 tzdata==2026.2

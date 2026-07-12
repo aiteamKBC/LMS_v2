@@ -589,6 +589,10 @@ export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
   { path: '/workspace/tutor', allowedRoles: ['tutor', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/employer', allowedRoles: ['employer', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/engagement', allowedRoles: ['engagement', 'tenant-admin', 'super-admin'] },
+<<<<<<< HEAD
+=======
+  { path: '/workspace/compliance', allowedRoles: ['compliance', 'qa', 'tenant-admin', 'super-admin'] },
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   { path: '/workspace/mis', allowedRoles: ['mis', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/qa', allowedRoles: ['qa', 'compliance', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/curriculum', allowedRoles: ['curriculum', 'programme-manager', 'tenant-admin', 'super-admin'] },
@@ -599,7 +603,11 @@ export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
   { path: '/admin/settings', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/learning', allowedRoles: ['learner', 'coach', 'tutor', 'tenant-admin', 'super-admin'] },
   { path: '/coaching', allowedRoles: ['learner', 'coach', 'tenant-admin', 'super-admin'] },
+<<<<<<< HEAD
   { path: '/users', allowedRoles: ['compliance', 'qa', 'tenant-admin', 'super-admin'] },
+=======
+  { path: '/compliance', allowedRoles: ['compliance', 'qa', 'tenant-admin', 'super-admin'] },
+>>>>>>> 7f82783 (ADD ATTENDANCE AND AI MARKIG)
   { path: '/reports', allowedRoles: ['coach', 'tutor', 'employer', 'engagement', 'compliance', 'qa', 'mis', 'leadership', 'finance', 'auditor', 'tenant-admin', 'super-admin'] },
   { path: '/admin', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/profile', allowedRoles: ['*'] },
