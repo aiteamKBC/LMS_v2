@@ -85,9 +85,22 @@ async function request<T>(url: string): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) {
+        throw new Error(`Backend returned HTML instead of JSON (${res.status}). Check the Django server error output.`);
+      }
+      throw new Error('Received an invalid JSON response from the backend.');
+    }
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const message = typeof data === 'object' && data && 'error' in data
+      ? String((data as { error?: string }).error)
+      : `Request failed (${res.status})`;
+    throw new Error(message);
   }
   return data as T;
 }

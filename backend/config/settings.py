@@ -135,7 +135,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("DATABASEURL")
 
 if DATABASE_URL:
     parsed_db = urlparse(DATABASE_URL)
@@ -160,7 +160,12 @@ else:
     }
 
 # Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
-_enrolment_database_url = os.environ.get('ENROLMENT_DATABASE_URL') or os.environ.get('Database_url')
+_enrolment_database_url = (
+    os.environ.get('ENROLMENT_DATABASE_URL')
+    or os.environ.get('Database_url')
+    or os.environ.get('DATABASEURL')
+    or os.environ.get('DATABASE_URL')
+)
 if _enrolment_database_url:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
