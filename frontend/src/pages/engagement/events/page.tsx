@@ -1,43 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
+import { fetchEvents, createEvent, updateEvent, deleteEvent, type EngagementEvent as Event } from '@/api/engagement';
+import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
-interface Event {
-  id: string;
-  title: string;
-  description: string;
-  date: string;
-  time: string;
-  location: string;
-  type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
-  attendees: number;
-  capacity: number;
-  status: 'upcoming' | 'ongoing' | 'completed';
-  organizer: string;
-}
-
-const INITIAL_EVENTS: Event[] = [
-  { id: 'ev-01', title: 'Marketing Club Monthly Showcase', description: 'Present your marketing campaigns and get feedback from peers and ambassadors.', date: '13 Jun 2026', time: '13:00 - 15:00', location: 'Teams Virtual', type: 'workshop', attendees: 28, capacity: 35, status: 'upcoming', organizer: 'Rebecca Okonkwo' },
-  { id: 'ev-02', title: 'Summer Apprentice Social', description: 'End of year social event for all apprentices. Food, games, and networking.', date: '20 Jun 2026', time: '16:00 - 19:00', location: 'KBC Central London', type: 'social', attendees: 45, capacity: 60, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-03', title: 'Leadership Workshop', description: 'Develop leadership skills with guest speaker Dr. Amara Okafor.', date: '15 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 22, capacity: 30, status: 'upcoming', organizer: 'Sarah Chen' },
-  { id: 'ev-04', title: 'Coding Competition', description: 'Monthly coding challenge with prizes for top performers.', date: '10 Jun 2026', time: '09:00 - 17:00', location: 'Online Platform', type: 'competition', attendees: 18, capacity: 25, status: 'ongoing', organizer: 'James Harrington' },
-  { id: 'ev-05', title: 'Employer Networking Night', description: 'Connect with employers and explore career opportunities.', date: '25 Jun 2026', time: '18:00 - 20:00', location: 'KBC Manchester Office', type: 'networking', attendees: 30, capacity: 40, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-06', title: 'Quarterly Awards Ceremony', description: 'Celebrate top learners and achievements across all programmes.', date: '28 Jun 2026', time: '14:00 - 16:00', location: 'KBC Central London', type: 'celebration', attendees: 50, capacity: 80, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-07', title: 'AI in Marketing Deep Dive', description: 'Advanced workshop on AI tools for marketing professionals.', date: '5 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 24, capacity: 25, status: 'completed', organizer: 'Tom Whitfield' },
-  { id: 'ev-08', title: 'Project Controls Masterclass', description: 'Master project management tools and techniques with industry experts.', date: '2 Jun 2026', time: '14:00 - 16:00', location: 'Teams Virtual', type: 'workshop', attendees: 20, capacity: 25, status: 'completed', organizer: 'James Harrington' },
-];
-
-const typeConfig: Record<string, { icon: string; bg: string; text: string }> = {
-  workshop: { icon: 'ri-presentation-line', bg: 'bg-primary-100', text: 'text-primary-700' },
-  social: { icon: 'ri-cake-line', bg: 'bg-accent-100', text: 'text-accent-700' },
-  networking: { icon: 'ri-group-line', bg: 'bg-secondary-100', text: 'text-secondary-700' },
-  competition: { icon: 'ri-trophy-line', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  celebration: { icon: 'ri-star-line', bg: 'bg-amber-100', text: 'text-amber-700' },
+// Type drives each card's identity: medallion + a left accent strip.
+// Full literal class strings so Tailwind's JIT keeps them.
+const typeConfig: Record<string, { icon: string; bg: string; text: string; bar: string }> = {
+  workshop: { icon: 'ri-presentation-line', bg: 'bg-primary-100', text: 'text-primary-700', bar: 'bg-primary-400' },
+  social: { icon: 'ri-cake-line', bg: 'bg-accent-100', text: 'text-accent-700', bar: 'bg-accent-400' },
+  networking: { icon: 'ri-group-line', bg: 'bg-secondary-100', text: 'text-secondary-700', bar: 'bg-secondary-400' },
+  competition: { icon: 'ri-trophy-line', bg: 'bg-emerald-100', text: 'text-emerald-700', bar: 'bg-emerald-400' },
+  celebration: { icon: 'ri-star-line', bg: 'bg-amber-100', text: 'text-amber-700', bar: 'bg-amber-400' },
 };
+
+// The stored date is a display string ('13 Jun 2026'); convert it back to the
+// yyyy-mm-dd an <input type="date"> expects so Edit can prefill it.
+function toDateInputValue(display: string): string {
+  const d = new Date(display);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 interface EventFormData {
   title: string;
@@ -47,7 +38,6 @@ interface EventFormData {
   endTime: string;
   location: string;
   type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
-  capacity: number;
   organizer: string;
 }
 
@@ -58,7 +48,6 @@ interface FormErrors {
   startTime?: string;
   endTime?: string;
   location?: string;
-  capacity?: string;
   organizer?: string;
 }
 
@@ -70,7 +59,6 @@ const blankForm: EventFormData = {
   endTime: '',
   location: '',
   type: 'workshop',
-  capacity: 30,
   organizer: 'Tom Harrington',
 };
 
@@ -92,7 +80,7 @@ function EventForm({
         <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Event Type <span className="text-red-500">*</span></label>
         <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 flex-wrap">
           {(Object.keys(typeConfig) as Array<keyof typeof typeConfig>).map(t => (
-            <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+            <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
               <i className={`${typeConfig[t].icon} text-sm`}></i>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -138,18 +126,11 @@ function EventForm({
         <input type="text" value={form.location} onChange={e => { setForm(f => ({ ...f, location: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.location; return n; }); }} placeholder="e.g. Teams Virtual or KBC Central London" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.location ? 'border-red-300' : 'border-foreground-200/60'}`} />
         {errors.location && <p className="text-[10px] text-red-500 mt-1">{errors.location}</p>}
       </div>
-      {/* Capacity & Organizer */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Capacity <span className="text-red-500">*</span></label>
-          <input type="number" value={form.capacity} onChange={e => { setForm(f => ({ ...f, capacity: parseInt(e.target.value) || 0 })); setErrors(errs => { const n = { ...errs }; delete n.capacity; return n; }); }} min={5} max={500} className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.capacity ? 'border-red-300' : 'border-foreground-200/60'}`} />
-          {errors.capacity && <p className="text-[10px] text-red-500 mt-1">{errors.capacity}</p>}
-        </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Organizer <span className="text-red-500">*</span></label>
-          <input type="text" value={form.organizer} onChange={e => { setForm(f => ({ ...f, organizer: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.organizer; return n; }); }} placeholder="e.g. Tom Harrington" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.organizer ? 'border-red-300' : 'border-foreground-200/60'}`} />
-          {errors.organizer && <p className="text-[10px] text-red-500 mt-1">{errors.organizer}</p>}
-        </div>
+      {/* Organizer */}
+      <div>
+        <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Organizer <span className="text-red-500">*</span></label>
+        <input type="text" value={form.organizer} onChange={e => { setForm(f => ({ ...f, organizer: e.target.value })); setErrors(errs => { const n = { ...errs }; delete n.organizer; return n; }); }} placeholder="e.g. Tom Harrington" className={`w-full px-3 py-2 bg-background-50 border rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 ${errors.organizer ? 'border-red-300' : 'border-foreground-200/60'}`} />
+        {errors.organizer && <p className="text-[10px] text-red-500 mt-1">{errors.organizer}</p>}
       </div>
     </div>
   );
@@ -166,17 +147,26 @@ function validateForm(form: EventFormData): FormErrors {
   if (!form.endTime) errs.endTime = 'End time is required';
   if (form.startTime && form.endTime && form.startTime >= form.endTime) errs.endTime = 'End time must be after start time';
   if (!form.location.trim()) errs.location = 'Location is required';
-  if (!form.capacity || form.capacity < 5) errs.capacity = 'Minimum 5 capacity';
-  else if (form.capacity > 500) errs.capacity = 'Maximum 500 capacity';
   if (!form.organizer.trim()) errs.organizer = 'Organizer is required';
   return errs;
 }
 
 export default function EventsPage() {
   const navigate = useNavigate();
-  const [events, setEvents] = useState<Event[]>(INITIAL_EVENTS);
+  const { success, warning } = useToast();
+  const [events, setEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'ongoing' | 'completed'>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEvents()
+      .then(data => { if (!cancelled) setEvents(data); })
+      .catch(err => { if (!cancelled) warning('Could not load events', err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
 
   // ADD modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -208,25 +198,26 @@ export default function EventsPage() {
     setShowAddModal(true);
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     const errs = validateForm(addForm);
     if (Object.keys(errs).length > 0) { setAddErrors(errs); return; }
-    const newEvent: Event = {
-      id: `ev-${String(events.length + 1).padStart(2, '0')}`,
-      title: addForm.title.trim(),
-      description: addForm.description.trim(),
-      date: new Date(addForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      time: `${addForm.startTime} - ${addForm.endTime}`,
-      location: addForm.location.trim(),
-      type: addForm.type,
-      attendees: 0,
-      capacity: addForm.capacity,
-      status: 'upcoming',
-      organizer: addForm.organizer.trim(),
-    };
-    setEvents(prev => [newEvent, ...prev]);
-    setAddSubmitted(true);
-    setTimeout(() => { setShowAddModal(false); setAddSubmitted(false); }, 700);
+    try {
+      const created = await createEvent({
+        title: addForm.title.trim(),
+        description: addForm.description.trim(),
+        date: new Date(addForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        time: `${addForm.startTime} - ${addForm.endTime}`,
+        location: addForm.location.trim(),
+        type: addForm.type,
+        organizer: addForm.organizer.trim(),
+      });
+      setEvents(prev => [created, ...prev]);
+      setAddSubmitted(true);
+      setTimeout(() => { setShowAddModal(false); setAddSubmitted(false); }, 700);
+      success(`Event "${created.title}" created`);
+    } catch (err: any) {
+      warning('Could not create event', err.message);
+    }
   }
 
   function openEditModal(event: Event) {
@@ -235,43 +226,51 @@ export default function EventsPage() {
     setEditForm({
       title: event.title,
       description: event.description,
-      date: '',
-      startTime: startTime || '',
-      endTime: endTime || '',
+      date: toDateInputValue(event.date),
+      startTime: (startTime || '').trim(),
+      endTime: (endTime || '').trim(),
       location: event.location,
       type: event.type,
-      capacity: event.capacity,
       organizer: event.organizer,
     });
     setEditErrors({});
     setEditSubmitted(false);
   }
 
-  function handleEdit() {
+  async function handleEdit() {
     if (!editEventId) return;
     const errs = validateForm(editForm);
     if (Object.keys(errs).length > 0) { setEditErrors(errs); return; }
-    setEvents(prev => prev.map(e => {
-      if (e.id !== editEventId) return e;
-      return {
-        ...e,
+    try {
+      const updated = await updateEvent(editEventId, {
         title: editForm.title.trim(),
         description: editForm.description.trim(),
+        date: new Date(editForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
         time: `${editForm.startTime} - ${editForm.endTime}`,
         location: editForm.location.trim(),
         type: editForm.type,
-        capacity: editForm.capacity,
         organizer: editForm.organizer.trim(),
-      };
-    }));
-    setEditSubmitted(true);
-    setTimeout(() => { setEditEventId(null); setEditSubmitted(false); }, 700);
+      });
+      setEvents(prev => prev.map(e => e.id === editEventId ? updated : e));
+      setEditSubmitted(true);
+      setTimeout(() => { setEditEventId(null); setEditSubmitted(false); }, 700);
+      success(`Event "${updated.title}" updated`);
+    } catch (err: any) {
+      warning('Could not update event', err.message);
+    }
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!deleteEventId) return;
-    setEvents(prev => prev.filter(e => e.id !== deleteEventId));
-    setDeleteEventId(null);
+    const removed = events.find(e => e.id === deleteEventId);
+    try {
+      await deleteEvent(deleteEventId);
+      setEvents(prev => prev.filter(e => e.id !== deleteEventId));
+      setDeleteEventId(null);
+      if (removed) warning(`Event "${removed.title}" deleted`);
+    } catch (err: any) {
+      warning('Could not delete event', err.message);
+    }
   }
 
   const eventToDelete = events.find(e => e.id === deleteEventId);
@@ -301,23 +300,20 @@ export default function EventsPage() {
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
             <i className="ri-thumb-up-line text-sm"></i> Recognition
           </button>
-          <button onClick={() => navigate('/engagement/communication')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-message-2-line text-sm"></i> Communication
-          </button>
         </div>
 
         {/* Filters & Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'upcoming', 'ongoing', 'completed'].map(s => (
-              <button key={s} onClick={() => setStatusFilter(s as 'all' | 'upcoming' | 'ongoing' | 'completed')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === s ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={s} onClick={() => setStatusFilter(s as 'all' | 'upcoming' | 'ongoing' | 'completed')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === s ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'workshop', 'social', 'networking', 'competition', 'celebration'].map(t => (
-              <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {t === 'all' ? 'All Types' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
@@ -328,13 +324,23 @@ export default function EventsPage() {
           </button>
         </div>
 
+        {loading && <EventCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
+            <i className="ri-calendar-event-line text-2xl text-foreground-300"></i>
+            <p className="text-sm font-semibold text-foreground-700">No events match this view</p>
+            <p className="text-[11px] text-foreground-400">Try switching the status or type filter — or add a new event.</p>
+          </div>
+        )}
+
         {/* Event Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(event => {
-            const cfg = typeConfig[event.type] || { icon: 'ri-calendar-line', bg: 'bg-background-100', text: 'text-foreground-500' };
-            const pct = Math.round((event.attendees / event.capacity) * 100);
+            const cfg = typeConfig[event.type] || { icon: 'ri-calendar-line', bg: 'bg-background-100', text: 'text-foreground-500', bar: 'bg-foreground-300' };
             return (
-              <div key={event.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium hover:border-primary-200/50 transition-smooth">
+              <div key={event.id} className="relative bg-background-50 rounded-xl border border-foreground-200/60 p-4 pl-5 card-premium hover:border-primary-200/50 transition-smooth overflow-hidden">
+                <span className={`absolute inset-y-0 left-0 w-1 ${cfg.bar}`} aria-hidden="true"></span>
                 <div className="flex items-start gap-3 mb-3">
                   <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${cfg.bg} ${cfg.text}`}>
                     <i className={`${cfg.icon} text-sm`}></i>
@@ -351,14 +357,10 @@ export default function EventsPage() {
                   <p><i className="ri-map-pin-line mr-1 text-primary-500"></i>{event.location}</p>
                   <p><i className="ri-user-line mr-1 text-primary-500"></i>{event.organizer}</p>
                 </div>
-                <div className="mt-3">
-                  <div className="flex items-center justify-between text-[10px] mb-1">
-                    <span className="text-foreground-400">{event.attendees} / {event.capacity}</span>
-                    <span className={`font-bold ${pct >= 80 ? 'text-red-600' : pct >= 60 ? 'text-amber-600' : 'text-primary-600'}`}>{pct}%</span>
-                  </div>
-                  <div className="w-full h-1.5 bg-background-200 rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full ${pct >= 80 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-primary-500'}`} style={{ width: `${pct}%` }}></div>
-                  </div>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground-600">
+                  <i className="ri-group-line text-primary-500"></i>
+                  <span className="font-semibold text-foreground-900">{event.attendees}</span>
+                  <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>

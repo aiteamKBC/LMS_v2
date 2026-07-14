@@ -12,8 +12,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
-from urllib.parse import parse_qsl, urlparse
-from urllib.parse import urlparse, unquote, parse_qs
+from urllib.parse import parse_qsl, urlparse, unquote
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -97,7 +97,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'coach_api',
     'learner_api',
+    'curriculum_api',
+    'engagement_api',
 ]
 
 MIDDLEWARE = [

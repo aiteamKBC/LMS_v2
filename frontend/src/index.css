@@ -128,6 +128,17 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Full-screen overlays (modal backdrops) are usually rendered as the last
+   children of a page's `space-y-*` content wrapper. Tailwind's `space-y`
+   utility adds `margin-top` to every non-first flow sibling, and that margin
+   still applies to a `position: fixed`/`absolute` `inset-0` overlay — pushing
+   it down by the gap size and leaving an uncovered, clickable strip at the top
+   of the screen (e.g. the header shows through). An edge-pinned `inset-0`
+   overlay never needs that margin, so neutralise it. */
+[class*="space-y-"] > .inset-0 {
+  margin-top: 0 !important;
+}
+
 /* Subtle purple card glow on hover */
 .card-premium {
   position: relative;

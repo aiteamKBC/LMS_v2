@@ -108,28 +108,21 @@ export default function RiskPieChart({
             );
           })}
 
-          {/* Center text */}
-          <text x={center} y={center - 6} textAnchor="middle" className="fill-foreground-900" style={{ fontSize: '22px', fontWeight: 700, fontFamily: 'var(--font-heading)' }}>
-            {total}
-          </text>
-          <text x={center} y={center + 12} textAnchor="middle" className="fill-foreground-400" style={{ fontSize: '10px' }}>
-            Learners
-          </text>
         </svg>
 
-        {/* Center hover highlight */}
-        {hoveredIndex !== null && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center">
-              <p className="text-xl font-heading font-bold" style={{ color: slices[hoveredIndex].color }}>
-                {slices[hoveredIndex].value}
-              </p>
-              <p className="text-[10px] text-foreground-500 font-medium">
-                {slices[hoveredIndex].label}
-              </p>
-            </div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-center px-2">
+            <p
+              className="text-xl font-heading font-bold leading-none"
+              style={{ color: hoveredIndex !== null ? slices[hoveredIndex].color : 'oklch(var(--foreground-900))' }}
+            >
+              {hoveredIndex !== null ? slices[hoveredIndex].value : total}
+            </p>
+            <p className="mt-1 text-[10px] text-foreground-500 font-medium leading-tight">
+              {hoveredIndex !== null ? slices[hoveredIndex].label : 'Learners'}
+            </p>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Legend */}

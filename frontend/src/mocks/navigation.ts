@@ -14,7 +14,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     icon: 'ri-book-open-line',
     href: '',
     children: [
-      { id: 'learner-this-week', label: 'This Week', icon: 'ri-calendar-check-line', href: '/learner/this-week', badge: 3 },
       { id: 'learner-training-plan', label: 'Training Plan', icon: 'ri-road-map-line', href: '/learner/training-plan' },
       { id: 'learner-learning-journey', label: 'Learning Journey', icon: 'ri-compass-3-line', href: '/learner/modules' },
       { id: 'learner-quizzes', label: 'Quizzes', icon: 'ri-questionnaire-line', href: '/learner/quizzes', badge: 1 },
@@ -108,11 +107,8 @@ export const coachNavItems: SidebarNavItem[] = [
     id: 'coach-group-learners',
     label: 'My Learners',
     icon: 'ri-group-line',
-    href: '',
-    children: [
-      { id: 'coach-learner-overview', label: 'Learner Overview', icon: 'ri-folder-user-line', href: '/coach/caseload', badge: 24 },
-      { id: 'coach-at-risk', label: 'At-risk Learners', icon: 'ri-alert-line', href: '/coach/at-risk', badge: 3 },
-    ],
+    href: '/coach/caseload',
+    badge: 24,
   },
   {
     id: 'coach-group-attendance',
@@ -333,6 +329,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-quiz-xml', label: 'Quiz Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
       { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
       { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=trash' },
+      { id: 'curriculum-test-banks', label: 'Test Banks', icon: 'ri-database-2-line', href: '/curriculum/test-banks' },
       { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
     ],
   },
@@ -373,30 +370,6 @@ export const engagementNavItems: SidebarNavItem[] = [
     children: [
       { id: 'engagement-learner-engagement', label: 'Learner Engagement', icon: 'ri-heart-line', href: '/engagement/learner-engagement' },
       { id: 'engagement-attendance-risk', label: 'Attendance Risk', icon: 'ri-alert-line', href: '/engagement/attendance-risk', badge: 4 },
-      { id: 'engagement-catchup-overdue', label: 'Catch-up Overdue', icon: 'ri-timer-line', href: '/engagement/catchup-overdue', badge: 9 },
-    ],
-  },
-  {
-    id: 'engagement-group-absence',
-    label: 'Absence & Recovery',
-    icon: 'ri-error-warning-line',
-    href: '',
-    children: [
-      { id: 'engagement-absence-queue', label: 'Absence Reporting Queue', icon: 'ri-error-warning-line', href: '/engagement/absence-queue', badge: 7 },
-      { id: 'engagement-employer-escalations', label: 'Employer Escalations', icon: 'ri-building-2-line', href: '/engagement/employer-escalations', badge: 1 },
-    ],
-  },
-  {
-    id: 'engagement-group-communication',
-    label: 'Communication Hub',
-    icon: 'ri-message-2-line',
-    href: '',
-    children: [
-      { id: 'engagement-communication', label: 'Communication Centre', icon: 'ri-message-2-line', href: '/engagement/communication' },
-      { id: 'engagement-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', badge: 2 },
-      { id: 'engagement-call-logs', label: 'Call Logs', icon: 'ri-phone-line', href: '/engagement/call-logs' },
-      { id: 'engagement-whatsapp-logs', label: 'WhatsApp Logs', icon: 'ri-whatsapp-line', href: '/engagement/whatsapp-logs' },
-      { id: 'engagement-email-logs', label: 'Email Logs', icon: 'ri-mail-line', href: '/engagement/email-logs' },
     ],
   },
   {
@@ -409,6 +382,7 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-rewards-shop', label: 'Rewards Shop', icon: 'ri-shopping-bag-3-line', href: '/engagement/rewards-shop' },
       { id: 'engagement-voucher-claims', label: 'Voucher Claims', icon: 'ri-coupon-line', href: '/engagement/voucher-claims', badge: 5 },
       { id: 'engagement-recognition', label: 'Recognition Pages', icon: 'ri-thumb-up-line', href: '/engagement/recognition' },
+      { id: 'engagement-flash-cards', label: 'Flash Cards', icon: 'ri-flashlight-line', href: '/engagement/flash-cards' },
     ],
   },
   {

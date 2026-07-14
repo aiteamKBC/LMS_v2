@@ -1,109 +1,101 @@
-import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+﻿import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
+const API_ENDPOINT = '/coach_api/coach/timetable';
 
-/* ────────────────────────────────────────────────────────────
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Types
-   ──────────────────────────────────────────────────────────── */
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 interface TimetableEvent {
   id: string;
   title: string;
   type: 'coaching' | 'live-session' | 'review' | 'employer-meeting' | 'welfare' | 'admin' | 'personal';
+  date?: string;
+  year: number;
   dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6;
   dayOfMonth: number;
   month: number;
   startHour: number;
   endHour: number;
+  timeLabel?: string;
+  isTimeEstimated?: boolean;
   learner?: string;
+  email?: string;
   employer?: string;
+  managerEmail?: string;
   programme?: string;
   tutor?: string;
   location?: string;
   platform?: string;
   priority: 'normal' | 'urgent' | 'high';
-  status: 'confirmed' | 'pending' | 'cancelled';
+  status: 'completed' | 'scheduled' | 'in-progress' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
+  source?: 'mcr' | 'progress-review' | string;
+  sourceStatus?: string;
+  sequence?: number;
+  rawPlanned?: string;
+  rawStatus?: string;
   notes?: string;
   cohort?: string;
 }
 
-/* ────────────────────────────────────────────────────────────
-   Data — June 2026 (spans 4 weeks)
-   ──────────────────────────────────────────────────────────── */
+interface TimetableSummaryMetrics {
+  totalEvents: number;
+  completedEvents: number;
+  scheduledEvents: number;
+  inProgressEvents: number;
+  needsScheduling: number;
+  completionRate: number;
+  coachingEvents: number;
+  reviewEvents: number;
+  supportEvents: number;
+}
+
+interface TimetableSummary extends TimetableSummaryMetrics {
+  timeAvailability?: string;
+  sourceBreakdown?: {
+    mcr: TimetableSummaryMetrics;
+    progressReview: TimetableSummaryMetrics;
+  };
+}
+
+interface TimetableResponse {
+  owner?: {
+    name?: string;
+    email?: string;
+  };
+  summary?: TimetableSummary;
+  events?: TimetableEvent[];
+}
+
+const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
+  totalEvents: 0,
+  completedEvents: 0,
+  scheduledEvents: 0,
+  inProgressEvents: 0,
+  needsScheduling: 0,
+  completionRate: 0,
+  coachingEvents: 0,
+  reviewEvents: 0,
+  supportEvents: 0,
+};
+
+const EMPTY_SUMMARY: TimetableSummary = {
+  ...EMPTY_SUMMARY_METRICS,
+  sourceBreakdown: {
+    mcr: { ...EMPTY_SUMMARY_METRICS },
+    progressReview: { ...EMPTY_SUMMARY_METRICS },
+  },
+};
+
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Data â€” June 2026 (spans 4 weeks)
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 07:00 – 20:00
+const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 07:00 â€“ 20:00
 
-const ALL_EVENTS: TimetableEvent[] = [
-  // ── Week 1: June 1–7 ──
-  { id: 'evt-001', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 0, dayOfMonth: 1, month: 5, startHour: 9, endHour: 10, learner: 'James Okafor', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Discuss Q2 progress & next milestones' },
-  { id: 'evt-002', title: 'Live Session: Customer Segmentation', type: 'live-session', dayOfWeek: 0, dayOfMonth: 1, month: 5, startHour: 10, endHour: 12, tutor: 'Crispin Jones', programme: 'Marketing Executive L4', location: 'Room 302', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '18 learners attending', cohort: 'Cohort B' },
-  { id: 'evt-003', title: 'Employer Check-in', type: 'employer-meeting', dayOfWeek: 0, dayOfMonth: 1, month: 5, startHour: 13, endHour: 13.5, employer: 'Tim Hortons UK', platform: 'Phone', priority: 'normal', status: 'confirmed', notes: 'Discuss Sophie Williams OTJH pace' },
-  { id: 'evt-004', title: 'Welfare & Risk Review', type: 'welfare', dayOfWeek: 0, dayOfMonth: 1, month: 5, startHour: 15, endHour: 16, learner: 'Mia Robinson', programme: 'Project Manager L4', platform: 'Teams', priority: 'urgent', status: 'confirmed', notes: 'CRITICAL: 71% attendance, 4 missed sessions' },
-  { id: 'evt-005', title: 'Progress Review', type: 'review', dayOfWeek: 1, dayOfMonth: 2, month: 5, startHour: 9, endHour: 10, learner: 'Connor Walsh', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'Week 12 review — FS English pending' },
-  { id: 'evt-006', title: 'Live Session: Data Visualisation', type: 'live-session', dayOfWeek: 1, dayOfMonth: 2, month: 5, startHour: 10, endHour: 12, tutor: 'Dr. Helen Park', programme: 'Data Analyst L4', location: 'Lab 101', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '14 learners', cohort: 'Cohort D' },
-  { id: 'evt-007', title: 'Onboarding Coaching', type: 'coaching', dayOfWeek: 1, dayOfMonth: 2, month: 5, startHour: 11, endHour: 12, learner: 'Priya Sharma', programme: 'Business Admin L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Week 2 — new starter support' },
-  { id: 'evt-008', title: 'Evidence Review', type: 'admin', dayOfWeek: 1, dayOfMonth: 2, month: 5, startHour: 13, endHour: 14, priority: 'high', status: 'confirmed', notes: 'Mark 5 pending assignments' },
-  { id: 'evt-009', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 2, dayOfMonth: 3, month: 5, startHour: 14, endHour: 15, learner: 'Sophie Williams', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'OTJH catch-up plan & evidence strategy' },
-  { id: 'evt-010', title: 'Live Session: Business Comms', type: 'live-session', dayOfWeek: 2, dayOfMonth: 3, month: 5, startHour: 9, endHour: 11, tutor: 'Rachel Myers', programme: 'Business Admin', location: 'Room 205', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '22 learners', cohort: 'Cohort A' },
-  { id: 'evt-011', title: 'Compliance Check-in', type: 'coaching', dayOfWeek: 2, dayOfMonth: 3, month: 5, startHour: 15, endHour: 16, learner: 'Liam Patel', programme: 'Data Analyst L4', platform: 'Teams', priority: 'high', status: 'pending', notes: 'Pre-Active — QA Rejected, needs follow-up' },
-  { id: 'evt-012', title: 'Employer Call', type: 'employer-meeting', dayOfWeek: 2, dayOfMonth: 3, month: 5, startHour: 16, endHour: 16.5, employer: 'Pret A Manger', platform: 'Phone', priority: 'normal', status: 'pending', notes: 'James Okafor progress update' },
-  { id: 'evt-013', title: 'Progress Review', type: 'review', dayOfWeek: 3, dayOfMonth: 4, month: 5, startHour: 11, endHour: 12, learner: 'Sophie Williams', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'Week 12 review — prepare Q&A' },
-  { id: 'evt-014', title: 'Progress Review', type: 'review', dayOfWeek: 3, dayOfMonth: 4, month: 5, startHour: 10, endHour: 11, learner: 'James Okafor', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Week 12 review' },
-  { id: 'evt-015', title: 'AI Marking Queue', type: 'admin', dayOfWeek: 3, dayOfMonth: 4, month: 5, startHour: 13, endHour: 15, priority: 'normal', status: 'confirmed', notes: 'Review AI-generated feedback for 8 submissions' },
-  { id: 'evt-016', title: 'Progress Review', type: 'review', dayOfWeek: 4, dayOfMonth: 5, month: 5, startHour: 15, endHour: 16, learner: 'Mia Robinson', programme: 'Project Manager L4', platform: 'Teams', priority: 'urgent', status: 'confirmed', notes: 'Rescheduled review — welfare priority' },
-  { id: 'evt-017', title: 'Team Standup', type: 'admin', dayOfWeek: 4, dayOfMonth: 5, month: 5, startHour: 9, endHour: 9.5, priority: 'normal', status: 'confirmed', notes: 'Weekly coach team sync' },
-  { id: 'evt-018', title: 'Employer Escalation', type: 'employer-meeting', dayOfWeek: 4, dayOfMonth: 5, month: 5, startHour: 16, endHour: 17, employer: 'Tesco', platform: 'Teams', priority: 'urgent', status: 'pending', notes: 'Mia Robinson attendance escalation' },
-
-  // ── Week 2: June 8–14 ──
-  { id: 'evt-019', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 0, dayOfMonth: 8, month: 5, startHour: 10, endHour: 11, learner: 'Aisha Bakari', programme: 'Digital Marketing L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Monthly progress review' },
-  { id: 'evt-020', title: 'Live Session: Brand Strategy', type: 'live-session', dayOfWeek: 0, dayOfMonth: 8, month: 5, startHour: 11, endHour: 13, tutor: 'Crispin Jones', programme: 'Marketing Executive L4', location: 'Room 302', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '15 learners', cohort: 'Cohort B' },
-  { id: 'evt-021', title: 'Welfare Check', type: 'welfare', dayOfWeek: 1, dayOfMonth: 9, month: 5, startHour: 9, endHour: 9.5, learner: 'David Chen', programme: 'Software Dev L4', platform: 'Phone', priority: 'high', status: 'confirmed', notes: 'Attendance drop — 3 missed sessions' },
-  { id: 'evt-022', title: 'Employer Meeting', type: 'employer-meeting', dayOfWeek: 1, dayOfMonth: 9, month: 5, startHour: 14, endHour: 15, employer: 'NHS Trust', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Quarterly review — 3 apprentices' },
-  { id: 'evt-023', title: 'Live Session: Python Basics', type: 'live-session', dayOfWeek: 2, dayOfMonth: 10, month: 5, startHour: 9, endHour: 11, tutor: 'Mike Harrison', programme: 'Software Dev L4', location: 'Lab 201', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '12 learners', cohort: 'Cohort F' },
-  { id: 'evt-024', title: 'Progress Review', type: 'review', dayOfWeek: 2, dayOfMonth: 10, month: 5, startHour: 13, endHour: 14, learner: 'Aisha Bakari', programme: 'Digital Marketing L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Week 8 review' },
-  { id: 'evt-025', title: 'Coaching Session', type: 'coaching', dayOfWeek: 3, dayOfMonth: 11, month: 5, startHour: 15, endHour: 16, learner: 'Marcus Webb', programme: 'Project Manager L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Gateway readiness assessment' },
-  { id: 'evt-026', title: 'Admin: Report Writing', type: 'admin', dayOfWeek: 3, dayOfMonth: 11, month: 5, startHour: 9, endHour: 11, priority: 'high', status: 'confirmed', notes: 'Monthly compliance reports due' },
-  { id: 'evt-027', title: 'Progress Review', type: 'review', dayOfWeek: 4, dayOfMonth: 12, month: 5, startHour: 10, endHour: 11, learner: 'David Chen', programme: 'Software Dev L4', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'Week 12 — attendance action plan' },
-  { id: 'evt-028', title: 'Team Standup', type: 'admin', dayOfWeek: 4, dayOfMonth: 12, month: 5, startHour: 9, endHour: 9.5, priority: 'normal', status: 'confirmed', notes: 'Weekly coach sync' },
-
-  // ── Week 3: June 15–21 (CURRENT WEEK) ──
-  { id: 'evt-029', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 0, dayOfMonth: 15, month: 5, startHour: 9, endHour: 10, learner: 'Fatima Al-Rashid', programme: 'Business Admin L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'OTJH review & evidence check' },
-  { id: 'evt-030', title: 'Live Session: Data Ethics', type: 'live-session', dayOfWeek: 0, dayOfMonth: 15, month: 5, startHour: 11, endHour: 13, tutor: 'Dr. Helen Park', programme: 'Data Analyst L4', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '10 learners', cohort: 'Cohort D' },
-  { id: 'evt-031', title: 'Employer Escalation', type: 'employer-meeting', dayOfWeek: 1, dayOfMonth: 16, month: 5, startHour: 14, endHour: 15, employer: 'Sainsbury\'s', platform: 'Teams', priority: 'urgent', status: 'confirmed', notes: 'Marcus Webb — OTJH below 20%' },
-  { id: 'evt-032', title: 'Progress Review', type: 'review', dayOfWeek: 2, dayOfMonth: 17, month: 5, startHour: 10, endHour: 11, learner: 'Fatima Al-Rashid', programme: 'Business Admin L3', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'Week 8 review — KSB evidence gathering' },
-  { id: 'evt-033', title: 'Live Session: React Advanced', type: 'live-session', dayOfWeek: 2, dayOfMonth: 17, month: 5, startHour: 9, endHour: 11, tutor: 'Mike Harrison', programme: 'Software Dev L4', location: 'Lab 201', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '8 learners', cohort: 'Cohort F' },
-  { id: 'evt-034', title: 'Welfare Meeting', type: 'welfare', dayOfWeek: 3, dayOfMonth: 18, month: 5, startHour: 13, endHour: 14, learner: 'Connor Walsh', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'high', status: 'pending', notes: 'Wellbeing check — recent disengagement' },
-  { id: 'evt-035', title: 'Coaching Session', type: 'coaching', dayOfWeek: 3, dayOfMonth: 18, month: 5, startHour: 15, endHour: 16, learner: 'Sophie Williams', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Evidence portfolio review' },
-  { id: 'evt-036', title: 'Team Standup', type: 'admin', dayOfWeek: 4, dayOfMonth: 19, month: 5, startHour: 9, endHour: 9.5, priority: 'normal', status: 'confirmed', notes: 'Weekly coach sync' },
-  { id: 'evt-037', title: 'Progress Review', type: 'review', dayOfWeek: 4, dayOfMonth: 19, month: 5, startHour: 14, endHour: 15, learner: 'James Okafor', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Gateway readiness checkpoint' },
-  { id: 'evt-038', title: 'Personal CPD', type: 'personal', dayOfWeek: 5, dayOfMonth: 20, month: 5, startHour: 10, endHour: 12, priority: 'normal', status: 'confirmed', notes: 'Online safeguarding refresher course' },
-  { id: 'evt-039', title: 'Learner Catch-up', type: 'coaching', dayOfWeek: 5, dayOfMonth: 20, month: 5, startHour: 13, endHour: 14, learner: 'David Chen', programme: 'Software Dev L4', platform: 'Teams', priority: 'normal', status: 'pending', notes: 'Extra session — Python support' },
-  { id: 'evt-040', title: 'Compliance Audit Prep', type: 'admin', dayOfWeek: 6, dayOfMonth: 21, month: 5, startHour: 14, endHour: 16, priority: 'high', status: 'confirmed', notes: 'Prepare files for Ofsted readiness review' },
-
-  // ── Week 4: June 22–28 ──
-  { id: 'evt-041', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 0, dayOfMonth: 22, month: 5, startHour: 9, endHour: 10, learner: 'Marcus Webb', programme: 'Project Manager L4', platform: 'Teams', priority: 'high', status: 'confirmed', notes: 'Intensive OTJH recovery plan' },
-  { id: 'evt-042', title: 'Live Session: Campaign Analytics', type: 'live-session', dayOfWeek: 0, dayOfMonth: 22, month: 5, startHour: 11, endHour: 13, tutor: 'Crispin Jones', programme: 'Marketing Executive L4', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '16 learners', cohort: 'Cohort B' },
-  { id: 'evt-043', title: 'Employer Review', type: 'employer-meeting', dayOfWeek: 1, dayOfMonth: 23, month: 5, startHour: 10, endHour: 11, employer: 'Barclays', platform: 'Teams', priority: 'normal', status: 'pending', notes: 'Quarterly apprentice progress update' },
-  { id: 'evt-044', title: 'Progress Review', type: 'review', dayOfWeek: 2, dayOfMonth: 24, month: 5, startHour: 11, endHour: 12, learner: 'Priya Sharma', programme: 'Business Admin L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Week 6 review' },
-  { id: 'evt-045', title: 'Live Session: Database Design', type: 'live-session', dayOfWeek: 2, dayOfMonth: 24, month: 5, startHour: 9, endHour: 11, tutor: 'Dr. Helen Park', programme: 'Data Analyst L4', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '10 learners', cohort: 'Cohort D' },
-  { id: 'evt-046', title: 'Coaching Session', type: 'coaching', dayOfWeek: 3, dayOfMonth: 25, month: 5, startHour: 14, endHour: 15, learner: 'Liam Patel', programme: 'Data Analyst L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Pre-Active follow-up' },
-  { id: 'evt-047', title: 'Welfare Check', type: 'welfare', dayOfWeek: 3, dayOfMonth: 25, month: 5, startHour: 10, endHour: 10.5, learner: 'Mia Robinson', programme: 'Project Manager L4', platform: 'Phone', priority: 'urgent', status: 'confirmed', notes: 'Follow-up after last review' },
-  { id: 'evt-048', title: 'Team Standup', type: 'admin', dayOfWeek: 4, dayOfMonth: 26, month: 5, startHour: 9, endHour: 9.5, priority: 'normal', status: 'confirmed', notes: 'Weekly coach sync' },
-  { id: 'evt-049', title: 'Progress Review', type: 'review', dayOfWeek: 4, dayOfMonth: 26, month: 5, startHour: 15, endHour: 16, learner: 'Aisha Bakari', programme: 'Digital Marketing L3', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Week 10 review' },
-  { id: 'evt-050', title: 'End-of-Month Reports', type: 'admin', dayOfWeek: 5, dayOfMonth: 27, month: 5, startHour: 9, endHour: 12, priority: 'high', status: 'confirmed', notes: 'Compile monthly KPI reports for leadership' },
-
-  // ── Week 5: June 29–30 ──
-  { id: 'evt-051', title: 'Monthly Coaching', type: 'coaching', dayOfWeek: 0, dayOfMonth: 29, month: 5, startHour: 10, endHour: 11, learner: 'Connor Walsh', programme: 'Marketing Executive L4', platform: 'Teams', priority: 'normal', status: 'confirmed', notes: 'Month-end review' },
-  { id: 'evt-052', title: 'Live Session: Final Projects', type: 'live-session', dayOfWeek: 0, dayOfMonth: 29, month: 5, startHour: 11, endHour: 13, tutor: 'Rachel Myers', programme: 'Business Admin', location: 'Room 205', platform: 'Teams Live', priority: 'normal', status: 'confirmed', notes: '14 learners', cohort: 'Cohort A' },
-  { id: 'evt-053', title: 'Employer Check-in', type: 'employer-meeting', dayOfWeek: 1, dayOfMonth: 30, month: 5, startHour: 15, endHour: 16, employer: 'Costa Coffee', platform: 'Phone', priority: 'normal', status: 'pending', notes: 'Monthly apprentice review call' },
-];
-
-/* ────────────────────────────────────────────────────────────
-   Helpers
-   ──────────────────────────────────────────────────────────── */
 function typeConfig(type: TimetableEvent['type']) {
   const map: Record<TimetableEvent['type'], { label: string; bg: string; border: string; text: string; icon: string; dot: string; barBg: string }> = {
     coaching: { label: 'Coaching', bg: 'bg-primary-100', border: 'border-primary-300', text: 'text-primary-800', icon: 'ri-chat-smile-2-line', dot: 'bg-primary-500', barBg: 'bg-primary-500' },
@@ -115,6 +107,70 @@ function typeConfig(type: TimetableEvent['type']) {
     personal: { label: 'Personal', bg: 'bg-emerald-100', border: 'border-emerald-300', text: 'text-emerald-800', icon: 'ri-user-line', dot: 'bg-emerald-500', barBg: 'bg-emerald-500' },
   };
   return map[type];
+}
+
+function eventConfig(event: TimetableEvent) {
+  const base = typeConfig(event.type);
+  const statusThemeMap: Partial<Record<TimetableEvent['status'], Pick<ReturnType<typeof typeConfig>, 'bg' | 'border' | 'text' | 'dot' | 'barBg'>>> = {
+    completed: {
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-300',
+      text: 'text-emerald-800',
+      dot: 'bg-emerald-500',
+      barBg: 'bg-emerald-500',
+    },
+    confirmed: {
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-300',
+      text: 'text-emerald-800',
+      dot: 'bg-emerald-500',
+      barBg: 'bg-emerald-500',
+    },
+    scheduled: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    pending: {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    'not-scheduled': {
+      bg: 'bg-amber-50',
+      border: 'border-amber-300',
+      text: 'text-amber-800',
+      dot: 'bg-amber-500',
+      barBg: 'bg-amber-500',
+    },
+    'in-progress': {
+      bg: 'bg-secondary-50',
+      border: 'border-secondary-300',
+      text: 'text-secondary-800',
+      dot: 'bg-secondary-500',
+      barBg: 'bg-secondary-500',
+    },
+    cancelled: {
+      bg: 'bg-red-50',
+      border: 'border-red-300',
+      text: 'text-red-800',
+      dot: 'bg-red-500',
+      barBg: 'bg-red-500',
+    },
+  };
+
+  const statusTheme = statusThemeMap[event.status];
+  if (statusTheme) {
+    return {
+      ...base,
+      ...statusTheme,
+    };
+  }
+  return base;
 }
 
 function priorityBadge(p: TimetableEvent['priority']) {
@@ -129,7 +185,126 @@ function formatTime(h: number) {
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
-/* ─── Month calendar helpers ─── */
+function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 'dayOfMonth'>) {
+  if (event.date) {
+    const parsed = new Date(event.date);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date(event.year, event.month, event.dayOfMonth);
+}
+
+function getPreferredDisplayDate(events: TimetableEvent[], now: Date) {
+  if (!events.length) return now;
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const sortedEvents = [...events].sort((a, b) => parseEventDate(a).getTime() - parseEventDate(b).getTime());
+  const upcomingEvent = sortedEvents.find(event => parseEventDate(event).getTime() >= today.getTime());
+  return parseEventDate(upcomingEvent || sortedEvents[sortedEvents.length - 1]);
+}
+
+function statusBadge(status: TimetableEvent['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-50 text-amber-700 border-amber-200';
+  if (status === 'in-progress') return 'bg-primary-50 text-primary-700 border-primary-200';
+  return 'bg-red-50 text-red-700 border-red-200';
+}
+
+function statusLabel(status: TimetableEvent['status']) {
+  if (status === 'completed') return 'Completed';
+  if (status === 'scheduled') return 'Scheduled';
+  if (status === 'not-scheduled') return 'Not Scheduled';
+  if (status === 'in-progress') return 'In Progress';
+  if (status === 'confirmed') return 'Confirmed';
+  if (status === 'pending') return 'Pending';
+  return 'Cancelled';
+}
+
+function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics {
+  const totalEvents = events.length;
+  const completedEvents = events.filter(event => event.status === 'completed' || event.status === 'confirmed').length;
+  const scheduledEvents = events.filter(event => event.status === 'scheduled').length;
+  const inProgressEvents = events.filter(event => event.status === 'in-progress').length;
+  const needsScheduling = events.filter(event => event.status === 'pending' || event.status === 'not-scheduled').length;
+  const activeEvents = events.filter(event => event.status !== 'not-scheduled');
+
+  return {
+    totalEvents,
+    completedEvents,
+    scheduledEvents,
+    inProgressEvents,
+    needsScheduling,
+    completionRate: totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0,
+    coachingEvents: activeEvents.filter(event => event.type === 'coaching').length,
+    reviewEvents: activeEvents.filter(event => event.type === 'review').length,
+    supportEvents: activeEvents.filter(event => event.type === 'welfare').length,
+  };
+}
+
+function buildFallbackSummary(events: TimetableEvent[]): TimetableSummary {
+  return {
+    ...buildSummaryMetrics(events),
+    sourceBreakdown: {
+      mcr: buildSummaryMetrics(events.filter(event => event.source === 'mcr')),
+      progressReview: buildSummaryMetrics(events.filter(event => event.source === 'progress-review')),
+    },
+  };
+}
+
+function normalizeSummary(summary: TimetableSummary, events: TimetableEvent[]): TimetableSummary {
+  if (summary.sourceBreakdown) return summary;
+  return {
+    ...summary,
+    sourceBreakdown: buildFallbackSummary(events).sourceBreakdown,
+  };
+}
+
+type HeroMetricTone = 'emerald' | 'amber' | 'secondary' | 'accent' | 'red' | 'white';
+type HeroMetricItem = { label: string; value: number; tone: HeroMetricTone };
+
+const HERO_METRIC_TONES: Record<HeroMetricTone, string> = {
+  emerald: 'text-emerald-300',
+  amber: 'text-amber-300',
+  secondary: 'text-secondary-300',
+  accent: 'text-accent-300',
+  red: 'text-red-300',
+  white: 'text-white',
+};
+
+function HeroMetric({ label, value, tone }: { label: string; value: number; tone: HeroMetricTone }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-white/8 px-3 py-2 text-center backdrop-blur-sm">
+      <p className={`font-heading text-lg font-bold leading-none ${HERO_METRIC_TONES[tone]}`}>{value}</p>
+      <p className="mt-1 truncate text-[10px] font-medium leading-tight text-white/55">{label}</p>
+    </div>
+  );
+}
+
+function HeroSourcePanel({ title, summary, typeMetrics }: { title: string; summary: TimetableSummaryMetrics; typeMetrics: HeroMetricItem[] }) {
+  const statusMetrics: HeroMetricItem[] = [
+    { label: 'Completed', value: summary.completedEvents, tone: 'emerald' },
+    { label: 'Scheduled', value: summary.scheduledEvents, tone: 'amber' },
+    { label: 'In Progress', value: summary.inProgressEvents, tone: 'secondary' },
+    { label: 'Needs Plan', value: summary.needsScheduling, tone: 'amber' },
+  ];
+
+  return (
+    <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-white/55">{title}</p>
+        <p className="shrink-0 font-heading text-sm font-bold text-white">
+          {summary.totalEvents}<span className="ml-1 text-[10px] font-normal text-white/35">events</span>
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {[...statusMetrics, ...typeMetrics].map(metric => (
+          <HeroMetric key={`${title}-${metric.label}`} {...metric} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* â”€â”€â”€ Month calendar helpers â”€â”€â”€ */
 function getMonthData(year: number, month: number) {
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
@@ -148,16 +323,16 @@ function getWeekDates(year: number, month: number, selectedDay: number) {
   const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const monday = new Date(date);
   monday.setDate(date.getDate() - mondayOffset);
-  const week: { day: number; month: number; monthName: string }[] = [];
+  const week: { day: number; month: number; year: number; monthName: string }[] = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    week.push({ day: d.getDate(), month: d.getMonth(), monthName: MONTH_NAMES[d.getMonth()] });
+    week.push({ day: d.getDate(), month: d.getMonth(), year: d.getFullYear(), monthName: MONTH_NAMES[d.getMonth()] });
   }
   return week;
 }
 
-/* ─── Donut Ring ─── */
+/* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white/10' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -173,18 +348,23 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white
 
 type ViewMode = 'month' | 'week' | 'day';
 
-/* ────────────────────────────────────────────────────────────
+/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Page
-   ──────────────────────────────────────────────────────────── */
+   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function CoachTimetablePage() {
   const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
-  const [viewYear, setViewYear] = useState(2026);
-  const [viewMonth, setViewMonth] = useState(5); // June
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState(now.getDate());
   const [selectedEvent, setSelectedEvent] = useState<TimetableEvent | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [events, setEvents] = useState<TimetableEvent[]>([]);
+  const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -195,11 +375,52 @@ export default function CoachTimetablePage() {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
 
-  const getEventsForDay = useCallback((day: number, month: number): TimetableEvent[] => {
-    return ALL_EVENTS.filter(ev => ev.dayOfMonth === day && ev.month === month);
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTimetable() {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(API_ENDPOINT);
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+
+        const data: TimetableResponse = await response.json();
+        if (cancelled) return;
+
+        const nextEvents = data.events || [];
+        const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
+        const anchorDate = getPreferredDisplayDate(nextEvents, new Date());
+
+        setEvents(nextEvents);
+        setSummary(nextSummary);
+        setViewYear(anchorDate.getFullYear());
+        setViewMonth(anchorDate.getMonth());
+        setSelectedDay(anchorDate.getDate());
+        setSelectedEvent(null);
+      } catch (err) {
+        if (cancelled) return;
+
+        setError(err instanceof Error ? err.message : 'Unable to load timetable data');
+        setEvents([]);
+        setSummary(EMPTY_SUMMARY);
+        setSelectedEvent(null);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadTimetable();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const filteredEvents = ALL_EVENTS.filter(e => {
+  const getEventsForDay = useCallback((day: number, month: number, year: number): TimetableEvent[] => {
+    return events.filter(ev => ev.dayOfMonth === day && ev.month === month && ev.year === year);
+  }, [events]);
+
+  const filteredEvents = events.filter(e => {
     if (filterType !== 'all' && e.type !== filterType) return false;
     if (searchTerm && !(
       e.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -213,13 +434,12 @@ export default function CoachTimetablePage() {
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
-  const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth), [selectedDay, viewMonth, getEventsForDay]);
+  const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth, viewYear), [selectedDay, viewMonth, viewYear, getEventsForDay]);
 
-  const totalEvents = ALL_EVENTS.length;
-  const confirmedEvents = ALL_EVENTS.filter(e => e.status === 'confirmed').length;
-  const urgentEvents = ALL_EVENTS.filter(e => e.priority === 'urgent').length;
-  const coachingHours = ALL_EVENTS.filter(e => e.type === 'coaching').reduce((s, e) => s + (e.endHour - e.startHour), 0);
-  const completionRate = totalEvents > 0 ? Math.round((confirmedEvents / totalEvents) * 100) : 0;
+  const totalEvents = summary.totalEvents;
+  const completionRate = summary.completionRate;
+  const mcrSummary = summary.sourceBreakdown?.mcr || EMPTY_SUMMARY_METRICS;
+  const progressReviewSummary = summary.sourceBreakdown?.progressReview || EMPTY_SUMMARY_METRICS;
 
   const handlePrev = () => {
     if (viewMode === 'month') { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
@@ -241,57 +461,78 @@ export default function CoachTimetablePage() {
   const titleLabel = viewMode === 'month'
     ? `${MONTH_NAMES[viewMonth]} ${viewYear}`
     : viewMode === 'week'
-      ? `${weekDates[0].monthName} ${weekDates[0].day} – ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
+      ? `${weekDates[0].monthName} ${weekDates[0].day} â€“ ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
       : `${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
   return (
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
-      pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings — all in one place"
+      pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings â€” all in one place"
       userName="Med Maher" userRole="Progress Coach"
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
-        {/* ═══════════ HERO BANNER ═══════════ */}
+        {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
         <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute opacity-20" style={{ width: '50%', height: '40%', left: '-5%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute opacity-15" style={{ width: '60%', height: '30%', right: '-10%', top: '20%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative flex flex-col lg:flex-row items-stretch min-h-[150px]">
+          <div className="relative flex flex-col xl:flex-row items-stretch min-h-[150px]">
             <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
-                <span className="text-xs font-medium text-white/40">June 2026</span>
+                <span className="text-xs font-medium text-white/40">{MONTH_NAMES[viewMonth]} {viewYear}</span>
               </div>
               <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1">My Calendar</h1>
               <p className="text-sm text-white/40 max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
             </div>
-            <div className="lg:w-[380px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex items-center">
-              <div className="flex items-center gap-6 w-full">
+            <div className="xl:w-[860px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t xl:border-t-0 xl:border-l border-accent-400/10 flex items-center">
+              <div className="flex w-full flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:gap-5">
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="relative">
                     <DonutRing pct={completionRate} size={68} stroke={6} color="emerald" />
                     <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-lg font-heading font-bold text-white leading-none">{completionRate}%</span></div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs text-white/40 mb-0.5">Completion</p>
-                    <p className="text-base font-heading font-bold text-white">{totalEvents}<span className="text-white/30 text-sm font-normal"> events</span></p>
+                    <p className="text-base font-heading font-bold text-white leading-tight">{totalEvents}<span className="text-white/30 text-sm font-normal"> events</span></p>
                   </div>
                 </div>
-                <div className="w-px h-14 bg-accent-400/10 shrink-0" />
-                <div className="grid grid-cols-2 gap-2 flex-1">
-                  <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-emerald-300">{confirmedEvents}</p><p className="text-[10px] text-white/50">Confirmed</p></div>
-                  <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-accent-300">{Math.round(coachingHours)}h</p><p className="text-[10px] text-white/50">Coaching</p></div>
-                  <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-red-300">{urgentEvents}</p><p className="text-[10px] text-white/50">Urgent</p></div>
-                  <div className="bg-white/8 backdrop-blur-sm rounded-xl px-3 py-2 text-center"><p className="text-lg font-heading font-bold text-amber-300">{ALL_EVENTS.filter(e => e.status === 'pending').length}</p><p className="text-[10px] text-white/50">Pending</p></div>
+                <div className="hidden h-28 w-px shrink-0 bg-accent-400/10 2xl:block" />
+                <div className="grid w-full flex-1 grid-cols-1 gap-3 md:grid-cols-2">
+                  <HeroSourcePanel
+                    title="MCR"
+                    summary={mcrSummary}
+                    typeMetrics={[{ label: 'Coaching', value: mcrSummary.coachingEvents, tone: 'accent' }]}
+                  />
+                  <HeroSourcePanel
+                    title="Progress Reviews"
+                    summary={progressReviewSummary}
+                    typeMetrics={[
+                      { label: 'Reviews', value: progressReviewSummary.reviewEvents, tone: 'secondary' },
+                      { label: 'Support', value: progressReviewSummary.supportEvents, tone: 'red' },
+                    ]}
+                  />
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        {/* ═══════════ CONTROLS BAR ═══════════ */}
+        {/* â•â•â•â•â•â•â•â•â•â•â• CONTROLS BAR â•â•â•â•â•â•â•â•â•â•â• */}
+        {loading && (
+          <div className="rounded-xl border border-primary-200/60 bg-primary-50 px-4 py-3 text-sm text-primary-700">
+            Loading timetable data...
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
             {([
@@ -344,9 +585,9 @@ export default function CoachTimetablePage() {
           </div>
         </div>
 
-        {/* ═══════════ MAIN CONTENT ═══════════ */}
+        {/* â•â•â•â•â•â•â•â•â•â•â• MAIN CONTENT â•â•â•â•â•â•â•â•â•â•â• */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* ── Calendar Area (2/3) ── */}
+          {/* â”€â”€ Calendar Area (2/3) â”€â”€ */}
           <div className="lg:col-span-2 space-y-4">
 
             {/* MONTH VIEW */}
@@ -362,7 +603,7 @@ export default function CoachTimetablePage() {
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
                     if (day === null) return <div key={`empty-${idx}`} className="aspect-[4/3] bg-background-50/30 border-b border-r border-background-100/50" />;
-                    const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth);
+                    const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
                     return (
@@ -376,7 +617,7 @@ export default function CoachTimetablePage() {
                         </span>
                         <div className="flex-1 w-full overflow-hidden space-y-0.5">
                           {eventsForDay.slice(0, 3).map(ev => {
-                            const tc = typeConfig(ev.type);
+                            const tc = eventConfig(ev);
                             return (
                               <div
                                 key={ev.id}
@@ -405,14 +646,14 @@ export default function CoachTimetablePage() {
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {
-                    const isTdy = isToday(wd.day, wd.month, viewYear);
-                    const isSel = wd.day === selectedDay && wd.month === viewMonth;
-                    const weekdayIdx = new Date(viewYear, wd.month, wd.day).getDay();
+                    const isTdy = isToday(wd.day, wd.month, wd.year);
+                    const isSel = wd.day === selectedDay && wd.month === viewMonth && wd.year === viewYear;
+                    const weekdayIdx = new Date(wd.year, wd.month, wd.day).getDay();
                     const mappedDow = weekdayIdx === 0 ? 6 : weekdayIdx - 1;
                     return (
                       <button
                         key={`wh-${wd.day}-${wd.month}`}
-                        onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
+                        onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}
                         className={`px-2 py-2.5 text-center cursor-pointer transition-smooth ${isSel ? 'bg-primary-50/60' : 'hover:bg-background-100/50'}`}
                       >
                         <span className="text-xs font-semibold text-foreground-400 block">{DAYS_OF_WEEK[mappedDow]}</span>
@@ -425,26 +666,26 @@ export default function CoachTimetablePage() {
                 </div>
                 <div className="overflow-y-auto max-h-[600px]">
                   {HOURS.map(hour => {
-                    const isCurrentRow = currentHour === hour && weekDates.some(wd => isToday(wd.day, wd.month, viewYear));
+                    const isCurrentRow = currentHour === hour && weekDates.some(wd => isToday(wd.day, wd.month, wd.year));
                     return (
                       <div key={`h-${hour}`} className={`grid grid-cols-8 border-b border-background-100/50 min-h-[56px] ${isCurrentRow ? 'bg-primary-50/20' : ''}`}>
                         <div className="px-3 py-2 text-right border-r border-background-100/50">
                           <span className="text-[11px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map(wd => {
-                          const eventsInSlot = getEventsForDay(wd.day, wd.month).filter(ev => {
+                          const eventsInSlot = getEventsForDay(wd.day, wd.month, wd.year).filter(ev => {
                             const startH = ev.startHour;
                             return startH >= hour && startH < hour + 1;
                           });
-                          const isSel = wd.day === selectedDay && wd.month === viewMonth;
+                          const isSel = wd.day === selectedDay && wd.month === viewMonth && wd.year === viewYear;
                           return (
                             <div
                               key={`ws-${wd.day}-${wd.month}-${hour}`}
                               className={`p-1 border-r border-background-100/50 cursor-pointer transition-smooth hover:bg-primary-50/15 ${isSel ? 'bg-primary-50/30' : ''}`}
-                              onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); }}
+                              onClick={() => { setSelectedDay(wd.day); setViewMonth(wd.month); setViewYear(wd.year); }}
                             >
                               {eventsInSlot.map(ev => {
-                                const tc = typeConfig(ev.type);
+                                const tc = eventConfig(ev);
                                 const duration = ev.endHour - ev.startHour;
                                 const heightPx = Math.max(24, duration * 48);
                                 return (
@@ -455,7 +696,7 @@ export default function CoachTimetablePage() {
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
-                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</p>
+                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</p>
                                     {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
                                       <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
@@ -505,7 +746,7 @@ export default function CoachTimetablePage() {
                           {isCurrentRow && <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-400 rounded-full" />}
                           <div className="space-y-1.5">
                             {eventsInSlot.map(ev => {
-                              const tc = typeConfig(ev.type);
+                              const tc = eventConfig(ev);
                               return (
                                 <div
                                   key={ev.id}
@@ -520,13 +761,13 @@ export default function CoachTimetablePage() {
                                           {ev.priority === 'urgent' ? 'Urgent' : 'High'}
                                         </span>
                                       )}
-                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${ev.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : ev.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                        {ev.status === 'confirmed' ? 'Confirmed' : ev.status === 'pending' ? 'Pending' : 'Cancelled'}
+                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${statusBadge(ev.status)}`}>
+                                        {statusLabel(ev.status)}
                                       </span>
                                     </div>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-500">
-                                    <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</span>
+                                    <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
                                     {ev.platform && <span><i className="ri-video-line mr-0.5"></i>{ev.platform}</span>}
                                     {ev.location && <span><i className="ri-map-pin-line mr-0.5"></i>{ev.location}</span>}
                                     {ev.learner && <span className="font-medium text-foreground-600">{ev.learner}</span>}
@@ -550,7 +791,7 @@ export default function CoachTimetablePage() {
               </div>
             )}
 
-            {/* ── Day events list when in month view ── */}
+            {/* â”€â”€ Day events list when in month view â”€â”€ */}
             {viewMode === 'month' && (
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-3">
@@ -571,7 +812,7 @@ export default function CoachTimetablePage() {
                 ) : (
                   <div className="space-y-2">
                     {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
-                      const tc = typeConfig(ev.type);
+                      const tc = eventConfig(ev);
                       return (
                         <div
                           key={ev.id}
@@ -584,9 +825,9 @@ export default function CoachTimetablePage() {
                           <div className="flex-1 min-w-0">
                             <p className={`text-sm font-semibold ${tc.text}`}>{ev.title}</p>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
-                              <span>{formatTime(ev.startHour)} – {formatTime(ev.endHour)}</span>
-                              {ev.learner && <span className="text-foreground-400">· {ev.learner}</span>}
-                              {ev.employer && <span className="text-foreground-400">· {ev.employer}</span>}
+                              <span>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
+                              {ev.learner && <span className="text-foreground-400">Â· {ev.learner}</span>}
+                              {ev.employer && <span className="text-foreground-400">Â· {ev.employer}</span>}
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -606,7 +847,7 @@ export default function CoachTimetablePage() {
             )}
           </div>
 
-          {/* ── Sidebar (1/3) ── */}
+          {/* â”€â”€ Sidebar (1/3) â”€â”€ */}
           <div className="space-y-4">
             {/* Event Detail */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
@@ -619,8 +860,8 @@ export default function CoachTimetablePage() {
                     </button>
                   </div>
                   <div className="flex items-center gap-2 mb-4">
-                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${typeConfig(selectedEvent.type).bg}`}>
-                      <i className={`${typeConfig(selectedEvent.type).icon} ${typeConfig(selectedEvent.type).text} text-sm`}></i>
+                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${eventConfig(selectedEvent).bg}`}>
+                      <i className={`${eventConfig(selectedEvent).icon} ${eventConfig(selectedEvent).text} text-sm`}></i>
                     </span>
                     <div>
                       <h4 className="text-sm font-heading font-semibold text-foreground-900">{selectedEvent.title}</h4>
@@ -636,14 +877,14 @@ export default function CoachTimetablePage() {
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-time-line text-foreground-400 w-4 text-center"></i>
-                      <span className="font-medium">{formatTime(selectedEvent.startHour)} – {formatTime(selectedEvent.endHour)}</span>
+                      <span className="font-medium">{formatTime(selectedEvent.startHour)} â€“ {formatTime(selectedEvent.endHour)}</span>
                       <span className="text-foreground-300">({selectedEvent.endHour - selectedEvent.startHour}h)</span>
                     </div>
                     {selectedEvent.learner && (
                       <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                         <i className="ri-user-line text-foreground-400 w-4 text-center"></i>
                         <span className="font-medium">{selectedEvent.learner}</span>
-                        {selectedEvent.programme && <span className="text-foreground-300">— {selectedEvent.programme}</span>}
+                        {selectedEvent.programme && <span className="text-foreground-300">â€” {selectedEvent.programme}</span>}
                       </div>
                     )}
                     {selectedEvent.employer && (
@@ -673,8 +914,8 @@ export default function CoachTimetablePage() {
                     )}
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-checkbox-circle-line text-foreground-400 w-4 text-center"></i>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${selectedEvent.status === 'confirmed' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : selectedEvent.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                        {selectedEvent.status === 'confirmed' ? 'Confirmed' : selectedEvent.status === 'pending' ? 'Pending' : 'Cancelled'}
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusBadge(selectedEvent.status)}`}>
+                        {statusLabel(selectedEvent.status)}
                       </span>
                     </div>
                     {selectedEvent.notes && (
@@ -709,64 +950,40 @@ export default function CoachTimetablePage() {
               )}
             </div>
 
-            {/* Quick Links */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-                <i className="ri-links-line text-primary-500"></i>Quick Links
-              </h3>
-              <div className="space-y-1">
-                <Link to="/coach/meetings" className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-calendar-check-line text-primary-500"></i>Coaching Meetings
-                </Link>
-                <Link to="/coach/progress-reviews" className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-file-chart-line text-accent-500"></i>Progress Reviews
-                </Link>
-                <Link to="/coach/caseload" className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-user-line text-secondary-500"></i>My Caseload
-                </Link>
-                <Link to="/coach/attendance" className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-pulse-line text-amber-500"></i>Attendance Records
-                </Link>
-                <Link to="/coach/reports" className="flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-bar-chart-line text-emerald-500"></i>Reports
-                </Link>
-              </div>
-            </div>
-
             {/* Upcoming Events */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
                 <i className="ri-calendar-todo-line text-accent-500"></i>Upcoming
               </h3>
               <div className="space-y-2">
-                {ALL_EVENTS
+                {events
                   .filter(ev => {
-                    const evDate = new Date(2026, ev.month, ev.dayOfMonth);
-                    return evDate >= now && ev.status !== 'cancelled';
+                    const evDate = parseEventDate(ev);
+                    return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
                   })
                   .slice(0, 5)
                   .map(ev => {
-                    const tc = typeConfig(ev.type);
+                    const tc = eventConfig(ev);
                     return (
                       <div
                         key={ev.id}
-                        onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setSelectedEvent(ev); }}
+                        onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setViewYear(ev.year); setSelectedEvent(ev); }}
                         className="flex items-start gap-2.5 p-2 -mx-2 rounded-lg cursor-pointer transition-smooth hover:bg-background-100"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${tc.dot}`}></span>
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] font-semibold text-foreground-800 leading-tight truncate">{ev.title}</p>
                           <p className="text-[10px] text-foreground-400">
-                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} · {formatTime(ev.startHour)}
-                            {ev.learner && <span> · {ev.learner}</span>}
+                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} Â· {formatTime(ev.startHour)}
+                            {ev.learner && <span> Â· {ev.learner}</span>}
                           </p>
                         </div>
                       </div>
                     );
                   })}
-                {ALL_EVENTS.filter(ev => {
-                  const evDate = new Date(2026, ev.month, ev.dayOfMonth);
-                  return evDate >= now && ev.status !== 'cancelled';
+                {events.filter(ev => {
+                  const evDate = parseEventDate(ev);
+                  return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
                 }).length === 0 && (
                   <p className="text-[11px] text-foreground-400 text-center py-3">No upcoming events</p>
                 )}
@@ -778,3 +995,4 @@ export default function CoachTimetablePage() {
     </WorkspaceShell>
   );
 }
+

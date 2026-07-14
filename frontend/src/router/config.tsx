@@ -34,7 +34,6 @@ const EnrolmentReviewPage = lazy(() => import("../pages/compliance/enrolment-rev
 const EligibilityReviewPage = lazy(() => import("../pages/compliance/eligibility/page"));
 const InitialAssessmentPage = lazy(() => import("../pages/compliance/initial-assessment/page"));
 const RPLReviewPage = lazy(() => import("../pages/compliance/rpl-review/page"));
-const ThisWeekPage = lazy(() => import("../pages/learner/this-week/page"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
 const ModulesPage = lazy(() => import("../pages/learner/modules/page"));
 const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
@@ -134,7 +133,6 @@ const IfateStandardPage = lazy(() => import("../pages/curriculum/ifate-standard/
 const CurriculumMisAllocationPage = lazy(() => import("../pages/curriculum/mis-allocation/page"));
 const CurriculumReportsPage = lazy(() => import("../pages/curriculum/reports/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
-const SharedCommunicationPage = lazy(() => import("../pages/engagement/communication/page"));
 const CurriculumQAPage = lazy(() => import("../pages/curriculum/curriculum-qa/page"));
 const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
 const FundingOverviewPage = lazy(() => import("../pages/finance/funding/page"));
@@ -177,12 +175,9 @@ const QaDeliverySetup = lazy(() => import("../pages/qa/delivery-setup/page"));
 const QaGatewayEpa = lazy(() => import("../pages/qa/gateway-epa/page"));
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-risk/page"));
-const AbsenceQueuePage = lazy(() => import("../pages/engagement/absence-queue/page"));
-const CatchupOverduePage = lazy(() => import("../pages/engagement/catchup-overdue/page"));
 const CallLogsPage = lazy(() => import("../pages/engagement/call-logs/page"));
 const WhatsAppLogsPage = lazy(() => import("../pages/engagement/whatsapp-logs/page"));
 const EmailLogsPage = lazy(() => import("../pages/engagement/email-logs/page"));
-const EmployerEscalationsPage = lazy(() => import("../pages/engagement/employer-escalations/page"));
 const PointsRulesPage = lazy(() => import("../pages/engagement/points-rules/page"));
 const RewardsShopPage = lazy(() => import("../pages/engagement/rewards-shop/page"));
 const VoucherClaimsPage = lazy(() => import("../pages/engagement/voucher-claims/page"));
@@ -190,20 +185,20 @@ const EventsPage = lazy(() => import("../pages/engagement/events/page"));
 const EngagementClubsPage = lazy(() => import("../pages/engagement/clubs/page"));
 const RecognitionPage = lazy(() => import("../pages/engagement/recognition/page"));
 const EngagementReportsPage = lazy(() => import("../pages/engagement/reports/page"));
-const EmployerApprenticeRisk = lazy(() => import('@/pages/employer/apprentice-risk/page'));
-const EmployerApprenticeProgress = lazy(() => import('@/pages/employer/apprentice-progress/page'));
-const EmployerReviewActions = lazy(() => import('@/pages/employer/review-actions/page'));
-const EmployerEvidenceSummary = lazy(() => import('@/pages/employer/evidence-summary/page'));
-const EmployerGatewayEPA = lazy(() => import('@/pages/employer/gateway-epa/page'));
-const EmployerEmployerClubs = lazy(() => import('@/pages/employer/employer-clubs/page'));
-const EmployerLearnerClubs = lazy(() => import('@/pages/employer/learner-clubs/page'));
-const EmployerEvents = lazy(() => import('@/pages/employer/events/page'));
-const EmployerCommunityActivity = lazy(() => import('@/pages/employer/community-activity/page'));
-const EmployerWorkplaceConfirmations = lazy(() => import('@/pages/employer/workplace-confirm/page'));
-const EmployerKSBProgress = lazy(() => import('@/pages/employer/ksb-progress/page'));
-const EmployerReports = lazy(() => import('@/pages/employer/reports/page'));
-const EmployerSupportRequests = lazy(() => import('@/pages/employer/support/page'));
-const CoachAtRiskPage = lazy(() => import("../pages/coach/at-risk/page"));
+const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
+const EmployerApprenticeRisk = lazy(() => import("@/pages/employer/apprentice-risk/page"));
+const EmployerApprenticeProgress = lazy(() => import("@/pages/employer/apprentice-progress/page"));
+const EmployerReviewActions = lazy(() => import("@/pages/employer/review-actions/page"));
+const EmployerEvidenceSummary = lazy(() => import("@/pages/employer/evidence-summary/page"));
+const EmployerGatewayEPA = lazy(() => import("@/pages/employer/gateway-epa/page"));
+const EmployerEmployerClubs = lazy(() => import("@/pages/employer/employer-clubs/page"));
+const EmployerLearnerClubs = lazy(() => import("@/pages/employer/learner-clubs/page"));
+const EmployerEvents = lazy(() => import("@/pages/employer/events/page"));
+const EmployerCommunityActivity = lazy(() => import("@/pages/employer/community-activity/page"));
+const EmployerWorkplaceConfirmations = lazy(() => import("@/pages/employer/workplace-confirm/page"));
+const EmployerKSBProgress = lazy(() => import("@/pages/employer/ksb-progress/page"));
+const EmployerReports = lazy(() => import("@/pages/employer/reports/page"));
+const EmployerSupportRequests = lazy(() => import("@/pages/employer/support/page"));
 const CoachMessagesPage = lazy(() => import("../pages/coach/messages/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
@@ -214,46 +209,46 @@ const AuditorTrailPage = lazy(() => import("../pages/auditor/trail/page"));
 const AuditorCompliancePage = lazy(() => import("../pages/auditor/compliance/page"));
 const AuditorOfstedPage = lazy(() => import("../pages/auditor/ofsted/page"));
 const AuditorReportsPage = lazy(() => import("../pages/auditor/reports/page"));
-const LeadershipCohortPerformancePage = lazy(() => import('@/pages/leadership/cohort-performance/page'));
-const LeadershipProgrammePerformancePage = lazy(() => import('@/pages/leadership/programme-performance/page'));
-const LeadershipLearnerProgressPage = lazy(() => import('@/pages/leadership/learner-progress/page'));
-const LeadershipAchievementPipelinePage = lazy(() => import('@/pages/leadership/achievement-pipeline/page'));
-const LeadershipAttendanceTrendsPage = lazy(() => import('@/pages/leadership/attendance-trends/page'));
-const LeadershipEngagementTrendsPage = lazy(() => import('@/pages/leadership/engagement-trends/page'));
-const LeadershipEmployerEngagementPage = lazy(() => import('@/pages/leadership/employer-engagement/page'));
-const LeadershipOtjhTrendsPage = lazy(() => import('@/pages/leadership/otjh-trends/page'));
-const LeadershipKsbProgressPage = lazy(() => import('@/pages/leadership/ksb-progress/page'));
-const LeadershipGatewayEpaProgressPage = lazy(() => import('@/pages/leadership/gateway-epa-progress/page'));
-const LeadershipTutorSlaPage = lazy(() => import('@/pages/leadership/tutor-sla/page'));
-const LeadershipCoachWorkloadPage = lazy(() => import('@/pages/leadership/coach-workload/page'));
-const LeadershipDeliveryPerformancePage = lazy(() => import('@/pages/leadership/delivery-performance/page'));
-const LeadershipComplianceRiskPage = lazy(() => import('@/pages/leadership/compliance-risk/page'));
-const LeadershipQaSamplingPage = lazy(() => import('@/pages/leadership/qa-sampling/page'));
-const LeadershipOfstedPage = lazy(() => import('@/pages/leadership/ofsted/page'));
-const LeadershipSarQipPage = lazy(() => import('@/pages/leadership/sar-qip/page'));
-const LeadershipReportsPage = lazy(() => import('@/pages/leadership/reports/page'));
-const PlatformReportPage = lazy(() => import('@/pages/admin/platform-report/page'));
-const TenantOnboardingWizard = lazy(() => import('@/pages/admin/tenant-onboarding/page'));
-const BulkUserImportPage = lazy(() => import('@/pages/admin/bulk-user-import/page'));
-const SupportDashboard = lazy(() => import('@/pages/workspace/support/page'));
-const SupportTicketQueue = lazy(() => import('@/pages/support/ticket-queue/page'));
-const SupportEscalations = lazy(() => import('@/pages/support/escalations/page'));
-const SupportResolved = lazy(() => import('@/pages/support/resolved/page'));
-const SupportReports = lazy(() => import('@/pages/support/reports/page'));
-const SupportMyTickets = lazy(() => import('@/pages/support/my-tickets/page'));
-const SupportKnowledgeBase = lazy(() => import('@/pages/support/knowledge-base/page'));
-const AdminSupportSettingsPage = lazy(() => import('@/pages/admin/support-settings/page'));
-const SafeguardingDashboard = lazy(() => import('@/pages/workspace/safeguarding/page'));
-const SafeguardingOpenCases = lazy(() => import('@/pages/safeguarding/open-cases/page'));
-const SafeguardingNewConcerns = lazy(() => import('@/pages/safeguarding/new-concerns/page'));
-const SafeguardingHighRiskCases = lazy(() => import('@/pages/safeguarding/high-risk-cases/page'));
-const SafeguardingClosedCases = lazy(() => import('@/pages/safeguarding/closed-cases/page'));
-const SafeguardingLearnerWellbeing = lazy(() => import('@/pages/safeguarding/learner-wellbeing/page'));
-const SafeguardingReferrals = lazy(() => import('@/pages/safeguarding/referrals/page'));
-const SafeguardingPreventRisk = lazy(() => import('@/pages/safeguarding/prevent-risk/page'));
-const SafeguardingCommunication = lazy(() => import('@/pages/safeguarding/communication/page'));
-const SafeguardingQAAudit = lazy(() => import('@/pages/safeguarding/qa-audit/page'));
-const SafeguardingReports = lazy(() => import('@/pages/safeguarding/reports/page'));
+const LeadershipCohortPerformancePage = lazy(() => import("@/pages/leadership/cohort-performance/page"));
+const LeadershipProgrammePerformancePage = lazy(() => import("@/pages/leadership/programme-performance/page"));
+const LeadershipLearnerProgressPage = lazy(() => import("@/pages/leadership/learner-progress/page"));
+const LeadershipAchievementPipelinePage = lazy(() => import("@/pages/leadership/achievement-pipeline/page"));
+const LeadershipAttendanceTrendsPage = lazy(() => import("@/pages/leadership/attendance-trends/page"));
+const LeadershipEngagementTrendsPage = lazy(() => import("@/pages/leadership/engagement-trends/page"));
+const LeadershipEmployerEngagementPage = lazy(() => import("@/pages/leadership/employer-engagement/page"));
+const LeadershipOtjhTrendsPage = lazy(() => import("@/pages/leadership/otjh-trends/page"));
+const LeadershipKsbProgressPage = lazy(() => import("@/pages/leadership/ksb-progress/page"));
+const LeadershipGatewayEpaProgressPage = lazy(() => import("@/pages/leadership/gateway-epa-progress/page"));
+const LeadershipTutorSlaPage = lazy(() => import("@/pages/leadership/tutor-sla/page"));
+const LeadershipCoachWorkloadPage = lazy(() => import("@/pages/leadership/coach-workload/page"));
+const LeadershipDeliveryPerformancePage = lazy(() => import("@/pages/leadership/delivery-performance/page"));
+const LeadershipComplianceRiskPage = lazy(() => import("@/pages/leadership/compliance-risk/page"));
+const LeadershipQaSamplingPage = lazy(() => import("@/pages/leadership/qa-sampling/page"));
+const LeadershipOfstedPage = lazy(() => import("@/pages/leadership/ofsted/page"));
+const LeadershipSarQipPage = lazy(() => import("@/pages/leadership/sar-qip/page"));
+const LeadershipReportsPage = lazy(() => import("@/pages/leadership/reports/page"));
+const PlatformReportPage = lazy(() => import("@/pages/admin/platform-report/page"));
+const TenantOnboardingWizard = lazy(() => import("@/pages/admin/tenant-onboarding/page"));
+const BulkUserImportPage = lazy(() => import("@/pages/admin/bulk-user-import/page"));
+const SupportDashboard = lazy(() => import("@/pages/workspace/support/page"));
+const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"));
+const SupportEscalations = lazy(() => import("@/pages/support/escalations/page"));
+const SupportResolved = lazy(() => import("@/pages/support/resolved/page"));
+const SupportReports = lazy(() => import("@/pages/support/reports/page"));
+const SupportMyTickets = lazy(() => import("@/pages/support/my-tickets/page"));
+const SupportKnowledgeBase = lazy(() => import("@/pages/support/knowledge-base/page"));
+const AdminSupportSettingsPage = lazy(() => import("@/pages/admin/support-settings/page"));
+const SafeguardingDashboard = lazy(() => import("@/pages/workspace/safeguarding/page"));
+const SafeguardingOpenCases = lazy(() => import("@/pages/safeguarding/open-cases/page"));
+const SafeguardingNewConcerns = lazy(() => import("@/pages/safeguarding/new-concerns/page"));
+const SafeguardingHighRiskCases = lazy(() => import("@/pages/safeguarding/high-risk-cases/page"));
+const SafeguardingClosedCases = lazy(() => import("@/pages/safeguarding/closed-cases/page"));
+const SafeguardingLearnerWellbeing = lazy(() => import("@/pages/safeguarding/learner-wellbeing/page"));
+const SafeguardingReferrals = lazy(() => import("@/pages/safeguarding/referrals/page"));
+const SafeguardingPreventRisk = lazy(() => import("@/pages/safeguarding/prevent-risk/page"));
+const SafeguardingCommunication = lazy(() => import("@/pages/safeguarding/communication/page"));
+const SafeguardingQAAudit = lazy(() => import("@/pages/safeguarding/qa-audit/page"));
+const SafeguardingReports = lazy(() => import("@/pages/safeguarding/reports/page"));
 const WeekDetailPage = lazy(() => import("../pages/learner/week-detail/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const UserGuidePage = lazy(() => import("../pages/user-guide/page"));
@@ -507,6 +502,19 @@ import LearnerKnowledgeBase from "../pages/learner/knowledge-base/page";
 import UserGuidePage from "../pages/user-guide/page";
 import StarredMessagesPage from "../pages/starred-messages/page";
 
+// Pages previously declared via static import (merged in)
+const UsersListPage = lazy(() => import("../pages/users/page"));
+const BoardPage = lazy(() => import("../pages/users/BoardPage"));
+const WizardPage = lazy(() => import("../pages/users/wizard/WizardPage"));
+const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
+const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
+const QuizTakePage = lazy(() => import("../pages/learner/quiz-take/page"));
+const VideoWatchPage = lazy(() => import("../pages/learner/video-watch/page"));
+const QuizEditPage = lazy(() => import("../pages/curriculum/quiz-xml/edit/page"));
+const QuestionBankPage = lazy(() => import("../pages/curriculum/question-bank/page"));
+const CohortDetailPage = lazy(() => import("../pages/curriculum/cohort-detail/page"));
+const LearnerAllocationPage = lazy(() => import("../pages/curriculum/learner-allocation/page"));
+
 const routes: RouteObject[] = [
   {
     path: "/",
@@ -517,7 +525,7 @@ const routes: RouteObject[] = [
     element: <InternalPanelPage />,
   },
   {
-    // Login removed â€” entry is now the workspace launcher on the home page.
+    // Login removed — entry is now the workspace launcher on the home page.
     path: "/login",
     element: <Navigate to="/" replace />,
   },
@@ -638,12 +646,32 @@ const routes: RouteObject[] = [
     element: <TrainingPlanBuilderPage />,
   },
   {
-    path: "/learner/this-week",
-    element: <ThisWeekPage />,
+    path: "/compliance/pre-active",
+    element: <PreActiveLearnerJourney />,
   },
   {
-    path: "/learner/this-week/:kind/:id",
-    element: <ThisWeekPage />,
+    path: "/compliance/employer-contracting",
+    element: <EmployerContracting />,
+  },
+  {
+    path: "/compliance/self-onboarding",
+    element: <SelfOnboardingPage />,
+  },
+  {
+    path: "/compliance/enrolment-review",
+    element: <EnrolmentReviewPage />,
+  },
+  {
+    path: "/compliance/eligibility",
+    element: <EligibilityReviewPage />,
+  },
+  {
+    path: "/compliance/initial-assessment",
+    element: <InitialAssessmentPage />,
+  },
+  {
+    path: "/compliance/rpl-review",
+    element: <RPLReviewPage />,
   },
   {
     path: "/learner/week/:weekNumber",
@@ -660,6 +688,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/quiz/:kind/:id/:quizId",
     element: <QuizTakePage />,
+  },
+  {
+    path: "/learner/video/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
   },
   {
     path: "/learner/modules",
@@ -776,6 +808,10 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/employer",
     element: <EmployerDashboard />,
+  },
+  {
+    path: "/workspace/compliance",
+    element: <ComplianceDashboard />,
   },
   {
     path: "/workspace/mis",
@@ -962,6 +998,10 @@ const routes: RouteObject[] = [
     element: <QuizEditPage />,
   },
   {
+    path: "/curriculum/test-banks",
+    element: <TestBanksPage />,
+  },
+  {
     path: "/curriculum/checkpoints",
     element: <CheckpointsPage />,
   },
@@ -1054,10 +1094,6 @@ const routes: RouteObject[] = [
     element: <EmployerSupportRequests />,
   },
   {
-    path: "/coach/at-risk",
-    element: <CoachAtRiskPage />,
-  },
-  {
     path: "/coach/messages",
     element: <CoachMessagesPage />,
   },
@@ -1130,18 +1166,6 @@ const routes: RouteObject[] = [
     element: <AttendanceRiskPage />,
   },
   {
-    path: "/engagement/absence-queue",
-    element: <AbsenceQueuePage />,
-  },
-  {
-    path: "/engagement/catchup-overdue",
-    element: <CatchupOverduePage />,
-  },
-  {
-    path: "/engagement/communication",
-    element: <SharedCommunicationPage />,
-  },
-  {
     path: "/engagement/call-logs",
     element: <CallLogsPage />,
   },
@@ -1152,10 +1176,6 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/email-logs",
     element: <EmailLogsPage />,
-  },
-  {
-    path: "/engagement/employer-escalations",
-    element: <EmployerEscalationsPage />,
   },
   {
     path: "/engagement/points-rules",
@@ -1182,8 +1202,52 @@ const routes: RouteObject[] = [
     element: <RecognitionPage />,
   },
   {
+    path: "/engagement/flash-cards",
+    element: <FlashCardsPage />,
+  },
+  {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
+  },
+  {
+    path: "/compliance/new-starters",
+    element: <NewStartersPage />,
+  },
+  {
+    path: "/compliance/documents",
+    element: <DocumentsPage />,
+  },
+  {
+    path: "/compliance/signatures",
+    element: <SignaturesPage />,
+  },
+  {
+    path: "/compliance/das",
+    element: <DASPage />,
+  },
+  {
+    path: "/compliance/ilr",
+    element: <ILRPage />,
+  },
+  {
+    path: "/compliance/evidence-packs",
+    element: <EvidencePacksPage />,
+  },
+  {
+    path: "/compliance/funding-risk",
+    element: <FundingRiskPage />,
+  },
+  {
+    path: "/compliance/aptem-sync",
+    element: <AptemSyncPage />,
+  },
+  {
+    path: "/compliance/audit-reports",
+    element: <AuditReportsPage />,
+  },
+  {
+    path: "/compliance/reports",
+    element: <EnrolmentReportsPage />,
   },
   {
     path: "/mis/delivery-timeline",

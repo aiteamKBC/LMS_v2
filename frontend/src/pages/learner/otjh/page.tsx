@@ -1,8 +1,11 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { RealOtjhView } from '@/components/feature/RealOtjhView';
 
 const learnerNav = roleNavMap.learner;
 
@@ -129,6 +132,18 @@ function ProgressBar({ pct, color, height = 3 }: { pct: number; color: string; h
    PAGE
    ═══════════════════════════════════════════════════ */
 export default function OTJHPage() {
+  // Self-view (bare route) resolves the learner via useMyLearner; staff drill-down
+  // via :kind/:id. Real learners get the data-driven view; otherwise the mock.
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const myLearner = useMyLearner();
+  const kind = urlKind ?? myLearner?.kind;
+  const id = urlId ?? myLearner?.id;
+  const { isRealMode, real, loading } = useLearnerDetailParam(kind, id);
+  if (isRealMode) return <RealOtjhView real={real} loading={loading} />;
+  return <MockOtjhPage />;
+}
+
+function MockOtjhPage() {
   const p = LEARNER_PROFILE;
   const [showForm, setShowForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
