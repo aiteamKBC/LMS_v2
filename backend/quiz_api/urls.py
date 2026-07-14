@@ -12,6 +12,7 @@ urlpatterns = [
     path("quizzes/<int:pk>/course-links/", views.quiz_course_links, name="quiz-course-links"),
     path("quizzes/<int:pk>/download/", views.quiz_download, name="quiz-download"),
     path("quizzes/<int:pk>/preview/", views.quiz_preview, name="quiz-preview"),
+    path("quizzes/<int:pk>/students/", views.quiz_students, name="quiz-students"),
     path("quizzes/<int:pk>/scorm/", views.quiz_scorm_launch, name="quiz-scorm-launch"),
     path("quizzes/<int:pk>/scorm/<path:asset_path>", views.quiz_scorm_launch, name="quiz-scorm-asset"),
     path("quizzes/<int:pk>/questions/", views.quiz_questions, name="quiz-questions"),

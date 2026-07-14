@@ -44,7 +44,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
 
   return (
     <div
-      className={`relative w-80 bg-background-50 border border-foreground-200 rounded-xl shadow-lg shadow-foreground-950/8 overflow-hidden transition-all duration-300 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
+      className={`relative w-80 bg-background-50 border border-foreground-200 rounded-xl shadow-lg shadow-foreground-950/8 overflow-hidden transition-all duration-300 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3'}`}
     >
       {/* Progress bar */}
       <div className={`absolute top-0 left-0 h-0.5 w-full ${cfg.bar} opacity-80`}></div>
@@ -81,7 +81,7 @@ export function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-24 right-5 z-[9999] flex flex-col gap-2.5 pointer-events-none">
+    <div className="fixed top-5 right-5 z-[9999] flex flex-col gap-2.5 pointer-events-none">
       {toasts.map(t => (
         <div key={t.id} className="pointer-events-auto">
           <ToastCard item={t} onDismiss={() => dismiss(t.id)} />

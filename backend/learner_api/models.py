@@ -177,6 +177,7 @@ class ActiveUser(models.Model):
     # components: [{componentId, componentTitle}]}]}] — same shape as
     # CommercialUser.training_plan / EnrolmentUser.learning_plan.
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     # Chronological activity log (newest appended last). Each entry:
     # {kind:'quiz'|'video', action, title, detail, at, quizId?/componentId?, week, module}.

@@ -2,7 +2,7 @@ from django.db import models
 
 class QuizPackage(models.Model):
     title = models.CharField(max_length=255)
-    programme_id = models.BigIntegerField(blank=True, null=True)
+    programme_id = models.CharField(max_length=128, blank=True, default="")
     module = models.CharField(max_length=160, blank=True)
     programme = models.CharField(max_length=160, blank=True)
     version = models.CharField(max_length=32, default="v1.0")

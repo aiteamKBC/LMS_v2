@@ -11,7 +11,7 @@ from posixpath import normpath
 from xml.etree import ElementTree
 
 from django.conf import settings
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models import Max
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.utils import timezone
@@ -20,6 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
+from learner_api.models import ActiveUser
 
 AI_GENERATION_MAX_FILE_SIZE = 50 * 1024 * 1024
 AI_GENERATION_MAX_CONTENT_CHARS = 60000
@@ -42,6 +43,80 @@ ASSESSMENT_TYPES = {"quiz", "checkpoint"}
 
 def _ensure_quiz_assessment_type_column():
     with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            do $$
+            begin
+              if exists (
+                select 1
+                from information_schema.columns
+                where table_schema = 'curriculum'
+                  and table_name = 'quizzes'
+                  and column_name = 'programme_id'
+                  and data_type <> 'character varying'
+              ) then
+                alter table curriculum.quizzes
+                alter column programme_id type varchar(128)
+                using programme_id::varchar;
+              end if;
+            end $$;
+            """
+        )
+        cursor.execute(
+            """
+            with matches as (
+              select
+                q.id as quiz_id,
+                mam.programme_id,
+                row_number() over (
+                  partition by q.id
+                  order by
+                    case
+                      when mam.imported_from_training_plan_id = q.programme_id then 0
+                      when lower(mam.title) = lower(q.module) then 1
+                      else 2
+                    end,
+                    mam.updated_at desc nulls last,
+                    mam.created_at desc nulls last
+                ) as match_rank
+              from curriculum.quizzes q
+              left join curriculum."Training_plan" tp
+                on q.programme_id ~ '^[0-9]+$'
+               and tp.id = q.programme_id::integer
+              join curriculum.module_authoring_modules mam
+                on coalesce(trim(mam.programme_id), '') <> ''
+               and (
+                 mam.imported_from_training_plan_id = q.programme_id
+                 or (
+                   (lower(mam.title) = lower(q.module) or lower(q.module) like ('%%' || lower(mam.title) || '%%'))
+                   and (
+                     lower(mam.programme_name) = lower(q.programme)
+                     or lower(mam.programme_id) = lower(q.programme)
+                     or lower(mam.programme_name) = lower(tp."Program")
+                     or lower(mam.programme_id) = lower(tp."Program")
+                   )
+                 )
+                 or lower(mam.programme_name) = lower(tp."Program")
+                 or lower(mam.programme_id) = lower(tp."Program")
+               )
+              where q.programme_id ~ '^[0-9]+$'
+            )
+            update curriculum.quizzes q
+            set programme_id = matches.programme_id
+            from matches
+            where q.id = matches.quiz_id
+              and matches.match_rank = 1
+            """
+        )
+        cursor.execute(
+            """
+            update curriculum.quizzes
+            set programme_id = programme
+            where programme_id ~ '^[0-9]+$'
+              and coalesce(trim(programme), '') <> ''
+              and programme !~ '^[0-9]+$'
+            """
+        )
         cursor.execute(
             """
             alter table curriculum.quizzes
@@ -81,6 +156,10 @@ def _build_week_id(programme_id, week_value):
     if not programme_id or not week_number:
         return ""
     return f"week-training-module-{programme_id}-{week_number}"
+
+
+def _is_int_like(value):
+    return str(value or "").strip().isdigit()
 
 
 def _format_size(size):
@@ -476,8 +555,97 @@ def _match_training_plan_id(programme, module, title):
         return None
 
 
+def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
+    supplied_text = str(supplied_id or "").strip()
+    if supplied_text and not _is_int_like(supplied_text):
+        return supplied_text
+
+    candidates = _program_candidates(programme)
+    module_text = module or ""
+    title_text = title or ""
+
+    try:
+        with connection.cursor() as cursor:
+            if supplied_text:
+                cursor.execute(
+                    """
+                    select programme_id
+                    from curriculum.module_authoring_modules
+                    where coalesce(trim(programme_id), '') <> ''
+                      and imported_from_training_plan_id = %s
+                    order by updated_at desc nulls last, created_at desc nulls last
+                    limit 1
+                    """,
+                    [supplied_text],
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+
+                cursor.execute(
+                    """
+                    select mam.programme_id
+                    from curriculum."Training_plan" tp
+                    join curriculum.module_authoring_modules mam
+                      on coalesce(trim(mam.programme_id), '') <> ''
+                     and (
+                       lower(mam.programme_name) = lower(tp."Program")
+                       or lower(mam.programme_id) = lower(tp."Program")
+                     )
+                    where tp.id = %s
+                    order by
+                      case
+                        when lower(mam.title) = lower(%s) then 0
+                        when lower(%s) like ('%%' || lower(mam.title) || '%%') then 1
+                        else 2
+                      end,
+                      mam.updated_at desc nulls last,
+                      mam.created_at desc nulls last
+                    limit 1
+                    """,
+                    [supplied_text, module_text, module_text],
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+
+            programme_clauses = []
+            params = []
+            for candidate in candidates:
+                programme_clauses.append(
+                    "(lower(programme_name) = lower(%s) or lower(programme_id) = lower(%s) or lower(%s) like lower(programme_name) || ' %%')"
+                )
+                params.extend([candidate, candidate, candidate])
+
+            where_programme = f"and ({' or '.join(programme_clauses)})" if programme_clauses else ""
+            cursor.execute(
+                f"""
+                select programme_id
+                from curriculum.module_authoring_modules
+                where coalesce(trim(programme_id), '') <> ''
+                  {where_programme}
+                order by
+                  case
+                    when lower(title) = lower(%s) then 0
+                    when lower(%s) like ('%%' || lower(title) || '%%') then 1
+                    when lower(%s) like ('%%' || lower(title) || '%%') then 2
+                    else 3
+                  end,
+                  length(title) desc,
+                  updated_at desc nulls last,
+                  created_at desc nulls last
+                limit 1
+                """,
+                [*params, module_text, module_text, title_text],
+            )
+            row = cursor.fetchone()
+            return row[0] if row else (supplied_text or "")
+    except Exception:
+        return supplied_text or ""
+
+
 def _training_plan_programme_for_id(plan_id):
-    if not plan_id:
+    if not plan_id or not _is_int_like(plan_id):
         return ""
     try:
         with connection.cursor() as cursor:
@@ -509,7 +677,7 @@ def _training_plan_programmes():
 
 
 def _training_plan_programme_map(plan_ids):
-    ids = [plan_id for plan_id in plan_ids if plan_id]
+    ids = [int(plan_id) for plan_id in plan_ids if _is_int_like(plan_id)]
     if not ids:
         return {}
     try:
@@ -607,14 +775,26 @@ def training_plan_options(request):
             cursor.execute(
                 """
                 select
-                  "Program",
-                  module_name,
-                  max(id) as programme_id
-                from curriculum."Training_plan"
-                where coalesce(trim("Program"), '') <> ''
-                  and coalesce(trim(module_name), '') <> ''
-                group by "Program", module_name
-                order by "Program", module_name
+                  tp."Program",
+                  tp.module_name,
+                  max(coalesce(nullif(mam.programme_id, ''), tp."Program")) as programme_id,
+                  max(tp.id) as training_plan_id,
+                  max(mam.module_catalogue_id) as module_catalogue_id
+                from curriculum."Training_plan" tp
+                left join curriculum.module_authoring_modules mam
+                  on mam.imported_from_training_plan_id = tp.id::text
+                  or (
+                    mam.title = tp.module_name
+                    and (
+                      mam.programme_id = tp."Program"
+                      or mam.programme_name = tp."Program"
+                      or tp."Program" like mam.programme_name || ' %%'
+                    )
+                  )
+                where coalesce(trim(tp."Program"), '') <> ''
+                  and coalesce(trim(tp.module_name), '') <> ''
+                group by tp."Program", tp.module_name
+                order by tp."Program", tp.module_name
                 """
             )
             rows = cursor.fetchall()
@@ -624,7 +804,7 @@ def training_plan_options(request):
     programmes = []
     modules_by_programme = {}
     seen_programmes = set()
-    for programme, module_name, programme_id in rows:
+    for programme, module_name, programme_id, training_plan_id, module_catalogue_id in rows:
         if _is_placeholder_training_value(programme) or _is_placeholder_training_value(module_name):
             continue
         if programme not in seen_programmes:
@@ -634,6 +814,8 @@ def training_plan_options(request):
             "value": module_name,
             "label": module_name,
             "programmeId": programme_id,
+            "trainingPlanId": training_plan_id,
+            "moduleId": module_catalogue_id or "",
         })
 
     return JsonResponse({
@@ -1249,6 +1431,11 @@ def _save_questions(quiz, questions):
             )
 
 
+def _default_question_type_from_questions(questions, fallback="single_choice"):
+    first_type = next((question.get("question_type") for question in questions if question.get("question_type")), "")
+    return _normalise_question_type(first_type or fallback)
+
+
 def _seed_quizzes():
     if QuizPackage.objects.exists():
         return
@@ -1543,9 +1730,11 @@ def quizzes(request):
         title = request.POST.get("title") or detected_title or Path(uploaded_file.name).stem.replace("-", " ").title()
         programme = request.POST.get("programme") or file_metadata.get("programme", "")
         module = request.POST.get("module") or file_metadata.get("module", "")
-        programme_id = request.POST.get("programmeId") or _match_training_plan_id(programme, module, title)
-        if programme_id and not programme:
-            programme = _training_plan_programme_for_id(programme_id)
+        raw_programme_id = request.POST.get("programmeId")
+        training_plan_id = raw_programme_id if _is_int_like(raw_programme_id) else _match_training_plan_id(programme, module, title)
+        programme_id = _match_programme_catalogue_id(programme, module, title, raw_programme_id or training_plan_id)
+        if training_plan_id and not programme:
+            programme = _training_plan_programme_for_id(training_plan_id)
         week_value = request.POST.get("week") or request.POST.get("weekNumber") or title
         week_id = request.POST.get("weekId") or _build_week_id(programme_id, week_value)
         supplied_question_count = int(request.POST.get("questions") or 0)
@@ -1554,16 +1743,17 @@ def quizzes(request):
         if package_type in {"excel", "csv"} and not parsed_questions:
             valid = False
             message = message or "File uploaded, but no questions were detected. Use columns like Question Title, Option 1-5, and Answer."
+        default_question_type = _default_question_type_from_questions(parsed_questions, request.POST.get("questionType") or "single_choice")
 
         with transaction.atomic():
             quiz = QuizPackage.objects.create(
                 title=title,
-                programme_id=programme_id or None,
+                programme_id=programme_id or "",
                 module=module,
                 programme=programme,
                 version=request.POST.get("version", "v1.0"),
                 questions=final_question_count,
-                default_question_type=request.POST.get("questionType", "single_choice"),
+                default_question_type=default_question_type,
                 assessment_type=_clean_assessment_type(request.POST.get("assessmentType"), "quiz"),
                 week_id=week_id,
                 status=_clean_quiz_status(request.POST.get("status"), "draft"),
@@ -1588,20 +1778,23 @@ def quizzes(request):
     manual_title = payload.get("title", "Untitled Quiz")
     manual_programme = payload.get("programme", "")
     manual_module = payload.get("module", "")
-    manual_programme_id = payload.get("programmeId") or _match_training_plan_id(manual_programme, manual_module, manual_title)
-    if manual_programme_id and not manual_programme:
-        manual_programme = _training_plan_programme_for_id(manual_programme_id)
+    raw_manual_programme_id = payload.get("programmeId")
+    manual_training_plan_id = raw_manual_programme_id if _is_int_like(raw_manual_programme_id) else _match_training_plan_id(manual_programme, manual_module, manual_title)
+    manual_programme_id = _match_programme_catalogue_id(manual_programme, manual_module, manual_title, raw_manual_programme_id or manual_training_plan_id)
+    if manual_training_plan_id and not manual_programme:
+        manual_programme = _training_plan_programme_for_id(manual_training_plan_id)
     manual_week_value = payload.get("week") or payload.get("weekNumber") or manual_title
     manual_week_id = payload.get("weekId") or _build_week_id(manual_programme_id, manual_week_value)
+    manual_question_type = _normalise_question_type(payload.get("questionType") or "single_choice")
 
     quiz = QuizPackage.objects.create(
         title=manual_title,
-        programme_id=manual_programme_id or None,
+        programme_id=manual_programme_id or "",
         module=manual_module,
         programme=manual_programme,
         version=payload.get("version", "v1.0"),
         questions=int(payload.get("questions") or 0),
-        default_question_type=payload.get("questionType", "single_choice"),
+        default_question_type=manual_question_type,
         assessment_type=_clean_assessment_type(payload.get("assessmentType"), "quiz"),
         week_id=manual_week_id,
         status=_clean_quiz_status(payload.get("status"), "draft"),
@@ -1612,6 +1805,182 @@ def quizzes(request):
         linked_courses=int(payload.get("linkedCourses") or (1 if manual_programme_id else 0)),
     )
     return JsonResponse(_serialize_quiz(quiz), status=201)
+
+
+def _parse_grade_percent(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value) * 100, 1) if 0 <= float(value) <= 1 else round(float(value), 1)
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    return float(match.group(0)) if match else None
+
+
+def _format_grade(value):
+    percent = _parse_grade_percent(value)
+    if percent is None:
+        return ""
+    return f"{int(percent) if percent == int(percent) else percent}%"
+
+
+def _attempt_sort_key(attempt):
+    submitted_at = str(attempt.get("submittedAt") or "")
+    try:
+        attempt_number = int(attempt.get("attempt") or 0)
+    except (TypeError, ValueError):
+        attempt_number = 0
+    return submitted_at, attempt_number
+
+
+def _answer_label(answer_id, answer_lookup):
+    if answer_id is None:
+        return None
+    if isinstance(answer_id, list):
+        labels = [_answer_label(item, answer_lookup) for item in answer_id]
+        return ", ".join(label for label in labels if label) or None
+    try:
+        key = int(answer_id)
+    except (TypeError, ValueError):
+        return str(answer_id)
+    return answer_lookup.get(key) or str(answer_id)
+
+
+def _quiz_question_lookup(quiz_id):
+    questions = QuizQuestion.objects.filter(quiz_id=quiz_id).prefetch_related("answers")
+    question_lookup = {}
+    answer_lookup = {}
+    for question in questions:
+        question_lookup[question.id] = {
+            "text": question.question_text,
+            "type": question.question_type,
+            "possible": question.points,
+        }
+        for answer in question.answers.all():
+            answer_lookup[answer.id] = answer.answer_text
+    return question_lookup, answer_lookup
+
+
+def _serialize_attempt_for_student(attempt, question_lookup, answer_lookup):
+    questions = []
+    for index, question in enumerate(attempt.get("questions") or [], start=1):
+        question_id = question.get("questionId") or question.get("id")
+        try:
+            question_id = int(question_id)
+        except (TypeError, ValueError):
+            pass
+        question_meta = question_lookup.get(question_id) or {}
+        chosen_answer = question.get("chosenAnswer")
+        correct_answer = question.get("correctAnswer")
+        if chosen_answer is None:
+            chosen_answer = _answer_label(question.get("chosenAnswerId"), answer_lookup)
+        if correct_answer is None:
+            correct_answer = _answer_label(question.get("correctAnswerId"), answer_lookup)
+        questions.append({
+            "number": index,
+            "text": question.get("text") or question_meta.get("text") or "",
+            "type": question.get("type") or question_meta.get("type") or "",
+            "chosenAnswer": chosen_answer,
+            "correctAnswer": correct_answer,
+            "correct": bool(question.get("correct")),
+            "earned": question.get("earned"),
+            "possible": question.get("possible") or question_meta.get("possible"),
+        })
+
+    grade_percent = _parse_grade_percent(attempt.get("grade"))
+    achieved_score = attempt.get("achievedScore")
+    total_score = attempt.get("totalScore")
+    score = attempt.get("Score")
+    if not score and achieved_score is not None and total_score is not None:
+        score = f"{achieved_score}/{total_score}"
+
+    return {
+        "attempt": attempt.get("attempt"),
+        "grade": attempt.get("grade") if isinstance(attempt.get("grade"), str) and "%" in attempt.get("grade") else _format_grade(attempt.get("grade")),
+        "gradePercent": grade_percent,
+        "score": score or "",
+        "passed": bool(attempt.get("passed")),
+        "submittedAt": attempt.get("submittedAt") or "",
+        "startedAt": attempt.get("startedAt") or "",
+        "timeTaken": attempt.get("timeTaken") or "",
+        "reportedTime": attempt.get("reportedTime") or "",
+        "week": attempt.get("week") or "",
+        "module": attempt.get("module") or "",
+        "feedback": attempt.get("feedback") or "",
+        "ksbs": attempt.get("ksbs") if isinstance(attempt.get("ksbs"), list) else [],
+        "questions": questions,
+    }
+
+
+@require_http_methods(["GET"])
+def quiz_students(request, pk):
+    try:
+        quiz = QuizPackage.objects.get(pk=pk)
+    except QuizPackage.DoesNotExist:
+        raise Http404("Quiz not found")
+
+    try:
+        question_lookup, answer_lookup = _quiz_question_lookup(pk)
+        active_users = ActiveUser.objects.all().only(
+            "id",
+            "username",
+            "email",
+            "programme",
+            "cohort",
+            "group",
+            "training_plan_progress",
+        )
+        students = []
+        all_grade_percents = []
+        for learner in active_users:
+            history = learner.training_plan_progress if isinstance(learner.training_plan_progress, list) else []
+            quiz_attempts = [
+                attempt for attempt in history
+                if attempt.get("kind") == "quiz" and str(attempt.get("quizId")) == str(pk)
+            ]
+            if not quiz_attempts:
+                continue
+
+            serialized_attempts = [
+                _serialize_attempt_for_student(attempt, question_lookup, answer_lookup)
+                for attempt in sorted(quiz_attempts, key=_attempt_sort_key, reverse=True)
+            ]
+            latest_attempt = serialized_attempts[0]
+            best_grade = max(
+                (attempt["gradePercent"] for attempt in serialized_attempts if attempt["gradePercent"] is not None),
+                default=None,
+            )
+            if best_grade is not None:
+                all_grade_percents.append(best_grade)
+
+            students.append({
+                "id": learner.id,
+                "name": learner.username or learner.email or f"Learner {learner.id}",
+                "email": learner.email or "",
+                "programme": learner.programme or "",
+                "cohort": learner.cohort or "",
+                "group": learner.group or "",
+                "attemptCount": len(serialized_attempts),
+                "bestGrade": best_grade,
+                "latestAttempt": latest_attempt,
+                "attempts": serialized_attempts,
+            })
+    except DatabaseError as exc:
+        return JsonResponse({"error": f"Database error: {exc}"}, status=502)
+
+    students.sort(key=lambda item: (item["latestAttempt"].get("submittedAt") or "", item["name"]), reverse=True)
+    passed_count = sum(1 for student in students if student["latestAttempt"].get("passed"))
+    average_best = round(sum(all_grade_percents) / len(all_grade_percents), 1) if all_grade_percents else None
+
+    return JsonResponse({
+        "quiz": _serialize_quiz(quiz),
+        "summary": {
+            "students": len(students),
+            "attempts": sum(student["attemptCount"] for student in students),
+            "passed": passed_count,
+            "averageBest": average_best,
+        },
+        "students": students,
+    })
 
 
 @csrf_exempt
@@ -1654,7 +2023,7 @@ def quiz_detail(request, pk):
     if "assessmentType" in payload:
         quiz.assessment_type = _clean_assessment_type(payload["assessmentType"], quiz.assessment_type or "quiz")
     if "programmeId" in payload:
-        quiz.programme_id = payload["programmeId"] or None
+        quiz.programme_id = _match_programme_catalogue_id(quiz.programme, quiz.module, quiz.title, payload["programmeId"]) or ""
     if "weekId" in payload:
         quiz.week_id = payload["weekId"] or ""
     elif any(field in payload for field in ["week", "weekNumber", "title", "programmeId", "programme", "module"]):
@@ -1736,13 +2105,16 @@ def quiz_course_links(request, pk):
                         [quiz.id, plan_id],
                     )
             quiz.linked_courses = len(selected_ids)
-            quiz.programme_id = selected_ids[0] if selected_ids else quiz.programme_id
-            quiz.save(update_fields=["linked_courses", "programme_id", "updated_at"])
+            if not quiz.programme_id:
+                quiz.programme_id = _match_programme_catalogue_id(quiz.programme, quiz.module, quiz.title)
+                quiz.save(update_fields=["linked_courses", "programme_id", "updated_at"])
+            else:
+                quiz.save(update_fields=["linked_courses", "updated_at"])
 
     courses = _training_plan_courses_for_programme(programme)
     selected_ids = set(_quiz_course_link_ids(quiz.id))
-    if not selected_ids and quiz.programme_id:
-        selected_ids = {quiz.programme_id}
+    if not selected_ids and _is_int_like(quiz.programme_id):
+        selected_ids = {int(quiz.programme_id)}
 
     return JsonResponse({
         "programme": programme or "",
