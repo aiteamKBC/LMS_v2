@@ -23,6 +23,7 @@ export interface KsbMapping {
   code: string;
   description: string;
   type: KsbMappingType;
+  weight: number;
 }
 
 export interface CompletionCriteria {
@@ -44,6 +45,7 @@ export interface AdvancedModuleDetails {
 
 export interface ModuleComponent {
   id: string;
+  sourceId?: string;
   moduleId?: string;
   weekId: string;
   type: ModuleComponentType;
@@ -146,14 +148,22 @@ export function readModuleBuilderSync(identifier: string): ModuleCatalogueItem |
 
 export function writeModuleBuilderSync(module: ModuleCatalogueItem, wizardDraftLocalId = '') {
   if (typeof window === 'undefined') return;
+  const normalisedModule = recalculateModule(module);
   const payload = JSON.stringify({
-    module: recalculateModule(module),
+    module: normalisedModule,
     catalogueId: module.catalogueId,
     wizardDraftLocalId,
     updatedAt: new Date().toISOString(),
   });
-  window.localStorage.setItem(moduleBuilderSyncKey(module.catalogueId), payload);
-  if (wizardDraftLocalId) window.localStorage.setItem(moduleBuilderSyncKey(wizardDraftLocalId), payload);
+  const identifiers = new Set([
+    normalisedModule.catalogueId,
+    normalisedModule.id,
+    normalisedModule.sourceId,
+    normalisedModule.sourceModule?.id,
+    normalisedModule.sourceModule?.sourceId,
+    wizardDraftLocalId,
+  ].map(value => String(value || '').trim()).filter(Boolean));
+  identifiers.forEach(identifier => window.localStorage.setItem(moduleBuilderSyncKey(identifier), payload));
 }
 
 export const componentTypes: Array<{ type: ModuleComponentType; label: string; icon: string; group: string; tone: string }> = [
@@ -227,7 +237,7 @@ export function createEmptyComponent(weekId: string, type: ModuleComponentType, 
     type,
     title: `${label} ${index}`,
     description: '',
-    expectedOtjh: type === 'live-session' ? 1.5 : ['checkpoint', 'monthly-ksb-quiz', 'coaching-preparation'].includes(type) ? 0.5 : 1,
+    expectedOtjh: type === 'video' ? 0 : 2,
     points: ['quiz', 'assignment', 'checkpoint', 'monthly-ksb-quiz', 'workplace-evidence'].includes(type) ? 20 : 10,
     reflectionRequired: ['reflection', 'coaching-preparation'].includes(type),
     workplaceEvidenceRequired: type === 'workplace-evidence',
@@ -487,6 +497,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
       code,
       description: `Mapped KSB ${code}`,
       type: index < 3 ? 'main' : 'secondary',
+      weight: index < 3 ? 40 : 20,
     })),
     completionCriteria: emptyCompletionCriteria(),
     advancedDetails: emptyAdvancedDetails(),
@@ -525,28 +536,31 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
 
 export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueItem {
   const moduleId = String(module.catalogueId || module.id);
+  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || []);
   const normalisedWeeks = module.weekStructure.map((week, index) => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
       ...week,
       id: weekId,
       moduleId,
+      ksbMappings: normaliseKsbMappings(week.ksbMappings || []),
       weekNumber: index + 1,
       components: (week.components || []).map(component => ({
         ...component,
         moduleId,
         weekId,
+        ksbMappings: normaliseKsbMappings(component.ksbMappings || []),
       })),
     };
   });
   const allComponents = normalisedWeeks.flatMap(week => week.components);
   const hasStructure = module.weekStructure.length > 0;
   const componentKsbCodes = new Set(allComponents.flatMap(component => component.ksbMappings.map(mapping => mapping.code)));
-  (module.moduleKsbMappings || []).forEach(mapping => componentKsbCodes.add(mapping.code));
+  moduleKsbMappings.forEach(mapping => componentKsbCodes.add(mapping.code));
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
   const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
-  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size });
+  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
   return {
     ...module,
@@ -557,12 +571,32 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
     lessonCount: hasStructure ? allComponents.length : module.lessonCount,
     quizCount: hasStructure ? allComponents.filter(component => ['quiz', 'checkpoint', 'monthly-ksb-quiz'].includes(component.type)).length : module.quizCount,
     qualityScore: quality,
+    moduleKsbMappings,
     weekStructure: normalisedWeeks,
     description: cleanUserFacingText(module.description || module.sourceModule?.notes || ''),
     background: module.background || '',
     epaRequirements: module.epaRequirements || [],
     qualificationOutcomes: module.qualificationOutcomes || [],
   };
+}
+
+function normaliseKsbMappings(mappings: KsbMapping[]) {
+  return mappings.map(mapping => ({
+    ...mapping,
+    weight: clampKsbWeight(mapping.weight ?? defaultKsbWeight(mapping.type)),
+  }));
+}
+
+function defaultKsbWeight(type: KsbMappingType) {
+  if (type === 'main') return 40;
+  if (type === 'secondary') return 20;
+  return 10;
+}
+
+function clampKsbWeight(value: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
 }
 
 export function calculateQualityChecklist(module: ModuleCatalogueItem) {
@@ -588,6 +622,7 @@ export function calculateQualityChecklist(module: ModuleCatalogueItem) {
     { label: 'Recording placeholder for live sessions', passed: liveSessions.every(component => typeof component.settings.recordingExpected === 'boolean') },
     { label: 'All components have estimated OTJH greater than 0', passed: allComponents.length > 0 && allComponents.every(component => Number(component.expectedOtjh) > 0) },
     { label: 'All components have at least one KSB mapping', passed: allComponents.length > 0 && allComponents.every(component => component.ksbMappings.length > 0) },
+    { label: 'All mapped KSBs have a weight', passed: allMappedKsbs(module).every(mapping => Number(mapping.weight || 0) > 0) },
     { label: 'Every mapped KSB is classified', passed: allMappedKsbs(module).every(mapping => ['main', 'secondary', 'practice'].includes(mapping.type)) },
     { label: 'Completion criteria configured', passed: criteriaConfigured },
     { label: 'Total module OTJH matches component sum', passed: Math.abs(declaredTotal - expectedTotal) < 0.01 },

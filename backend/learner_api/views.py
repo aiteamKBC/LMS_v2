@@ -27,7 +27,7 @@ from .mappers import (
     write_commercial_fields,
     write_fields,
 )
-from .models import CommercialUser, EnrolmentUser
+from .models import ActiveUser, CommercialUser, EnrolmentUser
 
 
 def _parse_body(request):
@@ -41,6 +41,55 @@ def _parse_body(request):
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+@csrf_exempt
+def learner_coach(request, pk):
+    """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
+    mirror (columns coach_name / coach_email). Set from the delivery "Enrolled
+    learners" page. The learner must be Active (they only have a mirror row then).
+
+        GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
+        PATCH /learner_api/learners/<id>/coach/   -> {coachName?, coachEmail?} -> same
+
+    Written straight to the mirror (not the source tables), so a status toggle to
+    non-Active deletes the row and the coach data with it — re-entered on
+    reactivation. An Active->Active re-save preserves it (sync_active_user's UPDATE
+    excludes these columns).
+    """
+    try:
+        active = ActiveUser.objects.filter(id=pk).first()
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if active is None:
+        return _error("No active learner record. Coach can be set once the learner is Active.", 404)
+
+    if request.method == "GET":
+        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+
+    if request.method in ("PATCH", "PUT"):
+        try:
+            payload = _parse_body(request)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
+
+        update = {}
+        if "coachName" in payload:
+            update["coach_name"] = (str(payload["coachName"]).strip() or None) if payload["coachName"] is not None else None
+        if "coachEmail" in payload:
+            update["coach_email"] = (str(payload["coachEmail"]).strip() or None) if payload["coachEmail"] is not None else None
+        if not update:
+            return _error("Provide coachName and/or coachEmail.", 400)
+
+        for attr, value in update.items():
+            setattr(active, attr, value)
+        try:
+            active.save(update_fields=list(update.keys()))
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        return JsonResponse({"coachName": active.coach_name or "", "coachEmail": active.coach_email or ""})
+
+    return _error("Method not allowed.", 405)
 
 
 @csrf_exempt

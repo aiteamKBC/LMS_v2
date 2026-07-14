@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -6,6 +6,11 @@ import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { ENGAGEMENT_LEARNERS } from '@/mocks/engagement-data';
+import {
+  fetchPointsRules, createPointsRule, updatePointsRule, fetchRuleGrants,
+  type EngagementPointsRule as PointsRule, type EngagementPointsGrant,
+} from '@/api/engagement';
+import { RuleCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -44,50 +49,9 @@ function InfoTooltip({ label, text }: { label: string; text: string }) {
   );
 }
 
-interface PointsRule {
-  id: string;
-  name: string;
-  description: string;
-  points: number;
-  category: string;
-  frequency: string;
-  active: boolean;
-  trigger: string;
-  learnersImpacted: number;
-  totalPointsAwarded: number;
-}
-
-const INITIAL_RULES: PointsRule[] = [
-  { id: 'pr-01', name: 'Session Attendance', description: 'Attend a scheduled live session', points: 10, category: 'Attendance', frequency: 'Per session', active: true, trigger: 'Automatic on attendance mark', learnersImpacted: 48, totalPointsAwarded: 480 },
-  { id: 'pr-02', name: 'Evidence Submission', description: 'Submit evidence for a KSB', points: 15, category: 'Evidence', frequency: 'Per submission', active: true, trigger: 'On evidence upload', learnersImpacted: 35, totalPointsAwarded: 525 },
-  { id: 'pr-03', name: 'Evidence Approved', description: 'Evidence approved by tutor/assessor', points: 25, category: 'Evidence', frequency: 'Per approval', active: true, trigger: 'On approval status change', learnersImpacted: 28, totalPointsAwarded: 700 },
-  { id: 'pr-04', name: 'Quiz Pass', description: 'Pass a module quiz with 70%+', points: 20, category: 'Assessment', frequency: 'Per quiz', active: true, trigger: 'On quiz completion', learnersImpacted: 42, totalPointsAwarded: 840 },
-  { id: 'pr-05', name: 'Club Attendance', description: 'Attend a learner club session', points: 15, category: 'Clubs', frequency: 'Per session', active: true, trigger: 'On club attendance', learnersImpacted: 22, totalPointsAwarded: 330 },
-  { id: 'pr-06', name: 'Club Contribution', description: 'Lead or contribute to a club activity', points: 30, category: 'Clubs', frequency: 'Per contribution', active: true, trigger: 'Manual by ambassador', learnersImpacted: 8, totalPointsAwarded: 240 },
-  { id: 'pr-07', name: 'Message Response', description: 'Respond to coach message within 24h', points: 5, category: 'Communication', frequency: 'Per response', active: true, trigger: 'On message reply', learnersImpacted: 45, totalPointsAwarded: 225 },
-  { id: 'pr-08', name: 'Monthly Progress Review', description: 'Complete monthly progress review', points: 50, category: 'Progress', frequency: 'Monthly', active: true, trigger: 'On review completion', learnersImpacted: 38, totalPointsAwarded: 1900 },
-  { id: 'pr-09', name: 'Employer Feedback', description: 'Employer submits positive feedback', points: 20, category: 'Employer', frequency: 'Per feedback', active: true, trigger: 'On feedback submission', learnersImpacted: 15, totalPointsAwarded: 300 },
-  { id: 'pr-10', name: 'Catch-up Session', description: 'Attend a scheduled catch-up session', points: 10, category: 'Attendance', frequency: 'Per session', active: true, trigger: 'On catch-up attendance', learnersImpacted: 12, totalPointsAwarded: 120 },
-  { id: 'pr-11', name: 'Referral', description: 'Refer another learner to a club', points: 15, category: 'Clubs', frequency: 'Per referral', active: true, trigger: 'On referral completion', learnersImpacted: 6, totalPointsAwarded: 90 },
-  { id: 'pr-12', name: 'Milestone Completion', description: 'Complete a programme milestone', points: 100, category: 'Progress', frequency: 'Per milestone', active: true, trigger: 'On milestone achieved', learnersImpacted: 10, totalPointsAwarded: 1000 },
-];
-
-// Recent grant history per rule (most recent first). Rules created via "Add
-// Rule" have no history yet, so the Logs panel falls back to an empty state.
-const GRANT_LOG: Record<string, { learnerId: string; date: string }[]> = {
-  'pr-01': [{ learnerId: 'en-13', date: '8 Jun 2026' }, { learnerId: 'en-10', date: '8 Jun 2026' }, { learnerId: 'en-16', date: '7 Jun 2026' }, { learnerId: 'en-04', date: '6 Jun 2026' }, { learnerId: 'en-15', date: '6 Jun 2026' }],
-  'pr-02': [{ learnerId: 'en-14', date: '7 Jun 2026' }, { learnerId: 'en-04', date: '6 Jun 2026' }, { learnerId: 'en-07', date: '5 Jun 2026' }],
-  'pr-03': [{ learnerId: 'en-04', date: '6 Jun 2026' }, { learnerId: 'en-10', date: '5 Jun 2026' }, { learnerId: 'en-13', date: '4 Jun 2026' }],
-  'pr-04': [{ learnerId: 'en-13', date: '7 Jun 2026' }, { learnerId: 'en-05', date: '6 Jun 2026' }, { learnerId: 'en-16', date: '5 Jun 2026' }, { learnerId: 'en-07', date: '5 Jun 2026' }],
-  'pr-05': [{ learnerId: 'en-15', date: '6 Jun 2026' }, { learnerId: 'en-10', date: '4 Jun 2026' }],
-  'pr-06': [{ learnerId: 'en-15', date: '5 Jun 2026' }],
-  'pr-07': [{ learnerId: 'en-13', date: '8 Jun 2026' }, { learnerId: 'en-10', date: '8 Jun 2026' }, { learnerId: 'en-07', date: '7 Jun 2026' }],
-  'pr-08': [{ learnerId: 'en-04', date: '7 Jun 2026' }, { learnerId: 'en-05', date: '7 Jun 2026' }, { learnerId: 'en-13', date: '6 Jun 2026' }],
-  'pr-09': [{ learnerId: 'en-07', date: '3 Jun 2026' }, { learnerId: 'en-16', date: '2 Jun 2026' }],
-  'pr-10': [{ learnerId: 'en-06', date: '2 Jun 2026' }, { learnerId: 'en-12', date: '1 Jun 2026' }],
-  'pr-11': [{ learnerId: 'en-11', date: '30 May 2026' }],
-  'pr-12': [{ learnerId: 'en-05', date: '7 Jun 2026' }, { learnerId: 'en-13', date: '4 Jun 2026' }],
-};
+// PointsRule / EngagementPointsGrant types come from the api module.
+// learnersImpacted + totalPointsAwarded are aggregates the backend computes
+// from the grants table, not stored columns.
 
 const LEARNER_BY_ID = new Map(ENGAGEMENT_LEARNERS.map(l => [l.id, l]));
 
@@ -194,12 +158,17 @@ function RuleForm({
 export default function PointsRulesPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
-  const [rules, setRules] = useState<PointsRule[]>(INITIAL_RULES);
+  const [rules, setRules] = useState<PointsRule[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [activeOnly, setActiveOnly] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('points');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addForm, setAddForm] = useState<RuleFormData>({ ...blankForm });
+  const [addErrors, setAddErrors] = useState<FormErrors>({});
 
   const [editRuleId, setEditRuleId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<RuleFormData>({ ...blankForm });
@@ -207,6 +176,29 @@ export default function PointsRulesPage() {
 
   const [statsRuleId, setStatsRuleId] = useState<string | null>(null);
   const [logsRuleId, setLogsRuleId] = useState<string | null>(null);
+  const [logsGrants, setLogsGrants] = useState<EngagementPointsGrant[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchPointsRules()
+      .then(data => { if (!cancelled) setRules(data); })
+      .catch(err => { if (!cancelled) warning('Could not load rules', err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
+
+  // Fetch the grant history for whichever rule's Logs modal is open.
+  useEffect(() => {
+    if (!logsRuleId) { setLogsGrants([]); return; }
+    let cancelled = false;
+    setLogsLoading(true);
+    fetchRuleGrants(logsRuleId)
+      .then(data => { if (!cancelled) setLogsGrants(data); })
+      .catch(err => { if (!cancelled) warning('Could not load grant history', err.message); })
+      .finally(() => { if (!cancelled) setLogsLoading(false); });
+    return () => { cancelled = true; };
+  }, [logsRuleId, warning]);
 
   const categories = useMemo(() => Array.from(new Set(rules.map(r => r.category))).sort(), [rules]);
   const totalPoints = rules.reduce((s, r) => s + r.totalPointsAwarded, 0);
@@ -237,31 +229,77 @@ export default function PointsRulesPage() {
     else { setSortKey(key); setSortDir('desc'); }
   }
 
+  function openAddModal() {
+    setAddForm({ ...blankForm });
+    setAddErrors({});
+    setShowAddModal(true);
+  }
+
+  async function handleAdd() {
+    const errs = validateForm(addForm);
+    if (Object.keys(errs).length > 0) { setAddErrors(errs); return; }
+    try {
+      const created = await createPointsRule({
+        name: addForm.name.trim(), description: addForm.description.trim(), points: addForm.points,
+        category: addForm.category.trim(), frequency: addForm.frequency.trim(), trigger: addForm.trigger.trim(), active: addForm.active,
+      });
+      setRules(prev => [created, ...prev]);
+      setShowAddModal(false);
+      success(`Rule "${created.name}" created`);
+    } catch (err: any) {
+      warning('Could not create rule', err.message);
+    }
+  }
+
   function openEditModal(rule: PointsRule) {
     setEditForm({ name: rule.name, description: rule.description, points: rule.points, category: rule.category, frequency: rule.frequency, trigger: rule.trigger, active: rule.active });
     setEditErrors({});
     setEditRuleId(rule.id);
   }
 
-  function handleEdit() {
+  async function handleEdit() {
+    if (!editRuleId) return;
     const errs = validateForm(editForm);
     if (Object.keys(errs).length > 0) { setEditErrors(errs); return; }
-    setRules(prev => prev.map(r => r.id === editRuleId ? { ...r, ...editForm, name: editForm.name.trim(), description: editForm.description.trim(), category: editForm.category.trim(), frequency: editForm.frequency.trim(), trigger: editForm.trigger.trim() } : r));
-    setEditRuleId(null);
-    success(`Rule "${editForm.name.trim()}" updated`);
+    try {
+      const updated = await updatePointsRule(editRuleId, {
+        name: editForm.name.trim(), description: editForm.description.trim(), points: editForm.points,
+        category: editForm.category.trim(), frequency: editForm.frequency.trim(), trigger: editForm.trigger.trim(), active: editForm.active,
+      });
+      setRules(prev => prev.map(r => r.id === editRuleId ? updated : r));
+      setEditRuleId(null);
+      success(`Rule "${updated.name}" updated`);
+    } catch (err: any) {
+      warning('Could not update rule', err.message);
+    }
   }
 
-  function toggleActive(rule: PointsRule) {
+  async function toggleActive(rule: PointsRule) {
     const nextActive = !rule.active;
-    setRules(prev => prev.map(r => r.id === rule.id ? { ...r, active: nextActive } : r));
-    (nextActive ? success : warning)(`Rule "${rule.name}" ${nextActive ? 'activated' : 'deactivated'}`);
+    try {
+      const updated = await updatePointsRule(rule.id, { active: nextActive });
+      setRules(prev => prev.map(r => r.id === rule.id ? updated : r));
+      (nextActive ? success : warning)(`Rule "${rule.name}" ${nextActive ? 'activated' : 'deactivated'}`);
+    } catch (err: any) {
+      warning('Could not update rule', err.message);
+    }
   }
 
   const statsRule = rules.find(r => r.id === statsRuleId) ?? null;
   const logsRule = rules.find(r => r.id === logsRuleId) ?? null;
-  const logsEntries = (logsRuleId ? GRANT_LOG[logsRuleId] ?? [] : [])
-    .map(entry => ({ ...entry, learner: LEARNER_BY_ID.get(entry.learnerId) }))
-    .filter((entry): entry is typeof entry & { learner: NonNullable<typeof entry.learner> } => Boolean(entry.learner));
+  // Enrich each grant with the mocked learner's avatar/programme (owned by
+  // another team); fall back to the name the grant itself stored.
+  const logsEntries = logsGrants.map(g => {
+    const learner = LEARNER_BY_ID.get(g.learnerId);
+    return {
+      id: g.id,
+      name: learner?.name ?? g.learner,
+      avatarImg: learner?.avatarImg,
+      programme: learner?.programme ?? '',
+      date: g.awardedAt,
+      points: g.points,
+    };
+  });
 
   return (
     <WorkspaceShell
@@ -315,6 +353,10 @@ export default function PointsRulesPage() {
           >
             <i className={activeOnly ? 'ri-toggle-fill text-sm' : 'ri-toggle-line text-sm'}></i> Active only
           </button>
+          <div className="flex-1"></div>
+          <button onClick={openAddModal} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
+            <i className="ri-add-line mr-1"></i> Add Rule
+          </button>
         </div>
 
         {/* Sort Controls */}
@@ -337,15 +379,17 @@ export default function PointsRulesPage() {
           <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-1 rounded-full">{filtered.length} rules</span>
         </div>
 
-        {filtered.length === 0 && (
+        {loading && <RuleCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
             <i className="ri-search-line text-2xl text-foreground-300"></i>
             <p className="text-sm font-semibold text-foreground-700">No rules match this view</p>
-            <p className="text-[11px] text-foreground-400">Try clearing the search or switching the category filter.</p>
+            <p className="text-[11px] text-foreground-400">Try clearing the search, switching the category filter, or add a rule.</p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(rule => {
             const band = pointsBand(rule.points);
             return (
@@ -389,6 +433,34 @@ export default function PointsRulesPage() {
           })}
         </div>
       </div>
+
+      {/* ADD RULE MODAL */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowAddModal(false)}>
+          <div className="absolute inset-0 bg-foreground-950/50 backdrop-blur-sm"></div>
+          <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-gift-2-line text-lg"></i></span>
+                <div>
+                  <h3 className="text-base font-heading font-semibold text-foreground-900">Add Rule</h3>
+                  <p className="text-[11px] text-foreground-400">Create a new way for learners to earn points</p>
+                </div>
+              </div>
+              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+            </div>
+            <div className="p-5 overflow-y-auto">
+              <RuleForm form={addForm} errors={addErrors} setForm={setAddForm} setErrors={setAddErrors} categories={categories} />
+            </div>
+            <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
+              <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
+              <button onClick={handleAdd} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600">
+                <i className="ri-add-line"></i> Create Rule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* EDIT RULE MODAL */}
       {editRuleId !== null && (
@@ -476,7 +548,12 @@ export default function PointsRulesPage() {
               <button onClick={() => setLogsRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
             </div>
             <div className="overflow-y-auto">
-              {logsEntries.length === 0 ? (
+              {logsLoading ? (
+                <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
+                  <i className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></i>
+                  <p className="text-[12px] font-semibold text-foreground-700">Loading grant history…</p>
+                </div>
+              ) : logsEntries.length === 0 ? (
                 <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
                   <i className="ri-history-line text-2xl text-foreground-300"></i>
                   <p className="text-[12px] font-semibold text-foreground-700">No grants recorded yet</p>
@@ -484,20 +561,20 @@ export default function PointsRulesPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-background-200/30">
-                  {logsEntries.map((entry, i) => (
-                    <div key={`${entry.learnerId}-${entry.date}-${i}`} className="p-3.5 flex items-center gap-3">
+                  {logsEntries.map(entry => (
+                    <div key={entry.id} className="p-3.5 flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full shrink-0 overflow-hidden bg-background-200">
-                        {entry.learner.avatarImg ? (
-                          <img src={entry.learner.avatarImg} alt={entry.learner.name} className="w-full h-full object-cover" />
+                        {entry.avatarImg ? (
+                          <img src={entry.avatarImg} alt={entry.name} className="w-full h-full object-cover" />
                         ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[11px] font-bold bg-primary-100 text-primary-600">{entry.learner.name.charAt(0)}</div>
+                          <div className="w-full h-full flex items-center justify-center text-[11px] font-bold bg-primary-100 text-primary-600">{entry.name.charAt(0)}</div>
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[12px] font-semibold text-foreground-900 truncate">{entry.learner.name}</p>
-                        <p className="text-[10px] text-foreground-400 truncate">{entry.learner.programme} &middot; {entry.date}</p>
+                        <p className="text-[12px] font-semibold text-foreground-900 truncate">{entry.name}</p>
+                        <p className="text-[10px] text-foreground-400 truncate">{entry.programme ? `${entry.programme} · ` : ''}{entry.date}</p>
                       </div>
-                      <span className="text-[11px] font-bold text-emerald-600 shrink-0">+{logsRule.points}</span>
+                      <span className="text-[11px] font-bold text-emerald-600 shrink-0">+{entry.points}</span>
                     </div>
                   ))}
                 </div>

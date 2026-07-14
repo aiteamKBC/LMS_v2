@@ -158,7 +158,7 @@ function StatCard({ icon, label, value, detail, color }: { icon: string; label: 
 function QuizRow({ quiz, canTake, onTake }: { quiz: LinkedQuiz; canTake: boolean; onTake: () => void }) {
   const attempts = quiz.attempts;
   const best = attempts.length ? attempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b)) : null;
-  const bestGrade = best ? (typeof best.grade === 'number' ? `${best.grade}%` : best.grade) : null;
+  const bestGrade = best ? `${gradePercent(best.grade)}%` : null;
   const bestPassed = best?.passed ?? false;
 
   return (

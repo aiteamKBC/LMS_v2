@@ -1,8 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
+import {
+  fetchClubs, createClub as apiCreateClub, updateClub, deleteClub as apiDeleteClub,
+  addClubMeeting, updateClubMeeting, deleteClubMeeting,
+  type EngagementClub as Club, type EngagementClubMeeting as ClubMeeting,
+} from '@/api/engagement';
+import { ClubCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -11,89 +17,7 @@ const engagementNav = roleNavMap.engagement;
 // meets locally. Clubs exist mainly to build community and networking through
 // meetings — some are scheduled during the learning period, others are held
 // ad-hoc, so meetings are UNSCHEDULED by default with the option to add a date.
-interface ClubMeeting {
-  id: string;
-  title: string;
-  scheduled: boolean;   // false by default — no schedule until an ambassador sets one
-  date?: string;        // set only once scheduled
-  time?: string;
-  venue?: string;
-  attendees: number;
-}
-
-interface Club {
-  id: string;
-  name: string;
-  location: string;
-  description: string;
-  ambassador: string;
-  ambassadorRole: string;
-  members: number;          // joined learners — no capacity limit
-  sampleMembers: string[];  // initials for the joined-members indicator stack
-  active: boolean;
-  meetings: ClubMeeting[];
-}
-
-const CLUBS: Club[] = [
-  {
-    id: 'cl-london', name: 'London Club', location: 'London',
-    description: 'Where KBC learners across London meet, network, and build community — organised locally so getting together is easy.',
-    ambassador: 'Rebecca Okonkwo', ambassadorRole: 'London Ambassador', members: 34,
-    sampleMembers: ['SW', 'OP', 'LF', 'MK', 'DC'], active: true,
-    meetings: [
-      { id: 'm-ldn-1', title: 'Summer networking meetup', scheduled: true, date: '2026-06-18', time: '17:30', venue: 'KBC London Campus', attendees: 22 },
-      { id: 'm-ldn-2', title: 'Peer support & study social', scheduled: false, attendees: 0 },
-    ],
-  },
-  {
-    id: 'cl-kent', name: 'Kent Club', location: 'Kent',
-    description: 'A local community for Kent-based apprentices to connect, share experiences, and support each other through their programmes.',
-    ambassador: 'David Thompson', ambassadorRole: 'Kent Ambassador', members: 21,
-    sampleMembers: ['AP', 'JO', 'EW'], active: true,
-    meetings: [
-      { id: 'm-kent-1', title: 'Coffee & connect morning', scheduled: false, attendees: 0 },
-      { id: 'm-kent-2', title: 'Careers chat with local employers', scheduled: false, attendees: 0 },
-    ],
-  },
-  {
-    id: 'cl-nottingham', name: 'Nottingham Club', location: 'Nottingham',
-    description: 'Bringing Nottingham learners together for informal meetups, networking, and getting to know one another beyond the screen.',
-    ambassador: 'Priya Patel', ambassadorRole: 'Nottingham Ambassador', members: 17,
-    sampleMembers: ['MK', 'OP', 'ZM'], active: true,
-    meetings: [
-      { id: 'm-nott-1', title: 'Welcome social for new starters', scheduled: true, date: '2026-06-25', time: '18:00', venue: 'City centre — venue TBC', attendees: 9 },
-      { id: 'm-nott-2', title: 'Study group & networking', scheduled: false, attendees: 0 },
-    ],
-  },
-  {
-    id: 'cl-birmingham', name: 'Birmingham Club', location: 'Birmingham',
-    description: 'A hub for Birmingham apprentices to meet peers nearby, network, and build friendships across programmes.',
-    ambassador: 'Sarah Chen', ambassadorRole: 'Birmingham Ambassador', members: 26,
-    sampleMembers: ['EW', 'DC', 'LF', 'SW'], active: true,
-    meetings: [
-      { id: 'm-birm-1', title: 'Monthly community meetup', scheduled: false, attendees: 0 },
-    ],
-  },
-  {
-    id: 'cl-manchester', name: 'Manchester Club', location: 'Manchester',
-    description: 'Manchester-based learners connecting locally for networking, peer support, and community events.',
-    ambassador: 'Tom Whitfield', ambassadorRole: 'Manchester Ambassador', members: 19,
-    sampleMembers: ['LF', 'SW', 'MK'], active: true,
-    meetings: [
-      { id: 'm-manc-1', title: 'Networking & pizza evening', scheduled: true, date: '2026-06-20', time: '18:30', venue: 'KBC Manchester Hub', attendees: 14 },
-      { id: 'm-manc-2', title: 'Peer mentoring drop-in', scheduled: false, attendees: 0 },
-    ],
-  },
-  {
-    id: 'cl-leeds', name: 'Leeds Club', location: 'Leeds',
-    description: 'A new local club for Leeds apprentices to get to know each other, network, and grow together.',
-    ambassador: 'James Harrington', ambassadorRole: 'Leeds Ambassador', members: 12,
-    sampleMembers: ['DC', 'EW'], active: false,
-    meetings: [
-      { id: 'm-leeds-1', title: 'First meetup — say hello', scheduled: false, attendees: 0 },
-    ],
-  },
-];
+// Club/ClubMeeting types are imported from the api module.
 
 function formatMeetingDate(date?: string) {
   if (!date) return '';
@@ -120,7 +44,8 @@ function remainingLabel(date?: string, time?: string) {
 
 export default function EngagementClubsPage() {
   const navigate = useNavigate();
-  const [clubs, setClubs] = useState<Club[]>(CLUBS);
+  const [clubs, setClubs] = useState<Club[]>([]);
+  const [loading, setLoading] = useState(true);
   const [customLocations, setCustomLocations] = useState<string[]>([]);
   const [locationFilter, setLocationFilter] = useState<string>('all');
   const [activeOnly, setActiveOnly] = useState(true);
@@ -137,7 +62,7 @@ export default function EngagementClubsPage() {
   const [emailMsg, setEmailMsg] = useState('');
 
   // Lightweight confirmation toast.
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ msg: string; kind: 'success' | 'error' } | null>(null);
 
   // Add a new location/city to the filter (works even before a club exists there).
   const [addingLocation, setAddingLocation] = useState(false);
@@ -152,6 +77,15 @@ export default function EngagementClubsPage() {
   const [managingClubId, setManagingClubId] = useState<string | null>(null);
   const [manageForm, setManageForm] = useState({ description: '', ambassador: '', ambassadorRole: '' });
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchClubs()
+      .then(data => { if (!cancelled) setClubs(data); })
+      .catch(err => { if (!cancelled) setToast({ msg: err.message || 'Could not load clubs', kind: 'error' }); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
   const locations = ['all', ...Array.from(new Set([...clubs.map(c => c.location), ...customLocations]))];
 
   const filtered = clubs.filter(c => {
@@ -165,15 +99,19 @@ export default function EngagementClubsPage() {
   const scheduledCount = liveMeetings.filter(m => m.scheduled).length;
   const unscheduledCount = liveMeetings.length - scheduledCount;
 
-  const showToast = (msg: string) => { setToast(msg); window.setTimeout(() => setToast(null), 3500); };
+  const showToast = (msg: string, kind: 'success' | 'error' = 'success') => { setToast({ msg, kind }); window.setTimeout(() => setToast(null), 3500); };
 
-  const addMeeting = (clubId: string) => {
+  const addMeeting = async (clubId: string) => {
     const title = draftTitle.trim();
     if (!title) return;
-    const newMeeting: ClubMeeting = { id: `m-${clubId}-${Date.now()}`, title, scheduled: false, attendees: 0 };
-    setClubs(prev => prev.map(c => (c.id === clubId ? { ...c, meetings: [...c.meetings, newMeeting] } : c)));
-    setDraftTitle('');
-    setAddingClubId(null);
+    try {
+      const created = await addClubMeeting(clubId, { title });
+      setClubs(prev => prev.map(c => (c.id === clubId ? { ...c, meetings: [...c.meetings, created] } : c)));
+      setDraftTitle('');
+      setAddingClubId(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not add meeting', 'error');
+    }
   };
 
   const openMeeting = (club: Club, m: ClubMeeting) => {
@@ -181,25 +119,39 @@ export default function EngagementClubsPage() {
     setMeetingForm({ title: m.title, date: m.date ?? '', time: m.time ?? '', venue: m.venue ?? '' });
     setEmailMsg(`Hi everyone,\n\nA quick reminder about our upcoming "${m.title}" meetup for ${club.name}. Hope to see you there!\n\n${club.ambassador}`);
   };
-  const saveMeeting = () => {
+  const saveMeeting = async () => {
     if (!meetingCtx) return;
     const title = meetingForm.title.trim() || 'Untitled meeting';
     const scheduled = !!meetingForm.date;
-    setClubs(prev => prev.map(c => c.id === meetingCtx.clubId
-      ? { ...c, meetings: c.meetings.map(m => m.id === meetingCtx.meetingId
-          ? { ...m, title, scheduled, date: meetingForm.date || undefined, time: meetingForm.time || undefined, venue: meetingForm.venue.trim() || undefined }
-          : m) }
-      : c));
-    setMeetingCtx(null);
-    showToast('Meeting saved');
+    try {
+      const updated = await updateClubMeeting(meetingCtx.clubId, meetingCtx.meetingId, {
+        title,
+        scheduled,
+        date: meetingForm.date || null,
+        time: meetingForm.time || null,
+        venue: meetingForm.venue.trim() || null,
+      });
+      setClubs(prev => prev.map(c => c.id === meetingCtx.clubId
+        ? { ...c, meetings: c.meetings.map(m => m.id === meetingCtx.meetingId ? updated : m) }
+        : c));
+      setMeetingCtx(null);
+      showToast('Meeting saved');
+    } catch (err: any) {
+      showToast(err.message || 'Could not save meeting', 'error');
+    }
   };
-  const deleteMeeting = () => {
+  const deleteMeeting = async () => {
     if (!meetingCtx) return;
-    setClubs(prev => prev.map(c => c.id === meetingCtx.clubId
-      ? { ...c, meetings: c.meetings.filter(m => m.id !== meetingCtx.meetingId) }
-      : c));
-    setMeetingCtx(null);
-    showToast('Meeting deleted');
+    try {
+      await deleteClubMeeting(meetingCtx.clubId, meetingCtx.meetingId);
+      setClubs(prev => prev.map(c => c.id === meetingCtx.clubId
+        ? { ...c, meetings: c.meetings.filter(m => m.id !== meetingCtx.meetingId) }
+        : c));
+      setMeetingCtx(null);
+      showToast('Meeting deleted');
+    } catch (err: any) {
+      showToast(err.message || 'Could not delete meeting', 'error');
+    }
   };
   const sendMeetingEmail = (recipients: number, clubName: string) => {
     setMeetingCtx(null);
@@ -215,44 +167,67 @@ export default function EngagementClubsPage() {
     setAddingLocation(false);
   };
 
-  const createClub = () => {
+  const createClub = async () => {
     const name = clubForm.name.trim();
     const location = clubForm.location.trim();
     if (!name || !location) return;
-    const slug = location.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const newClub: Club = {
-      id: `cl-${slug}-${Date.now()}`,
-      name,
-      location,
-      description: clubForm.description.trim() || `A local community for ${location} learners to meet, network, and connect.`,
-      ambassador: clubForm.ambassador.trim() || 'Unassigned',
-      ambassadorRole: clubForm.ambassadorRole.trim() || `${location} Ambassador`,
-      members: 0,
-      sampleMembers: [],
-      active: true,
-      meetings: [],
-    };
-    setClubs(prev => [...prev, newClub]);
-    setLocationFilter(location);
-    setClubForm(emptyClubForm);
-    setCreatingClub(false);
+    try {
+      const created = await apiCreateClub({
+        name,
+        location,
+        description: clubForm.description.trim() || `A local community for ${location} learners to meet, network, and connect.`,
+        ambassador: clubForm.ambassador.trim() || 'Unassigned',
+        ambassadorRole: clubForm.ambassadorRole.trim() || `${location} Ambassador`,
+      });
+      setClubs(prev => [...prev, created]);
+      setLocationFilter(location);
+      setClubForm(emptyClubForm);
+      setCreatingClub(false);
+      showToast(`${created.name} created`);
+    } catch (err: any) {
+      showToast(err.message || 'Could not create club', 'error');
+    }
   };
 
   const openManage = (club: Club) => {
     setManagingClubId(club.id);
     setManageForm({ description: club.description, ambassador: club.ambassador, ambassadorRole: club.ambassadorRole });
   };
-  const saveManage = () => {
+  const saveManage = async () => {
     if (!managingClubId) return;
-    setClubs(prev => prev.map(c => (c.id === managingClubId ? { ...c, ...manageForm } : c)));
-    setManagingClubId(null);
+    try {
+      const updated = await updateClub(managingClubId, {
+        description: manageForm.description,
+        ambassador: manageForm.ambassador,
+        ambassadorRole: manageForm.ambassadorRole,
+      });
+      setClubs(prev => prev.map(c => (c.id === managingClubId ? updated : c)));
+      setManagingClubId(null);
+      showToast('Club updated');
+    } catch (err: any) {
+      showToast(err.message || 'Could not update club', 'error');
+    }
   };
-  const toggleActive = (clubId: string) => {
-    setClubs(prev => prev.map(c => (c.id === clubId ? { ...c, active: !c.active } : c)));
+  const toggleActive = async (clubId: string) => {
+    const club = clubs.find(c => c.id === clubId);
+    if (!club) return;
+    try {
+      const updated = await updateClub(clubId, { active: !club.active });
+      setClubs(prev => prev.map(c => (c.id === clubId ? updated : c)));
+    } catch (err: any) {
+      showToast(err.message || 'Could not update club', 'error');
+    }
   };
-  const deleteClub = (clubId: string) => {
-    setClubs(prev => prev.filter(c => c.id !== clubId));
-    setManagingClubId(null);
+  const deleteClub = async (clubId: string) => {
+    const club = clubs.find(c => c.id === clubId);
+    try {
+      await apiDeleteClub(clubId);
+      setClubs(prev => prev.filter(c => c.id !== clubId));
+      setManagingClubId(null);
+      if (club) showToast(`${club.name} deleted`);
+    } catch (err: any) {
+      showToast(err.message || 'Could not delete club', 'error');
+    }
   };
 
   const managingClub = clubs.find(c => c.id === managingClubId) ?? null;
@@ -272,11 +247,11 @@ export default function EngagementClubsPage() {
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
           title="Learner Clubs"
-          description={`${CLUBS.length} location-based clubs. ${totalMembers} learners joined. ${scheduledCount} meetings scheduled, ${unscheduledCount} awaiting a date. Clubs are grouped by where learners live so meeting up locally is easy — no travel required.`}
+          description={`${clubs.length} location-based clubs. ${totalMembers} learners joined. ${scheduledCount} meetings scheduled, ${unscheduledCount} awaiting a date. Clubs are grouped by where learners live so meeting up locally is easy — no travel required.`}
           icon="ri-team-line"
           imageUrl="https://readdy.ai/api/search-image?query=UK%20learner%20clubs%20group%20collaboration%20teamwork%20warm%20modern%20office%20professional&width=400&height=160&seq=clubs-01&orientation=landscape"
           imageAlt="Learner Clubs"
-          stats={[{ label: 'Clubs', value: String(CLUBS.length) }, { label: 'Members', value: String(totalMembers) }, { label: 'Scheduled', value: String(scheduledCount) }]}
+          stats={[{ label: 'Clubs', value: String(clubs.length) }, { label: 'Members', value: String(totalMembers) }, { label: 'Scheduled', value: String(scheduledCount) }]}
         />
 
         {/* Quick access */}
@@ -338,7 +313,17 @@ export default function EngagementClubsPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {loading && <ClubCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
+            <i className="ri-team-line text-2xl text-foreground-300"></i>
+            <p className="text-sm font-semibold text-foreground-700">No clubs match this view</p>
+            <p className="text-[11px] text-foreground-400">Try switching the location filter, turn off "Active only", or create a club.</p>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(club => (
             <div key={club.id} className={`rounded-xl border p-4 card-premium transition-smooth flex flex-col ${club.active ? 'bg-background-50 border-foreground-200/60 hover:border-primary-200/50' : 'bg-background-100/70 border-foreground-200/50 grayscale opacity-70'}`}>
               <div className="flex items-start gap-3 mb-3">
@@ -616,8 +601,8 @@ export default function EngagementClubsPage() {
         {/* Confirmation toast */}
         {toast && (
           <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 bg-foreground-900 text-white px-4 py-2.5 rounded-xl shadow-lg animate-in slide-in-from-bottom-4 duration-300">
-            <i className="ri-checkbox-circle-line text-emerald-400"></i>
-            <span className="text-[12px] font-medium">{toast}</span>
+            <i className={`${toast.kind === 'error' ? 'ri-error-warning-line text-rose-400' : 'ri-checkbox-circle-line text-emerald-400'}`}></i>
+            <span className="text-[12px] font-medium">{toast.msg}</span>
           </div>
         )}
       </div>

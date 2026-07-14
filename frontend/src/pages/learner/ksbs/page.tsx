@@ -1,8 +1,11 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { RealKsbView } from '@/components/feature/RealKsbView';
 
 const learnerNav = roleNavMap.learner;
 
@@ -125,6 +128,16 @@ function ProgressBar({ pct, color, height = 2 }: { pct: number; color: string; h
 }
 
 export default function KSBsPage() {
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const myLearner = useMyLearner();
+  const kind = urlKind ?? myLearner?.kind;
+  const id = urlId ?? myLearner?.id;
+  const { isRealMode, real, loading } = useLearnerDetailParam(kind, id);
+  if (isRealMode) return <RealKsbView real={real} loading={loading} />;
+  return <MockKSBsPage />;
+}
+
+function MockKSBsPage() {
   const p = LEARNER_PROFILE;
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'All' | 'Knowledge' | 'Skill' | 'Behaviour'>('All');

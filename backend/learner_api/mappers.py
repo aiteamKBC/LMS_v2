@@ -456,6 +456,16 @@ def to_learner_detail(source, active):
     visible even for learners who aren't currently Active; only KSBs (looked
     up live by sync_active_user) depend on the Active_users mirror."""
     modules, week, components = flatten_training_plan(get_training_plan(source))
+
+    # Unified progress log holds both quiz attempts and video completions,
+    # distinguished by "kind" (a record without a "kind" is treated as a quiz
+    # attempt, for any pre-"kind" data).
+    progress = _as_list(active.training_plan_progress) if active else []
+    quiz_attempts = [r for r in progress if r.get("kind", "quiz") == "quiz"]
+    video_progress = [r for r in progress if r.get("kind") == "video"]
+    # Activity log, newest first for the feed (full history is kept in the column).
+    activity_feed = list(reversed(_as_list(active.activity_feed))) if active else []
+
     return {
         "id": str(source.id),
         "name": _s(source.username),
@@ -471,5 +481,7 @@ def to_learner_detail(source, active):
         "week": week,
         "components": components,
         "ksbs": _as_list(active.ksbs) if active else [],
-        "quizAttempts": _as_list(active.weekly_quizzes) if active else [],
+        "quizAttempts": quiz_attempts,
+        "videoProgress": video_progress,
+        "activityFeed": activity_feed,
     }

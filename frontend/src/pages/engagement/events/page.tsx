@@ -1,44 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
+import { fetchEvents, createEvent, updateEvent, deleteEvent, type EngagementEvent as Event } from '@/api/engagement';
+import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
-interface Event {
-  id: string;
-  title: string;
-  description: string;
-  date: string;
-  time: string;
-  location: string;
-  type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
-  // Learners who've said they intend to attend — not a capacity-limited RSVP,
-  // just a headcount signal for the organiser.
-  attendees: number;
-  status: 'upcoming' | 'ongoing' | 'completed';
-  organizer: string;
-}
-
-const INITIAL_EVENTS: Event[] = [
-  { id: 'ev-01', title: 'Marketing Club Monthly Showcase', description: 'Present your marketing campaigns and get feedback from peers and ambassadors.', date: '13 Jun 2026', time: '13:00 - 15:00', location: 'Teams Virtual', type: 'workshop', attendees: 28, status: 'upcoming', organizer: 'Rebecca Okonkwo' },
-  { id: 'ev-02', title: 'Summer Apprentice Social', description: 'End of year social event for all apprentices. Food, games, and networking.', date: '20 Jun 2026', time: '16:00 - 19:00', location: 'KBC Central London', type: 'social', attendees: 45, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-03', title: 'Leadership Workshop', description: 'Develop leadership skills with guest speaker Dr. Amara Okafor.', date: '15 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 22, status: 'upcoming', organizer: 'Sarah Chen' },
-  { id: 'ev-04', title: 'Coding Competition', description: 'Monthly coding challenge with prizes for top performers.', date: '10 Jun 2026', time: '09:00 - 17:00', location: 'Online Platform', type: 'competition', attendees: 18, status: 'ongoing', organizer: 'James Harrington' },
-  { id: 'ev-05', title: 'Employer Networking Night', description: 'Connect with employers and explore career opportunities.', date: '25 Jun 2026', time: '18:00 - 20:00', location: 'KBC Manchester Office', type: 'networking', attendees: 30, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-06', title: 'Quarterly Awards Ceremony', description: 'Celebrate top learners and achievements across all programmes.', date: '28 Jun 2026', time: '14:00 - 16:00', location: 'KBC Central London', type: 'celebration', attendees: 50, status: 'upcoming', organizer: 'Tom Harrington' },
-  { id: 'ev-07', title: 'AI in Marketing Deep Dive', description: 'Advanced workshop on AI tools for marketing professionals.', date: '5 Jun 2026', time: '10:00 - 12:00', location: 'Teams Virtual', type: 'workshop', attendees: 24, status: 'completed', organizer: 'Tom Whitfield' },
-  { id: 'ev-08', title: 'Project Controls Masterclass', description: 'Master project management tools and techniques with industry experts.', date: '2 Jun 2026', time: '14:00 - 16:00', location: 'Teams Virtual', type: 'workshop', attendees: 20, status: 'completed', organizer: 'James Harrington' },
-];
-
-const typeConfig: Record<string, { icon: string; bg: string; text: string }> = {
-  workshop: { icon: 'ri-presentation-line', bg: 'bg-primary-100', text: 'text-primary-700' },
-  social: { icon: 'ri-cake-line', bg: 'bg-accent-100', text: 'text-accent-700' },
-  networking: { icon: 'ri-group-line', bg: 'bg-secondary-100', text: 'text-secondary-700' },
-  competition: { icon: 'ri-trophy-line', bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  celebration: { icon: 'ri-star-line', bg: 'bg-amber-100', text: 'text-amber-700' },
+// Type drives each card's identity: medallion + a left accent strip.
+// Full literal class strings so Tailwind's JIT keeps them.
+const typeConfig: Record<string, { icon: string; bg: string; text: string; bar: string }> = {
+  workshop: { icon: 'ri-presentation-line', bg: 'bg-primary-100', text: 'text-primary-700', bar: 'bg-primary-400' },
+  social: { icon: 'ri-cake-line', bg: 'bg-accent-100', text: 'text-accent-700', bar: 'bg-accent-400' },
+  networking: { icon: 'ri-group-line', bg: 'bg-secondary-100', text: 'text-secondary-700', bar: 'bg-secondary-400' },
+  competition: { icon: 'ri-trophy-line', bg: 'bg-emerald-100', text: 'text-emerald-700', bar: 'bg-emerald-400' },
+  celebration: { icon: 'ri-star-line', bg: 'bg-amber-100', text: 'text-amber-700', bar: 'bg-amber-400' },
 };
+
+// The stored date is a display string ('13 Jun 2026'); convert it back to the
+// yyyy-mm-dd an <input type="date"> expects so Edit can prefill it.
+function toDateInputValue(display: string): string {
+  const d = new Date(display);
+  if (isNaN(d.getTime())) return '';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 interface EventFormData {
   title: string;
@@ -163,9 +153,20 @@ function validateForm(form: EventFormData): FormErrors {
 
 export default function EventsPage() {
   const navigate = useNavigate();
-  const [events, setEvents] = useState<Event[]>(INITIAL_EVENTS);
+  const { success, warning } = useToast();
+  const [events, setEvents] = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'upcoming' | 'ongoing' | 'completed'>('all');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEvents()
+      .then(data => { if (!cancelled) setEvents(data); })
+      .catch(err => { if (!cancelled) warning('Could not load events', err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
 
   // ADD modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -197,24 +198,26 @@ export default function EventsPage() {
     setShowAddModal(true);
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     const errs = validateForm(addForm);
     if (Object.keys(errs).length > 0) { setAddErrors(errs); return; }
-    const newEvent: Event = {
-      id: `ev-${String(events.length + 1).padStart(2, '0')}`,
-      title: addForm.title.trim(),
-      description: addForm.description.trim(),
-      date: new Date(addForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-      time: `${addForm.startTime} - ${addForm.endTime}`,
-      location: addForm.location.trim(),
-      type: addForm.type,
-      attendees: 0,
-      status: 'upcoming',
-      organizer: addForm.organizer.trim(),
-    };
-    setEvents(prev => [newEvent, ...prev]);
-    setAddSubmitted(true);
-    setTimeout(() => { setShowAddModal(false); setAddSubmitted(false); }, 700);
+    try {
+      const created = await createEvent({
+        title: addForm.title.trim(),
+        description: addForm.description.trim(),
+        date: new Date(addForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
+        time: `${addForm.startTime} - ${addForm.endTime}`,
+        location: addForm.location.trim(),
+        type: addForm.type,
+        organizer: addForm.organizer.trim(),
+      });
+      setEvents(prev => [created, ...prev]);
+      setAddSubmitted(true);
+      setTimeout(() => { setShowAddModal(false); setAddSubmitted(false); }, 700);
+      success(`Event "${created.title}" created`);
+    } catch (err: any) {
+      warning('Could not create event', err.message);
+    }
   }
 
   function openEditModal(event: Event) {
@@ -223,9 +226,9 @@ export default function EventsPage() {
     setEditForm({
       title: event.title,
       description: event.description,
-      date: '',
-      startTime: startTime || '',
-      endTime: endTime || '',
+      date: toDateInputValue(event.date),
+      startTime: (startTime || '').trim(),
+      endTime: (endTime || '').trim(),
       location: event.location,
       type: event.type,
       organizer: event.organizer,
@@ -234,30 +237,40 @@ export default function EventsPage() {
     setEditSubmitted(false);
   }
 
-  function handleEdit() {
+  async function handleEdit() {
     if (!editEventId) return;
     const errs = validateForm(editForm);
     if (Object.keys(errs).length > 0) { setEditErrors(errs); return; }
-    setEvents(prev => prev.map(e => {
-      if (e.id !== editEventId) return e;
-      return {
-        ...e,
+    try {
+      const updated = await updateEvent(editEventId, {
         title: editForm.title.trim(),
         description: editForm.description.trim(),
+        date: new Date(editForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
         time: `${editForm.startTime} - ${editForm.endTime}`,
         location: editForm.location.trim(),
         type: editForm.type,
         organizer: editForm.organizer.trim(),
-      };
-    }));
-    setEditSubmitted(true);
-    setTimeout(() => { setEditEventId(null); setEditSubmitted(false); }, 700);
+      });
+      setEvents(prev => prev.map(e => e.id === editEventId ? updated : e));
+      setEditSubmitted(true);
+      setTimeout(() => { setEditEventId(null); setEditSubmitted(false); }, 700);
+      success(`Event "${updated.title}" updated`);
+    } catch (err: any) {
+      warning('Could not update event', err.message);
+    }
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!deleteEventId) return;
-    setEvents(prev => prev.filter(e => e.id !== deleteEventId));
-    setDeleteEventId(null);
+    const removed = events.find(e => e.id === deleteEventId);
+    try {
+      await deleteEvent(deleteEventId);
+      setEvents(prev => prev.filter(e => e.id !== deleteEventId));
+      setDeleteEventId(null);
+      if (removed) warning(`Event "${removed.title}" deleted`);
+    } catch (err: any) {
+      warning('Could not delete event', err.message);
+    }
   }
 
   const eventToDelete = events.find(e => e.id === deleteEventId);
@@ -311,12 +324,23 @@ export default function EventsPage() {
           </button>
         </div>
 
+        {loading && <EventCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
+            <i className="ri-calendar-event-line text-2xl text-foreground-300"></i>
+            <p className="text-sm font-semibold text-foreground-700">No events match this view</p>
+            <p className="text-[11px] text-foreground-400">Try switching the status or type filter — or add a new event.</p>
+          </div>
+        )}
+
         {/* Event Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(event => {
-            const cfg = typeConfig[event.type] || { icon: 'ri-calendar-line', bg: 'bg-background-100', text: 'text-foreground-500' };
+            const cfg = typeConfig[event.type] || { icon: 'ri-calendar-line', bg: 'bg-background-100', text: 'text-foreground-500', bar: 'bg-foreground-300' };
             return (
-              <div key={event.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium hover:border-primary-200/50 transition-smooth">
+              <div key={event.id} className="relative bg-background-50 rounded-xl border border-foreground-200/60 p-4 pl-5 card-premium hover:border-primary-200/50 transition-smooth overflow-hidden">
+                <span className={`absolute inset-y-0 left-0 w-1 ${cfg.bar}`} aria-hidden="true"></span>
                 <div className="flex items-start gap-3 mb-3">
                   <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${cfg.bg} ${cfg.text}`}>
                     <i className={`${cfg.icon} text-sm`}></i>

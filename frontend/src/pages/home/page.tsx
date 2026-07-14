@@ -81,6 +81,8 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 export default function Home() {
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Enter a section directly — sign in as its demo account, then route in.
   const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
 
   // Enter a section directly — sign in as its demo account, then route in.
