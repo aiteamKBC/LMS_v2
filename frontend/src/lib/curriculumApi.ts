@@ -15,6 +15,7 @@ export interface CurriculumProgramme {
   level: string;
   status: CurriculumStatus;
   modules: number;
+  freeComponents?: number;
   weeks: number;
   ksbMapped: number;
   ksbTotal: number;
@@ -25,12 +26,14 @@ export interface CurriculumProgramme {
   owner: string;
   color: string;
   description: string;
+  structureType?: 'scheduled' | 'free' | string;
 }
 
 export interface CurriculumModule {
   id: string;
   sourceId: number | string;
   catalogueId?: string;
+  relatedCatalogueIds?: string[];
   name: string;
   programmeId?: string;
   programme: string;
@@ -73,6 +76,14 @@ export interface CurriculumComponent {
   week: string;
   duration: number;
   ksbRefs: string[];
+  ksbMappings?: Array<{
+    id: string;
+    ksbId: string;
+    code: string;
+    description: string;
+    type: string;
+    weight: number;
+  }>;
   status: 'published' | 'draft' | 'review';
   lastEdited: string;
   contentSections: number;
@@ -292,6 +303,35 @@ export interface CurriculumOverview {
   coaches?: CurriculumStaffProfile[];
 }
 
+export interface FreeProgrammeComponent {
+  id: string;
+  moduleId?: string;
+  displayOrder: number;
+  type: string;
+  title: string;
+  description: string;
+  expectedOtjh: number;
+  points: number;
+  reflectionRequired: boolean;
+  workplaceEvidenceRequired: boolean;
+  tutorValidationRequired: boolean;
+  settings?: Record<string, unknown>;
+}
+
+export interface FreeProgrammeModule {
+  id: string;
+  programmeId: string;
+  programmeName: string;
+  title: string;
+  description: string;
+  status: string;
+  color?: string;
+  displayOrder: number;
+  componentCount: number;
+  totalOtjh: number;
+  components: FreeProgrammeComponent[];
+}
+
 export interface CurriculumProgrammeDetail {
   schema: string;
   programme: CurriculumProgramme;
@@ -435,7 +475,7 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description' | 'structureType'>>;
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   startDate?: string;
   endDate?: string;
@@ -471,6 +511,19 @@ export type CurriculumModuleAttachmentInput = {
   notes?: string;
   holidays?: unknown[];
   linkedHolidays?: unknown[];
+};
+export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
+  id: string;
+  type: string;
+  settings?: Record<string, unknown>;
+};
+export type FreeProgrammeModuleInput = {
+  id?: string;
+  title: string;
+  description?: string;
+  status?: string;
+  color?: string;
+  components?: FreeProgrammeComponentInput[];
 };
 
 export function createCurriculumProgramme(input: CurriculumProgrammeInput) {
@@ -525,6 +578,14 @@ export function archiveCurriculumGroup(id: string) {
 
 export function attachCurriculumModulesToGroup(groupId: string, modules: CurriculumModuleAttachmentInput[]) {
   return patchJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, { modules });
+}
+
+export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {
+  return fetchCollection<FreeProgrammeModule>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, { signal });
+}
+
+export function saveFreeProgrammeModules(programmeId: string, input: { programmeName?: string; modules: FreeProgrammeModuleInput[] }) {
+  return patchJson<{ saved: boolean; programmeId: string; modules: FreeProgrammeModule[] }>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, input);
 }
 
 export function createGroupModule(groupId: string, input: CurriculumModuleAttachmentInput) {

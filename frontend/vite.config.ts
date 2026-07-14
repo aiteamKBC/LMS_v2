@@ -86,7 +86,7 @@ export default defineConfig({
     // same-origin (no CORS). Django runs on :8000 by default.
     proxy: {
       "/curriculum_api": {
-        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/coach_api": {

@@ -53,6 +53,10 @@ function programmeStatusLabel(status: string) {
   return bucket;
 }
 
+function programmeTypeBucket(programme: CurriculumProgramme) {
+  return String(programme.structureType || '').toLowerCase() === 'free' ? 'free' : 'normal';
+}
+
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
   return showCurriculumAlert({
     title,
@@ -66,9 +70,11 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
 export default function CurriculumProgrammes() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'normal' | 'free'>('all');
   const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
+  const [wizardProgramme, setWizardProgramme] = useState<CurriculumProgramme | undefined>();
   const [actionError, setActionError] = useState<string | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
   const [selectedArchivedIds, setSelectedArchivedIds] = useState<Set<string>>(new Set());
@@ -82,8 +88,10 @@ export default function CurriculumProgrammes() {
 
   const filtered = programmes.filter(p => {
     const status = programmeStatusBucket(p.status);
+    const type = programmeTypeBucket(p);
     const needle = search.toLowerCase();
     if (needle && !p.name.toLowerCase().includes(needle) && !p.standard.toLowerCase().includes(needle)) return false;
+    if (typeFilter !== 'all' && type !== typeFilter) return false;
     if (statusFilter === 'all') return status !== 'archived';
     if (status !== statusFilter) return false;
     return true;
@@ -93,6 +101,15 @@ export default function CurriculumProgrammes() {
   const planned = programmes.filter(p => programmeStatusBucket(p.status) === 'planned').length;
   const archived = programmes.filter(p => programmeStatusBucket(p.status) === 'archived').length;
   const liveProgrammes = programmes.filter(p => programmeStatusBucket(p.status) !== 'archived');
+  const typeCountProgrammes = programmes.filter(programme => (
+    statusFilter === 'all'
+      ? programmeStatusBucket(programme.status) !== 'archived'
+      : programmeStatusBucket(programme.status) === statusFilter
+  ));
+  const freeProgrammes = liveProgrammes.filter(programme => programmeTypeBucket(programme) === 'free').length;
+  const normalProgrammes = liveProgrammes.length - freeProgrammes;
+  const filteredTypeFreeProgrammes = typeCountProgrammes.filter(programme => programmeTypeBucket(programme) === 'free').length;
+  const filteredTypeNormalProgrammes = typeCountProgrammes.length - filteredTypeFreeProgrammes;
   const visibleProgrammes = liveProgrammes.length;
   const totalLearners = liveProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
   const totalCohorts = liveProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
@@ -108,8 +125,13 @@ export default function CurriculumProgrammes() {
     { key: 'planned', label: 'Planned', count: planned },
     { key: 'archived', label: 'Archive', count: archived },
   ];
+  const typeFilterOptions = [
+    { key: 'all' as const, label: 'All types', count: typeCountProgrammes.length },
+    { key: 'normal' as const, label: 'Normal', count: filteredTypeNormalProgrammes },
+    { key: 'free' as const, label: 'Free', count: filteredTypeFreeProgrammes },
+  ];
   const pageSubtitle = `${visibleProgrammes} programmes - ${active} active - ${planned} planned - ${archived} archived - ${totalLearners} learners`;
-  const heroSummary = <><strong>{visibleProgrammes} programmes</strong> - {active} active - {planned} planned - {totalCohorts} cohorts</>;
+  const heroSummary = <><strong>{visibleProgrammes} programmes</strong> - {normalProgrammes} normal - {freeProgrammes} free - {totalCohorts} cohorts</>;
 
   const archivedFiltered = filtered.filter(programme => programmeStatusBucket(programme.status) === 'archived');
   const selectedArchivedProgrammes = archivedFiltered.filter(programme => selectedArchivedIds.has(programme.sourceId || programme.id));
@@ -118,7 +140,14 @@ export default function CurriculumProgrammes() {
   const openEdit = (programme: CurriculumProgramme) => {
     setActionError(null);
     setWizardProgrammeId(programme.sourceId || programme.id);
+    setWizardProgramme(programme);
     setWizardOpen(true);
+  };
+
+  const closeWizard = () => {
+    setWizardOpen(false);
+    setWizardProgrammeId(undefined);
+    setWizardProgramme(undefined);
   };
 
   const deleteProgramme = async (programme: CurriculumProgramme) => {
@@ -195,7 +224,7 @@ export default function CurriculumProgrammes() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={() => { setWizardProgrammeId(undefined); setWizardOpen(true); }}
+                  onClick={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
                   <i className="ri-add-line text-base"></i>
@@ -233,7 +262,7 @@ export default function CurriculumProgrammes() {
         )}
 
         <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
               <input
@@ -259,6 +288,19 @@ export default function CurriculumProgrammes() {
                 >
                   {f.label}
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${statusFilter === f.key ? 'bg-primary-50 text-primary-700' : 'bg-background-200 text-foreground-500'}`}>{f.count}</span>
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-1 rounded-xl bg-background-100 p-1">
+              {typeFilterOptions.map(option => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setTypeFilter(option.key)}
+                  className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-[11px] font-bold transition-smooth ${typeFilter === option.key ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}
+                >
+                  {option.label}
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${typeFilter === option.key ? 'bg-primary-50 text-primary-700' : 'bg-background-200 text-foreground-500'}`}>{option.count}</span>
                 </button>
               ))}
             </div>
@@ -302,10 +344,16 @@ export default function CurriculumProgrammes() {
             {filtered.map(prog => {
             const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
             const status = programmeStatusBucket(prog.status);
+            const programmeType = programmeTypeBucket(prog);
+            const isFreeProgramme = programmeType === 'free';
+            const typeLabel = isFreeProgramme ? 'Free programme' : 'Normal programme';
+            const moduleMetricLabel = isFreeProgramme ? 'Free modules' : 'Modules';
+            const sessionsMetricLabel = isFreeProgramme ? 'Components' : 'Sessions';
+            const sessionsMetricValue = isFreeProgramme ? String(prog.freeComponents ?? prog.weeks ?? 0) : `${prog.weeks}`;
             const archivedKey = prog.sourceId || prog.id;
             const isArchivedSelected = selectedArchivedIds.has(archivedKey);
             return (
-              <article key={prog.id} className={`group relative overflow-hidden rounded-2xl border bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-lg ${isArchivedSelected ? 'border-red-300 ring-2 ring-red-100' : 'border-foreground-200/70 hover:border-primary-200/80'}`}>
+              <article key={prog.id} className={`group relative overflow-hidden rounded-2xl border bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-lg ${isArchivedSelected ? 'border-red-300 ring-2 ring-red-100' : isFreeProgramme ? 'border-primary-200/80 ring-1 ring-primary-100/70 hover:border-primary-300' : 'border-foreground-200/70 hover:border-primary-200/80'}`}>
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
                 {status === 'archived' && statusFilter === 'archived' && (
                   <button
@@ -325,6 +373,10 @@ export default function CurriculumProgrammes() {
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">{prog.standard} - {prog.level || 'Level not set'}</p>
+                      <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${isFreeProgramme ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-100' : 'bg-slate-50 text-slate-600 ring-1 ring-slate-200'}`}>
+                        <i className={`${isFreeProgramme ? 'ri-layout-masonry-line' : 'ri-calendar-event-line'} text-[10px]`}></i>
+                        {typeLabel}
+                      </span>
                     </div>
                   </div>
                   <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${status === 'archived' && statusFilter === 'archived' ? 'mr-9' : ''} ${status === 'active' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/70' : status === 'planned' ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/70' : 'bg-background-100 text-foreground-500 ring-1 ring-background-200'}`}>{programmeStatusLabel(prog.status)}</span>
@@ -332,8 +384,8 @@ export default function CurriculumProgrammes() {
                 <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
-                  <Metric label="Modules" value={String(prog.modules)} />
-                  <Metric label="Sessions" value={`${prog.weeks}`} />
+                  <Metric label={moduleMetricLabel} value={String(prog.modules)} />
+                  <Metric label={sessionsMetricLabel} value={sessionsMetricValue} />
                   <Metric label="Learners" value={String(prog.learners)} />
                   <div className="col-span-2 sm:col-span-5">
                     <p className="text-[9px] text-foreground-400 uppercase">KSB Mapping</p>
@@ -376,9 +428,9 @@ export default function CurriculumProgrammes() {
         ) : (
           <ProgrammesEmptyState
             archivedMode={statusFilter === 'archived'}
-            hasSearch={Boolean(search.trim())}
-            onClear={() => { setSearch(''); setStatusFilter('all'); }}
-            onCreate={() => { setWizardProgrammeId(undefined); setWizardOpen(true); }}
+            hasSearch={Boolean(search.trim()) || typeFilter !== 'all'}
+            onClear={() => { setSearch(''); setStatusFilter('all'); setTypeFilter('all'); }}
+            onCreate={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
           />
         )}
 
@@ -389,12 +441,21 @@ export default function CurriculumProgrammes() {
             onSaved={reload}
             onOpenAddStructure={() => {
               setWizardProgrammeId(editingProgramme.sourceId || editingProgramme.id);
+              setWizardProgramme(editingProgramme);
               setEditingProgramme(null);
               setWizardOpen(true);
             }}
           />
         )}
-        <AddCurriculumStructureWizard isOpen={wizardOpen} onClose={() => setWizardOpen(false)} onSaved={reload} initialProgrammeId={wizardProgrammeId} startStep={wizardProgrammeId ? 'cohort' : 'programme'} />
+        <AddCurriculumStructureWizard
+          key={wizardOpen ? `wizard-${wizardProgrammeId || 'new'}` : 'wizard-closed'}
+          isOpen={wizardOpen}
+          onClose={closeWizard}
+          onSaved={reload}
+          initialProgrammeId={wizardProgrammeId}
+          initialProgramme={wizardProgramme}
+          startStep="programme"
+        />
         <ArchiveConfirmDialog
           open={Boolean(archiveTarget)}
           title="Archive programme?"

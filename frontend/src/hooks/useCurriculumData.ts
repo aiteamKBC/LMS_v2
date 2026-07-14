@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchCurriculumComponents, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
+import { fetchCurriculumComponents, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
 
 export function useCurriculumData() {
   const [data, setData] = useState<CurriculumOverview | null>(null);
@@ -12,11 +12,12 @@ export function useCurriculumData() {
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const [overview, components] = await Promise.all([
+      const [overview, modules, components] = await Promise.all([
         fetchCurriculumOverview(signal),
+        fetchCurriculumModules(signal).catch(() => []),
         fetchCurriculumComponents(signal).catch(() => []),
       ]);
-      const result: CurriculumOverview = { ...overview, components };
+      const result: CurriculumOverview = { ...overview, modules: modules.length ? modules : overview.modules, components };
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
       setData(result);
       setError(null);

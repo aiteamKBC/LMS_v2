@@ -160,10 +160,9 @@ else:
         }
     }
 
-# Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
-_enrolment_database_url = os.environ.get('ENROLMENT_DATABASE_URL') or os.environ.get('Database_url')
-if _enrolment_database_url:
-    DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+_database_url = os.environ.get('Database_url') or os.environ.get('DATABASE_URL')
+if _database_url:
+    DATABASES['enrolment'] = database_from_url(_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
