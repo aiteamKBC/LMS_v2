@@ -100,6 +100,7 @@ INSTALLED_APPS = [
     'coach_api',
     'learner_api',
     'curriculum_api',
+    'engagement_api',
 ]
 
 MIDDLEWARE = [

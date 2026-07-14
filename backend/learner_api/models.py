@@ -147,7 +147,6 @@ class ActiveUser(models.Model):
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
-<<<<<<< HEAD
     completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
     target_hours = models.TextField(db_column="Target_hours", null=True, blank=True)
     minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
@@ -158,7 +157,6 @@ class ActiveUser(models.Model):
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
     planned_hours = models.TextField(db_column="planned_hours", null=True, blank=True)
-=======
     # Coach contact, set per-learner on the delivery "Enrolled learners" page and
     # stored on the mirror only. Preserved across re-syncs because sync_active_user
     # uses UPDATE with a fixed field list that excludes these (see active_users.py);
@@ -183,7 +181,6 @@ class ActiveUser(models.Model):
     # RAG status derived from progress_variance: "On track" (> -5%),
     # "Need attention" (-15% < v <= -5%), "At risk" (v <= -15%).
     otjh_status = models.TextField(db_column="OTJHoursStatus", null=True, blank=True)
->>>>>>> origin/main
 
     # --- json columns (SafeJSONField: psycopg3 pre-parses json) ---
     # Structured plan: [{moduleId, moduleTitle, weeks: [{weekId, weekTitle,
@@ -192,13 +189,11 @@ class ActiveUser(models.Model):
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
-<<<<<<< HEAD
     # Quiz attempts: [{week, attempt, grade, Score, module, passed, quizId, quizName,
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
     # — appended to by learner_api.quizzes.submit_quiz_attempt.
     weekly_quizzes = SafeJSONField(db_column="Weekly_Quizzes", null=True, blank=True)
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
-=======
     # Chronological activity log (newest appended last). Each entry:
     # {kind:'quiz'|'video', action, title, detail, at, quizId?/componentId?, week, module}.
     # Appended when a learner finishes a component (quizzes.py / videos.py).
@@ -212,7 +207,6 @@ class ActiveUser(models.Model):
     # Appended to by learner_api.quizzes.submit_quiz_attempt and
     # learner_api.videos.submit_video_progress.
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
->>>>>>> origin/main
 
     class Meta:
         managed = False
@@ -224,7 +218,6 @@ class ActiveUser(models.Model):
 
 
 class UnactiveUser(models.Model):
-<<<<<<< HEAD
     """Unmanaged mapping of "Learner"."Unactive_users"."""
 
     id = models.AutoField(primary_key=True, db_column="id")
@@ -250,7 +243,6 @@ class UnactiveUser(models.Model):
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
-=======
     """Unmanaged mapping of "Learner"."Unactive_users" — the archive for learners
     whose programme status is NOT Active.
 
@@ -279,7 +271,6 @@ class UnactiveUser(models.Model):
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
->>>>>>> origin/main
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
 
     class Meta:
@@ -287,8 +278,4 @@ class UnactiveUser(models.Model):
         db_table = 'Learner"."Unactive_users'
 
     def __str__(self):
-<<<<<<< HEAD
-        return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
-=======
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.status or '?'}]"
->>>>>>> origin/main
