@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { VOUCHER_CLAIMS, ENGAGEMENT_REWARDS, type RewardItem } from '@/mocks/engagement-data';
+import { type RewardItem, type VoucherClaim } from '@/mocks/engagement-data';
+import { fetchRewards, fetchVoucherClaims, createReward, updateReward } from '@/api/engagement';
+import { RewardCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -132,7 +134,11 @@ function RewardForm({
 export default function RewardsShopPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
-  const [rewards, setRewards] = useState<RewardItem[]>(ENGAGEMENT_REWARDS);
+  const [rewards, setRewards] = useState<RewardItem[]>([]);
+  // Claims are read-only here — used only to populate the per-reward Stats
+  // modal's "Recent Claims" list. The Voucher Claims page owns the workflow.
+  const [claims, setClaims] = useState<VoucherClaim[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'digital' | 'physical'>('all');
@@ -149,6 +155,20 @@ export default function RewardsShopPage() {
   const [editErrors, setEditErrors] = useState<FormErrors>({});
 
   const [statsRewardId, setStatsRewardId] = useState<string | null>(null);
+
+  // Load the catalogue + claims from the backend on mount.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([fetchRewards(), fetchVoucherClaims()])
+      .then(([rewardsData, claimsData]) => {
+        if (cancelled) return;
+        setRewards(rewardsData);
+        setClaims(claimsData);
+      })
+      .catch(err => { if (!cancelled) warning('Could not load rewards', err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
 
   const categories = useMemo(() => Array.from(new Set(rewards.map(r => r.category))).sort(), [rewards]);
   const totalClaimed = rewards.reduce((s, r) => s + r.totalClaimed, 0);
@@ -188,22 +208,24 @@ export default function RewardsShopPage() {
     setShowAddModal(true);
   }
 
-  function handleAdd() {
+  async function handleAdd() {
     const errs = validateForm(addForm);
     if (Object.keys(errs).length > 0) { setAddErrors(errs); return; }
     const name = addForm.name.trim();
     const points = addForm.points;
     const category = addForm.category.trim();
-    setRewards(prev => [{
-      // Counter derived from the current list, not Date.now() — two creations
-      // in the same millisecond would otherwise generate the same id.
-      id: `rw-new-${prev.length + 1}`,
-      name, description: addForm.description.trim(), points,
-      category, deliveryType: addForm.deliveryType, stock: addForm.stock, popular: addForm.popular, active: addForm.active,
-      totalClaimed: 0, image: addForm.image.trim() || DEFAULT_REWARD_IMAGE,
-    }, ...prev]);
-    setShowAddModal(false);
-    success(`Reward "${name}" created`, `${points} pts · ${category}`);
+    try {
+      const created = await createReward({
+        name, description: addForm.description.trim(), points,
+        category, deliveryType: addForm.deliveryType, stock: addForm.stock,
+        image: addForm.image.trim() || DEFAULT_REWARD_IMAGE, popular: addForm.popular, active: addForm.active,
+      });
+      setRewards(prev => [created, ...prev]);
+      setShowAddModal(false);
+      success(`Reward "${name}" created`, `${points} pts · ${category}`);
+    } catch (err: any) {
+      warning('Could not create reward', err.message);
+    }
   }
 
   function openEditModal(reward: RewardItem) {
@@ -212,22 +234,37 @@ export default function RewardsShopPage() {
     setEditRewardId(reward.id);
   }
 
-  function handleEdit() {
+  async function handleEdit() {
     const errs = validateForm(editForm);
     if (Object.keys(errs).length > 0) { setEditErrors(errs); return; }
-    setRewards(prev => prev.map(r => r.id === editRewardId ? { ...r, ...editForm, name: editForm.name.trim(), description: editForm.description.trim(), category: editForm.category.trim(), image: editForm.image.trim() || DEFAULT_REWARD_IMAGE } : r));
-    setEditRewardId(null);
-    success(`Reward "${editForm.name.trim()}" updated`);
+    if (!editRewardId) return;
+    try {
+      const updated = await updateReward(editRewardId, {
+        name: editForm.name.trim(), description: editForm.description.trim(), points: editForm.points,
+        category: editForm.category.trim(), deliveryType: editForm.deliveryType, stock: editForm.stock,
+        image: editForm.image.trim() || DEFAULT_REWARD_IMAGE, popular: editForm.popular, active: editForm.active,
+      });
+      setRewards(prev => prev.map(r => r.id === editRewardId ? updated : r));
+      setEditRewardId(null);
+      success(`Reward "${editForm.name.trim()}" updated`);
+    } catch (err: any) {
+      warning('Could not update reward', err.message);
+    }
   }
 
-  function toggleActive(reward: RewardItem) {
+  async function toggleActive(reward: RewardItem) {
     const nextActive = !reward.active;
-    setRewards(prev => prev.map(r => r.id === reward.id ? { ...r, active: nextActive } : r));
-    (nextActive ? success : warning)(`Reward "${reward.name}" ${nextActive ? 'shown in' : 'hidden from'} the shop`);
+    try {
+      const updated = await updateReward(reward.id, { active: nextActive });
+      setRewards(prev => prev.map(r => r.id === reward.id ? updated : r));
+      (nextActive ? success : warning)(`Reward "${reward.name}" ${nextActive ? 'shown in' : 'hidden from'} the shop`);
+    } catch (err: any) {
+      warning('Could not update reward', err.message);
+    }
   }
 
   const statsReward = rewards.find(r => r.id === statsRewardId) ?? null;
-  const statsClaims = statsReward ? VOUCHER_CLAIMS.filter(c => c.reward === statsReward.name) : [];
+  const statsClaims = statsReward ? claims.filter(c => c.reward === statsReward.name) : [];
 
   return (
     <WorkspaceShell
@@ -310,7 +347,9 @@ export default function RewardsShopPage() {
           ))}
         </div>
 
-        {filtered.length === 0 && (
+        {loading && <RewardCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
             <i className="ri-search-line text-2xl text-foreground-300"></i>
             <p className="text-sm font-semibold text-foreground-700">No rewards match this view</p>
@@ -318,7 +357,7 @@ export default function RewardsShopPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
           {filtered.map(reward => (
             <div key={reward.id} className={`bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden card-premium hover:border-primary-200/50 transition-smooth ${reward.active ? '' : 'opacity-60'}`}>
               <div className="relative h-32 bg-background-100">

@@ -3,18 +3,22 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
+import { useToast } from '@/hooks/useToast';
+import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
 import { roleNavMap } from '@/mocks/navigation';
 import {
-  ENGAGEMENT_LEARNERS as ROSTER, VOUCHER_CLAIMS,
+  ENGAGEMENT_LEARNERS as ROSTER,
   countByProgramme, filterByProgramme, type ProgrammeCode, type ProgrammeFilterValue,
 } from '@/mocks/engagement-data';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, ScatterChart, Scatter, ZAxis, ReferenceLine } from 'recharts';
 
 const engagementNav = roleNavMap.engagement;
 
 type TabKey = 'overview' | 'attendance' | 'engagement';
 
 interface EngagementLearner {
+  id: string;
   name: string;
   avatarImg?: string;
   programmeCode: ProgrammeCode;
@@ -34,17 +38,13 @@ interface EngagementLearner {
 // All dashboard datasets derive from the shared engagement roster + event
 // arrays (single source of truth), so programmes stay consistent across pages.
 const ENGAGEMENT_LEARNERS: EngagementLearner[] = ROSTER.map(l => ({
-  name: l.name, avatarImg: l.avatarImg, programmeCode: l.programmeCode, programme: l.programme, cohort: l.cohort,
+  id: l.id, name: l.name, avatarImg: l.avatarImg, programmeCode: l.programmeCode, programme: l.programme, cohort: l.cohort,
   engagementScore: l.engagementScore, attendanceRate: l.attendanceRate, lastActive: l.lastActive,
   riskLevel: l.riskLevel, trend: l.trend, flags: l.flags, points: l.overallPoints, pointsThisMonth: l.pointsThisMonth,
   monthlyTrend: l.monthlyStatus === 'rising' ? 'up' : l.monthlyStatus === 'falling' ? 'down' : 'stable',
 }));
 
 const TOP_LEARNERS = [...ENGAGEMENT_LEARNERS].sort((a, b) => b.points - a.points);
-
-const PENDING_VOUCHER_CLAIMS = VOUCHER_CLAIMS
-  .filter(v => v.status === 'pending')
-  .map(v => ({ id: v.id, learner: v.learner, avatarImg: v.avatarImg, programmeCode: v.programmeCode, programme: v.programme, reward: v.reward, points: v.points, requestedAt: v.requestedAt, deliveryMethod: v.deliveryMethod }));
 
 // Learners whose attendance is a concern (below 90% or a worsening trend).
 const ATTENDANCE_RISK = ROSTER
@@ -92,46 +92,118 @@ const ATTENDANCE_TREND_DATA = [
   { week: 'Wk 10', attendance: 83, target: 90 },
 ];
 
-const ENGAGEMENT_DISTRIBUTION = [
-  { range: '0-20%', count: 1, fill: '#ef4444' },
-  { range: '21-40%', count: 2, fill: '#f97316' },
-  { range: '41-60%', count: 4, fill: '#eab308' },
-  { range: '61-80%', count: 12, fill: '#22c55e' },
-  { range: '81-100%', count: 6, fill: '#10b981' },
-];
+const PROGRAMME_LABELS: Record<ProgrammeCode, string> = {
+  PCP: 'Project Control', APM: 'Acc. Project Manager', MM: 'Marketing Management', ME: 'Marketing Execution',
+};
 
-const OTJH_PROGRESS_DATA = [
-  { name: 'On Track', value: 38, color: '#22c55e' },
-  { name: 'Slightly Behind', value: 12, color: '#eab308' },
-  { name: 'Significantly Behind', value: 6, color: '#f97316' },
-  { name: 'At Risk', value: 3, color: '#ef4444' },
-];
+function average(values: number[]) {
+  return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : 0;
+}
 
-const CLUB_ACTIVITY_DATA = [
-  { subject: 'Attendance', Marketing: 85, Leadership: 78, AI: 92, Career: 70, Sustainability: 65, Project: 80, British: 75 },
-  { subject: 'Contributions', Marketing: 90, Leadership: 82, AI: 88, Career: 75, Sustainability: 60, Project: 85, British: 70 },
-  { subject: 'New Members', Marketing: 75, Leadership: 65, AI: 80, Career: 70, Sustainability: 55, Project: 72, British: 68 },
-  { subject: 'Events Held', Marketing: 80, Leadership: 70, AI: 85, Career: 60, Sustainability: 50, Project: 75, British: 65 },
-  { subject: 'Points Earned', Marketing: 95, Leadership: 88, AI: 90, Career: 72, Sustainability: 58, Project: 82, British: 74 },
-];
+function scatterStatus(attendance: number, engagement: number) {
+  if (attendance < 75 || engagement < 40) return { label: 'Priority', color: '#ef4444' };
+  if (attendance < 90 || engagement < 70) return { label: 'Watch', color: '#f59e0b' };
+  return { label: 'On track', color: '#22c55e' };
+}
 
-const CLUB_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899'];
+function LearnerScatterDot({ cx, cy, payload }: any) {
+  if (typeof cx !== 'number' || typeof cy !== 'number') return null;
+  const status = payload?.status ?? scatterStatus(payload?.attendance ?? 0, payload?.engagement ?? 0);
+  return (
+    <g>
+      <circle cx={cx} cy={cy} r={7} fill={status.color} fillOpacity={0.14} />
+      <circle cx={cx} cy={cy} r={4.5} fill={status.color} stroke="#ffffff" strokeWidth={2} />
+    </g>
+  );
+}
 
 export default function EngagementDashboard() {
   const navigate = useNavigate();
+  const { success, warning } = useToast();
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
+  const [selectedChampionId, setSelectedChampionId] = useState<string | null>(null);
+
+  // Voucher claims are real engagement_api data (unlike the learner-stats
+  // sections below, which stay mocked — per-learner stats are owned by
+  // another team). Loads on mount; the mock arrays already show what this
+  // table looks like once real claims exist.
+  const [voucherClaims, setVoucherClaims] = useState<Awaited<ReturnType<typeof fetchVoucherClaims>>>([]);
+  const [claimsLoading, setClaimsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchVoucherClaims()
+      .then(data => { if (!cancelled) setVoucherClaims(data); })
+      .catch(err => { if (!cancelled) warning('Could not load voucher claims', err.message); })
+      .finally(() => { if (!cancelled) setClaimsLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
+
+  async function approveClaim(id: string, learner: string) {
+    try {
+      const updated = await updateVoucherClaim(id, { status: 'approved', reviewedBy: 'Tom Harrington' });
+      setVoucherClaims(prev => prev.map(c => c.id === id ? updated : c));
+      success(`Claim approved for ${learner}`);
+    } catch (err: any) {
+      warning('Could not approve claim', err.message);
+    }
+  }
+
+  async function rejectClaim(id: string, learner: string) {
+    try {
+      const updated = await updateVoucherClaim(id, { status: 'rejected', reviewedBy: 'Tom Harrington' });
+      setVoucherClaims(prev => prev.map(c => c.id === id ? updated : c));
+      warning(`Claim rejected for ${learner}`);
+    } catch (err: any) {
+      warning('Could not reject claim', err.message);
+    }
+  }
 
   const programmeCounts = countByProgramme(ENGAGEMENT_LEARNERS);
   const filteredLearners = filterByProgramme(ENGAGEMENT_LEARNERS, programmeFilter);
+  const filteredRoster = filterByProgramme(ROSTER, programmeFilter);
   const filteredTopLearners = [...filteredLearners].sort((a, b) => b.points - a.points);
   const filteredAttendanceRisk = filterByProgramme(ATTENDANCE_RISK, programmeFilter);
-  const filteredVoucherClaims = filterByProgramme(PENDING_VOUCHER_CLAIMS, programmeFilter);
+  const pendingClaims = voucherClaims.filter(c => c.status === 'pending');
+  const filteredVoucherClaims = filterByProgramme(pendingClaims, programmeFilter);
 
   const redRiskCount = filteredLearners.filter(l => l.riskLevel === 'red').length;
   const amberRiskCount = filteredLearners.filter(l => l.riskLevel === 'amber').length;
   const greenRiskCount = filteredLearners.filter(l => l.riskLevel === 'green').length;
   const avgEngagement = filteredLearners.length ? Math.round(filteredLearners.reduce((sum, l) => sum + l.engagementScore, 0) / filteredLearners.length) : 0;
+  const filteredEngagementDistribution = [
+    { range: '0–20%', count: filteredLearners.filter(l => l.engagementScore <= 20).length, fill: '#ef4444' },
+    { range: '21–40%', count: filteredLearners.filter(l => l.engagementScore > 20 && l.engagementScore <= 40).length, fill: '#f97316' },
+    { range: '41–60%', count: filteredLearners.filter(l => l.engagementScore > 40 && l.engagementScore <= 60).length, fill: '#eab308' },
+    { range: '61–80%', count: filteredLearners.filter(l => l.engagementScore > 60 && l.engagementScore <= 80).length, fill: '#22c55e' },
+    { range: '81–100%', count: filteredLearners.filter(l => l.engagementScore > 80).length, fill: '#10b981' },
+  ];
+  const filteredOtjhProgress = [
+    { name: 'On Track', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.9).length, color: '#22c55e' },
+    { name: 'Slightly Behind', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.75 && l.otjhHours / l.otjhTarget < 0.9).length, color: '#eab308' },
+    { name: 'Significantly Behind', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget >= 0.5 && l.otjhHours / l.otjhTarget < 0.75).length, color: '#f97316' },
+    { name: 'At Risk', value: filteredRoster.filter(l => l.otjhHours / l.otjhTarget < 0.5).length, color: '#ef4444' },
+  ];
+  const otjhOnTrack = filteredOtjhProgress[0].value;
+  const riskBreakdown = [
+    { name: 'On track', value: greenRiskCount, color: '#22c55e' },
+    { name: 'Amber risk', value: amberRiskCount, color: '#f59e0b' },
+    { name: 'Red risk', value: redRiskCount, color: '#ef4444' },
+  ];
+  const engagementDrivers = [
+    { name: 'Attendance', value: average(filteredRoster.map(l => l.attendanceRate)) },
+    { name: 'Evidence', value: average(filteredRoster.map(l => l.evidenceTarget ? (l.evidenceSubmitted / l.evidenceTarget) * 100 : 0)) },
+    { name: 'OTJH', value: average(filteredRoster.map(l => l.otjhTarget ? (l.otjhHours / l.otjhTarget) * 100 : 0)) },
+    { name: 'Quiz', value: average(filteredRoster.map(l => l.quizAverage)) },
+    { name: 'KSB', value: average(filteredRoster.map(l => l.ksbProgress)) },
+    { name: 'Messages', value: average(filteredRoster.map(l => l.messageResponse)) },
+  ];
+  const programmeComparison = (['PCP', 'APM', 'MM', 'ME'] as ProgrammeCode[]).map(code => {
+    const learners = filteredRoster.filter(l => l.programmeCode === code);
+    return { name: PROGRAMME_LABELS[code], engagement: average(learners.map(l => l.engagementScore)), attendance: average(learners.map(l => l.attendanceRate)), learnerCount: learners.length };
+  }).filter(programme => programme.learnerCount > 0);
+  const learnerScatter = filteredRoster.map(learner => ({ name: learner.name, attendance: learner.attendanceRate, engagement: learner.engagementScore, programme: learner.programme, status: scatterStatus(learner.attendanceRate, learner.engagementScore) }));
 
   return (
     <WorkspaceShell
@@ -219,7 +291,7 @@ export default function EngagementDashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* Course Champions Podium — right on desktop */}
               <div className="lg:order-2">
-                <CourseChampionsPodium champions={filteredTopLearners.slice(0, 3)} onViewAll={() => navigate('/engagement/recognition')} />
+                <CourseChampionsPodium champions={filteredTopLearners.slice(0, 3)} onViewAll={() => navigate('/engagement/recognition')} onOpenProfile={setSelectedChampionId} />
               </div>
 
               {/* Top Learners Leaderboard — left on desktop */}
@@ -351,7 +423,10 @@ export default function EngagementDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredVoucherClaims.length === 0 && (
+                    {claimsLoading && (
+                      <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">Loading voucher claims…</td></tr>
+                    )}
+                    {!claimsLoading && filteredVoucherClaims.length === 0 && (
                       <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">No voucher claims for this programme.</td></tr>
                     )}
                     {filteredVoucherClaims.map(claim => (
@@ -371,8 +446,8 @@ export default function EngagementDashboard() {
                         <td className="px-5 py-3 text-[11px] text-foreground-400">{claim.deliveryMethod}</td>
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
-                            <button className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-smooth cursor-pointer whitespace-nowrap">Approve</button>
-                            <button className="px-3 py-1.5 bg-red-500/10 text-red-700 rounded-lg text-[10px] font-bold hover:bg-red-500/20 transition-smooth cursor-pointer whitespace-nowrap">Reject</button>
+                            <button onClick={() => approveClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-emerald-500/10 text-emerald-700 rounded-lg text-[10px] font-bold hover:bg-emerald-500/20 transition-smooth cursor-pointer whitespace-nowrap">Approve</button>
+                            <button onClick={() => rejectClaim(claim.id, claim.learner)} className="px-3 py-1.5 bg-red-500/10 text-red-700 rounded-lg text-[10px] font-bold hover:bg-red-500/20 transition-smooth cursor-pointer whitespace-nowrap">Reject</button>
                           </div>
                         </td>
                       </tr>
@@ -391,14 +466,14 @@ export default function EngagementDashboard() {
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Trends</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Weekly attendance rate vs 90% target</p>
                   </div>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">Last 10 weeks</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">Last 10 weeks</span>
                 </div>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={ATTENDANCE_TREND_DATA} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
                     <XAxis dataKey="week" tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
                     <YAxis domain={[60, 100]} tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
+                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
                     <Line type="monotone" dataKey="target" stroke="var(--foreground-300)" strokeDasharray="5 5" strokeWidth={1.5} dot={false} name="Target 90%" />
                     <Line type="monotone" dataKey="attendance" stroke="oklch(var(--primary-500))" strokeWidth={2.5} dot={{ r: 3, fill: 'oklch(var(--primary-500))' }} activeDot={{ r: 5 }} name="Attendance" />
                   </LineChart>
@@ -412,16 +487,16 @@ export default function EngagementDashboard() {
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Engagement Score Distribution</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Learners by engagement score range</p>
                   </div>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{ENGAGEMENT_DISTRIBUTION.reduce((s, d) => s + d.count, 0)} learners</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{filteredLearners.length} learners</span>
                 </div>
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={ENGAGEMENT_DISTRIBUTION} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                  <BarChart data={filteredEngagementDistribution} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
                     <XAxis dataKey="range" tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={{ stroke: 'var(--background-200)' }} tickLine={false} />
                     <YAxis tick={{ fontSize: 11, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
+                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
                     <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Learners">
-                      {ENGAGEMENT_DISTRIBUTION.map((entry, index) => (
+                      {filteredEngagementDistribution.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.fill} />
                       ))}
                     </Bar>
@@ -430,8 +505,8 @@ export default function EngagementDashboard() {
               </div>
             </div>
 
-            {/* Charts Row 2 - OTJH Pie + Club Radar */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* OTJH progress */}
+            <div className="w-full">
               {/* OTJH Progress Pie Chart */}
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-4">
@@ -439,12 +514,12 @@ export default function EngagementDashboard() {
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">OTJH Progress</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Learners by off-the-job training progress status</p>
                   </div>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">59 learners</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{otjhOnTrack} on track</span>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
                     <Pie
-                      data={OTJH_PROGRESS_DATA}
+                      data={filteredOtjhProgress}
                       cx="50%"
                       cy="50%"
                       innerRadius={60}
@@ -453,39 +528,122 @@ export default function EngagementDashboard() {
                       dataKey="value"
                       stroke="none"
                     >
-                      {OTJH_PROGRESS_DATA.map((entry, index) => (
+                      {filteredOtjhProgress.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
+                    <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-2xl font-semibold">{filteredRoster.length}</text>
+                    <text x="50%" y="58%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-400 text-[10px]">learners</text>
+                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
                     <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '11px' }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
 
-              {/* Club Activity Radar Chart */}
+            </div>
+
+            {/* Actionable insight charts */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+              {/* Risk breakdown */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Risk Breakdown</h3>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">Current learner risk distribution</p>
+                  </div>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">{filteredRoster.length} learners</span>
+                </div>
+                <div className="flex items-center gap-5">
+                  <ResponsiveContainer width="48%" height={190}>
+                    <PieChart>
+                      <Pie data={riskBreakdown} dataKey="value" innerRadius={48} outerRadius={72} paddingAngle={3} stroke="none">
+                        {riskBreakdown.map(entry => <Cell key={entry.name} fill={entry.color} />)}
+                      </Pie>
+                      <text x="50%" y="47%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-900 text-xl font-semibold">{filteredRoster.length}</text>
+                      <text x="50%" y="59%" textAnchor="middle" dominantBaseline="middle" className="fill-foreground-400 text-[9px]">learners</text>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="flex-1 space-y-3">
+                    {riskBreakdown.map(entry => (
+                      <div key={entry.name} className="flex items-center justify-between text-[11px]">
+                        <span className="flex items-center gap-2 text-foreground-500"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></span>{entry.name}</span>
+                        <span className="font-semibold text-foreground-800">{entry.value} <span className="font-normal text-foreground-400">({filteredRoster.length ? Math.round(entry.value / filteredRoster.length * 100) : 0}%)</span></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Engagement drivers */}
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Club Activity</h3>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">Performance across learner clubs by dimension</p>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Engagement Drivers</h3>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">Average performance across key signals</p>
                   </div>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">7 clubs</span>
+                  <span className="text-[10px] text-foreground-500 bg-background-100 px-2 py-1 rounded-full">0–100%</span>
                 </div>
-                <ResponsiveContainer width="100%" height={240}>
-                  <RadarChart data={CLUB_ACTIVITY_DATA} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
-                    <PolarGrid stroke="var(--background-200)" />
-                    <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9, fill: 'var(--foreground-400)' }} />
-                    <Radar name="Marketing" dataKey="Marketing" stroke="#ef4444" fill="#ef4444" fillOpacity={0.1} strokeWidth={1.5} />
-                    <Radar name="Leadership" dataKey="Leadership" stroke="#f97316" fill="#f97316" fillOpacity={0.1} strokeWidth={1.5} />
-                    <Radar name="AI" dataKey="AI" stroke="#eab308" fill="#eab308" fillOpacity={0.1} strokeWidth={1.5} />
-                    <Radar name="Career" dataKey="Career" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} strokeWidth={1.5} />
-                    <Radar name="Sustainability" dataKey="Sustainability" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.1} strokeWidth={1.5} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '10px' }} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid var(--background-200)', fontSize: '11px', background: 'var(--background-50)' }} />
-                  </RadarChart>
+                <ResponsiveContainer width="100%" height={190}>
+                  <BarChart data={engagementDrivers} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }}>
+                    <CartesianGrid horizontal={false} stroke="var(--background-200)" />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={62} tick={{ fontSize: 10, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Bar dataKey="value" fill="oklch(var(--primary-500))" radius={[0, 5, 5, 0]} barSize={14} name="Average" />
+                  </BarChart>
                 </ResponsiveContainer>
+              </div>
+
+              {/* Programme comparison */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Programme Comparison</h3>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">Average engagement and attendance by programme</p>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px] text-foreground-400"><span><i className="ri-checkbox-blank-circle-fill text-primary-500 mr-1"></i>Engagement</span><span><i className="ri-checkbox-blank-circle-fill text-accent-500 mr-1"></i>Attendance</span></div>
+                </div>
+                <ResponsiveContainer width="100%" height={210}>
+                  <BarChart data={programmeComparison} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }} barGap={3}>
+                    <CartesianGrid horizontal={false} stroke="var(--background-200)" />
+                    <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
+                    <YAxis type="category" dataKey="name" width={118} tick={{ fontSize: 9, fill: 'var(--foreground-500)' }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Bar dataKey="engagement" fill="oklch(var(--primary-500))" radius={[0, 4, 4, 0]} barSize={9} name="Engagement" />
+                    <Bar dataKey="attendance" fill="oklch(var(--accent-500))" radius={[0, 4, 4, 0]} barSize={9} name="Attendance" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              {/* Attendance vs engagement */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance vs Engagement</h3>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">Each dot is a learner: attendance on X, engagement on Y</p>
+                  </div>
+                  <div className="flex items-center gap-2 text-[9px] font-medium text-foreground-500">
+                    <span><i className="ri-checkbox-blank-circle-fill text-emerald-500 mr-1"></i>On track</span>
+                    <span><i className="ri-checkbox-blank-circle-fill text-amber-500 mr-1"></i>Watch</span>
+                    <span><i className="ri-checkbox-blank-circle-fill text-red-500 mr-1"></i>Priority</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={210}>
+                  <ScatterChart margin={{ top: 5, right: 10, bottom: 10, left: -8 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--background-200)" />
+                    <XAxis type="number" dataKey="attendance" domain={[50, 100]} name="Attendance" unit="%" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
+                    <YAxis type="number" dataKey="engagement" domain={[0, 100]} name="Engagement" unit="%" tick={{ fontSize: 10, fill: 'var(--foreground-400)' }} axisLine={false} tickLine={false} />
+                    <ZAxis range={[45, 45]} />
+                    <ReferenceLine x={90} stroke="var(--foreground-300)" strokeDasharray="4 4" />
+                    <ReferenceLine y={40} stroke="var(--foreground-300)" strokeDasharray="4 4" />
+                    <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<ChartSidePanel />} position={{ x: 8, y: 8 }} />
+                    <Scatter data={learnerScatter} shape={<LearnerScatterDot />} name="Learner" />
+                  </ScatterChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground-400 mt-1">
+                  <span><i className="ri-error-warning-fill text-red-500 mr-1"></i>Bottom-left: priority follow-up</span>
+                  <span><i className="ri-checkbox-circle-fill text-emerald-500 mr-1"></i>Top-right: on track</span>
+                </div>
               </div>
             </div>
           </div>
@@ -616,6 +774,7 @@ export default function EngagementDashboard() {
             </button>
           ))}
         </section>
+        <LearnerProfilePanel learnerId={selectedChampionId} onClose={() => setSelectedChampionId(null)} />
       </div>
     </WorkspaceShell>
   );
@@ -630,13 +789,17 @@ function ProgrammeEmptyState({ message }: { message: string }) {
   );
 }
 
-function CourseChampionsPodium({ champions, onViewAll }: { champions: EngagementLearner[]; onViewAll: () => void }) {
+function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champions: EngagementLearner[]; onViewAll: () => void; onOpenProfile: (learnerId: string) => void }) {
   const [first, second, third] = champions;
+  const reduceMotion = useReducedMotion();
   if (!first || !second || !third) return null;
 
   return (
-    <section className="relative rounded-2xl border shadow-xl overflow-hidden animate-hero-fade-in-up" style={{ backgroundColor: BG_LIGHT_PURPLE, borderColor: withAlpha(BRAND_PURPLE, 0.12) }}>
-      <ConfettiBurst />
+    <section
+      className="relative rounded-2xl border shadow-xl overflow-hidden animate-hero-fade-in-up"
+      style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)', borderColor: withAlpha(GOLD, 0.28) }}
+    >
+      <ConfettiBurst reducedMotion={reduceMotion} />
       {/* Bevel hairline — light-register analog of the app hero's top highlight */}
       <div className="absolute inset-x-0 top-0 h-px bg-white/60 pointer-events-none z-10"></div>
       {/* Ambient glows tuned for the light surface — decorative only */}
@@ -645,18 +808,18 @@ function CourseChampionsPodium({ champions, onViewAll }: { champions: Engagement
 
       <div className="relative z-20 p-6 sm:p-8">
         <div className="text-center mb-8">
-          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-1 rounded-full mb-3 border" style={{ backgroundColor: withAlpha(BRAND_PURPLE, 0.1), borderColor: withAlpha(BRAND_PURPLE, 0.3), color: BRAND_PURPLE }}>
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-1 rounded-full mb-3 border bg-white/10 text-accent-200 border-white/20">
             <i className="ri-trophy-line"></i> Engagement Sprint
           </span>
-          <h3 className="text-xl font-heading font-medium" style={{ color: TEXT_DARK }}>Champions</h3>
-          <p className="text-[12px] mt-1" style={{ color: TEXT_MUTED }}>Celebrating this month's top performers by points earned</p>
+          <h3 className="text-xl font-heading font-medium text-white">Champions</h3>
+          <p className="text-[12px] mt-1 text-white/65">Celebrating this month's top performers by points earned</p>
         </div>
 
         {/* Podium — full width, centered, blocks flush against each other */}
-        <div className="w-full max-w-md sm:max-w-lg mx-auto flex items-end justify-center stagger-children">
-          <PodiumSpot learner={second} rank={2} />
-          <PodiumSpot learner={first} rank={1} />
-          <PodiumSpot learner={third} rank={3} />
+        <div className="w-full max-w-md sm:max-w-lg mx-auto flex items-end justify-center">
+          <PodiumSpot learner={second} rank={2} revealDelay={140} gapLabel={`${(first.points - second.points).toLocaleString()} pts behind champion`} reduceMotion={reduceMotion} onOpenProfile={onOpenProfile} />
+          <PodiumSpot learner={first} rank={1} revealDelay={380} gapLabel={`${(first.points - second.points).toLocaleString()} pts ahead of #2`} reduceMotion={reduceMotion} onOpenProfile={onOpenProfile} />
+          <PodiumSpot learner={third} rank={3} revealDelay={0} gapLabel={`${(second.points - third.points).toLocaleString()} pts behind #2`} reduceMotion={reduceMotion} onOpenProfile={onOpenProfile} />
         </div>
 
         {/* Top Achiever spotlight strip — full width, below the podium */}
@@ -665,7 +828,7 @@ function CourseChampionsPodium({ champions, onViewAll }: { champions: Engagement
         </div>
 
         <div className="text-center mt-6">
-          <button onClick={onViewAll} className="text-[11px] font-medium hover:opacity-70 transition-smooth cursor-pointer" style={{ color: BRAND_PURPLE }}>
+          <button onClick={onViewAll} className="text-[11px] font-medium text-accent-200 hover:text-white transition-smooth cursor-pointer">
             View full leaderboard <i className="ri-arrow-right-line ml-1"></i>
           </button>
         </div>
@@ -677,20 +840,20 @@ function CourseChampionsPodium({ champions, onViewAll }: { champions: Engagement
 // Engagement Sprint podium palette — centralized here so no rank/brand hex
 // value is ever hardcoded inline elsewhere in this component.
 const RANK_COLORS = {
-  first: '#4A12C4',
-  second: '#6F35F5',
-  third: '#9A7AF7',
+  first: '#C8951F',
+  second: '#9AA3B2',
+  third: '#B86B3C',
 } as const;
 const BRAND_PURPLE = '#5B18E3';
 const TEXT_DARK = '#1E124D';
 const TEXT_MUTED = '#6B5C99';
-const BG_LIGHT_PURPLE = '#EBE3FC';
+const PODIUM_SURFACE = '#1A0940';
 const SUCCESS_GREEN = '#2F8F5B';
 // Heritage gold — the design system reserves accent-* gold for celebratory
 // focal points, so the #1 champion is accented with it. DOM elements use the
 // Tailwind accent-* tokens directly; this hex mirrors oklch(var(--accent-500))
 // for the canvas confetti, which can't reference CSS classes.
-const GOLD = '#C8951F';
+const GOLD = RANK_COLORS.first;
 
 // #9A7AF7 (rank 3) is too light for reliable white-text contrast, so rank-3
 // text/icons fall back to TEXT_DARK instead of white.
@@ -718,7 +881,7 @@ function lighten(hex: string, amount: number) {
 // "clipped" out of the ring rather than glued to the photo.
 const PODIUM_RANK_STYLES = {
   1: {
-    badgeStyle: { backgroundColor: RANK_COLORS.first, color: '#ffffff' },
+    badgeStyle: { backgroundColor: RANK_COLORS.first, color: TEXT_DARK },
     // White border = the ring gap; gold box-shadow ring + soft glow (champion).
     ringStyle: { boxShadow: `0 0 0 2px ${GOLD}, 0 10px 24px -6px ${withAlpha(GOLD, 0.5)}` },
     barStyle: {
@@ -726,26 +889,26 @@ const PODIUM_RANK_STYLES = {
       background: `linear-gradient(to bottom, ${lighten(RANK_COLORS.first, 0.22)} 0%, ${RANK_COLORS.first} 100%)`,
     },
     barIcon: 'ri-trophy-fill',
-    barIconStyle: { color: '#ffffff', opacity: 0.6 },
+    barIconStyle: { color: TEXT_DARK, opacity: 0.55 },
     barHeight: 'h-40 sm:h-52',
     avatarSize: 'w-20 h-20 sm:w-24 sm:h-24',
     order: 'order-1 sm:order-2',
   },
   2: {
-    badgeStyle: { backgroundColor: RANK_COLORS.second, color: '#ffffff' },
+    badgeStyle: { backgroundColor: RANK_COLORS.second, color: TEXT_DARK },
     ringStyle: { boxShadow: `0 0 0 2px ${RANK_COLORS.second}, 0 8px 18px -8px ${withAlpha(RANK_COLORS.second, 0.45)}` },
     barStyle: {
       boxShadow: `inset 0 1px 0 rgba(255,255,255,0.3), 0 10px 22px -10px ${withAlpha(RANK_COLORS.second, 0.4)}`,
       background: `linear-gradient(to bottom, ${lighten(RANK_COLORS.second, 0.2)} 0%, ${RANK_COLORS.second} 100%)`,
     },
     barIcon: 'ri-medal-fill',
-    barIconStyle: { color: '#ffffff', opacity: 0.6 },
+    barIconStyle: { color: TEXT_DARK, opacity: 0.45 },
     barHeight: 'h-28 sm:h-36',
     avatarSize: 'w-16 h-16 sm:w-20 sm:h-20',
     order: 'order-2 sm:order-1',
   },
   3: {
-    badgeStyle: { backgroundColor: RANK_COLORS.third, color: TEXT_DARK },
+    badgeStyle: { backgroundColor: RANK_COLORS.third, color: '#ffffff' },
     ringStyle: { boxShadow: `0 0 0 2px ${RANK_COLORS.third}, 0 8px 18px -8px ${withAlpha(RANK_COLORS.third, 0.45)}` },
     barStyle: {
       boxShadow: `inset 0 1px 0 rgba(255,255,255,0.4), 0 10px 22px -10px ${withAlpha(RANK_COLORS.third, 0.4)}`,
@@ -753,20 +916,28 @@ const PODIUM_RANK_STYLES = {
     },
     // Lightest bar — dark icon at low opacity keeps it a subtle texture, not white-on-light.
     barIcon: 'ri-medal-fill',
-    barIconStyle: { color: TEXT_DARK, opacity: 0.35 },
+    barIconStyle: { color: '#ffffff', opacity: 0.4 },
     barHeight: 'h-24 sm:h-32',
     avatarSize: 'w-16 h-16 sm:w-20 sm:h-20',
     order: 'order-3 sm:order-3',
   },
 } as const;
 
-function PodiumSpot({ learner, rank }: { learner: EngagementLearner; rank: 1 | 2 | 3 }) {
+function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpenProfile }: { learner: EngagementLearner; rank: 1 | 2 | 3; revealDelay: number; gapLabel: string; reduceMotion: boolean; onOpenProfile: (learnerId: string) => void }) {
   const isFirst = rank === 1;
   const initials = learner.name.split(' ').map(w => w[0]).join('').slice(0, 2);
   const styles = PODIUM_RANK_STYLES[rank];
+  const displayedPoints = useCountUp(learner.points, revealDelay + 180, reduceMotion);
+  const medalLabel = rank === 1 ? 'Gold champion' : rank === 2 ? 'Silver runner-up' : 'Bronze third place';
 
   return (
-    <div className={`flex-1 flex flex-col items-center ${styles.order} ${isFirst ? 'relative z-10' : ''}`}>
+    <button
+      type="button"
+      onClick={() => onOpenProfile(learner.id)}
+      className={`flex-1 flex flex-col items-center text-left cursor-pointer group ${styles.order} ${isFirst ? 'relative z-10' : ''} ${reduceMotion ? '' : 'animate-hero-fade-in-up'}`}
+      style={reduceMotion ? undefined : { animationDelay: `${revealDelay}ms` }}
+      aria-label={`View ${learner.name}'s profile`}
+    >
       {/* Avatar with a white ring gap; badge is punched out with a panel-colored border */}
       <div className="relative mb-3">
         {isFirst && (
@@ -783,14 +954,18 @@ function PodiumSpot({ learner, rank }: { learner: EngagementLearner; rank: 1 | 2
         </div>
         <span
           className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold border-[3px]"
-          style={{ ...styles.badgeStyle, borderColor: BG_LIGHT_PURPLE }}
+          style={{ ...styles.badgeStyle, borderColor: PODIUM_SURFACE }}
         >
           {rank}
         </span>
       </div>
 
-      <p className="text-[13px] font-medium text-center truncate max-w-full px-1" style={{ color: TEXT_DARK }}>{learner.name}</p>
-      <p className="text-[11px] font-medium mt-0.5" style={{ color: BRAND_PURPLE }}>{learner.points.toLocaleString()} pts</p>
+      <p className="text-[13px] font-medium text-center truncate max-w-full px-1 text-white group-hover:underline">{learner.name}</p>
+      <span className="mt-1 inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide" style={{ color: RANK_COLORS[rank === 1 ? 'first' : rank === 2 ? 'second' : 'third'] }}>
+        <i className={rank === 1 ? 'ri-trophy-fill' : 'ri-medal-fill'}></i>{medalLabel}
+      </span>
+      <p className="text-[12px] font-semibold mt-1 text-accent-200">{displayedPoints.toLocaleString()} pts</p>
+      <p className="text-[9px] text-center min-h-3 mt-0.5 px-1 text-white/55">{gapLabel}</p>
 
       {/* Grand champion pill — sits above the 1st-place bar, below name/points */}
       {isFirst && (
@@ -809,7 +984,7 @@ function PodiumSpot({ learner, rank }: { learner: EngagementLearner; rank: 1 | 2
       >
         <i className={`${styles.barIcon} text-3xl`} style={styles.barIconStyle}></i>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -851,71 +1026,178 @@ function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
   );
 }
 
-const CONFETTI_COLORS = [RANK_COLORS.first, RANK_COLORS.second, RANK_COLORS.third, GOLD];
+const CONFETTI_COLORS = ['#ffffff', '#F7D77C', RANK_COLORS.first, '#CBB7FF', '#F3B991'];
 
-function ConfettiBurst() {
+function useReducedMotion() {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => setReduceMotion(query.matches);
+    updatePreference();
+    query.addEventListener('change', updatePreference);
+    return () => query.removeEventListener('change', updatePreference);
+  }, []);
+
+  return reduceMotion;
+}
+
+function useCountUp(target: number, delay: number, reduceMotion: boolean) {
+  const [value, setValue] = useState(reduceMotion ? target : 0);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      setValue(target);
+      return;
+    }
+
+    setValue(0);
+    let animationFrame = 0;
+    let startTime = 0;
+    const timer = window.setTimeout(() => {
+      const animate = (time: number) => {
+        if (!startTime) startTime = time;
+        const progress = Math.min((time - startTime) / 850, 1);
+        setValue(Math.round(target * (1 - Math.pow(1 - progress, 3))));
+        if (progress < 1) animationFrame = requestAnimationFrame(animate);
+      };
+      animationFrame = requestAnimationFrame(animate);
+    }, delay);
+
+    return () => {
+      window.clearTimeout(timer);
+      cancelAnimationFrame(animationFrame);
+    };
+  }, [target, delay, reduceMotion]);
+
+  return value;
+}
+
+function ConfettiBurst({ reducedMotion }: { reducedMotion: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
+    if (reducedMotion) return;
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    const width = canvas.offsetWidth;
-    const height = canvas.offsetHeight;
-    canvas.width = width;
-    canvas.height = height;
+    let width = 0;
+    let height = 0;
+    let pixelRatio = 1;
 
-    const pieces = Array.from({ length: 50 }, () => ({
+    const resizeCanvas = () => {
+      width = canvas.offsetWidth;
+      height = canvas.offsetHeight;
+      pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    };
+
+    resizeCanvas();
+    const pieces = Array.from({ length: 84 }, () => ({
       x: Math.random() * width,
-      y: -20 - Math.random() * height * 0.6,
-      size: 4 + Math.random() * 5,
-      speed: 1.2 + Math.random() * 2,
-      drift: (Math.random() - 0.5) * 1.2,
+      y: Math.random() * height,
+      size: 2 + Math.random() * 4,
+      speed: 22 + Math.random() * 34,
+      drift: -12 + Math.random() * 24,
       rotation: Math.random() * 360,
-      spin: (Math.random() - 0.5) * 8,
+      spin: -100 + Math.random() * 200,
+      twinkleSpeed: 2 + Math.random() * 4,
+      phase: Math.random() * Math.PI * 2,
+      shape: Math.random() > 0.48 ? 'sparkle' : 'confetti',
       color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
     }));
 
-    const duration = 10000;
-    const fadeOut = 1200; // only fade during the final stretch, not the whole run
+    const duration = 11000;
+    const fadeOut = 1800;
     let elapsed = 0;
     let last = performance.now();
     let raf = 0;
 
     const tick = (now: number) => {
-      const dt = now - last;
+      const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
-      elapsed += dt;
+      elapsed += dt * 1000;
       ctx.clearRect(0, 0, width, height);
       const fade = Math.max(0, Math.min(1, (duration - elapsed) / fadeOut));
       pieces.forEach(p => {
-        p.y += p.speed;
-        p.x += p.drift;
-        p.rotation += p.spin;
-        // Recycle pieces that fall off the bottom so the fall stays continuous
-        // for the whole duration instead of emptying out after a few seconds.
+        p.y += p.speed * dt;
+        p.x += p.drift * dt;
+        p.rotation += p.spin * dt;
         if (p.y - p.size > height) {
-          p.y = -20;
+          p.y = -p.size;
           p.x = Math.random() * width;
         }
+        const twinkle = 0.5 + Math.sin(elapsed / 1000 * p.twinkleSpeed + p.phase) * 0.5;
         ctx.save();
-        ctx.globalAlpha = fade;
+        ctx.globalAlpha = fade * (0.35 + twinkle * 0.65);
         ctx.translate(p.x, p.y);
         ctx.rotate((p.rotation * Math.PI) / 180);
         ctx.fillStyle = p.color;
-        ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.5);
+        if (p.shape === 'sparkle') {
+          const size = p.size * (0.75 + twinkle * 0.65);
+          ctx.beginPath();
+          ctx.moveTo(0, -size);
+          ctx.lineTo(size * 0.34, -size * 0.34);
+          ctx.lineTo(size, 0);
+          ctx.lineTo(size * 0.34, size * 0.34);
+          ctx.lineTo(0, size);
+          ctx.lineTo(-size * 0.34, size * 0.34);
+          ctx.lineTo(-size, 0);
+          ctx.lineTo(-size * 0.34, -size * 0.34);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.52);
+        }
         ctx.restore();
       });
       if (elapsed < duration) raf = requestAnimationFrame(tick);
       else ctx.clearRect(0, 0, width, height);
     };
+
+    const resizeObserver = new ResizeObserver(resizeCanvas);
+    resizeObserver.observe(canvas);
     raf = requestAnimationFrame(tick);
 
-    return () => cancelAnimationFrame(raf);
-  }, []);
+    return () => {
+      resizeObserver.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [reducedMotion]);
 
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none z-10" aria-hidden="true"></canvas>;
+}
+
+// Recharts positions its default tooltip next to the pointer. This dashboard
+// uses a fixed panel instead so the graph remains readable while the hovered
+// values stay in one predictable place inside the card.
+function ChartSidePanel({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+
+  const firstPoint = payload[0]?.payload ?? {};
+  const title = firstPoint.name ?? firstPoint.subject ?? label ?? payload[0]?.name ?? 'Selected data';
+  const subtitle = firstPoint.programme;
+
+  return (
+    <div className="w-36 rounded-xl border border-primary-100 bg-background-50/95 p-3 shadow-xl backdrop-blur-sm pointer-events-none">
+      <p className="text-[10px] font-bold text-foreground-900 truncate">{title}</p>
+      {subtitle && <p className="text-[9px] text-foreground-400 truncate mt-0.5">{subtitle}</p>}
+      <div className="mt-2 space-y-1.5">
+        {payload.map((entry: any) => (
+          <div key={entry.dataKey ?? entry.name} className="flex items-center justify-between gap-2 text-[10px]">
+            <span className="flex items-center gap-1 min-w-0 text-foreground-500">
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: entry.color ?? 'oklch(var(--primary-500))' }}></span>
+              <span className="truncate">{entry.name ?? entry.dataKey}</span>
+            </span>
+            <span className="font-semibold text-foreground-800 shrink-0">{typeof entry.value === 'number' ? Math.round(entry.value) : entry.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function EngagementStatCard({ label, value, sub, trend, trendUp, icon, color }: { label: string; value: string; sub?: string; trend?: string; trendUp?: boolean; icon: string; color: string }) {

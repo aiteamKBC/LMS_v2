@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
+import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
@@ -124,6 +125,7 @@ export default function AttendanceRiskPage() {
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selected, setSelected] = useState<ScoredRisk | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
 
   // Attach the computed risk score/level to every record up front, scoped to
   // the active programme.
@@ -488,12 +490,15 @@ export default function AttendanceRiskPage() {
               </button>
             </div>
 
-            <button onClick={() => navigate('/engagement/learner-engagement')} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
+            <button onClick={() => { setSelected(null); setProfileId(selected.id); }} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
               View Full Engagement Profile
             </button>
           </div>
         )}
       </RightSlidePanel>
+
+      {/* FULL ENGAGEMENT PROFILE — opens in place, over the attendance page */}
+      <LearnerProfilePanel learnerId={profileId} onClose={() => setProfileId(null)} />
     </WorkspaceShell>
   );
 }
