@@ -3,6 +3,11 @@ import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
 export interface JourneyComponent {
   title: string;
   expectedOtjh: number | null;
+  componentId?: string | null;
+  type?: string | null;
+  description?: string | null;
+  videoUrl?: string | null;
+  durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
@@ -56,17 +61,39 @@ export function componentTypeMeta(title: string): ComponentTypeMeta {
   return { label, detail, ...meta };
 }
 
-/** Grade "30%" (or legacy number) -> numeric percent. */
-function gradePercent(grade: string | number | undefined): number {
-  if (typeof grade === 'number') return grade;
+/** Grade -> numeric percent (0-100). Accepts the new 0-1 decimal form (0.9 ->
+ * 90), a legacy "30%" string, or a legacy whole-number percent. */
+export function gradePercent(grade: string | number | undefined): number {
+  if (typeof grade === 'number') return grade <= 1 ? Math.round(grade * 100) : grade;
   const m = String(grade ?? '').match(/-?\d+(\.\d+)?/);
-  return m ? parseFloat(m[0]) : 0;
+  if (!m) return 0;
+  const n = parseFloat(m[0]);
+  return n <= 1 ? Math.round(n * 100) : n;
 }
 
 /** First number found in a free-text time ("about 25 minutes" -> 25). null if none. */
 function parseMinutes(text: string | undefined): number | null {
   const m = String(text ?? '').match(/\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
+}
+
+/** Decimal hours -> "1h 30m" (drops the minutes part when it's a whole hour,
+ * and the hours part when under an hour: 0.5 -> "30m", 2 -> "2h", 1.25 -> "1h 15m"). */
+export function formatHoursMinutes(hours: number): string {
+  const totalMin = Math.round(hours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h === 0 && m === 0) return '0h';
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/** Parse a stored hours string ("1.5", "48") to a number. 0 on garbage. */
+export function parseHours(value: string | number | null | undefined): number {
+  if (typeof value === 'number') return value;
+  const n = parseFloat(String(value ?? ''));
+  return Number.isFinite(n) ? n : 0;
 }
 
 /** For each quiz, the learner's BEST attempt = highest grade%, ties -> most recent. */
@@ -90,26 +117,46 @@ export interface QuizAggregateStats {
   ksbCount: number;           // distinct KSB count
 }
 
+/** Best watch per video component: highest reportedTime, ties -> most recent. */
+function bestWatchPerVideo(videos: LearnerDetail['videoProgress']): NonNullable<LearnerDetail['videoProgress']> {
+  const byComp = new Map<string, NonNullable<LearnerDetail['videoProgress']>[number]>();
+  for (const v of videos || []) {
+    const cur = byComp.get(v.componentId);
+    const mins = parseMinutes(v.reportedTime) ?? 0;
+    if (!cur) { byComp.set(v.componentId, v); continue; }
+    const curMins = parseMinutes(cur.reportedTime) ?? 0;
+    if (mins > curMins || (mins === curMins && (v.submittedAt || '') > (cur.submittedAt || ''))) {
+      byComp.set(v.componentId, v);
+    }
+  }
+  return Array.from(byComp.values());
+}
+
 /**
- * Aggregate a learner's Weekly_Quizzes into the overview-card figures.
- * Uses only each quiz's BEST attempt (highest grade). Time comes from the
- * learner's chosen `reportedTime` (first number parsed as minutes); KSBs are
- * the union of the best attempts' selected codes.
+ * Aggregate a learner's progress into the overview-card figures.
+ * KSBs: the union of KSB codes from each quiz's BEST attempt AND each video
+ * component's best watch — retakes/re-watches never double-count a KSB.
+ * `totalMinutes`/`totalHours`: a best-attempt-per-activity time rollup (the
+ * user-facing OTJ hours come from the backend `completedHours`, which sums ALL
+ * attempts — this figure is only a secondary KSB-time summary).
  */
 export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateStats {
   const empty: QuizAggregateStats = { quizzesTaken: 0, totalMinutes: 0, totalHours: 0, ksbCodes: [], ksbCount: 0 };
-  if (!real || !Array.isArray(real.quizAttempts) || real.quizAttempts.length === 0) return empty;
+  if (!real) return empty;
 
-  const best = bestAttemptPerQuiz(real.quizAttempts);
+  const bestQuizzes = bestAttemptPerQuiz(real.quizAttempts || []);
+  const bestVideos = bestWatchPerVideo(real.videoProgress);
+  if (bestQuizzes.length === 0 && bestVideos.length === 0) return empty;
+
   let totalMinutes = 0;
   const ksbSet = new Set<string>();
-  for (const a of best) {
-    const mins = parseMinutes(a.reportedTime);
+  for (const r of [...bestQuizzes, ...bestVideos]) {
+    const mins = parseMinutes(r.reportedTime);
     if (mins != null) totalMinutes += mins;
-    for (const code of a.ksbs || []) ksbSet.add(code);
+    for (const code of r.ksbs || []) ksbSet.add(code);
   }
   return {
-    quizzesTaken: best.length,
+    quizzesTaken: bestQuizzes.length,
     totalMinutes,
     totalHours: Math.round((totalMinutes / 60) * 10) / 10,
     ksbCodes: Array.from(ksbSet),
@@ -129,6 +176,8 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
           .filter((c) => c.module === moduleTitle && c.week === w.week)
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
+            componentId: c.componentId, type: c.type, description: c.description,
+            videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             quizAttempts: c.isQuiz && c.quizMeta
               ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
               : undefined,

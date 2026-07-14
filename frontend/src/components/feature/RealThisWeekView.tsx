@@ -5,7 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import {
-  buildLearnerJourney, quizAggregateStats, componentTypeMeta,
+  buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 
@@ -273,7 +273,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
-  const gradeLabel = lastAttempt ? (typeof lastAttempt.grade === 'number' ? `${lastAttempt.grade}%` : lastAttempt.grade) : '';
+  const gradeLabel = lastAttempt ? `${gradePercent(lastAttempt.grade)}%` : '';
 
   return (
     <div className="w-full flex items-center gap-3 px-4 py-3">

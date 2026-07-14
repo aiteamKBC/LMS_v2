@@ -187,7 +187,7 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
         <div className="px-3.5 pb-3 mt-auto">
           {mod.status === 'In Progress' ? (
             <Link
-              to="/learner/this-week"
+              to="/learner/training-plan"
               className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] font-semibold text-white transition-colors duration-200 whitespace-nowrap cursor-pointer font-label"
               style={{ backgroundColor: metro.line }}
               onMouseOver={(e) => { e.currentTarget.style.opacity = '0.9'; }}

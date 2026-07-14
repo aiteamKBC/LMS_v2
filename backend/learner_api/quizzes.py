@@ -29,6 +29,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from .active_users import completed_hours_from_progress, append_activity_entry
 from .models import ActiveUser, CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
@@ -195,6 +196,9 @@ def _grade_question(question, submitted):
             "earned": points if ok else 0, "possible": points, "correct": ok,
             "chosenAnswer": by_id.get(chosen_id) if chosen_id is not None else None,
             "correctAnswer": ", ".join(by_id[i] for i in correct_ids),
+            # ID form (for the slim stored record); resolved back to text on display.
+            "chosenAnswerId": chosen_id,
+            "correctAnswerId": sorted(correct_ids),
         }
 
     if qtype == "multiple_choice":
@@ -205,6 +209,8 @@ def _grade_question(question, submitted):
             "earned": points if ok else 0, "possible": points, "correct": ok,
             "chosenAnswer": ", ".join(by_id[i] for i in submitted_ids if i in by_id) or None,
             "correctAnswer": ", ".join(by_id[i] for i in correct_ids),
+            "chosenAnswerId": sorted(submitted_ids),
+            "correctAnswerId": sorted(correct_ids),
         }
 
     if qtype == "fill_gap":
@@ -244,6 +250,8 @@ def _grade_question(question, submitted):
             "earned": points if ok else 0, "possible": points, "correct": ok,
             "chosenAnswer": " -> ".join(by_id[i] for i in submitted_order if i in by_id) or None,
             "correctAnswer": " -> ".join(by_id[i] for i in correct_order),
+            "chosenAnswerId": submitted_order,
+            "correctAnswerId": correct_order,
         }
 
     if qtype == "keywords":
@@ -307,7 +315,9 @@ def submit_quiz_attempt(request, quiz_id):
     earned = 0.0
     possible = 0.0
     correct_count = 0
-    breakdown = []
+    breakdown = []       # full text, for the fresh submit response (results screen)
+    stored_questions = []  # slim, id-only, for the persisted record
+    FREE_TEXT = ("fill_gap", "keywords", "matching", "image_matching")
     for q in quiz["questions"]:
         submitted = submitted_answers.get(str(q["id"]))
         result = _grade_question(q, submitted)
@@ -326,9 +336,23 @@ def submit_quiz_attempt(request, quiz_id):
             "chosenAnswer": result["chosenAnswer"],
             "correctAnswer": result["correctAnswer"],
         })
+        # Slim record: reference answers by id; free-text types have no answer id,
+        # so keep their (short) submitted/accepted text as a fallback.
+        slim = {
+            "questionId": q["id"],
+            "earned": result["earned"],
+            "correct": result["correct"],
+        }
+        if q["type"] in FREE_TEXT:
+            slim["chosenText"] = result["chosenAnswer"]
+        else:
+            slim["chosenAnswerId"] = result.get("chosenAnswerId")
+            slim["correctAnswerId"] = result.get("correctAnswerId")
+        stored_questions.append(slim)
 
     question_count = len(quiz["questions"])
     grade_pct = round((earned / possible) * 100, 1) if possible else 0.0
+    grade_decimal = round((earned / possible), 2) if possible else 0.0  # 0.90 form
     passed = grade_pct >= (quiz["passingGrade"] or 0)
 
     try:
@@ -343,37 +367,67 @@ def submit_quiz_attempt(request, quiz_id):
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    history = (active.weekly_quizzes if active and isinstance(active.weekly_quizzes, list) else [])
-    # 1-based attempt number for THIS quiz (counts prior attempts of the same quiz).
-    attempt_number = sum(1 for a in history if a.get("quizId") == quiz["id"]) + 1
+    history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
+    # 1-based attempt number for THIS quiz — count prior quiz-kind records for it.
+    prior = sum(1 for a in history if a.get("kind") == "quiz" and a.get("quizId") == quiz["id"])
+    attempt_number = prior + 1
 
-    # Format grade so a whole number renders as "30%" (not "30.0%").
-    grade_str = f"{int(grade_pct) if grade_pct == int(grade_pct) else grade_pct}%"
+    submitted_at = timezone.now().isoformat()
+    time_taken = _format_clock(time_taken_seconds)
 
+    # Slim, id-referenced record actually stored in Training_plan_progress.
+    # Names (quizName/week/module) are dropped — the plan tree resolves them from
+    # quizId; grade is a 0-1 decimal; score is split into achieved/total.
     attempt = {
-        "week": week_title,
-        "attempt": attempt_number,
-        "grade": grade_str,                              # e.g. "30%"
-        "Score": f"{correct_count}/{question_count}",    # questions correct / total, e.g. "6/20"
-        "module": module_title or quiz["module"],
-        "passed": passed,
+        "kind": "quiz",
         "quizId": quiz["id"],
-        "quizName": quiz["title"],
-        "ksbs": ksbs,                                    # KSB codes the learner selected
-        "feedback": feedback,                            # general feedback about the quiz
-        "reportedTime": reported_time,                   # learner's self-reported time-to-complete
-        "questions": breakdown,
+        "attempt": attempt_number,
+        "passed": passed,
+        "grade": grade_decimal,                # 0-1 decimal, e.g. 0.9
+        "achievedScore": correct_count,        # questions correct
+        "totalScore": question_count,          # questions total
+        "ksbs": ksbs,                          # KSB codes the learner selected
+        "feedback": feedback,
+        "reportedTime": reported_time,
+        "questions": stored_questions,         # id-referenced (see above)
         "startedAt": started_at,
-        "submittedAt": timezone.now().isoformat(),
-        "timeTaken": _format_clock(time_taken_seconds),  # "M:SS", e.g. "0:26"
+        "submittedAt": submitted_at,
+        "timeTaken": time_taken,
     }
 
     if active is not None:
         history.append(attempt)
-        active.weekly_quizzes = history
+        active.training_plan_progress = history
+        # Keep Completed_hours in step with the progress log (summed reportedTime).
+        active.completed_hours = completed_hours_from_progress(history)
+        # Log this completion to the activity feed (newest last).
+        append_activity_entry(active, {
+            "kind": "quiz",
+            "action": "Completed quiz",
+            "title": quiz["title"],
+            "detail": f"Scored {int(grade_pct) if grade_pct == int(grade_pct) else grade_pct}% · {correct_count}/{question_count}",
+            "passed": passed,
+            "quizId": quiz["id"],
+            "week": week_title,
+            "module": module_title or quiz["module"],
+            "at": submitted_at,
+        })
         try:
-            active.save(update_fields=["weekly_quizzes"])
+            active.save(update_fields=["training_plan_progress", "completed_hours", "activity_feed"])
         except DatabaseError as exc:
             return _error(f"Database error saving attempt: {exc}", 502)
 
-    return JsonResponse({"attempt": attempt, "breakdown": breakdown, "earned": earned, "possible": possible})
+    # The response carries the FULL-text breakdown + summary so the results
+    # screen can render immediately without a second lookup.
+    return JsonResponse({
+        "attempt": attempt,
+        "breakdown": breakdown,
+        "earned": earned,
+        "possible": possible,
+        "grade": grade_decimal,
+        "achievedScore": correct_count,
+        "totalScore": question_count,
+        "passed": passed,
+        "timeTaken": time_taken,
+        "quizName": quiz["title"],
+    })

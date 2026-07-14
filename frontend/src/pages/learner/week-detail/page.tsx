@@ -276,7 +276,7 @@ export default function WeekDetailPage() {
             </span>
             {isCurrentWeek && (
               <Link
-                to="/learner/this-week"
+                to="/learner/training-plan"
                 className="text-xs font-semibold text-primary-600 hover:text-primary-700 bg-primary-50 px-2.5 py-1 rounded-full transition-smooth"
               >
                 This Week View
