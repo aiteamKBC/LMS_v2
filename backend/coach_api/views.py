@@ -3,12 +3,16 @@ import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from types import SimpleNamespace
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
+from django.db import connections, router
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+
+from learner_api.models import ActiveUser
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
@@ -18,6 +22,12 @@ ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
+UNACTIVE_USER_RELATION_CANDIDATES = (
+    '"Learner"."Unactive_users"',
+    '"Learner"."unactive_users"',
+    '"learner"."Unactive_users"',
+    '"learner"."unactive_users"',
+)
 
 
 def load_env_file() -> None:
@@ -67,6 +77,10 @@ def to_decimal(value) -> Decimal:
 
 def to_int(value) -> int:
     return int(to_decimal(value))
+
+
+def to_number(value) -> float:
+    return float(to_decimal(value))
 
 
 def percentage(numerator, denominator) -> int:
@@ -195,7 +209,7 @@ def normalize_program_status(raw_status: str | None) -> str:
     normalized = (raw_status or "").strip().lower().replace(" ", "")
     if normalized == "withdrawn":
         return "withdrawn"
-    if normalized in {"break", "onbreak"}:
+    if normalized in {"break", "onbreak", "onabreak", "onmaternitybreak", "onillnessbreak", "onotherbreak"}:
         return "break"
     if normalized == "readytoenrol":
         return "ready-to-enrol"
@@ -309,6 +323,424 @@ def fetch_caseload_rows(owner_email: str) -> list[dict]:
 
 def normalize_email(value: str | None) -> str:
     return (value or "").strip().lower()
+
+
+def clean_text(value) -> str:
+    return "" if value in (None, "") else str(value).strip()
+
+def list_or_empty(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def count_planned_components(training_plan) -> int:
+    total = 0
+    for module in list_or_empty(training_plan):
+        if not isinstance(module, dict):
+            continue
+        for week in list_or_empty(module.get("weeks")):
+            if not isinstance(week, dict):
+                continue
+            total += sum(1 for component in list_or_empty(week.get("components")) if isinstance(component, dict))
+    return total
+
+
+def activity_completion_key(item: dict, index: int) -> str:
+    quiz_id = item.get("quizId")
+    if quiz_id not in (None, ""):
+        return f"quiz:{quiz_id}"
+
+    component_id = clean_text(item.get("componentId"))
+    if component_id:
+        return f"component:{component_id}"
+
+    parts = [
+        clean_text(item.get("module")),
+        clean_text(item.get("week")),
+        clean_text(item.get("kind")),
+        clean_text(item.get("title")),
+        clean_text(item.get("quizName")),
+        clean_text(item.get("action")),
+    ]
+    compact = "|".join(part for part in parts if part)
+    return compact or f"item:{index}"
+
+
+def extract_ksb_codes(values) -> set[str]:
+    codes: set[str] = set()
+    for value in list_or_empty(values):
+        if isinstance(value, str):
+            code = value.strip().upper()
+        elif isinstance(value, dict):
+            code = clean_text(value.get("code") or value.get("Code") or value.get("id")).upper()
+        else:
+            code = ""
+        if code:
+            codes.add(code)
+    return codes
+
+
+def summarize_ksb_breakdown(target_codes: set[str], completed_codes: set[str]) -> dict[str, dict[str, int | None]]:
+    completed_in_target = completed_codes & target_codes if target_codes else set()
+    breakdown: dict[str, dict[str, int | None]] = {}
+
+    for label, prefix in (("knowledge", "K"), ("skills", "S"), ("behaviours", "B")):
+        target_for_type = {code for code in target_codes if code.startswith(prefix)}
+        completed_for_type = {code for code in completed_in_target if code.startswith(prefix)}
+        target_count = len(target_for_type)
+        completed_count = len(completed_for_type)
+
+        breakdown[label] = {
+            "completed": completed_count if target_count else None,
+            "target": target_count if target_count else None,
+            "progress": percentage(completed_count, target_count) if target_count else None,
+        }
+
+    return breakdown
+
+
+def count_completed_components(progress_entries: list[dict], activity_entries: list[dict]) -> int:
+    seen: set[str] = set()
+    for entry in [*progress_entries, *activity_entries]:
+        if not isinstance(entry, dict):
+            continue
+        seen.add(activity_completion_key(entry, len(seen)))
+    return len(seen)
+
+
+def completed_ksb_codes(progress_entries: list[dict], activity_entries: list[dict]) -> set[str]:
+    completed: set[str] = set()
+    for entry in [*progress_entries, *activity_entries]:
+        if not isinstance(entry, dict):
+            continue
+        completed.update(extract_ksb_codes(entry.get("ksbs")))
+    return completed
+
+
+def is_evidence_entry(entry: dict) -> bool:
+    joined = " ".join(
+        clean_text(entry.get(field))
+        for field in ("kind", "title", "action", "detail", "quizName")
+    ).lower()
+    return "evidence" in joined
+
+
+def derive_evidence_count(progress_entries: list[dict], activity_entries: list[dict]) -> int:
+    seen: set[str] = set()
+    for entry in [*progress_entries, *activity_entries]:
+        if isinstance(entry, dict) and is_evidence_entry(entry):
+            seen.add(activity_completion_key(entry, len(seen)))
+    return len(seen)
+
+
+def derive_ksb_status(completed: int | None, target: int | None) -> str:
+    if not target:
+        return ""
+    if not completed:
+        return "Not Started"
+    if completed >= target:
+        return "Completed"
+    return "In Progress"
+
+
+def build_active_user_risk_flags(
+    *,
+    otjh_status: str,
+    ksb_status: str,
+    progress_variance: str,
+    hours_progress: int,
+    hours_available: bool,
+    ksb_progress: int,
+    ksb_available: bool,
+    component_progress: int,
+    component_available: bool,
+) -> list[str]:
+    flags: list[str] = []
+    normalized_otjh = clean_text(otjh_status).lower().replace(" ", "")
+
+    if normalized_otjh == "needattention":
+        flags.append("Hours need attention")
+    elif normalized_otjh == "atrisk":
+        flags.append("OTJH at risk")
+
+    if ksb_status == "Not Started":
+        flags.append("KSBs not started")
+    if progress_variance:
+        flags.append(f"Variance {progress_variance}")
+    if component_available and component_progress < 25:
+        flags.append("Components behind target")
+    if hours_available and hours_progress < 25:
+        flags.append("Low hours progress")
+    if ksb_available and ksb_progress < 25:
+        flags.append("Low KSB progress")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for flag in flags:
+        if flag not in seen:
+            seen.add(flag)
+            deduped.append(flag)
+    return deduped[:4]
+
+
+def determine_active_user_status(
+    *,
+    program_status: str,
+    otjh_status: str,
+    progress_variance: str,
+    hours_progress: int,
+    hours_available: bool,
+    ksb_progress: int,
+    ksb_available: bool,
+    component_progress: int,
+    component_available: bool,
+) -> str:
+    if normalize_program_status(program_status) == "ready-to-enrol":
+        return "new-starter"
+
+    normalized_otjh = clean_text(otjh_status).lower().replace(" ", "")
+    if normalized_otjh == "atrisk":
+        return "at-risk"
+    if normalized_otjh == "needattention" and (
+        (hours_available and hours_progress < 45)
+        or (ksb_available and ksb_progress < 35)
+        or (component_available and component_progress < 35)
+    ):
+        return "at-risk"
+    if progress_variance and parse_variance(progress_variance) <= -10:
+        return "at-risk"
+    if (
+        hours_available
+        and ksb_available
+        and component_available
+        and hours_progress >= 80
+        and ksb_progress >= 75
+        and component_progress >= 75
+    ):
+        return "high"
+    return "on-track"
+
+
+def get_lms_row_program_status(row) -> str:
+    return clean_text(getattr(row, "programme_status", None) or getattr(row, "status", None))
+
+
+def get_learner_db_alias() -> str:
+    return router.db_for_read(ActiveUser) or "default"
+
+
+def find_existing_relation(connection, relation_candidates: tuple[str, ...]) -> str | None:
+    with connection.cursor() as cursor:
+        for relation in relation_candidates:
+            cursor.execute("select to_regclass(%s)", [relation])
+            result = cursor.fetchone()
+            if result and result[0]:
+                return relation
+    return None
+
+
+def fetch_inactive_user_caseload_rows(owner_email: str) -> list[SimpleNamespace]:
+    connection = connections[get_learner_db_alias()]
+    relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
+    if not relation:
+        return []
+
+    query = f"""
+        select
+            id,
+            "Username" as username,
+            "Email" as email,
+            "Phone_number" as phone_number,
+            "Programme" as programme,
+            "status" as status,
+            "Cohort" as cohort,
+            "Group" as "group",
+            "Completed_hours" as completed_hours,
+            "Target_hours" as target_hours,
+            "Minimum_hours" as minimum_hours,
+            "Maximum_hours" as maximum_hours,
+            "Progress_variance" as progress_variance,
+            "Progress_Hours" as progress_hours,
+            "OTJHoursStatus" as otjh_status,
+            "Training_plan" as training_plan,
+            "Training_plan_progress" as training_plan_progress,
+            "KSBs" as ksbs,
+            "Activity_Feed" as activity_feed,
+            coach_name,
+            coach_email,
+            planned_hours
+        from {relation}
+        where lower(trim(coach_email)) = %s
+        order by "Username", id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, [normalize_email(owner_email)])
+        columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
+
+    return [
+        SimpleNamespace(**row)
+        for row in rows
+        if clean_text(row.get("username"))
+    ]
+
+
+def fetch_active_user_caseload_rows(owner_email: str) -> list[ActiveUser | SimpleNamespace]:
+    active_queryset = ActiveUser.objects.only(
+        "id",
+        "username",
+        "email",
+        "phone_number",
+        "programme",
+        "programme_status",
+        "cohort",
+        "group",
+        "completed_hours",
+        "target_hours",
+        "minimum_hours",
+        "maximum_hours",
+        "progress_variance",
+        "progress_hours",
+        "otjh_status",
+        "training_plan",
+        "training_plan_progress",
+        "ksbs",
+        "activity_feed",
+        "coach_name",
+        "coach_email",
+        "planned_hours",
+    )
+    active_rows = [
+        row
+        for row in active_queryset.order_by("username", "id")
+        if clean_text(row.username)
+    ]
+    inactive_rows = fetch_inactive_user_caseload_rows(owner_email)
+    requested_owner = normalize_email(owner_email)
+    matched_rows = [
+        row
+        for row in [*active_rows, *inactive_rows]
+        if normalize_email(row.coach_email) == requested_owner
+    ]
+    matched_rows.sort(key=lambda row: (clean_text(row.username).lower(), getattr(row, "id", 0)))
+    return matched_rows
+
+
+def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
+    progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
+    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    planned_components = count_planned_components(row.training_plan)
+    completed_components = count_completed_components(progress_entries, activity_entries)
+    component_available = planned_components > 0
+    component_progress = percentage(completed_components, planned_components) if component_available else 0
+
+    target_hours_value = (
+        clean_text(row.target_hours)
+        or clean_text(row.minimum_hours)
+        or clean_text(row.planned_hours)
+    )
+    hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
+    hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
+
+    target_ksb_codes = extract_ksb_codes(row.ksbs)
+    completed_codes = completed_ksb_codes(progress_entries, activity_entries)
+    ksb_available = bool(target_ksb_codes)
+    ksb_completed = len(completed_codes) if ksb_available else None
+    ksb_target = len(target_ksb_codes) if ksb_available else None
+    ksb_progress = percentage(ksb_completed, ksb_target) if ksb_available else 0
+    ksb_status = derive_ksb_status(ksb_completed, ksb_target)
+    ksb_breakdown = summarize_ksb_breakdown(target_ksb_codes, completed_codes)
+
+    progress_variance = clean_text(row.progress_variance)
+    otjh_status = clean_text(row.otjh_status)
+    program_status = get_lms_row_program_status(row)
+    performance_status = determine_active_user_status(
+        program_status=program_status,
+        otjh_status=otjh_status,
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=ksb_progress,
+        ksb_available=ksb_available,
+        component_progress=component_progress,
+        component_available=component_available,
+    )
+    risk_flags = build_active_user_risk_flags(
+        otjh_status=otjh_status,
+        ksb_status=ksb_status,
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=ksb_progress,
+        ksb_available=ksb_available,
+        component_progress=component_progress,
+        component_available=component_available,
+    )
+
+    cohort_name = clean_text(row.cohort) or "--"
+    group_name = clean_text(row.group) or "--"
+    cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+
+    return {
+        "id": str(row.id),
+        "name": clean_text(row.username) or "Unknown learner",
+        "initials": build_initials(row.username),
+        "employer": "--",
+        "cohortId": cohort_id,
+        "cohortName": cohort_name,
+        "group": group_name,
+        "status": performance_status,
+        "enrollmentStatus": normalize_program_status(program_status),
+        "riskFlags": risk_flags,
+        "overallProgress": hours_progress,
+        "overallProgressAvailable": hours_available,
+        "attendanceRate": component_progress,
+        "attendanceRateAvailable": component_available,
+        "componentsCompleted": completed_components,
+        "componentsPlanned": planned_components,
+        "otjhCompleted": to_number(row.completed_hours),
+        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhMinimum": to_number(row.minimum_hours),
+        "otjhPlanned": to_number(row.planned_hours),
+        "otjhProgressHours": clean_text(row.progress_hours) or "--",
+        "otjhStatus": otjh_status,
+        "ksbCompleted": ksb_completed,
+        "ksbTarget": ksb_target,
+        "ksbStatus": ksb_status,
+        "ksbProgress": ksb_progress,
+        "ksbProgressAvailable": ksb_available,
+        "knowledgeCompleted": ksb_breakdown["knowledge"]["completed"],
+        "knowledgeTarget": ksb_breakdown["knowledge"]["target"],
+        "knowledgeProgress": ksb_breakdown["knowledge"]["progress"],
+        "skillsCompleted": ksb_breakdown["skills"]["completed"],
+        "skillsTarget": ksb_breakdown["skills"]["target"],
+        "skillsProgress": ksb_breakdown["skills"]["progress"],
+        "behavioursCompleted": ksb_breakdown["behaviours"]["completed"],
+        "behavioursTarget": ksb_breakdown["behaviours"]["target"],
+        "behavioursProgress": ksb_breakdown["behaviours"]["progress"],
+        "evidenceCount": derive_evidence_count(progress_entries, activity_entries),
+        "evidenceCountAvailable": bool(progress_entries or activity_entries),
+        "nextCoaching": "--",
+        "nextReview": "--",
+        "lastContact": "--",
+        "lastAttendanceDate": "--",
+        "lastProgressReview": "--",
+        "lastReview": "--",
+        "lastCoachingSession": "--",
+        "lastSubmittedEvidence": "--",
+        "recentFlag": risk_flags[0] if risk_flags else None,
+        "email": clean_text(row.email) or None,
+        "employerEmail": None,
+        "employerPhone": None,
+        "progressVariance": progress_variance or "--",
+        "startDate": "--",
+        "gatewayReviewDate": "--",
+        "plannedEndDate": "--",
+        "coachName": clean_text(row.coach_name) or None,
+        "coachEmail": clean_text(row.coach_email) or None,
+        "rawProgramStatus": program_status or "--",
+        "coachRag": "",
+    }
 
 
 def attendance_risk_from_rate(rate: int | None) -> str | None:
@@ -924,19 +1356,18 @@ def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
 
     try:
-        rows = [
-            row
-            for row in fetch_caseload_rows(owner_email)
-            if (row["full_name"] or "").strip()
-        ]
-        learners = [serialize_learner(row) for row in rows]
+        rows = fetch_active_user_caseload_rows(owner_email)
+        learners = [serialize_active_user_learner(row) for row in rows]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},
             status=500,
         )
 
-    owner_name = learners[0]["coachName"] if learners else "Med Maher"
+    owner_name = next(
+        (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
+        "Med Maher",
+    )
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},

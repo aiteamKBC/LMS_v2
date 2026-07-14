@@ -147,22 +147,70 @@ class ActiveUser(models.Model):
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
+    completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
+    target_hours = models.TextField(db_column="Target_hours", null=True, blank=True)
+    minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
+    maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
+    progress_variance = models.TextField(db_column="Progress_variance", null=True, blank=True)
+    progress_hours = models.TextField(db_column="Progress_Hours", null=True, blank=True)
+    otjh_status = models.TextField(db_column="OTJHoursStatus", null=True, blank=True)
+    coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
+    coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
+    planned_hours = models.TextField(db_column="planned_hours", null=True, blank=True)
 
     # --- json columns (SafeJSONField: psycopg3 pre-parses json) ---
     # Structured plan: [{moduleId, moduleTitle, weeks: [{weekId, weekTitle,
     # components: [{componentId, componentTitle}]}]}] — same shape as
     # CommercialUser.training_plan / EnrolmentUser.learning_plan.
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     # Quiz attempts: [{week, attempt, grade, Score, module, passed, quizId, quizName,
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
     # — appended to by learner_api.quizzes.submit_quiz_attempt.
     weekly_quizzes = SafeJSONField(db_column="Weekly_Quizzes", null=True, blank=True)
+    activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
 
     class Meta:
         managed = False
         # Emitted by Django as "Learner"."Active_users".
         db_table = 'Learner"."Active_users'
+
+    def __str__(self):
+        return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
+
+
+class UnactiveUser(models.Model):
+    """Unmanaged mapping of "Learner"."Unactive_users"."""
+
+    id = models.AutoField(primary_key=True, db_column="id")
+
+    username = models.TextField(db_column="Username ", null=True, blank=True)  # NB: trailing space
+    email = models.TextField(db_column="Email", null=True, blank=True)
+    phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
+    programme = models.TextField(db_column="Programme", null=True, blank=True)
+    status = models.TextField(db_column="status", null=True, blank=True)
+    cohort = models.TextField(db_column="Cohort", null=True, blank=True)
+    group = models.TextField(db_column="Group", null=True, blank=True)
+    completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
+    target_hours = models.TextField(db_column="Target_hours", null=True, blank=True)
+    minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
+    maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
+    progress_variance = models.TextField(db_column="Progress_variance", null=True, blank=True)
+    progress_hours = models.TextField(db_column="Progress_Hours", null=True, blank=True)
+    otjh_status = models.TextField(db_column="OTJHoursStatus", null=True, blank=True)
+    coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
+    coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
+    planned_hours = models.TextField(db_column="planned_hours", null=True, blank=True)
+
+    training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
+    ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
+    activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."Unactive_users'
 
     def __str__(self):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"

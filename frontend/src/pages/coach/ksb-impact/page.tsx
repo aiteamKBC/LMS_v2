@@ -22,7 +22,17 @@ interface CaseloadApiLearner {
   ksbTarget?: number;
   ksbStatus?: string;
   ksbProgress?: number;
+  knowledgeCompleted?: number | null;
+  knowledgeTarget?: number | null;
+  knowledgeProgress?: number | null;
+  skillsCompleted?: number | null;
+  skillsTarget?: number | null;
+  skillsProgress?: number | null;
+  behavioursCompleted?: number | null;
+  behavioursTarget?: number | null;
+  behavioursProgress?: number | null;
   evidenceCount?: number;
+  evidenceCountAvailable?: boolean;
   rawProgramStatus?: string;
   coachRag?: string;
   startDate?: string;
@@ -49,8 +59,18 @@ interface KsbImpactRow {
   target: number;
   remaining: number;
   overall: number;
+  knowledgeCompleted: number | null;
+  knowledgeTarget: number | null;
+  knowledgeProgress: number | null;
+  skillsCompleted: number | null;
+  skillsTarget: number | null;
+  skillsProgress: number | null;
+  behavioursCompleted: number | null;
+  behavioursTarget: number | null;
+  behavioursProgress: number | null;
   ksbStatus: string;
   evidenceCount: number;
+  evidenceCountAvailable: boolean;
   programStatus: string;
   coachRag: string;
   startDate: string;
@@ -71,6 +91,35 @@ function displayText(value?: string | null): string {
 function percentage(completed: number, target: number): number {
   if (target <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((completed / target) * 100)));
+}
+
+function isNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function averageProgress(values: Array<number | null | undefined>): number | null {
+  const validValues = values.filter(isNumber);
+  if (!validValues.length) return null;
+  return Math.round(validValues.reduce((total, value) => total + value, 0) / validValues.length);
+}
+
+function sumCompleted(values: Array<number | null | undefined>): number | null {
+  const validValues = values.filter(isNumber);
+  if (!validValues.length) return null;
+  return validValues.reduce((total, value) => total + value, 0);
+}
+
+function formatKsbRatio(completed: number | null | undefined, target: number | null | undefined): string {
+  if (!isNumber(target) || target <= 0) return MISSING_VALUE;
+  return `${isNumber(completed) ? completed : 0}/${target}`;
+}
+
+function formatKsbPercent(progress: number | null | undefined): string {
+  return isNumber(progress) ? `${progress}%` : MISSING_VALUE;
+}
+
+function formatKsbCompleted(completed: number | null | undefined): string {
+  return isNumber(completed) ? String(completed) : MISSING_VALUE;
 }
 
 function getRiskTone(overall: number): RiskTone {
@@ -115,8 +164,18 @@ function toKsbImpactRow(learner: CaseloadApiLearner): KsbImpactRow {
     target,
     remaining: Math.max(target - completed, 0),
     overall,
+    knowledgeCompleted: isNumber(learner.knowledgeCompleted) ? learner.knowledgeCompleted : null,
+    knowledgeTarget: isNumber(learner.knowledgeTarget) ? learner.knowledgeTarget : null,
+    knowledgeProgress: isNumber(learner.knowledgeProgress) ? learner.knowledgeProgress : null,
+    skillsCompleted: isNumber(learner.skillsCompleted) ? learner.skillsCompleted : null,
+    skillsTarget: isNumber(learner.skillsTarget) ? learner.skillsTarget : null,
+    skillsProgress: isNumber(learner.skillsProgress) ? learner.skillsProgress : null,
+    behavioursCompleted: isNumber(learner.behavioursCompleted) ? learner.behavioursCompleted : null,
+    behavioursTarget: isNumber(learner.behavioursTarget) ? learner.behavioursTarget : null,
+    behavioursProgress: isNumber(learner.behavioursProgress) ? learner.behavioursProgress : null,
     ksbStatus: displayText(learner.ksbStatus),
     evidenceCount: Math.max(toNumber(learner.evidenceCount), 0),
+    evidenceCountAvailable: Boolean(learner.evidenceCountAvailable),
     programStatus: displayText(learner.rawProgramStatus),
     coachRag: displayText(learner.coachRag),
     startDate: displayText(learner.startDate),
@@ -169,11 +228,14 @@ export default function CoachKsbImpact() {
     const averageOverall = rows.length
       ? Math.round(rows.reduce((total, row) => total + row.overall, 0) / rows.length)
       : 0;
+    const totalKnowledgeCompleted = sumCompleted(rows.map(row => row.knowledgeCompleted));
+    const totalSkillsCompleted = sumCompleted(rows.map(row => row.skillsCompleted));
+    const totalBehavioursCompleted = sumCompleted(rows.map(row => row.behavioursCompleted));
     const highRisk = rows.filter(row => row.overall < 40).length;
     const onTrack = rows.filter(row => row.overall >= 40 && row.overall < 80).length;
     const gatewayReady = rows.filter(row => row.overall >= 80).length;
 
-    return { averageOverall, highRisk, onTrack, gatewayReady };
+    return { averageOverall, totalKnowledgeCompleted, totalSkillsCompleted, totalBehavioursCompleted, highRisk, onTrack, gatewayReady };
   }, [rows]);
 
   const filteredRows = useMemo(() => {
@@ -207,7 +269,7 @@ export default function CoachKsbImpact() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Monthly KSB Impact</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                Average KSB: Overall <strong>{stats.averageOverall}%</strong>. Knowledge {MISSING_VALUE}, Skills {MISSING_VALUE}, Behaviours {MISSING_VALUE}. {stats.highRisk} high-risk, {stats.gatewayReady} Gateway-ready.
+                Average KSB: Overall <strong>{stats.averageOverall}%</strong>. Knowledge {formatKsbCompleted(stats.totalKnowledgeCompleted)}, Skills {formatKsbCompleted(stats.totalSkillsCompleted)}, Behaviours {formatKsbCompleted(stats.totalBehavioursCompleted)}. {stats.highRisk} high-risk, {stats.gatewayReady} Gateway-ready.
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -216,15 +278,15 @@ export default function CoachKsbImpact() {
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Overall KSB</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{MISSING_VALUE}</p>
+                <p className="text-2xl font-bold text-white">{formatKsbCompleted(stats.totalKnowledgeCompleted)}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Knowledge</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{MISSING_VALUE}</p>
+                <p className="text-2xl font-bold text-white">{formatKsbCompleted(stats.totalSkillsCompleted)}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Skills</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{MISSING_VALUE}</p>
+                <p className="text-2xl font-bold text-white">{formatKsbCompleted(stats.totalBehavioursCompleted)}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Behaviours</p>
               </div>
             </div>
@@ -244,13 +306,13 @@ export default function CoachKsbImpact() {
         </div>
 
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(90px,0.75fr)_minmax(120px,0.8fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
+          <div className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
             <span>Learner</span>
             <span className="text-center">Knowledge</span>
             <span className="text-center">Skills</span>
             <span className="text-center">Behaviours</span>
-            <span className="text-center">Overall</span>
             <span className="text-center">Validated</span>
+            <span className="text-center">Overall</span>
             <span className="text-center">Evidenced</span>
             <span className="text-center">Applied</span>
             <span className="text-center">Trend</span>
@@ -279,7 +341,7 @@ export default function CoachKsbImpact() {
           {!loading && !error && filteredRows.length > 0 && (
             <div className="divide-y divide-background-200/30">
               {filteredRows.map(row => (
-                <div key={row.id} className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(90px,0.75fr)_minmax(120px,0.8fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
+                <div key={row.id} className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
                     <div className="min-w-0">
@@ -287,12 +349,12 @@ export default function CoachKsbImpact() {
                       <p className="text-[10px] text-foreground-400 truncate">{row.programme}</p>
                     </div>
                   </div>
-                  <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
-                  <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
-                  <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
+                  <span className={`text-[11px] font-semibold text-center ${isNumber(row.knowledgeCompleted) ? getMetricTone(row.overall) : 'text-foreground-400'}`}>{formatKsbCompleted(row.knowledgeCompleted)}</span>
+                  <span className={`text-[11px] font-semibold text-center ${isNumber(row.skillsCompleted) ? getMetricTone(row.overall) : 'text-foreground-400'}`}>{formatKsbCompleted(row.skillsCompleted)}</span>
+                  <span className={`text-[11px] font-semibold text-center ${isNumber(row.behavioursCompleted) ? getMetricTone(row.overall) : 'text-foreground-400'}`}>{formatKsbCompleted(row.behavioursCompleted)}</span>
+                  <span className="text-[11px] text-foreground-500 text-center">{formatKsbRatio(row.completed, row.target)}</span>
                   <span className={`text-[13px] font-bold text-center ${getMetricTone(row.overall)}`}>{row.overall}%</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{row.completed}/{row.target || MISSING_VALUE}</span>
-                  <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
+                  <span className="text-[11px] font-semibold text-center text-foreground-400">{row.evidenceCountAvailable ? row.evidenceCount : MISSING_VALUE}</span>
                   <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
                   <div className="flex justify-center">
                     <span className="text-[11px] font-semibold text-foreground-400">{MISSING_VALUE}</span>
@@ -365,6 +427,18 @@ export default function CoachKsbImpact() {
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Live KSB Source Values</h4>
               <div className="space-y-2 text-[11px]">
                 <div className="flex items-center justify-between gap-3">
+                  <span className="text-foreground-400">Knowledge</span>
+                  <span className="font-semibold text-foreground-700">{formatKsbRatio(selectedRow.knowledgeCompleted, selectedRow.knowledgeTarget)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-foreground-400">Skills</span>
+                  <span className="font-semibold text-foreground-700">{formatKsbRatio(selectedRow.skillsCompleted, selectedRow.skillsTarget)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-foreground-400">Behaviours</span>
+                  <span className="font-semibold text-foreground-700">{formatKsbRatio(selectedRow.behavioursCompleted, selectedRow.behavioursTarget)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">TotalCompletedKSB</span>
                   <span className="font-semibold text-foreground-700">{selectedRow.completed}</span>
                 </div>
@@ -382,25 +456,25 @@ export default function CoachKsbImpact() {
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Evidence count</span>
-                  <span className="font-semibold text-foreground-700">{selectedRow.evidenceCount}</span>
+                  <span className="font-semibold text-foreground-700">{selectedRow.evidenceCountAvailable ? selectedRow.evidenceCount : MISSING_VALUE}</span>
                 </div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-              <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Missing Granular Breakdown</h4>
+              <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Granular Breakdown</h4>
               <div className="grid grid-cols-2 gap-3 text-[11px]">
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Knowledge %</p>
-                  <p className="mt-1 text-foreground-400">{MISSING_VALUE}</p>
+                  <p className={`mt-1 ${isNumber(selectedRow.knowledgeProgress) ? getMetricTone(selectedRow.knowledgeProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.knowledgeProgress)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Skills %</p>
-                  <p className="mt-1 text-foreground-400">{MISSING_VALUE}</p>
+                  <p className={`mt-1 ${isNumber(selectedRow.skillsProgress) ? getMetricTone(selectedRow.skillsProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.skillsProgress)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Behaviours %</p>
-                  <p className="mt-1 text-foreground-400">{MISSING_VALUE}</p>
+                  <p className={`mt-1 ${isNumber(selectedRow.behavioursProgress) ? getMetricTone(selectedRow.behavioursProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.behavioursProgress)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Trend</p>
