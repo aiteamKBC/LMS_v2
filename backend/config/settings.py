@@ -78,7 +78,7 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5-mini")
 
 ALLOWED_HOSTS = [
     host.strip()

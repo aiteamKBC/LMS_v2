@@ -6,6 +6,7 @@ import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
 import { kbcUsers } from '@/mocks/users';
 import { useToast } from '@/hooks/useToast';
+import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -85,15 +86,67 @@ interface QuizPreviewData {
   questions: QuizPreviewQuestion[];
 }
 
+interface QuizStudentQuestionResult {
+  number: number;
+  text: string;
+  type: string;
+  chosenAnswer: string | null;
+  correctAnswer: string | null;
+  correct: boolean;
+  earned: number | null;
+  possible: number | null;
+}
+
+interface QuizStudentAttempt {
+  attempt: number | null;
+  grade: string;
+  gradePercent: number | null;
+  score: string;
+  passed: boolean;
+  submittedAt: string;
+  startedAt: string;
+  timeTaken: string;
+  reportedTime: string;
+  week: string;
+  module: string;
+  feedback: string;
+  ksbs: string[];
+  questions: QuizStudentQuestionResult[];
+}
+
+interface QuizStudentResult {
+  id: number;
+  name: string;
+  email: string;
+  programme: string;
+  cohort: string;
+  group: string;
+  attemptCount: number;
+  bestGrade: number | null;
+  latestAttempt: QuizStudentAttempt;
+  attempts: QuizStudentAttempt[];
+}
+
+interface QuizStudentResultsData {
+  quiz: QuizPackage;
+  summary: {
+    students: number;
+    attempts: number;
+    passed: number;
+    averageBest: number | null;
+  };
+  students: QuizStudentResult[];
+}
+
 interface QuizFormState {
   title: string;
   module: string;
   programme: string;
   programmeId: string;
   week: string;
+  weekId: string;
   version: string;
   questions: string;
-  questionType: QuestionType;
   status: QuizStatus;
   author: string;
   linkedCourses: string;
@@ -108,6 +161,7 @@ interface AiGeneratorState {
   module: string;
   programmeId: string;
   week: string;
+  weekId: string;
   questionCount: string;
   author: string;
 }
@@ -115,13 +169,17 @@ interface AiGeneratorState {
 interface TrainingPlanModuleOption {
   value: string;
   label: string;
-  programmeId: number;
+  programmeId: string;
+  trainingPlanId?: number;
+  moduleId?: string;
 }
 
 interface TrainingPlanOptions {
   programmes: { value: string; label: string }[];
   modulesByProgramme: Record<string, TrainingPlanModuleOption[]>;
 }
+
+type WeekLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 interface ScormApi {
   LMSInitialize: () => string;
@@ -146,9 +204,9 @@ const emptyForm: QuizFormState = {
   programme: '',
   programmeId: '',
   week: '',
+  weekId: '',
   version: 'v1.0',
   questions: '',
-  questionType: 'single_choice',
   status: 'draft',
   author: 'Curriculum Team',
   linkedCourses: '1',
@@ -166,6 +224,68 @@ Core rules:
 - Keep distractors plausible and avoid repeated stems or obvious patterns.
 - Return structured JSON only so the LMS can save and preview the questions.`;
 
+function QuizRowActions({
+  quiz,
+  previewLoadingId,
+  editorLoadingId,
+  studentsLoadingId,
+  onRestore,
+  onPreview,
+  onEdit,
+  onManageStudents,
+}: {
+  quiz: QuizPackage;
+  previewLoadingId: number | null;
+  editorLoadingId: number | null;
+  studentsLoadingId: number | null;
+  onRestore: () => void;
+  onPreview: () => void;
+  onEdit: () => void;
+  onManageStudents: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      {quiz.status === 'trash' && (
+        <button
+          type="button"
+          onClick={onRestore}
+          className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-smooth"
+          title="Restore to quizzes"
+        >
+          <i className="ri-arrow-go-back-line"></i>
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onPreview}
+        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        title="Student preview"
+      >
+        <i className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></i>
+      </button>
+      <button
+        type="button"
+        onClick={onEdit}
+        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        title="Review questions"
+      >
+        <i className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></i>
+      </button>
+      <button
+        type="button"
+        onClick={onManageStudents}
+        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        title="Manage students"
+      >
+        <i className={`${studentsLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-team-line'}`}></i>
+      </button>
+      <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center" title="Download">
+        <i className="ri-download-line"></i>
+      </a>
+    </div>
+  );
+}
+
 const emptyGeneratorForm: AiGeneratorState = {
   title: '',
   topic: '',
@@ -175,6 +295,7 @@ const emptyGeneratorForm: AiGeneratorState = {
   module: '',
   programmeId: '',
   week: '',
+  weekId: '',
   questionCount: '5',
   author: 'Curriculum Team',
 };
@@ -231,9 +352,15 @@ export default function QuizXmlWorkspacePage() {
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [trainingPlanOptions, setTrainingPlanOptions] = useState<TrainingPlanOptions>({ programmes: [], modulesByProgramme: {} });
+  const [formWeeks, setFormWeeks] = useState<WeekItem[]>([]);
+  const [formWeeksState, setFormWeeksState] = useState<WeekLoadState>('idle');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [previewData, setPreviewData] = useState<QuizPreviewData | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<number | null>(null);
+  const [studentResultsData, setStudentResultsData] = useState<QuizStudentResultsData | null>(null);
+  const [studentResultsLoadingId, setStudentResultsLoadingId] = useState<number | null>(null);
+  const [activeStudentId, setActiveStudentId] = useState<number | null>(null);
+  const [activeAttemptIndex, setActiveAttemptIndex] = useState(0);
   const [editorData, setEditorData] = useState<QuizPreviewData | null>(null);
   const [editorLoadingId, setEditorLoadingId] = useState<number | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<number | null>(null);
@@ -241,6 +368,8 @@ export default function QuizXmlWorkspacePage() {
   const [editorBaseline, setEditorBaseline] = useState('');
   const [showGenerator, setShowGenerator] = useState(false);
   const [generatorForm, setGeneratorForm] = useState<AiGeneratorState>(emptyGeneratorForm);
+  const [generatorWeeks, setGeneratorWeeks] = useState<WeekItem[]>([]);
+  const [generatorWeeksState, setGeneratorWeeksState] = useState<WeekLoadState>('idle');
   const [generatorFiles, setGeneratorFiles] = useState<File[]>([]);
   const [generatorDragActive, setGeneratorDragActive] = useState(false);
   const [showPromptCustomize, setShowPromptCustomize] = useState(false);
@@ -296,6 +425,62 @@ export default function QuizXmlWorkspacePage() {
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    const selectedModule = (trainingPlanOptions.modulesByProgramme[form.programme] ?? []).find(option => option.value === form.module);
+    const moduleId = selectedModule?.moduleId;
+    if (!moduleId) {
+      setFormWeeks([]);
+      setFormWeeksState(form.module ? 'error' : 'idle');
+      return;
+    }
+
+    let cancelled = false;
+    setFormWeeksState('loading');
+    fetchWeeks(moduleId)
+      .then(weeks => {
+        if (cancelled) return;
+        setFormWeeks(weeks);
+        setFormWeeksState('ready');
+        setForm(current => weeks.some(week => week.id === current.weekId) ? current : { ...current, week: '', weekId: '' });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFormWeeks([]);
+        setFormWeeksState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.module, form.programme, trainingPlanOptions.modulesByProgramme]);
+
+  useEffect(() => {
+    const selectedModule = (trainingPlanOptions.modulesByProgramme[generatorForm.programme] ?? []).find(option => option.value === generatorForm.module);
+    const moduleId = selectedModule?.moduleId;
+    if (!moduleId) {
+      setGeneratorWeeks([]);
+      setGeneratorWeeksState(generatorForm.module ? 'error' : 'idle');
+      return;
+    }
+
+    let cancelled = false;
+    setGeneratorWeeksState('loading');
+    fetchWeeks(moduleId)
+      .then(weeks => {
+        if (cancelled) return;
+        setGeneratorWeeks(weeks);
+        setGeneratorWeeksState('ready');
+        setGeneratorForm(current => weeks.some(week => week.id === current.weekId) ? current : { ...current, week: '', weekId: '' });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setGeneratorWeeks([]);
+        setGeneratorWeeksState('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [generatorForm.module, generatorForm.programme, trainingPlanOptions.modulesByProgramme]);
 
   useEffect(() => {
     if (previewData?.quiz.packageType !== 'scorm') return;
@@ -364,18 +549,46 @@ export default function QuizXmlWorkspacePage() {
     ...trainingPlanOptions.programmes,
   ], [trainingPlanOptions.programmes]);
   const moduleOptions = useMemo(() => [
-    { value: '', label: form.programme ? 'Module' : 'Select programme first', programmeId: 0 },
+    { value: '', label: form.programme ? 'Module' : 'Select programme first', programmeId: '' },
     ...(trainingPlanOptions.modulesByProgramme[form.programme] ?? []),
   ], [form.programme, trainingPlanOptions.modulesByProgramme]);
   const generatorModuleOptions = useMemo(() => [
-    { value: '', label: generatorForm.programme ? 'Module' : 'Select programme first', programmeId: 0 },
+    { value: '', label: generatorForm.programme ? 'Module' : 'Select programme first', programmeId: '' },
     ...(trainingPlanOptions.modulesByProgramme[generatorForm.programme] ?? []),
   ], [generatorForm.programme, trainingPlanOptions.modulesByProgramme]);
+  const formWeekOptions = useMemo(() => {
+    const label = !form.module
+      ? 'Select module first'
+      : formWeeksState === 'loading'
+        ? 'Loading weeks...'
+        : formWeeksState === 'error'
+          ? 'No weeks found'
+          : 'Week';
+    return [
+      { value: '', label },
+      ...formWeeks.map(week => ({ value: week.id, label: week.title })),
+    ];
+  }, [form.module, formWeeks, formWeeksState]);
+  const generatorWeekOptions = useMemo(() => {
+    const label = !generatorForm.module
+      ? 'Select module first'
+      : generatorWeeksState === 'loading'
+        ? 'Loading weeks...'
+        : generatorWeeksState === 'error'
+          ? 'No weeks found'
+          : 'Week';
+    return [
+      { value: '', label },
+      ...generatorWeeks.map(week => ({ value: week.id, label: week.title })),
+    ];
+  }, [generatorForm.module, generatorWeeks, generatorWeeksState]);
 
   const selectedCount = selectedIds.length;
   const activeEditorQuestion = editorData?.questions.find(question => question.id === activeQuestionId) ?? editorData?.questions[0];
   const editorSnapshot = useMemo(() => editorData ? serializeEditorQuestions(editorData.questions) : '', [editorData]);
   const editorDirty = Boolean(editorData && editorSnapshot !== editorBaseline);
+  const activeStudentResult = studentResultsData?.students.find(student => student.id === activeStudentId) ?? studentResultsData?.students[0] ?? null;
+  const activeStudentAttempt = activeStudentResult?.attempts[Math.min(activeAttemptIndex, Math.max(0, activeStudentResult.attempts.length - 1))] ?? activeStudentResult?.latestAttempt ?? null;
 
   const resetModal = () => {
     setShowCreate(false);
@@ -415,6 +628,41 @@ export default function QuizXmlWorkspacePage() {
     setSearchParams(nextParams, { replace: true });
   };
 
+  const createQuiz = async () => {
+    let response: Response;
+    if (uploadFile) {
+      const body = new FormData();
+      body.append('file', uploadFile);
+      Object.entries(form).forEach(([key, value]) => body.append(key, value));
+      response = await fetch('/quiz_api/quizzes/', { method: 'POST', body });
+    } else {
+      response = await fetch('/quiz_api/quizzes/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: form.title,
+          module: form.module,
+          programme: form.programme,
+          programmeId: form.programmeId,
+          week: form.week,
+          weekId: form.weekId,
+          version: form.version,
+          questions: Number(form.questions || 0),
+          status: form.status,
+          author: form.author,
+          linkedCourses: Number(form.linkedCourses || 0),
+          packageType: 'xml',
+        }),
+      });
+    }
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || 'Could not save quiz');
+    }
+    return response.json();
+  };
+
   const submitQuiz = async (event: FormEvent) => {
     event.preventDefault();
     if (savingQuiz) return;
@@ -422,40 +670,10 @@ export default function QuizXmlWorkspacePage() {
     setSavingQuiz(true);
 
     try {
-      let response: Response;
-      if (uploadFile) {
-        const body = new FormData();
-        body.append('file', uploadFile);
-        Object.entries(form).forEach(([key, value]) => body.append(key, value));
-        response = await fetch('/quiz_api/quizzes/', { method: 'POST', body });
-      } else {
-        response = await fetch('/quiz_api/quizzes/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: form.title,
-            module: form.module,
-            programme: form.programme,
-            programmeId: form.programmeId,
-            week: form.week,
-            version: form.version,
-            questions: Number(form.questions || 0),
-            questionType: form.questionType,
-            status: form.status,
-            author: form.author,
-            linkedCourses: Number(form.linkedCourses || 0),
-            packageType: 'xml',
-          }),
-        });
-      }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || 'Could not save quiz');
-      }
-      const saved = await response.json();
+      const saved = await createQuiz();
       setQuizzes(prev => [saved, ...prev]);
       resetModal();
+      success('Quiz created', 'The quiz package was saved successfully.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save quiz');
     } finally {
@@ -481,6 +699,8 @@ export default function QuizXmlWorkspacePage() {
         body.append('customInstructions', generatorForm.customInstructions);
         body.append('programme', generatorForm.programme);
         body.append('module', generatorForm.module);
+        body.append('week', generatorForm.week);
+        body.append('weekId', generatorForm.weekId);
         body.append('questionCount', generatorForm.questionCount);
         response = await fetch('/quiz_api/ai/generate-questions/', { method: 'POST', body });
       } else {
@@ -494,6 +714,8 @@ export default function QuizXmlWorkspacePage() {
             customInstructions: generatorForm.customInstructions,
             programme: generatorForm.programme,
             module: generatorForm.module,
+            week: generatorForm.week,
+            weekId: generatorForm.weekId,
             questionCount: Number(generatorForm.questionCount || 5),
           }),
         });
@@ -527,6 +749,7 @@ export default function QuizXmlWorkspacePage() {
           programme: generatorForm.programme,
           programmeId: generatorForm.programmeId,
           week: generatorForm.week,
+          weekId: generatorForm.weekId,
           version: 'v1.0',
           questions: generatedQuestions.length,
           questionType: generatedQuestions[0]?.questionType || 'single_choice',
@@ -630,6 +853,23 @@ export default function QuizXmlWorkspacePage() {
     }
   };
 
+  const openStudentManager = async (quiz: QuizPackage) => {
+    setStudentResultsLoadingId(quiz.id);
+    setError('');
+    try {
+      const response = await fetch(`/quiz_api/quizzes/${quiz.id}/students/`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Could not load quiz student results');
+      setStudentResultsData(data);
+      setActiveStudentId(data.students?.[0]?.id ?? null);
+      setActiveAttemptIndex(0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load quiz student results');
+    } finally {
+      setStudentResultsLoadingId(null);
+    }
+  };
+
   const openQuestionEditor = async (quiz: QuizPackage) => {
     window.location.href = `/curriculum/quiz-xml/${quiz.id}/edit`;
   };
@@ -716,18 +956,18 @@ export default function QuizXmlWorkspacePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Quiz Workspace" pageSubtitle="Upload XML, SCORM or spreadsheet quiz files, then store questions and answers" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
+          <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-code-box-line text-white text-2xl"></i></span>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Quiz Workspace</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{quizzes.length} quiz packages</strong> - {published} published, {draft} in draft. {validationIssues} with validation issues.</p>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center"><p className="text-2xl font-bold text-white">{quizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide">Quizzes</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center"><p className="text-2xl font-bold text-white">{totalQuestions}</p><p className="text-[10px] text-white/70 uppercase tracking-wide">Questions</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center"><p className="text-2xl font-bold text-white">{published}</p><p className="text-[10px] text-white/70 uppercase tracking-wide">Published</p></div>
+            <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full md:w-auto shrink-0">
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{quizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Quizzes</p></div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{totalQuestions}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Questions</p></div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{published}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Published</p></div>
             </div>
           </div>
         </div>
@@ -762,7 +1002,7 @@ export default function QuizXmlWorkspacePage() {
             options={bulkActionOptions}
             disabled={!selectedCount}
             onChange={setBulkAction}
-            className="w-44"
+            className="w-full sm:w-44"
           />
           <button
             type="button"
@@ -777,18 +1017,18 @@ export default function QuizXmlWorkspacePage() {
             value={filterStatus}
             options={statusOptions}
             onChange={handleStatusFilterChange}
-            className="w-44 ml-auto"
+            className="w-full sm:w-44 xl:ml-auto"
           />
 
-          <div className="relative">
-            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-56 rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
+          <div className="relative w-full sm:w-64">
+            <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-full rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
             <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
           </div>
 
           <button
             type="button"
             onClick={() => handleStatusFilterChange(filterStatus === 'trash' ? 'all' : 'trash')}
-            className={`h-10 px-4 rounded-lg text-sm font-semibold transition-smooth whitespace-nowrap flex items-center ${
+            className={`h-10 px-4 rounded-lg text-sm font-semibold transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto ${
               filterStatus === 'trash'
                 ? 'bg-[#fff7ed] border border-[#fed7aa] text-[#c2410c]'
                 : 'bg-white border border-[#d8dde6] text-[#5b2dbb] hover:bg-[#f7f3ff]'
@@ -799,16 +1039,16 @@ export default function QuizXmlWorkspacePage() {
             {filterStatus === 'trash' ? 'Back to quizzes' : 'Archive'}
           </button>
 
-          <Link to="/curriculum/question-bank" className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center">
+          <Link to="/curriculum/question-bank" className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto">
             <i className="ri-questionnaire-line mr-1"></i> Question Bank
           </Link>
-          <button onClick={() => setShowGenerator(true)} className="h-10 px-4 bg-[#0f172a] text-white rounded-lg text-sm font-semibold hover:bg-[#111827] transition-smooth whitespace-nowrap">
+          <button onClick={() => setShowGenerator(true)} className="h-10 px-4 bg-[#0f172a] text-white rounded-lg text-sm font-semibold hover:bg-[#111827] transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-sparkling-2-line mr-1"></i> Generate Questions
           </button>
-          <button onClick={() => setShowCreate(true)} className="h-10 px-4 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap">
+          <button onClick={() => setShowCreate(true)} className="h-10 px-4 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-add-circle-fill mr-1"></i> Add New Quiz
           </button>
-          <button onClick={() => fileInputRef.current?.click()} className="h-10 px-4 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
+          <button onClick={() => fileInputRef.current?.click()} className="h-10 px-4 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-upload-cloud-line mr-1"></i> Upload Quiz File
           </button>
         </div>
@@ -816,8 +1056,78 @@ export default function QuizXmlWorkspacePage() {
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
 
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left">
+          <div className="xl:hidden divide-y divide-foreground-200/50">
+            {loading && (
+              <div className="px-4 py-10 text-center text-sm text-foreground-400">Loading quizzes...</div>
+            )}
+            {!loading && paginatedQuizzes.map(quiz => (
+              <article key={quiz.id} onClick={() => setSelectedQuiz(quiz)} className="p-4 sm:p-5 hover:bg-background-100/50 transition-smooth cursor-pointer">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(quiz.id)}
+                    onClick={event => event.stopPropagation()}
+                    onChange={() => setSelectedIds(prev => prev.includes(quiz.id) ? prev.filter(id => id !== quiz.id) : [...prev, quiz.id])}
+                    className="mt-1 w-4 h-4 rounded border-foreground-300 shrink-0"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="text-sm sm:text-base font-heading font-bold text-foreground-900 leading-6 break-words [overflow-wrap:anywhere]">{quiz.title}</h3>
+                        <p className="mt-1 text-xs text-foreground-500 break-words [overflow-wrap:anywhere]">{quiz.module || 'No module'} - {quiz.questions} questions</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusClasses(quiz.status)}`}>{statusLabel(quiz.status)}</span>
+                        <span className="text-xs text-foreground-400 uppercase">{quiz.packageType}</span>
+                        {quiz.schemaValid ? <i className="ri-checkbox-circle-line text-emerald-500"></i> : <i className="ri-error-warning-line text-red-500"></i>}
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                      <div className="rounded-lg bg-background-100/80 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Linked</p>
+                        <p className="font-semibold text-primary-600">{quiz.linkedCourses}</p>
+                      </div>
+                      <div className="rounded-lg bg-background-100/80 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Date</p>
+                        <p className="font-semibold text-foreground-800">Last Modified - {statusLabel(quiz.status)}</p>
+                        <p className="text-xs text-foreground-500">{formatDate(quiz.updatedAt)}</p>
+                      </div>
+                      <div className="rounded-lg bg-background-100/80 px-3 py-2" onClick={event => event.stopPropagation()}>
+                        <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-foreground-400">Author</p>
+                        <ThemedSelect
+                          value={quiz.author || 'Curriculum Team'}
+                          options={authorOptions}
+                          onChange={author => void updateAuthor(quiz, author)}
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex items-center justify-between gap-3" onClick={event => event.stopPropagation()}>
+                      <p className="text-xs text-foreground-400">Package is {quiz.schemaValid ? 'valid' : 'missing validation'}</p>
+                      <QuizRowActions
+                        quiz={quiz}
+                        previewLoadingId={previewLoadingId}
+                        editorLoadingId={editorLoadingId}
+                        studentsLoadingId={studentResultsLoadingId}
+                        onRestore={() => void updateStatus([quiz.id], 'draft')}
+                        onPreview={() => void openStudentPreview(quiz)}
+                        onEdit={() => void openQuestionEditor(quiz)}
+                        onManageStudents={() => void openStudentManager(quiz)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </article>
+            ))}
+            {!loading && quizzes.length === 0 && (
+              <div className="px-4 py-10 text-center text-sm text-foreground-400">No quizzes match this filter</div>
+            )}
+          </div>
+
+          <div className="hidden xl:block overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left">
               <thead>
                 <tr className="border-b border-foreground-300/50 bg-background-100/60">
                   <th className="px-4 py-3 w-10"></th>
@@ -864,26 +1174,16 @@ export default function QuizXmlWorkspacePage() {
                     </td>
                     <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
                       <div className="flex items-center gap-2">
-                        {quiz.status === 'trash' && (
-                          <button
-                            onClick={() => void updateStatus([quiz.id], 'draft')}
-                            className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-smooth"
-                            title="Restore to quizzes"
-                          >
-                            <i className="ri-arrow-go-back-line"></i>
-                          </button>
-                        )}
-                        <button
-                          onClick={() => void openStudentPreview(quiz)}
-                          className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
-                          title="Student preview"
-                        >
-                          <i className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></i>
-                        </button>
-                        <button onClick={() => void openQuestionEditor(quiz)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth" title="Review questions">
-                          <i className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></i>
-                        </button>
-                        <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center"><i className="ri-download-line"></i></a>
+                        <QuizRowActions
+                          quiz={quiz}
+                          previewLoadingId={previewLoadingId}
+                          editorLoadingId={editorLoadingId}
+                          studentsLoadingId={studentResultsLoadingId}
+                          onRestore={() => void updateStatus([quiz.id], 'draft')}
+                          onPreview={() => void openStudentPreview(quiz)}
+                          onEdit={() => void openQuestionEditor(quiz)}
+                          onManageStudents={() => void openStudentManager(quiz)}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -1072,6 +1372,163 @@ export default function QuizXmlWorkspacePage() {
           </div>
         )}
 
+        {studentResultsData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={() => setStudentResultsData(null)}>
+            <div className="w-full max-w-7xl max-h-[92vh] bg-white rounded-2xl border border-[#ded8e8] shadow-2xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 px-4 sm:px-7 py-5 sm:py-6 border-b border-[#e2e8f0] bg-[#fbfbfd]">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="w-8 h-8 rounded-xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center">
+                      <i className="ri-team-line"></i>
+                    </span>
+                    <p className="text-xs font-bold uppercase tracking-wider text-[#5b2dbb]">Manage Students</p>
+                  </div>
+                  <h3 className="text-xl font-heading font-bold text-foreground-900 leading-snug break-words [overflow-wrap:anywhere]">{studentResultsData.quiz.title}</h3>
+                  <p className="text-sm text-[#647083] mt-1">Review learner attempts, scores and answer-level results.</p>
+                </div>
+                <button onClick={() => setStudentResultsData(null)} className="w-11 h-11 rounded-xl bg-white hover:bg-[#f1f5f9] text-[#0f172a] shrink-0 transition-smooth"><i className="ri-close-line text-lg"></i></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto bg-[#f8fafc] p-4 sm:p-6 quiz-preview-scroll">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+                  {[
+                    ['Students', studentResultsData.summary.students],
+                    ['Attempts', studentResultsData.summary.attempts],
+                    ['Passed', studentResultsData.summary.passed],
+                    ['Avg best', studentResultsData.summary.averageBest === null ? '-' : `${studentResultsData.summary.averageBest}%`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl border border-[#e2e8f0] bg-white px-4 py-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b]">{label}</p>
+                      <p className="mt-1 text-xl font-heading font-bold text-[#0f172a]">{value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {studentResultsData.students.length === 0 ? (
+                  <div className="rounded-2xl border border-[#e2e8f0] bg-white py-16 text-center">
+                    <span className="w-14 h-14 rounded-2xl bg-[#f8fafc] border border-[#e2e8f0] flex items-center justify-center mx-auto mb-3">
+                      <i className="ri-user-search-line text-[#94a3b8] text-xl"></i>
+                    </span>
+                    <p className="text-sm font-semibold text-[#334155]">No student attempts yet</p>
+                    <p className="text-xs text-[#64748b] mt-1">When learners submit this quiz, their scores and answers will appear here.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-5">
+                    <aside className="rounded-2xl border border-[#e2e8f0] bg-white overflow-hidden">
+                      <div className="px-4 py-3 border-b border-[#e2e8f0]">
+                        <h4 className="text-sm font-heading font-bold text-[#0f172a]">Students</h4>
+                        <p className="text-xs text-[#64748b]">{studentResultsData.students.length} learner{studentResultsData.students.length === 1 ? '' : 's'} attempted</p>
+                      </div>
+                      <div className="max-h-[56vh] overflow-y-auto quiz-preview-scroll">
+                        {studentResultsData.students.map(student => (
+                          <button
+                            key={student.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveStudentId(student.id);
+                              setActiveAttemptIndex(0);
+                            }}
+                            className={`w-full text-left px-4 py-3 border-b border-[#edf2f7] transition-smooth ${activeStudentResult?.id === student.id ? 'bg-[#f4f1ff]' : 'hover:bg-[#f8fafc]'}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-[#0f172a] truncate">{student.name}</p>
+                                <p className="text-xs text-[#64748b] truncate">{student.email || student.programme || 'No email saved'}</p>
+                              </div>
+                              <span className={`text-[11px] font-bold px-2 py-1 rounded-full shrink-0 ${student.latestAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                {student.latestAttempt.grade || '-'}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-[#64748b]">
+                              <span>{student.latestAttempt.score || 'No score'}</span>
+                              <span>•</span>
+                              <span>{student.attemptCount} attempt{student.attemptCount === 1 ? '' : 's'}</span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </aside>
+
+                    <section className="min-w-0 rounded-2xl border border-[#e2e8f0] bg-white overflow-hidden">
+                      {activeStudentResult && activeStudentAttempt ? (
+                        <>
+                          <div className="p-4 sm:p-5 border-b border-[#e2e8f0]">
+                            <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                              <div className="min-w-0">
+                                <h4 className="text-lg font-heading font-bold text-[#0f172a] truncate">{activeStudentResult.name}</h4>
+                                <p className="text-sm text-[#64748b] break-words [overflow-wrap:anywhere]">{activeStudentResult.email || activeStudentResult.programme || 'No learner email saved'}</p>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`text-xs font-bold px-3 py-1.5 rounded-full ${activeStudentAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                  {activeStudentAttempt.passed ? 'Passed' : 'Not passed'}
+                                </span>
+                                <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-[#eef2ff] text-[#4f46e5]">{activeStudentAttempt.grade || '-'}</span>
+                                <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-[#f1f5f9] text-[#334155]">{activeStudentAttempt.score || 'No score'}</span>
+                              </div>
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div className="rounded-xl bg-[#f8fafc] border border-[#e2e8f0] px-3 py-2">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b]">Submitted</p>
+                                <p className="text-sm font-semibold text-[#0f172a]">{activeStudentAttempt.submittedAt ? formatDate(activeStudentAttempt.submittedAt) : '-'}</p>
+                              </div>
+                              <div className="rounded-xl bg-[#f8fafc] border border-[#e2e8f0] px-3 py-2">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b]">Time taken</p>
+                                <p className="text-sm font-semibold text-[#0f172a]">{activeStudentAttempt.timeTaken || activeStudentAttempt.reportedTime || '-'}</p>
+                              </div>
+                              <div className="rounded-xl bg-[#f8fafc] border border-[#e2e8f0] px-3 py-2">
+                                <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b]">Attempt</p>
+                                <ThemedSelect
+                                  value={String(activeAttemptIndex)}
+                                  options={activeStudentResult.attempts.map((attempt, index) => ({
+                                    value: String(index),
+                                    label: `Attempt ${attempt.attempt ?? index + 1} - ${attempt.grade || '-'}`,
+                                  }))}
+                                  onChange={value => setActiveAttemptIndex(Number(value))}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="max-h-[56vh] overflow-y-auto p-4 sm:p-5 space-y-4 quiz-preview-scroll">
+                            {activeStudentAttempt.questions.length === 0 ? (
+                              <div className="py-12 text-center text-sm text-[#64748b]">No answer breakdown was saved for this attempt.</div>
+                            ) : activeStudentAttempt.questions.map(question => (
+                              <div key={`${question.number}-${question.text}`} className="rounded-2xl border border-[#e2e8f0] bg-[#f8fafc] p-4">
+                                <div className="flex items-start justify-between gap-3 mb-3">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-[#64748b] mb-1">Question {question.number}</p>
+                                    <p className="text-sm font-semibold text-[#0f172a] leading-6 break-words [overflow-wrap:anywhere]">{question.text}</p>
+                                  </div>
+                                  <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 ${question.correct ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                    {question.correct ? 'Correct' : 'Incorrect'}
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div className={`rounded-xl border px-3 py-3 ${question.correct ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}`}>
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b] mb-1">Student answer</p>
+                                    <p className="text-sm text-[#0f172a] leading-6 break-words [overflow-wrap:anywhere]">{question.chosenAnswer || 'No answer submitted'}</p>
+                                  </div>
+                                  <div className="rounded-xl border border-emerald-200 bg-white px-3 py-3">
+                                    <p className="text-[10px] font-bold uppercase tracking-wide text-[#64748b] mb-1">Correct answer</p>
+                                    <p className="text-sm text-[#0f172a] leading-6 break-words [overflow-wrap:anywhere]">{question.correctAnswer || 'No answer key saved'}</p>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="py-16 text-center text-sm text-[#64748b]">Select a student to review their answers.</div>
+                      )}
+                    </section>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {editorData && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setEditorData(null)}>
             <div className="w-full max-w-6xl max-h-[90vh] bg-background-50 rounded-2xl border border-foreground-200/60 shadow-xl flex flex-col" onClick={event => event.stopPropagation()}>
@@ -1190,7 +1647,7 @@ export default function QuizXmlWorkspacePage() {
 
         {showGenerator && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={resetGenerator}>
-            <div className="w-full max-w-5xl max-h-[92vh] bg-background-50 rounded-2xl border border-foreground-200/60 shadow-xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
+            <div className="w-full max-w-6xl max-h-[92vh] bg-background-50 rounded-2xl border border-foreground-200/60 shadow-xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 p-5 border-b border-foreground-200/60">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 mb-1">AI Question Generator</p>
@@ -1200,14 +1657,14 @@ export default function QuizXmlWorkspacePage() {
                 <button onClick={resetGenerator} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0"><i className="ri-close-line"></i></button>
               </div>
 
-              <div className="flex-1 overflow-y-auto quiz-preview-scroll p-5 grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-5">
+              <div className="flex-1 overflow-y-auto quiz-preview-scroll p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-5">
                 <section className="space-y-3">
                   <input value={generatorForm.title} onChange={event => setGeneratorForm({ ...generatorForm, title: event.target.value })} placeholder="Quiz title" className="w-full h-10 rounded-lg border border-foreground-200/60 bg-white px-3 text-sm outline-none focus:border-primary-400" />
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
                     <ThemedSelect
                       value={generatorForm.programme}
                       options={programmeOptions}
-                      onChange={programme => setGeneratorForm({ ...generatorForm, programme, module: '', programmeId: '' })}
+                      onChange={programme => setGeneratorForm({ ...generatorForm, programme, module: '', programmeId: '', week: '', weekId: '' })}
                       menuClassName="max-h-56"
                     />
                     <ThemedSelect
@@ -1215,16 +1672,20 @@ export default function QuizXmlWorkspacePage() {
                       options={generatorModuleOptions}
                       onChange={module => {
                         const selectedModule = generatorModuleOptions.find(option => option.value === module);
-                        setGeneratorForm({ ...generatorForm, module, programmeId: selectedModule?.programmeId ? String(selectedModule.programmeId) : '' });
+                        setGeneratorForm({ ...generatorForm, module, programmeId: selectedModule?.programmeId ? String(selectedModule.programmeId) : '', week: '', weekId: '' });
                       }}
                       disabled={!generatorForm.programme}
                       menuClassName="max-h-56"
                     />
-                    <input
-                      value={generatorForm.week}
-                      onChange={event => setGeneratorForm({ ...generatorForm, week: event.target.value })}
-                      className="h-10 rounded-lg border border-foreground-200/60 bg-white px-3 text-sm outline-none focus:border-primary-400"
-                      placeholder="Week, e.g. Week 9"
+                    <ThemedSelect
+                      value={generatorForm.weekId}
+                      options={generatorWeekOptions}
+                      onChange={weekId => {
+                        const selectedWeek = generatorWeeks.find(week => week.id === weekId);
+                        setGeneratorForm({ ...generatorForm, weekId, week: selectedWeek?.title || '' });
+                      }}
+                      disabled={!generatorForm.module || generatorWeeksState === 'loading' || generatorWeeks.length === 0}
+                      menuClassName="max-h-56"
                     />
                     <input
                       type="number"
@@ -1270,7 +1731,7 @@ export default function QuizXmlWorkspacePage() {
                       value={generatorForm.customInstructions}
                       readOnly={!showPromptCustomize}
                       onChange={event => setGeneratorForm({ ...generatorForm, customInstructions: event.target.value })}
-                      className={`w-full min-h-40 resize-y p-3 text-xs leading-5 outline-none transition-smooth ${showPromptCustomize ? 'bg-white text-[#111827] focus:ring-2 focus:ring-inset focus:ring-[#ede9fe]' : 'bg-[#fbfcff] text-[#475569]'}`}
+                      className={`w-full min-h-32 max-h-52 resize-y p-3 text-xs leading-5 outline-none transition-smooth ${showPromptCustomize ? 'bg-white text-[#111827] focus:ring-2 focus:ring-inset focus:ring-[#ede9fe]' : 'bg-[#fbfcff] text-[#475569]'}`}
                     />
                   </div>
                   <textarea
@@ -1330,7 +1791,7 @@ export default function QuizXmlWorkspacePage() {
                   </button>
                 </section>
 
-                <section className="min-w-0 min-h-[420px] max-h-[calc(92vh-150px)] rounded-2xl border border-[#dbe3ee] bg-[#f8fafc] p-3 sm:p-4 flex flex-col overflow-hidden">
+                <section className="min-w-0 min-h-[420px] lg:min-h-0 lg:max-h-[calc(92vh-150px)] rounded-2xl border border-[#dbe3ee] bg-[#f8fafc] p-3 sm:p-4 flex flex-col overflow-hidden">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 shrink-0 rounded-xl bg-white border border-[#e2e8f0] px-4 py-3 shadow-sm">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -1357,23 +1818,26 @@ export default function QuizXmlWorkspacePage() {
                       <p className="text-xs text-foreground-400 mt-1 max-w-sm">Add a topic, paste lesson content, or upload source files, then generate a preview.</p>
                     </div>
                   ) : (
-                    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden quiz-preview-scroll pr-1">
+                    <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden quiz-preview-scroll pr-1">
                       {generatedQuestions.map((question, questionIndex) => (
-                        <div key={question.id} className="min-w-0 rounded-2xl border border-[#dbe3ee] bg-white p-4 sm:p-5 overflow-hidden shadow-sm">
-                          <div className="flex items-start gap-3 sm:gap-4 mb-5 min-w-0">
-                            <span className="w-10 h-10 rounded-xl bg-[#f2edff] text-[#5b21b6] border border-[#ded2ff] flex items-center justify-center text-sm font-bold shrink-0">{questionIndex + 1}</span>
+                        <div key={question.id} className="min-w-0 rounded-xl border border-[#dbe3ee] bg-white overflow-hidden shadow-sm">
+                          <div className="flex items-start gap-3 sm:gap-4 p-4 sm:p-5 min-w-0">
+                            <span className="w-10 h-10 rounded-xl bg-[#f2edff] text-[#5b21b6] border border-[#ded2ff] flex items-center justify-center text-sm font-bold shrink-0">{String(questionIndex + 1).padStart(2, '0')}</span>
                             <div className="min-w-0 flex-1">
-                              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-2">
+                              <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
                                 <p className="text-[15px] sm:text-base font-semibold text-[#0f172a] leading-7 break-words [overflow-wrap:anywhere]">{question.text}</p>
-                                <span className="w-fit text-[10px] font-bold uppercase px-2.5 py-1.5 rounded-lg bg-[#e8eef5] text-[#526173] shrink-0">
+                                <span className="w-fit inline-flex items-center gap-1.5 text-[10px] font-bold uppercase px-2.5 py-1.5 rounded-lg bg-[#e8eef5] text-[#526173] shrink-0">
+                                  <i className="ri-question-answer-line"></i>
                                   {questionTypeOptions.find(option => option.value === question.questionType)?.label}
                                 </span>
                               </div>
                             </div>
                           </div>
-                          <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} className="pl-0 sm:pl-14" />
+                          <div className="border-t border-[#edf2f7] bg-[#fbfcff] p-4 sm:p-5">
+                            <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} compact />
+                          </div>
                           {question.explanation && (
-                            <div className="mt-5 sm:ml-14 rounded-xl border border-[#ddd2ff] bg-[#fbf9ff] px-4 py-3.5">
+                            <div className="mx-4 sm:mx-5 mb-4 sm:mb-5 rounded-xl border border-[#ddd2ff] bg-[#fbf9ff] px-4 py-3.5">
                               <p className="text-[11px] font-bold uppercase tracking-wider text-[#6d5aa8] mb-1">Feedback</p>
                               <p className="text-sm text-[#3f2f73] leading-6 break-words [overflow-wrap:anywhere]">{question.explanation}</p>
                             </div>
@@ -1404,15 +1868,9 @@ export default function QuizXmlWorkspacePage() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Quiz title" className="sm:col-span-2 h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />
                 <ThemedSelect
-                  value={form.questionType}
-                  options={questionTypeOptions}
-                  onChange={questionType => setForm({ ...form, questionType })}
-                  className="sm:col-span-2"
-                />
-                <ThemedSelect
                   value={form.programme}
                   options={programmeOptions}
-                  onChange={programme => setForm({ ...form, programme, module: '', programmeId: '' })}
+                  onChange={programme => setForm({ ...form, programme, module: '', programmeId: '', week: '', weekId: '' })}
                   menuClassName="max-h-56"
                 />
                 <ThemedSelect
@@ -1420,16 +1878,20 @@ export default function QuizXmlWorkspacePage() {
                   options={moduleOptions}
                   onChange={module => {
                     const selectedModule = moduleOptions.find(option => option.value === module);
-                    setForm({ ...form, module, programmeId: selectedModule?.programmeId ? String(selectedModule.programmeId) : '' });
+                    setForm({ ...form, module, programmeId: selectedModule?.programmeId ? String(selectedModule.programmeId) : '', week: '', weekId: '' });
                   }}
                   disabled={!form.programme}
                   menuClassName="max-h-56"
                 />
-                <input
-                  value={form.week}
-                  onChange={e => setForm({ ...form, week: e.target.value })}
-                  placeholder="Week, e.g. Week 9"
-                  className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm"
+                <ThemedSelect
+                  value={form.weekId}
+                  options={formWeekOptions}
+                  onChange={weekId => {
+                    const selectedWeek = formWeeks.find(week => week.id === weekId);
+                    setForm({ ...form, weekId, week: selectedWeek?.title || '' });
+                  }}
+                  disabled={!form.module || formWeeksState === 'loading' || formWeeks.length === 0}
+                  menuClassName="max-h-56"
                 />
                 <input value={form.version} onChange={e => setForm({ ...form, version: e.target.value })} placeholder="Version" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />
                 <input type="number" min="0" value={form.questions} onChange={e => setForm({ ...form, questions: e.target.value })} placeholder="Questions" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm" />

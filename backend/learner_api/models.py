@@ -153,6 +153,7 @@ class ActiveUser(models.Model):
     # components: [{componentId, componentTitle}]}]}] — same shape as
     # CommercialUser.training_plan / EnrolmentUser.learning_plan.
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     # Quiz attempts: [{week, attempt, grade, Score, module, passed, quizId, quizName,
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
