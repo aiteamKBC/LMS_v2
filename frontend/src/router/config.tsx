@@ -34,7 +34,6 @@ const EnrolmentReviewPage = lazy(() => import("../pages/compliance/enrolment-rev
 const EligibilityReviewPage = lazy(() => import("../pages/compliance/eligibility/page"));
 const InitialAssessmentPage = lazy(() => import("../pages/compliance/initial-assessment/page"));
 const RPLReviewPage = lazy(() => import("../pages/compliance/rpl-review/page"));
-const ThisWeekPage = lazy(() => import("../pages/learner/this-week/page"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
 const ModulesPage = lazy(() => import("../pages/learner/modules/page"));
 const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
@@ -261,6 +260,7 @@ const WizardPage = lazy(() => import("../pages/users/wizard/WizardPage"));
 const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
 const QuizTakePage = lazy(() => import("../pages/learner/quiz-take/page"));
+const VideoWatchPage = lazy(() => import("../pages/learner/video-watch/page"));
 const QuizEditPage = lazy(() => import("../pages/curriculum/quiz-xml/edit/page"));
 const QuestionBankPage = lazy(() => import("../pages/curriculum/question-bank/page"));
 const CohortDetailPage = lazy(() => import("../pages/curriculum/cohort-detail/page"));
@@ -425,14 +425,6 @@ const routes: RouteObject[] = [
     element: <RPLReviewPage />,
   },
   {
-    path: "/learner/this-week",
-    element: <ThisWeekPage />,
-  },
-  {
-    path: "/learner/this-week/:kind/:id",
-    element: <ThisWeekPage />,
-  },
-  {
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
   },
@@ -447,6 +439,10 @@ const routes: RouteObject[] = [
   {
     path: "/learner/quiz/:kind/:id/:quizId",
     element: <QuizTakePage />,
+  },
+  {
+    path: "/learner/video/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
   },
   {
     path: "/learner/modules",

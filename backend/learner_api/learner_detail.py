@@ -10,12 +10,14 @@ mappers.to_learner_detail, then annotates each saved component with its
 authored expected_otjh (curriculum.module_authoring_components) and a
 programme-wide total.
 """
+import json
 import logging
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 
-from .mappers import to_learner_detail
+from .active_users import completed_hours_from_progress, fmt_hours
+from .mappers import _s, to_learner_detail
 from .models import ActiveUser, CommercialUser, EnrolmentUser
 
 logger = logging.getLogger(__name__)
@@ -204,6 +206,193 @@ def _append_week_quizzes(weeks, components):
     return components
 
 
+def _otjh_status(variance):
+    """RAG status from progress_variance (a decimal fraction):
+        On track       : variance > -0.05          (-4.999...% and better)
+        Need attention : -0.15 < variance <= -0.05  (-5% to -14.999...%)
+        At risk        : variance <= -0.15          (-15% and worse)
+    With no target yet (variance None) there's nothing to be behind on -> On track.
+    """
+    if variance is None:
+        return "On track"
+    if variance > -0.05:
+        return "On track"
+    if variance > -0.15:
+        return "Need attention"
+    return "At risk"
+
+
+def _cumulative_week_target(detail):
+    """Planned hours the learner should have reached by the CURRENT week —
+    the cumulative sum of expected_otjh for every week up to and including it.
+
+    "Current week" is the first week of the first module (test-data heuristic,
+    matching the frontend). CURRENT_WEEK_INDEX bumps this once real scheduling
+    lands, making the target accumulate across weeks. Returns a float (hours).
+    """
+    CURRENT_WEEK_INDEX = 0  # first week; raise as the learner advances
+
+    modules = detail.get("modules") or []
+    if not modules:
+        return 0.0
+    first_module = modules[0]
+    # Weeks of the first module, in the order to_learner_detail emitted them.
+    week_order = [w["week"] for w in detail.get("week", []) if w.get("module") == first_module]
+    if not week_order:
+        return 0.0
+    target_weeks = set(week_order[: CURRENT_WEEK_INDEX + 1])
+
+    total = 0.0
+    for c in detail.get("components", []):
+        if c.get("module") == first_module and c.get("week") in target_weeks:
+            otjh = c.get("expectedOtjh")
+            if otjh:
+                total += otjh
+    return round(total, 2)
+
+
+def _resolve_from_master(modules, weeks, components):
+    """Rebuild the module -> week -> component tree LIVE from the master
+    authoring tables (curriculum.module_authoring_*) so coach edits in the
+    Module Builder show up immediately for already-enrolled learners.
+
+    Membership at the MODULE level stays driven by the learner's own snapshot
+    (they are enrolled in specific modules). Within each of those modules, the
+    weeks + components — their titles, order, and set — come live from master,
+    keyed by the ids the snapshot already carries. So renames propagate, and
+    weeks/components added or removed in Module Builder appear/disappear here.
+
+    Only structured-plan (id-bearing) modules are resolved. Legacy id-less
+    entries pass through unchanged and rely on the existing title-matching
+    fallbacks (_otjh_by_legacy_title / _resolve_week_ids). Mixed plans are
+    handled module-by-module. On any DB error the snapshot tree is returned
+    unchanged — never 500 the page because master is unreachable.
+    """
+    # Module ids present in the snapshot, keyed to their snapshot title (used
+    # as the join key for legacy passthrough and to preserve module order).
+    module_ids = []
+    for w in weeks:
+        mid = w.get("moduleId")
+        if mid and mid not in module_ids:
+            module_ids.append(mid)
+    for c in components:
+        mid = c.get("moduleId")
+        if mid and mid not in module_ids:
+            module_ids.append(mid)
+
+    if not module_ids:
+        return modules, weeks, components  # fully legacy plan — nothing to resolve
+
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                "SELECT module_catalogue_id, title FROM curriculum.module_authoring_modules "
+                "WHERE module_catalogue_id = ANY(%s)",
+                [module_ids],
+            )
+            master_module_title = {mid: title for mid, title in cur.fetchall()}
+
+            cur.execute(
+                "SELECT id, module_catalogue_id, title, week_number, display_order "
+                "FROM curriculum.module_authoring_weeks WHERE module_catalogue_id = ANY(%s) "
+                "ORDER BY module_catalogue_id, display_order, week_number, id",
+                [module_ids],
+            )
+            master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
+
+            cur.execute(
+                "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, display_order "
+                "FROM curriculum.module_authoring_components WHERE module_catalogue_id = ANY(%s) "
+                "ORDER BY week_id, display_order, id",
+                [module_ids],
+            )
+            master_components = cur.fetchall()  # [(comp_id, week_id, module_id, type, title, description, settings_json, display_order)]
+    except DatabaseError as exc:
+        logger.warning("Could not live-resolve training plan from master: %s", exc)
+        return modules, weeks, components
+
+    if not master_module_title:
+        return modules, weeks, components  # ids no longer exist in master — keep snapshot
+
+    # Group master rows by parent.
+    weeks_by_module = {}
+    for week_id, mid, title, week_number, _order in master_weeks:
+        live_title = _s(title) or f"Week {week_number}"
+        weeks_by_module.setdefault(mid, []).append((week_id, live_title))
+
+    comps_by_week = {}
+    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, _order in master_components:
+        # settings_json comes back from the raw cursor as a JSON string (JSONField
+        # auto-parsing only happens through the ORM), so parse it here.
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings) if settings else {}
+            except (ValueError, TypeError):
+                settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        video_url = _s(settings.get("videoUrl")) or None
+        duration = settings.get("durationMinutes")
+        comps_by_week.setdefault(week_id, []).append({
+            "componentId": comp_id,
+            "display": _display_component_title(ctype, ctitle),
+            "type": ctype,
+            "description": _s(cdesc) or None,
+            "videoUrl": video_url,
+            "durationMinutes": duration if isinstance(duration, (int, float)) else None,
+        })
+
+    # Distinct snapshot module ids in first-seen order, plus any legacy
+    # (id-less) module titles that must still pass through.
+    legacy_module_titles = [
+        w.get("module") for w in weeks if not w.get("moduleId") and w.get("module")
+    ]
+
+    out_modules, out_weeks, out_components = [], [], []
+    seen_modules = set()
+
+    for mid in module_ids:
+        if mid not in master_module_title:
+            continue  # module deleted from master; drop it (full sync)
+        live_module = _s(master_module_title[mid])
+        # Skip blanks, and dedupe titles that would otherwise collide under the
+        # frontend's title-based grouping (keep the first).
+        if not live_module or live_module in seen_modules:
+            continue
+        seen_modules.add(live_module)
+        out_modules.append(live_module)
+
+        for week_id, live_wk in weeks_by_module.get(mid, []):
+            out_weeks.append({
+                "module": live_module, "week": live_wk,
+                "moduleId": mid, "weekId": week_id,
+            })
+            for comp in comps_by_week.get(week_id, []):
+                out_components.append({
+                    "module": live_module, "week": live_wk,
+                    "component": comp["display"],
+                    "moduleId": mid, "weekId": week_id, "componentId": comp["componentId"],
+                    "type": comp["type"],
+                    "description": comp["description"],
+                    "videoUrl": comp["videoUrl"],
+                    "durationMinutes": comp["durationMinutes"],
+                })
+
+    # Preserve legacy (id-less) modules unchanged so pre-structured-format
+    # learners are unaffected.
+    for legacy_title in legacy_module_titles:
+        if legacy_title in seen_modules:
+            continue
+        seen_modules.add(legacy_title)
+        out_modules.append(legacy_title)
+        out_weeks.extend(w for w in weeks if not w.get("moduleId") and w.get("module") == legacy_title)
+        out_components.extend(
+            c for c in components if not c.get("moduleId") and c.get("module") == legacy_title
+        )
+
+    return out_modules, out_weeks, out_components
+
+
 def _annotate_otjh(components):
     """Attach expectedOtjh (hours, float|None) to each component dict. Prefers
     an exact componentId match (structured-plan saves); falls back to title
@@ -249,6 +438,54 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     detail = to_learner_detail(source, active)
+    # Live-resolve titles + membership from the master authoring tables so coach
+    # edits in Module Builder reflect here immediately (structured-plan learners).
+    detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
+        detail["modules"], detail["week"], detail["components"]
+    )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
+
+    # Persist the plan's planned hours + the learner's completed hours onto the
+    # mirror so the columns stay current as the plan/progress change, and echo
+    # them back so the card reads the same stored values.
+    planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
+    completed = completed_hours_from_progress(active.training_plan_progress) if active else "0"
+
+    # Target = cumulative planned hours up to & including the CURRENT week (first
+    # week of the first module, matching the frontend heuristic; grows week by
+    # week as scheduling advances). Then:
+    #   progress_hours    = completed - target
+    #   progress_variance = (completed - target) / target   (None when target=0)
+    target_num = _cumulative_week_target(detail)
+    completed_num = float(completed) if completed else 0.0
+    progress_hours_num = round(completed_num - target_num, 2)
+    variance = round((completed_num - target_num) / target_num, 2) if target_num else None
+
+    target_str = fmt_hours(target_num)
+    progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
+    variance_str = "" if variance is None else str(variance)
+    otjh_status = _otjh_status(variance)
+
+    detail["plannedHours"] = planned
+    detail["completedHours"] = completed
+    detail["targetHours"] = target_str
+    detail["progressHours"] = progress_hours_str
+    detail["progressVariance"] = variance_str
+    detail["otjhStatus"] = otjh_status
+    if active is not None:
+        try:
+            active.planned_hours = planned
+            active.completed_hours = completed
+            active.target_hours = target_str
+            active.progress_hours = progress_hours_str
+            active.progress_variance = variance_str
+            active.otjh_status = otjh_status
+            active.save(update_fields=[
+                "planned_hours", "completed_hours",
+                "target_hours", "progress_hours", "progress_variance", "otjh_status",
+            ])
+        except DatabaseError as exc:
+            logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
+
     return JsonResponse(detail)
