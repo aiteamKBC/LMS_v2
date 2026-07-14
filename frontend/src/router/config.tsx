@@ -377,7 +377,6 @@ import IfateStandardPage from "../pages/curriculum/ifate-standard/page";
 import CurriculumMisAllocationPage from "../pages/curriculum/mis-allocation/page";
 import CurriculumReportsPage from "../pages/curriculum/reports/page";
 import CommunicationPage from "../pages/communication/page";
-import SharedCommunicationPage from "../pages/engagement/communication/page";
 import CurriculumQAPage from "../pages/curriculum/curriculum-qa/page";
 import FinanceWorkspace from "../pages/workspace/finance/page";
 import FundingOverviewPage from "../pages/finance/funding/page";
@@ -420,12 +419,10 @@ import QaDeliverySetup from "../pages/qa/delivery-setup/page";
 import QaGatewayEpa from "../pages/qa/gateway-epa/page";
 import LearnerEngagementPage from "../pages/engagement/learner-engagement/page";
 import AttendanceRiskPage from "../pages/engagement/attendance-risk/page";
-import AbsenceQueuePage from "../pages/engagement/absence-queue/page";
-import CatchupOverduePage from "../pages/engagement/catchup-overdue/page";
+
 import CallLogsPage from "../pages/engagement/call-logs/page";
 import WhatsAppLogsPage from "../pages/engagement/whatsapp-logs/page";
 import EmailLogsPage from "../pages/engagement/email-logs/page";
-import EmployerEscalationsPage from "../pages/engagement/employer-escalations/page";
 import PointsRulesPage from "../pages/engagement/points-rules/page";
 import RewardsShopPage from "../pages/engagement/rewards-shop/page";
 import VoucherClaimsPage from "../pages/engagement/voucher-claims/page";
@@ -446,7 +443,6 @@ import EmployerWorkplaceConfirmations from '@/pages/employer/workplace-confirm/p
 import EmployerKSBProgress from '@/pages/employer/ksb-progress/page';
 import EmployerReports from '@/pages/employer/reports/page';
 import EmployerSupportRequests from '@/pages/employer/support/page';
-import CoachAtRiskPage from "../pages/coach/at-risk/page";
 import CoachMessagesPage from "../pages/coach/messages/page";
 import CoachReportsPage from "../pages/coach/reports/page";
 import CurriculumKsbFrameworksPage from "../pages/curriculum/ksb-frameworks/page";
@@ -503,17 +499,7 @@ import UserGuidePage from "../pages/user-guide/page";
 import StarredMessagesPage from "../pages/starred-messages/page";
 
 // Pages previously declared via static import (merged in)
-const UsersListPage = lazy(() => import("../pages/users/page"));
-const BoardPage = lazy(() => import("../pages/users/BoardPage"));
-const WizardPage = lazy(() => import("../pages/users/wizard/WizardPage"));
-const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
-const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
-const QuizTakePage = lazy(() => import("../pages/learner/quiz-take/page"));
-const VideoWatchPage = lazy(() => import("../pages/learner/video-watch/page"));
-const QuizEditPage = lazy(() => import("../pages/curriculum/quiz-xml/edit/page"));
-const QuestionBankPage = lazy(() => import("../pages/curriculum/question-bank/page"));
-const CohortDetailPage = lazy(() => import("../pages/curriculum/cohort-detail/page"));
-const LearnerAllocationPage = lazy(() => import("../pages/curriculum/learner-allocation/page"));
+
 
 const routes: RouteObject[] = [
   {
@@ -645,34 +631,7 @@ const routes: RouteObject[] = [
     path: "/training-plan/:kind/:userId",
     element: <TrainingPlanBuilderPage />,
   },
-  {
-    path: "/compliance/pre-active",
-    element: <PreActiveLearnerJourney />,
-  },
-  {
-    path: "/compliance/employer-contracting",
-    element: <EmployerContracting />,
-  },
-  {
-    path: "/compliance/self-onboarding",
-    element: <SelfOnboardingPage />,
-  },
-  {
-    path: "/compliance/enrolment-review",
-    element: <EnrolmentReviewPage />,
-  },
-  {
-    path: "/compliance/eligibility",
-    element: <EligibilityReviewPage />,
-  },
-  {
-    path: "/compliance/initial-assessment",
-    element: <InitialAssessmentPage />,
-  },
-  {
-    path: "/compliance/rpl-review",
-    element: <RPLReviewPage />,
-  },
+
   {
     path: "/learner/week/:weekNumber",
     element: <WeekDetailPage />,
@@ -689,10 +648,7 @@ const routes: RouteObject[] = [
     path: "/learner/quiz/:kind/:id/:quizId",
     element: <QuizTakePage />,
   },
-  {
-    path: "/learner/video/:kind/:id/:componentId",
-    element: <VideoWatchPage />,
-  },
+  
   {
     path: "/learner/modules",
     element: <ModulesPage />,
@@ -809,10 +765,7 @@ const routes: RouteObject[] = [
     path: "/workspace/employer",
     element: <EmployerDashboard />,
   },
-  {
-    path: "/workspace/compliance",
-    element: <ComplianceDashboard />,
-  },
+  
   {
     path: "/workspace/mis",
     element: <MISDashboard />,
@@ -997,10 +950,7 @@ const routes: RouteObject[] = [
     path: "/curriculum/quiz-xml/:quizId/edit",
     element: <QuizEditPage />,
   },
-  {
-    path: "/curriculum/test-banks",
-    element: <TestBanksPage />,
-  },
+  
   {
     path: "/curriculum/checkpoints",
     element: <CheckpointsPage />,
@@ -1201,54 +1151,12 @@ const routes: RouteObject[] = [
     path: "/engagement/recognition",
     element: <RecognitionPage />,
   },
-  {
-    path: "/engagement/flash-cards",
-    element: <FlashCardsPage />,
-  },
+  
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
   },
-  {
-    path: "/compliance/new-starters",
-    element: <NewStartersPage />,
-  },
-  {
-    path: "/compliance/documents",
-    element: <DocumentsPage />,
-  },
-  {
-    path: "/compliance/signatures",
-    element: <SignaturesPage />,
-  },
-  {
-    path: "/compliance/das",
-    element: <DASPage />,
-  },
-  {
-    path: "/compliance/ilr",
-    element: <ILRPage />,
-  },
-  {
-    path: "/compliance/evidence-packs",
-    element: <EvidencePacksPage />,
-  },
-  {
-    path: "/compliance/funding-risk",
-    element: <FundingRiskPage />,
-  },
-  {
-    path: "/compliance/aptem-sync",
-    element: <AptemSyncPage />,
-  },
-  {
-    path: "/compliance/audit-reports",
-    element: <AuditReportsPage />,
-  },
-  {
-    path: "/compliance/reports",
-    element: <EnrolmentReportsPage />,
-  },
+  
   {
     path: "/mis/delivery-timeline",
     element: <MisDeliveryTimelinePage />,
