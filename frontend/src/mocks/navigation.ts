@@ -383,6 +383,7 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-rewards-shop', label: 'Rewards Shop', icon: 'ri-shopping-bag-3-line', href: '/engagement/rewards-shop' },
       { id: 'engagement-voucher-claims', label: 'Voucher Claims', icon: 'ri-coupon-line', href: '/engagement/voucher-claims', badge: 5 },
       { id: 'engagement-recognition', label: 'Recognition Pages', icon: 'ri-thumb-up-line', href: '/engagement/recognition' },
+      { id: 'engagement-flash-cards', label: 'Flash Cards', icon: 'ri-flashlight-line', href: '/engagement/flash-cards' },
     ],
   },
   {

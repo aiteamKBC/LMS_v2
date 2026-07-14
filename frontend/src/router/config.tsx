@@ -186,6 +186,7 @@ const EventsPage = lazy(() => import("../pages/engagement/events/page"));
 const EngagementClubsPage = lazy(() => import("../pages/engagement/clubs/page"));
 const RecognitionPage = lazy(() => import("../pages/engagement/recognition/page"));
 const EngagementReportsPage = lazy(() => import("../pages/engagement/reports/page"));
+const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
 const EmployerApprenticeRisk = lazy(() => import("@/pages/employer/apprentice-risk/page"));
 const EmployerApprenticeProgress = lazy(() => import("@/pages/employer/apprentice-progress/page"));
 const EmployerReviewActions = lazy(() => import("@/pages/employer/review-actions/page"));
@@ -955,6 +956,10 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/recognition",
     element: <RecognitionPage />,
+  },
+  {
+    path: "/engagement/flash-cards",
+    element: <FlashCardsPage />,
   },
   {
     path: "/engagement/reports",
