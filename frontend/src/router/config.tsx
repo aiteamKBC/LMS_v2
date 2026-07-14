@@ -1,7 +1,7 @@
-import { lazy } from "react";
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
 
+/*
 const NotFound = lazy(() => import("../pages/NotFound"));
 const Home = lazy(() => import("../pages/home/page"));
 const ForgotPasswordPage = lazy(() => import("../pages/forgot-password/page"));
@@ -258,6 +258,7 @@ const WeekDetailPage = lazy(() => import("../pages/learner/week-detail/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const UserGuidePage = lazy(() => import("../pages/user-guide/page"));
 const StarredMessagesPage = lazy(() => import("../pages/starred-messages/page"));
+*/
 import NotFound from "../pages/NotFound";
 import Home from "../pages/home/page";
 import ForgotPasswordPage from "../pages/forgot-password/page";

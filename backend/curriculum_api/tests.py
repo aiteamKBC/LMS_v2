@@ -568,6 +568,174 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(enriched[0]['deliveryStatus'], 'completed')
         self.assertEqual(enriched[0]['status'], 'published')
 
+    def test_module_collection_merges_best_authoring_twin_by_delivery_identity(self):
+        modules = [{
+            'id': 'training-module-7',
+            'sourceId': 7,
+            'sourceType': 'training_plan',
+            'catalogueId': 'MOD-EMPTY',
+            'name': 'Delivery Module',
+            'programme': 'Programme A',
+            'cohortId': 'cohort-1',
+            'cohort': 'Cohort 1',
+            'groupId': 'group-1',
+            'group': 'Group 1',
+            'status': 'published',
+            'deliveryStatus': 'active',
+        }]
+        summaries = {
+            'MOD-EMPTY': {
+                'catalogueId': 'MOD-EMPTY',
+                'title': 'Delivery Module',
+                'programmeName': 'Programme A',
+                'cohortId': 'cohort-1',
+                'cohort': 'Cohort 1',
+                'groupId': 'group-1',
+                'group': 'Group 1',
+                'description': '',
+                'status': 'draft',
+                'sourceType': 'authoring',
+                'sourceId': '',
+                'sessionsNumber': 6,
+                'startDate': '2026-07-01',
+                'endDate': '2026-08-01',
+                'qualityScore': 50,
+                'lastUpdated': '2026-07-05',
+                'weeks': 6,
+                'ksbCount': 0,
+                'lessonCount': 6,
+                'quizCount': 0,
+                'sessionNames': [],
+                'ksbCodes': [],
+            },
+            'MOD-MAPPED': {
+                'catalogueId': 'MOD-MAPPED',
+                'title': 'Delivery Module',
+                'programmeName': 'Programme A',
+                'cohortId': 'cohort-1',
+                'cohort': 'Cohort 1',
+                'groupId': 'group-1',
+                'group': 'Group 1',
+                'description': '',
+                'status': 'draft',
+                'sourceType': 'authoring',
+                'sourceId': '',
+                'sessionsNumber': 6,
+                'startDate': '2026-07-01',
+                'endDate': '2026-08-01',
+                'qualityScore': 67,
+                'lastUpdated': '2026-07-06',
+                'weeks': 6,
+                'ksbCount': 9,
+                'lessonCount': 32,
+                'quizCount': 1,
+                'sessionNames': ['Live session'],
+                'ksbCodes': ['K1', 'K3', 'K5', 'S1', 'S3', 'S7', 'B1', 'B3', 'B7'],
+            },
+        }
+
+        with patch.object(views, 'authoring_catalogue_summaries', return_value=summaries):
+            enriched = views.enrich_modules_with_authoring(modules)
+
+        self.assertEqual(len(enriched), 1)
+        self.assertEqual(enriched[0]['catalogueId'], 'MOD-MAPPED')
+        self.assertEqual(enriched[0]['ksbCount'], 9)
+        self.assertEqual(enriched[0]['lessons'], 32)
+        self.assertEqual(enriched[0]['status'], 'published')
+        self.assertEqual(enriched[0]['authoringStatus'], 'draft')
+        self.assertEqual(enriched[0]['deliveryStatus'], 'active')
+
+    def test_programme_counts_include_authoring_only_curriculum_modules(self):
+        programmes = [{
+            'id': 'program-prog-1',
+            'sourceId': 'PROG-1',
+            'name': 'Programme A',
+            'standard': 'Programme A',
+            'modules': 1,
+            'cohorts': 1,
+            'groups': 1,
+            'structureType': 'scheduled',
+        }]
+        modules = [{
+            'id': 'training-module-7',
+            'sourceId': 7,
+            'sourceType': 'training_plan',
+            'catalogueId': 'MOD-DELIVERY',
+            'name': 'Delivery Module',
+            'programmeId': 'program-prog-1',
+            'programme': 'Programme A',
+            'cohortId': 'cohort-1',
+            'cohort': 'Cohort 1',
+            'groupId': 'group-1',
+            'group': 'Group 1',
+        }]
+        summaries = {
+            'MOD-AUTHORING': {
+                'catalogueId': 'MOD-AUTHORING',
+                'title': 'Authoring Only Module',
+                'programmeId': 'PROG-1',
+                'programmeName': 'Programme A',
+                'cohortId': 'cohort-2',
+                'cohort': 'Cohort 2',
+                'groupId': 'group-2',
+                'group': 'Group 2',
+                'description': '',
+                'status': 'draft',
+                'sourceType': 'authoring',
+                'sourceId': '',
+                'sessionsNumber': 6,
+                'startDate': '',
+                'endDate': '',
+                'qualityScore': 10,
+                'lastUpdated': '',
+                'weeks': 6,
+                'ksbCount': 0,
+                'lessonCount': 6,
+                'quizCount': 0,
+                'sessionNames': [],
+                'ksbCodes': [],
+            },
+        }
+
+        with patch.object(views, 'authoring_catalogue_summaries', return_value=summaries):
+            enriched = views.enrich_programmes_with_module_counts(programmes, modules)
+
+        self.assertEqual(enriched[0]['modules'], 2)
+        self.assertEqual(enriched[0]['cohorts'], 2)
+        self.assertEqual(enriched[0]['groups'], 2)
+
+    def test_training_module_structure_get_uses_resolved_authoring_catalogue(self):
+        request = self.factory.get('/curriculum_api/curriculum/modules/training-module-61287/structure/')
+        structure = {
+            'catalogueId': 'MOD-BEST',
+            'title': 'Fouda-Module',
+            'weekStructure': [{'id': 'week-1', 'components': [{'id': 'component-1'}]}],
+        }
+
+        with patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-BEST'), \
+             patch.object(views, 'get_authoring_structure_payload', return_value=structure) as get_structure:
+            response = views.curriculum_module_structure(request, 'training-module-61287')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['catalogueId'], 'MOD-BEST')
+        get_structure.assert_called_once_with('MOD-BEST')
+
+    def test_training_module_structure_patch_saves_to_resolved_authoring_catalogue(self):
+        request = self.factory.patch(
+            '/curriculum_api/curriculum/modules/training-module-61287/structure/',
+            data=json.dumps({'catalogueId': 'MOD-BEST', 'title': 'Fouda-Module', 'weekStructure': []}),
+            content_type='application/json',
+        )
+
+        with patch.object(views, 'resolve_authoring_catalogue_id', return_value='MOD-BEST'), \
+             patch.object(views, 'save_module_authoring_structure', return_value={'catalogueId': 'MOD-BEST'}) as save_structure:
+            response = views.curriculum_module_structure(request, 'training-module-61287')
+
+        self.assertEqual(response.status_code, 200)
+        save_structure.assert_called_once()
+        self.assertEqual(save_structure.call_args.args[0], 'MOD-BEST')
+        self.assertEqual(save_structure.call_args.args[1]['sourceId'], '61287')
+
     def test_training_plan_module_can_have_completed_delivery_status(self):
         modules = views.build_modules(
             [],

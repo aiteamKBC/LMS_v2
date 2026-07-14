@@ -1557,6 +1557,8 @@ table tbody td:last-child {
   .kbc-swal-toast-popup {
     width: calc(100vw - 24px) !important;
   }
+}
+
 .quiz-preview-scroll {
   scrollbar-width: thin;
   scrollbar-color: #b8a8df #eef2f7;

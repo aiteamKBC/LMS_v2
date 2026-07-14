@@ -157,9 +157,9 @@ else:
         }
     }
 
-_database_url = ENV.get('Database_url') or ENV.get('DATABASE_URL')
+_database_url = os.environ.get('Database_url') or os.environ.get('DATABASE_URL')
 if _database_url:
-    DATABASES['enrolment'] = _neon_config(_database_url)
+    DATABASES['enrolment'] = database_from_url(_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 

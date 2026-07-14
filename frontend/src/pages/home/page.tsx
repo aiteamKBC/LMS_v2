@@ -83,7 +83,6 @@ export default function Home() {
   const navigate = useNavigate();
 
   // Enter a section directly — sign in as its demo account, then route in.
-  const enterWorkspace = (section: WorkspaceSection) => {
   const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
 
   // Enter a section directly — sign in as its demo account, then route in.
