@@ -78,7 +78,7 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -100,7 +100,6 @@ INSTALLED_APPS = [
     'coach_api',
     'learner_api',
     'curriculum_api',
-    'engagement_api',
 ]
 
 MIDDLEWARE = [
@@ -136,7 +135,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("DATABASEURL")
 
 if DATABASE_URL:
     parsed_db = urlparse(DATABASE_URL)
@@ -160,9 +159,15 @@ else:
         }
     }
 
-_database_url = os.environ.get('Database_url') or os.environ.get('DATABASE_URL')
-if _database_url:
-    DATABASES['enrolment'] = database_from_url(_database_url)
+# Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
+_enrolment_database_url = (
+    os.environ.get('ENROLMENT_DATABASE_URL')
+    or os.environ.get('Database_url')
+    or os.environ.get('DATABASEURL')
+    or os.environ.get('DATABASE_URL')
+)
+if _enrolment_database_url:
+    DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 

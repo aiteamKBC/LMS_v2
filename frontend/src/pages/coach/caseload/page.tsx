@@ -28,7 +28,11 @@ interface Learner {
   enrollmentStatus: EnrollmentStatus;
   riskFlags: string[];
   overallProgress: number;
+  overallProgressAvailable?: boolean;
   attendanceRate: number;
+  attendanceRateAvailable?: boolean;
+  componentsCompleted?: number;
+  componentsPlanned?: number;
   otjhCompleted: number;
   otjhTarget: number;
   otjhStatus?: string;
@@ -36,7 +40,9 @@ interface Learner {
   ksbTarget?: number;
   ksbStatus?: string;
   ksbProgress: number;
+  ksbProgressAvailable?: boolean;
   evidenceCount: number;
+  evidenceCountAvailable?: boolean;
   nextCoaching: string;
   nextReview: string;
   lastContact: string;
@@ -71,7 +77,11 @@ interface CaseloadApiLearner {
   enrollmentStatus: Exclude<EnrollmentStatus, 'all'>;
   riskFlags: string[];
   overallProgress: number;
+  overallProgressAvailable?: boolean;
   attendanceRate: number;
+  attendanceRateAvailable?: boolean;
+  componentsCompleted?: number;
+  componentsPlanned?: number;
   otjhCompleted: number;
   otjhTarget: number;
   otjhStatus?: string;
@@ -79,7 +89,9 @@ interface CaseloadApiLearner {
   ksbTarget?: number;
   ksbStatus?: string;
   ksbProgress: number;
+  ksbProgressAvailable?: boolean;
   evidenceCount: number;
+  evidenceCountAvailable?: boolean;
   nextCoaching: string;
   nextReview: string;
   lastContact: string;
@@ -145,12 +157,12 @@ function normalizeLearner(learner: CaseloadApiLearner): Learner {
     lastReview: gatewayReviewDate,
     lastCoachingSession: plannedEndDate,
     lastSubmittedEvidence: displayValue(learner.lastSubmittedEvidence),
-    progressVariance: displayValue(learner.progressVariance || '0%'),
+    progressVariance: displayValue(learner.progressVariance),
     startDate,
     gatewayReviewDate,
     plannedEndDate,
-    coachName: displayValue(learner.coachName || DEFAULT_COACH_NAME),
-    coachEmail: displayValue(learner.coachEmail || DEFAULT_COACH_EMAIL),
+    coachName: displayValue(learner.coachName),
+    coachEmail: displayValue(learner.coachEmail),
     rawProgramStatus: displayValue(learner.rawProgramStatus),
     coachRag: displayValue(learner.coachRag),
     otjhStatus: displayValue(learner.otjhStatus),
@@ -178,7 +190,7 @@ function getProgramStatusStyle(value?: string) {
   if (normalized === 'withdrawn') {
     return { bg: 'bg-foreground-100 border-foreground-200/50', text: 'text-foreground-500' };
   }
-  if (normalized === 'break' || normalized === 'onbreak') {
+  if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') {
     return { bg: 'bg-amber-50 border-amber-200/50', text: 'text-amber-700' };
   }
   if (normalized === 'readytoenrol') {
@@ -194,7 +206,7 @@ function getProgramStatusKey(value?: string) {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
   if (normalized === 'active') return 'active';
   if (normalized === 'withdrawn') return 'withdrawn';
-  if (normalized === 'break' || normalized === 'onbreak') return 'break';
+  if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') return 'break';
   if (normalized === 'readytoenrol') return 'ready-to-enrol';
   return 'other';
 }
@@ -236,6 +248,9 @@ function getOtjhStatusMeta(value?: string) {
   if (normalized === 'needattention') {
     return { dot: 'bg-amber-500', text: 'text-amber-700' };
   }
+  if (normalized === 'atrisk') {
+    return { dot: 'bg-red-500', text: 'text-red-700' };
+  }
   return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
 }
 
@@ -264,6 +279,27 @@ function formatRatio(completed?: number, target?: number) {
     return EMPTY_VALUE;
   }
   return `${safeCompleted}/${safeTarget}`;
+}
+
+function formatHoursValue(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value);
+}
+
+function getComponentsTooltip(learner: Learner) {
+  if (!learner.attendanceRateAvailable || typeof learner.componentsCompleted !== 'number' || typeof learner.componentsPlanned !== 'number' || learner.componentsPlanned <= 0) {
+    return 'Components progress is not available.';
+  }
+  return `Components = completed components / planned components. ${learner.componentsCompleted}/${learner.componentsPlanned} = ${learner.attendanceRate}%`;
+}
+
+function getProgressTooltip(learner: Learner) {
+  if (!learner.overallProgressAvailable) {
+    return 'Progress is not available.';
+  }
+  return `Progress = completed OTJH hours / target hours. ${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h = ${learner.overallProgress}%`;
 }
 
 function sortCoachRagOptions(values: string[]) {
@@ -824,13 +860,27 @@ export default function CoachCaseload() {
                           </td>
                           <td className="px-2 py-2 text-center">
                             <div data-allow-selection="true" className="flex min-w-[96px] flex-col items-center gap-0.5 leading-none text-center">
-                              <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
-                                {learner.progressVariance}
-                              </span>
-                              <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
-                                {displayValue(learner.otjhStatus)}
-                              </span>
+                              {learner.overallProgressAvailable ? (
+                                <>
+                                  <span className="cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap text-foreground-800">
+                                    {`${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h`}
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.otjhStatus ? otjhStatusMeta.text : 'text-foreground-500'}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${learner.otjhStatus ? otjhStatusMeta.dot : 'bg-foreground-300'}`}></span>
+                                    {learner.otjhStatus ? displayValue(learner.otjhStatus) : `${learner.overallProgress}% complete`}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
+                                    {learner.progressVariance}
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
+                                    {displayValue(learner.otjhStatus)}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center">
@@ -845,15 +895,30 @@ export default function CoachCaseload() {
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <span data-allow-selection="true" className={`cursor-text select-text text-[10px] font-semibold ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{learner.attendanceRate}%</span>
+                            {learner.attendanceRateAvailable ? (
+                              <div title={getComponentsTooltip(learner)} data-allow-selection="true" className="flex min-w-[72px] flex-col items-center gap-0.5 leading-none text-center cursor-help">
+                                <span className="cursor-text select-text text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap">
+                                  {`${learner.componentsCompleted ?? 0}/${learner.componentsPlanned ?? 0}`}
+                                </span>
+                                <span className={`cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                                  {learner.attendanceRate}%
+                                </span>
+                              </div>
+                            ) : (
+                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-400">{EMPTY_VALUE}</span>
+                            )}
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <div className="w-8 bg-background-200 rounded-full h-1.5">
-                                <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
+                            {learner.overallProgressAvailable ? (
+                              <div title={getProgressTooltip(learner)} className="flex items-center justify-center gap-1 cursor-help">
+                                <div className="w-8 bg-background-200 rounded-full h-1.5">
+                                  <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
+                                </div>
+                                <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-700 w-6 text-right">{learner.overallProgress}%</span>
                               </div>
-                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-700 w-6 text-right">{learner.overallProgress}%</span>
-                            </div>
+                            ) : (
+                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-400">{EMPTY_VALUE}</span>
+                            )}
                           </td>
                           <td className="px-2 py-2 text-center text-[10px] text-foreground-600 whitespace-nowrap">
                             <span data-allow-selection="true" className="cursor-text select-text">{learner.startDate}</span>
@@ -1327,7 +1392,7 @@ export default function CoachCaseload() {
                     <i className="ri-time-line text-primary-500"></i> Recent Activity Timeline
                   </h4>
                   <div className="space-y-3">
-                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the Aptem extraction table" />
+                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the learner record" />
                     <TimelineItem icon="ri-file-chart-line" color="primary" date={selectedLearner.gatewayReviewDate} title="Gateway Review" desc="Current gateway review date from the source table" />
                     <TimelineItem icon="ri-mail-line" color="secondary" date={selectedLearner.coachEmail || ownerEmail} title="Assigned Coach" desc={selectedLearner.coachName || ownerName} />
                     <TimelineItem icon="ri-folder-upload-line" color="accent" date={selectedLearner.progressVariance} title={`${selectedLearner.evidenceCount} Evidence Items`} desc={selectedLearner.status === 'at-risk' ? 'Variance is behind target - catch-up planning recommended' : 'Evidence volume looks healthy against current progress'} />
@@ -1501,12 +1566,13 @@ function ActivityRow({ icon, color, text, subtext }: { icon: string; color: stri
 
 function OverflowRevealText({ text, maxWidthClass = 'max-w-[240px]' }: { text: string; maxWidthClass?: string }) {
   return (
-    <div data-allow-selection="true" className={`group/overflow relative w-fit cursor-text ${maxWidthClass}`}>
-      <span className="block cursor-text truncate whitespace-nowrap select-text">{text}</span>
-      <div data-allow-selection="true" className="absolute left-0 top-full z-30 mt-1 hidden min-w-full max-w-[420px] cursor-text rounded-lg border border-foreground-200/80 bg-background-50 px-3 py-2 text-[11px] leading-relaxed text-foreground-700 shadow-xl group-hover/overflow:block select-text">
-        {text}
-      </div>
-    </div>
+    <span
+      data-allow-selection="true"
+      title={text}
+      className={`block cursor-text truncate whitespace-nowrap select-text ${maxWidthClass}`}
+    >
+      {text}
+    </span>
   );
 }
 

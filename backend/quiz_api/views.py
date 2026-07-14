@@ -1637,7 +1637,7 @@ Rules:
     try:
         from openai import OpenAI
     except ImportError:
-        return JsonResponse({"error": "OpenAI Python package is not installed. Run pip install -r requirments.txt."}, status=503)
+        return JsonResponse({"error": "OpenAI Python package is not installed. Run pip install -r requirements.txt."}, status=503)
 
     try:
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
