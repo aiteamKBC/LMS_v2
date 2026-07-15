@@ -285,6 +285,7 @@ import TrainingPlanBuilderPage from "../pages/delivery/TrainingPlanPage";
 import ThisWeekPage from "../pages/learner/this-week/page";
 import TrainingPlanPage from "../pages/learner/training-plan/page";
 import QuizTakePage from "../pages/learner/quiz-take/page";
+import VideoWatchPage from "../pages/learner/video-watch/page";
 import ModulesPage from "../pages/learner/modules/page";
 import AttendancePage from "../pages/learner/attendance/page";
 import CatchUpPage from "../pages/learner/catchup/page";
@@ -642,7 +643,11 @@ const routes: RouteObject[] = [
     path: "/learner/quiz/:kind/:id/:quizId",
     element: <QuizTakePage />,
   },
-  
+  {
+    path: "/learner/video/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+
   {
     path: "/learner/modules",
     element: <ModulesPage />,
