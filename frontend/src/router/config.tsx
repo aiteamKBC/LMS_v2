@@ -25,7 +25,6 @@ const AdminReportsPage = lazy(() => import("../pages/admin/reports/page"));
 const AdminAtRiskPage = lazy(() => import("../pages/admin/at-risk/page"));
 const AdminDashboard = lazy(() => import("../pages/workspace/admin/page"));
 const InternalPanelPage = lazy(() => import("../pages/internal-panel/page"));
-const OnboardingPage = lazy(() => import("../pages/onboarding/page"));
 const SettingsHub = lazy(() => import("../pages/admin/settings/page"));
 const PreActiveLearnerJourney = lazy(() => import("../pages/compliance/pre-active/page"));
 const EmployerContracting = lazy(() => import("../pages/compliance/employer-contracting/page"));
@@ -277,7 +276,6 @@ import AdminReportsPage from "../pages/admin/reports/page";
 import AdminAtRiskPage from "../pages/admin/at-risk/page";
 import AdminDashboard from "../pages/workspace/admin/page";
 import InternalPanelPage from "../pages/internal-panel/page";
-import OnboardingPage from "../pages/onboarding/page";
 import SettingsHub from "../pages/admin/settings/page";
 import UsersListPage from "../pages/users/page";
 import BoardPage from "../pages/users/BoardPage";
@@ -602,10 +600,6 @@ const routes: RouteObject[] = [
   {
     path: "/admin/settings",
     element: <SettingsHub />,
-  },
-  {
-    path: "/onboarding",
-    element: <OnboardingPage />,
   },
   {
     path: "/users",
