@@ -184,7 +184,7 @@ def _insert_with_id(source_id, fields):
 # source enrolment tables). These must survive the Active <-> Unactive round-trip
 # so a learner keeps their coach, hours, and progress when re-activated.
 PRESERVED_FIELDS = (
-    "coach_name", "coach_email", "completed_hours",
+    "coach_name", "coach_email", "coach_rag", "completed_hours",
     "training_plan", "ksbs", "training_plan_progress", "activity_feed",
 )
 
