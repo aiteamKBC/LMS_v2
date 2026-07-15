@@ -5,7 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -300,9 +300,7 @@ export default function LearnerOverview() {
 
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const myLearner = useMyLearner();
-  const kind = urlKind ?? myLearner?.kind;
-  const id = urlId ?? myLearner?.id;
+  const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
 
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;

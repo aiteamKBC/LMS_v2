@@ -8,6 +8,7 @@ import { submitVideoProgress, type VideoProgressRecord } from '@/api/videos';
 import { buildLearnerJourney, componentTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
+import { rememberLearner } from '@/hooks/useMyLearner';
 
 const learnerNav = roleNavMap.learner;
 
@@ -46,6 +47,8 @@ export default function VideoWatchPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  // Keep sidebar self-view pointing at this learner after watching.
+  useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
