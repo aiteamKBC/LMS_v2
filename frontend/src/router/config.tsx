@@ -418,7 +418,6 @@ import QaDeliverySetup from "../pages/qa/delivery-setup/page";
 import QaGatewayEpa from "../pages/qa/gateway-epa/page";
 import LearnerEngagementPage from "../pages/engagement/learner-engagement/page";
 import AttendanceRiskPage from "../pages/engagement/attendance-risk/page";
-
 import CallLogsPage from "../pages/engagement/call-logs/page";
 import WhatsAppLogsPage from "../pages/engagement/whatsapp-logs/page";
 import EmailLogsPage from "../pages/engagement/email-logs/page";
@@ -429,6 +428,8 @@ import EventsPage from "../pages/engagement/events/page";
 import EngagementClubsPage from "../pages/engagement/clubs/page";
 import RecognitionPage from "../pages/engagement/recognition/page";
 import EngagementReportsPage from "../pages/engagement/reports/page";
+import FlashCardsPage from "../pages/engagement/flash-cards/page";
+
 import EmployerApprenticeRisk from '@/pages/employer/apprentice-risk/page';
 import EmployerApprenticeProgress from '@/pages/employer/apprentice-progress/page';
 import EmployerReviewActions from '@/pages/employer/review-actions/page';
@@ -1154,6 +1155,10 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
+  },
+  {
+    path: "/engagement/flash-cards",
+    element: <FlashCardsPage />,
   },
   
   {
