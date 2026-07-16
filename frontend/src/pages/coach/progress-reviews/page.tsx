@@ -11,6 +11,11 @@ import {
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
+  isCancelledEvent,
+  isAtRiskProgressReview,
+  isDueSoonEvent,
+  isEventThisWeek,
+  isScheduledEvent,
   initialsFor,
   isCompletedEvent,
   meetingUrl,
@@ -25,7 +30,42 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type ReviewTab = 'upcoming' | 'completed' | 'prep-forms';
+type ReviewTab = 'this-week' | 'overdue' | 'due-soon' | 'scheduled' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
+
+const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
+  'this-week': {
+    label: 'This Week',
+    description: 'Progress reviews with a target or scheduled date inside the current week, excluding completed reviews.',
+  },
+  overdue: {
+    label: 'Overdue',
+    description: 'Progress reviews where the target date has passed and the review is still not scheduled.',
+  },
+  'due-soon': {
+    label: 'Due Soon',
+    description: 'Progress reviews not scheduled yet and due within the next 14 days.',
+  },
+  scheduled: {
+    label: 'Scheduled',
+    description: 'Progress reviews that are already booked or currently in progress.',
+  },
+  completed: {
+    label: 'Completed',
+    description: 'Progress reviews marked as completed or confirmed.',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    description: 'Progress reviews that were cancelled and can be scheduled again if needed.',
+  },
+  'prep-forms': {
+    label: 'Preparation Forms',
+    description: 'Preparation form records. This is ready for a live source when that data is connected.',
+  },
+  all: {
+    label: 'All',
+    description: 'Every generated progress review for this coach across the learner programme dates.',
+  },
+};
 
 const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
   date: '',
@@ -34,7 +74,7 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
 };
 
 export default function CoachProgressReviews() {
-  const [tab, setTab] = useState<ReviewTab>('upcoming');
+  const [tab, setTab] = useState<ReviewTab>('this-week');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -69,12 +109,32 @@ export default function CoachProgressReviews() {
     return () => controller.abort();
   }, []);
 
-  const completed = events.filter(isCompletedEvent).length;
-  const upcomingEvents = events.filter(event => !isCompletedEvent(event));
-  const upcoming = upcomingEvents.length;
+  const thisWeekEvents = events.filter(event => isEventThisWeek(event));
+  const overdueEvents = events.filter(event => isAtRiskProgressReview(event));
+  const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
+  const scheduledEvents = events.filter(event => isScheduledEvent(event));
+  const completedEvents = events.filter(event => isCompletedEvent(event));
+  const cancelledEvents = events.filter(event => isCancelledEvent(event));
+  const thisWeek = thisWeekEvents.length;
+  const overdue = overdueEvents.length;
+  const dueSoon = dueSoonEvents.length;
   const pendingSchedule = events.filter(needsScheduling).length;
   const prepForms = 0;
-  const data = tab === 'completed' ? events.filter(isCompletedEvent) : tab === 'upcoming' ? upcomingEvents : [];
+  const data = tab === 'this-week'
+    ? thisWeekEvents
+    : tab === 'overdue'
+      ? overdueEvents
+      : tab === 'due-soon'
+        ? dueSoonEvents
+        : tab === 'scheduled'
+          ? scheduledEvents
+          : tab === 'completed'
+            ? completedEvents
+            : tab === 'cancelled'
+              ? cancelledEvents
+              : tab === 'all'
+                ? events
+                : [];
 
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvents(prevEvents => sortEvents(prevEvents.map(event => (
@@ -146,22 +206,32 @@ export default function CoachProgressReviews() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Progress Reviews</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{upcoming} upcoming</strong> reviews, {completed} completed. {pendingSchedule} need scheduling.
+                <strong>{events.length} generated</strong> reviews. {thisWeek} this week, {overdue} overdue, {dueSoon} due soon, {pendingSchedule} need scheduling.
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
-              <MetricCard value={upcoming} label="Upcoming" />
-              <MetricCard value={completed} label="Completed" tone="text-emerald-300" />
-              <MetricCard value={pendingSchedule} label="Needs Schedule" tone="text-amber-300" />
-              <MetricCard value={prepForms} label="Prep Forms" />
+              <MetricCard value={thisWeek} label="This Week" />
+              <MetricCard value={overdue} label="Overdue" tone="text-red-300" />
+              <MetricCard value={dueSoon} label="Due Soon" tone="text-amber-300" />
+              <MetricCard value={scheduledEvents.length} label="Scheduled" />
+              <MetricCard value={completedEvents.length} label="Completed" tone="text-emerald-300" />
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit flex-wrap">
-          <TabButton active={tab === 'upcoming'} onClick={() => setTab('upcoming')} label="Upcoming" count={upcoming} />
-          <TabButton active={tab === 'completed'} onClick={() => setTab('completed')} label="Completed" count={completed} />
-          <TabButton active={tab === 'prep-forms'} onClick={() => setTab('prep-forms')} label="Preparation Forms" count={prepForms} />
+          <TabButton active={tab === 'this-week'} onClick={() => setTab('this-week')} label={FILTER_COPY['this-week'].label} count={thisWeek} description={FILTER_COPY['this-week'].description} />
+          <TabButton active={tab === 'overdue'} onClick={() => setTab('overdue')} label={FILTER_COPY.overdue.label} count={overdue} description={FILTER_COPY.overdue.description} />
+          <TabButton active={tab === 'due-soon'} onClick={() => setTab('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoon} description={FILTER_COPY['due-soon'].description} />
+          <TabButton active={tab === 'scheduled'} onClick={() => setTab('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
+          <TabButton active={tab === 'completed'} onClick={() => setTab('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
+          <TabButton active={tab === 'cancelled'} onClick={() => setTab('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
+          <TabButton active={tab === 'prep-forms'} onClick={() => setTab('prep-forms')} label={FILTER_COPY['prep-forms'].label} count={prepForms} description={FILTER_COPY['prep-forms'].description} />
+          <TabButton active={tab === 'all'} onClick={() => setTab('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
+        </div>
+        <div className="rounded-xl border border-background-200/70 bg-background-50 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">{FILTER_COPY[tab].label}</p>
+          <p className="mt-1 text-[12px] text-foreground-500">{FILTER_COPY[tab].description}</p>
         </div>
 
         {error && (
@@ -193,6 +263,7 @@ export default function CoachProgressReviews() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold text-foreground-900">{review.learner || 'Unknown learner'}</p>
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${statusPillClass(review.status)}`}>{statusLabel(review.status)}</span>
+                        {isAtRiskProgressReview(review) && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Overdue</span>}
                         <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">{eventPeriodLabel(review)}</span>
                       </div>
                       <p className="text-[11px] text-foreground-400 mt-0.5">
@@ -218,6 +289,7 @@ export default function CoachProgressReviews() {
                         <InfoBox label="Target date" value={formatDateLabel(review.targetDate)} />
                         <InfoBox label="Scheduled date" value={review.scheduledDate ? formatDateLabel(review.scheduledDate) : '--'} />
                         <InfoBox label="Status" value={statusLabel(review.status)} />
+                        {isAtRiskProgressReview(review) && <InfoBox label="Risk" value="Target date passed and not scheduled" />}
                       </div>
                       {review.notes && (
                         <div className="bg-background-100/60 rounded-lg p-3">
@@ -286,9 +358,9 @@ function MetricCard({ value, label, tone = 'text-white' }: { value: number; labe
   );
 }
 
-function TabButton({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function TabButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
   return (
-    <button type="button" onClick={onClick} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${active ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+    <button type="button" onClick={onClick} title={description} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${active ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
       {label} <span className="text-[10px] opacity-60">({count})</span>
     </button>
   );

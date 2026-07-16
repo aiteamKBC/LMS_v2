@@ -12,8 +12,12 @@ import {
   formatDateLabel,
   formatTimeLabel,
   initialsFor,
-  isConfirmedEvent,
-  isUrgentEvent,
+  isAtRiskEvent,
+  isCancelledEvent,
+  isCompletedEvent,
+  isDueSoonEvent,
+  isEventThisWeek,
+  isScheduledEvent,
   meetingUrl,
   needsScheduling,
   runCoachCalendarAction,
@@ -26,7 +30,38 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type MeetingFilter = 'all' | 'confirmed' | 'urgent' | 'needs-schedule';
+type MeetingFilter = 'this-week' | 'at-risk' | 'due-soon' | 'scheduled' | 'completed' | 'cancelled' | 'all';
+
+const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }> = {
+  'this-week': {
+    label: 'This Week',
+    description: 'Monthly coaching meetings with a target or scheduled date inside the current week, excluding completed meetings.',
+  },
+  'at-risk': {
+    label: 'Overdue',
+    description: 'Monthly coaching meetings where the target date has passed and the meeting is still not scheduled.',
+  },
+  'due-soon': {
+    label: 'Due Soon',
+    description: 'Monthly coaching meetings not scheduled yet and due within the next 14 days.',
+  },
+  scheduled: {
+    label: 'Scheduled',
+    description: 'Monthly coaching meetings that are already booked or currently in progress.',
+  },
+  completed: {
+    label: 'Completed',
+    description: 'Monthly coaching meetings marked as completed or confirmed.',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    description: 'Monthly coaching meetings that were cancelled and can be scheduled again if needed.',
+  },
+  all: {
+    label: 'All',
+    description: 'Every generated monthly coaching meeting for this coach across the learner programme dates.',
+  },
+};
 
 const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
   date: '',
@@ -35,7 +70,7 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
 };
 
 export default function CoachMeetings() {
-  const [filter, setFilter] = useState<MeetingFilter>('all');
+  const [filter, setFilter] = useState<MeetingFilter>('this-week');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -70,13 +105,19 @@ export default function CoachMeetings() {
     return () => controller.abort();
   }, []);
 
-  const confirmed = events.filter(isConfirmedEvent).length;
-  const urgent = events.filter(isUrgentEvent).length;
-  const pendingSchedule = events.filter(needsScheduling).length;
+  const thisWeekEvents = events.filter(event => isEventThisWeek(event));
+  const atRiskEvents = events.filter(event => isAtRiskEvent(event));
+  const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
+  const scheduledEvents = events.filter(event => isScheduledEvent(event));
+  const completedEvents = events.filter(event => isCompletedEvent(event));
+  const cancelledEvents = events.filter(event => isCancelledEvent(event));
   const filtered = events.filter(event => {
-    if (filter === 'confirmed') return isConfirmedEvent(event);
-    if (filter === 'urgent') return isUrgentEvent(event);
-    if (filter === 'needs-schedule') return needsScheduling(event);
+    if (filter === 'this-week') return isEventThisWeek(event);
+    if (filter === 'at-risk') return isAtRiskEvent(event);
+    if (filter === 'due-soon') return isDueSoonEvent(event);
+    if (filter === 'scheduled') return isScheduledEvent(event);
+    if (filter === 'completed') return isCompletedEvent(event);
+    if (filter === 'cancelled') return isCancelledEvent(event);
     return true;
   });
 
@@ -150,22 +191,30 @@ export default function CoachMeetings() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Coaching Meetings</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{events.length} meetings</strong> generated from {ownerName}'s active learners. {confirmed} confirmed, {urgent} urgent, {pendingSchedule} need scheduling.
+                <strong>{events.length} meetings</strong> generated from {ownerName}'s active learners. {thisWeekEvents.length} this week, {atRiskEvents.length} overdue, {dueSoonEvents.length} due soon.
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <MetricCard value={events.length} label="Total" />
-              <MetricCard value={urgent} label="Urgent" tone="text-red-300" />
-              <MetricCard value={confirmed} label="Confirmed" />
+              <MetricCard value={thisWeekEvents.length} label="This Week" />
+              <MetricCard value={atRiskEvents.length} label="Overdue" tone="text-red-300" />
+              <MetricCard value={scheduledEvents.length} label="Scheduled" />
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit flex-wrap">
-          <FilterButton active={filter === 'all'} onClick={() => setFilter('all')} label="All" count={events.length} />
-          <FilterButton active={filter === 'confirmed'} onClick={() => setFilter('confirmed')} label="Confirmed" count={confirmed} />
-          <FilterButton active={filter === 'urgent'} onClick={() => setFilter('urgent')} label="Urgent" count={urgent} />
-          <FilterButton active={filter === 'needs-schedule'} onClick={() => setFilter('needs-schedule')} label="Needs Schedule" count={pendingSchedule} />
+          <FilterButton active={filter === 'this-week'} onClick={() => setFilter('this-week')} label={FILTER_COPY['this-week'].label} count={thisWeekEvents.length} description={FILTER_COPY['this-week'].description} />
+          <FilterButton active={filter === 'at-risk'} onClick={() => setFilter('at-risk')} label={FILTER_COPY['at-risk'].label} count={atRiskEvents.length} description={FILTER_COPY['at-risk'].description} />
+          <FilterButton active={filter === 'due-soon'} onClick={() => setFilter('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoonEvents.length} description={FILTER_COPY['due-soon'].description} />
+          <FilterButton active={filter === 'scheduled'} onClick={() => setFilter('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
+          <FilterButton active={filter === 'completed'} onClick={() => setFilter('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
+          <FilterButton active={filter === 'cancelled'} onClick={() => setFilter('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
+          <FilterButton active={filter === 'all'} onClick={() => setFilter('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
+        </div>
+        <div className="rounded-xl border border-background-200/70 bg-background-50 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">{FILTER_COPY[filter].label}</p>
+          <p className="mt-1 text-[12px] text-foreground-500">{FILTER_COPY[filter].description}</p>
         </div>
 
         {error && (
@@ -192,6 +241,8 @@ export default function CoachMeetings() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-foreground-900">{event.learner || 'Unknown learner'}</p>
                       <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${statusPillClass(event.status)}`}>{statusLabel(event.status)}</span>
+                      {isAtRiskEvent(event) && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Overdue</span>}
+                      {isDueSoonEvent(event) && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Due Soon</span>}
                       <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">Monthly Coaching</span>
                     </div>
                     <p className="text-[11px] text-foreground-400 mt-0.5">
@@ -284,9 +335,9 @@ function MetricCard({ value, label, tone = 'text-white' }: { value: number; labe
   );
 }
 
-function FilterButton({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function FilterButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
   return (
-    <button type="button" onClick={onClick} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${active ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+    <button type="button" onClick={onClick} title={description} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${active ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
       {label} <span className="text-[10px] opacity-60">({count})</span>
     </button>
   );

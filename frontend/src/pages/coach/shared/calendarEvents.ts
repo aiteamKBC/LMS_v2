@@ -129,6 +129,22 @@ export function parseLocalDate(value?: string | null) {
   return new Date(parts[0], parts[1] - 1, parts[2]);
 }
 
+export function startOfDay(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+export function currentWeekRange(referenceDate = new Date()) {
+  const today = startOfDay(referenceDate);
+  const day = today.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(today);
+  start.setDate(today.getDate() + mondayOffset);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
 export function eventDisplayDate(event: CoachCalendarEvent) {
   return event.scheduledDate || event.date || event.targetDate || '';
 }
@@ -217,6 +233,14 @@ export function needsScheduling(event: CoachCalendarEvent) {
   return ['not-scheduled', 'pending', 'cancelled'].includes(event.status);
 }
 
+export function isScheduledEvent(event: CoachCalendarEvent) {
+  return ['scheduled', 'in-progress'].includes(event.status);
+}
+
+export function isCancelledEvent(event: CoachCalendarEvent) {
+  return event.status === 'cancelled';
+}
+
 export function isUrgentEvent(event: CoachCalendarEvent) {
   return event.priority === 'urgent' || event.priority === 'high';
 }
@@ -227,6 +251,39 @@ export function isCompletedEvent(event: CoachCalendarEvent) {
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {
   return !['completed', 'confirmed', 'cancelled'].includes(event.status);
+}
+
+export function isAtRiskEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
+  if (!needsScheduling(event)) return false;
+  const targetDate = parseLocalDate(eventTargetDate(event));
+  if (!targetDate) return false;
+
+  const today = startOfDay(referenceDate);
+  return targetDate.getTime() < today.getTime();
+}
+
+export function isDueSoonEvent(event: CoachCalendarEvent, referenceDate = new Date(), daysAhead = 14) {
+  if (!needsScheduling(event) || isAtRiskEvent(event, referenceDate)) return false;
+  const targetDate = parseLocalDate(eventTargetDate(event));
+  if (!targetDate) return false;
+
+  const today = startOfDay(referenceDate);
+  const riskCutoff = new Date(today);
+  riskCutoff.setDate(today.getDate() + daysAhead);
+
+  return targetDate.getTime() >= today.getTime() && targetDate.getTime() <= riskCutoff.getTime();
+}
+
+export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate || isCompletedEvent(event)) return false;
+
+  const { start, end } = currentWeekRange(referenceDate);
+  return displayDate.getTime() >= start.getTime() && displayDate.getTime() <= end.getTime();
+}
+
+export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {
+  return event.source === 'progress-review' && isAtRiskEvent(event, referenceDate);
 }
 
 export function meetingUrl(event: CoachCalendarEvent) {
