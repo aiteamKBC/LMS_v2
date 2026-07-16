@@ -42,6 +42,11 @@ class EnrolmentUser(models.Model):
     programme = models.TextField(db_column="Programme", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
+    # Cohort delivery window, copied from curriculum."cohort_authoring_details"
+    # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
+    # Populated on create; refreshed on the Active mirror.
+    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
+    end_date = models.DateField(db_column="End_date", null=True, blank=True)
     # Structured training plan (see mappers.TRAINING_PLAN docstring for shape).
     # This column pre-existed as unused free text; repurposed here since apprentice
     # learners previously had no way to persist a training plan at all.
@@ -112,6 +117,10 @@ class CommercialUser(models.Model):
     group = models.TextField(db_column="Group", null=True, blank=True)
     start_date = models.TextField(db_column="Start_date", null=True, blank=True)
     end_date = models.TextField(db_column="End_date", null=True, blank=True)
+    # Cohort delivery window, copied from curriculum."cohort_authoring_details"
+    # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
+    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
+    end_date = models.DateField(db_column="End_date", null=True, blank=True)
 
     # Legacy comma-joined summary columns — superseded by `training_plan` below,
     # kept only so old saved values remain visible until a learner's plan is
@@ -151,16 +160,13 @@ class ActiveUser(models.Model):
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
-    completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
-    target_hours = models.TextField(db_column="Target_hours", null=True, blank=True)
+    # Cohort delivery window, copied from curriculum."cohort_authoring_details"
+    # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
+    # Refreshed on every Active mirror sync.
+    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
+    end_date = models.DateField(db_column="End_date", null=True, blank=True)
     minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
     maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
-    progress_variance = models.TextField(db_column="Progress_variance", null=True, blank=True)
-    progress_hours = models.TextField(db_column="Progress_Hours", null=True, blank=True)
-    otjh_status = models.TextField(db_column="OTJHoursStatus", null=True, blank=True)
-    coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
-    coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
-    planned_hours = models.TextField(db_column="planned_hours", null=True, blank=True)
     # Coach contact, set per-learner on the delivery "Enrolled learners" page and
     # stored on the mirror only. Preserved across re-syncs because sync_active_user
     # uses UPDATE with a fixed field list that excludes these (see active_users.py);
@@ -192,13 +198,11 @@ class ActiveUser(models.Model):
     # components: [{componentId, componentTitle}]}]}] — same shape as
     # CommercialUser.training_plan / EnrolmentUser.learning_plan.
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
-    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     # Quiz attempts: [{week, attempt, grade, Score, module, passed, quizId, quizName,
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
-    # — appended to by learner_api.quizzes.submit_quiz_attempt.
+    # — legacy read-only store; new attempts go to training_plan_progress.
     weekly_quizzes = SafeJSONField(db_column="Weekly_Quizzes", null=True, blank=True)
-    activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
     # Chronological activity log (newest appended last). Each entry:
     # {kind:'quiz'|'video', action, title, detail, at, quizId?/componentId?, week, module}.
     # Appended when a learner finishes a component (quizzes.py / videos.py).
@@ -223,31 +227,6 @@ class ActiveUser(models.Model):
 
 
 class UnactiveUser(models.Model):
-    """Unmanaged mapping of "Learner"."Unactive_users"."""
-
-    id = models.AutoField(primary_key=True, db_column="id")
-
-    username = models.TextField(db_column="Username ", null=True, blank=True)  # NB: trailing space
-    email = models.TextField(db_column="Email", null=True, blank=True)
-    phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
-    programme = models.TextField(db_column="Programme", null=True, blank=True)
-    status = models.TextField(db_column="status", null=True, blank=True)
-    cohort = models.TextField(db_column="Cohort", null=True, blank=True)
-    group = models.TextField(db_column="Group", null=True, blank=True)
-    completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
-    target_hours = models.TextField(db_column="Target_hours", null=True, blank=True)
-    minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
-    maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
-    progress_variance = models.TextField(db_column="Progress_variance", null=True, blank=True)
-    progress_hours = models.TextField(db_column="Progress_Hours", null=True, blank=True)
-    otjh_status = models.TextField(db_column="OTJHoursStatus", null=True, blank=True)
-    coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
-    coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
-    planned_hours = models.TextField(db_column="planned_hours", null=True, blank=True)
-
-    training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
-    training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
-    ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
     """Unmanaged mapping of "Learner"."Unactive_users" — the archive for learners
     whose programme status is NOT Active.
 
@@ -267,6 +246,10 @@ class UnactiveUser(models.Model):
     programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
+    # Cohort delivery window, mirrored from the Active_users row on archive
+    # (copied automatically by _archive_active_user's shared-field loop).
+    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
+    end_date = models.DateField(db_column="End_date", null=True, blank=True)
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
     coach_rag = models.TextField(db_column="coach_rag", null=True, blank=True)

@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RealLearningJourneyView } from '@/components/feature/RealLearningJourneyView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import RoadJourneyView from './components/RoadJourneyView';
@@ -380,9 +380,7 @@ function TimelineView({
    ═══════════════════════════════════════════════════════════════ */
 export default function ModulesPage() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const myLearner = useMyLearner();
-  const kind = urlKind ?? myLearner?.kind;
-  const id = urlId ?? myLearner?.id;
+  const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
 
   const [viewMode, setViewMode] = useState<'road' | 'timeline'>('road');
