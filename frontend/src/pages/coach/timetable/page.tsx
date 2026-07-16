@@ -4,12 +4,15 @@ import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
+const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
+const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Types
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 interface TimetableEvent {
   id: string;
+  eventKey?: string;
   title: string;
   type: 'coaching' | 'live-session' | 'review' | 'employer-meeting' | 'welfare' | 'admin' | 'personal';
   date?: string;
@@ -38,6 +41,17 @@ interface TimetableEvent {
   rawStatus?: string;
   notes?: string;
   cohort?: string;
+  learnerId?: string;
+  ownerEmail?: string;
+  ownerName?: string;
+  targetDate?: string;
+  scheduledDate?: string | null;
+  scheduledTime?: string | null;
+  durationMinutes?: number;
+  meetingProvider?: string;
+  meetingLink?: string;
+  graphWebLink?: string;
+  syncWarning?: string;
 }
 
 interface TimetableSummaryMetrics {
@@ -193,6 +207,10 @@ function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 
   return new Date(event.year, event.month, event.dayOfMonth);
 }
 
+function formatEventDateLabel(event: TimetableEvent) {
+  return `${DAYS_OF_WEEK[event.dayOfWeek]}, ${event.dayOfMonth} ${MONTH_NAMES[event.month]}`;
+}
+
 function getPreferredDisplayDate(events: TimetableEvent[], now: Date) {
   if (!events.length) return now;
 
@@ -225,7 +243,6 @@ function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics 
   const scheduledEvents = events.filter(event => event.status === 'scheduled').length;
   const inProgressEvents = events.filter(event => event.status === 'in-progress').length;
   const needsScheduling = events.filter(event => event.status === 'pending' || event.status === 'not-scheduled').length;
-  const activeEvents = events.filter(event => event.status !== 'not-scheduled');
 
   return {
     totalEvents,
@@ -234,9 +251,9 @@ function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics 
     inProgressEvents,
     needsScheduling,
     completionRate: totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0,
-    coachingEvents: activeEvents.filter(event => event.type === 'coaching').length,
-    reviewEvents: activeEvents.filter(event => event.type === 'review').length,
-    supportEvents: activeEvents.filter(event => event.type === 'welfare').length,
+    coachingEvents: events.filter(event => event.type === 'coaching').length,
+    reviewEvents: events.filter(event => event.type === 'review').length,
+    supportEvents: events.filter(event => event.type === 'welfare').length,
   };
 }
 
@@ -365,6 +382,12 @@ export default function CoachTimetablePage() {
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+  const [scheduleDuration, setScheduleDuration] = useState(60);
+  const [eventActionBusy, setEventActionBusy] = useState(false);
+  const [eventActionError, setEventActionError] = useState<string | null>(null);
+  const [eventActionNotice, setEventActionNotice] = useState<string | null>(null);
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -375,10 +398,27 @@ export default function CoachTimetablePage() {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
 
-  useEffect(() => {
+  const applyEventsUpdate = useCallback((nextEvents: TimetableEvent[], nextSelectedEventId?: string | null) => {
+    setEvents(nextEvents);
+    setSummary(buildFallbackSummary(nextEvents));
+    if (nextSelectedEventId) {
+      const nextSelectedEvent = nextEvents.find(event => event.id === nextSelectedEventId) || null;
+      setSelectedEvent(nextSelectedEvent);
+      return nextSelectedEvent;
+    }
+    return null;
+  }, []);
+
+  const updateSingleEvent = useCallback((updatedEvent: TimetableEvent) => {
+    const nextEvents = events.map(event => event.id === updatedEvent.id ? updatedEvent : event);
+    const nextSelectedEvent = applyEventsUpdate(nextEvents, updatedEvent.id);
+    return nextSelectedEvent || updatedEvent;
+  }, [applyEventsUpdate, events]);
+
+  const loadTimetable = useCallback(async () => {
     let cancelled = false;
 
-    async function loadTimetable() {
+    const run = async () => {
       setLoading(true);
       setError(null);
       try {
@@ -408,13 +448,40 @@ export default function CoachTimetablePage() {
       } finally {
         if (!cancelled) setLoading(false);
       }
-    }
+    };
 
-    loadTimetable();
+    await run();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cleanup: (() => void) | undefined;
+    loadTimetable().then(result => {
+      cleanup = result;
+    });
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [loadTimetable]);
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      setScheduleDate('');
+      setScheduleTime('09:00');
+      setScheduleDuration(60);
+      setEventActionError(null);
+      setEventActionNotice(null);
+      return;
+    }
+
+    setScheduleDate(selectedEvent.scheduledDate || selectedEvent.targetDate || selectedEvent.date || '');
+    setScheduleTime(selectedEvent.scheduledTime || '09:00');
+    setScheduleDuration(selectedEvent.durationMinutes || 60);
+    setEventActionError(null);
+    setEventActionNotice(selectedEvent.syncWarning || null);
+  }, [selectedEvent]);
 
   const getEventsForDay = useCallback((day: number, month: number, year: number): TimetableEvent[] => {
     return events.filter(ev => ev.dayOfMonth === day && ev.month === month && ev.year === year);
@@ -458,16 +525,77 @@ export default function CoachTimetablePage() {
     if (viewMode === 'month') setViewMode('day');
   };
 
+  const handleScheduleSave = useCallback(async () => {
+    if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+
+    setEventActionBusy(true);
+    setEventActionError(null);
+    setEventActionNotice(null);
+    try {
+      const response = await fetch(SCHEDULE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventKey: selectedEvent.eventKey,
+          ownerEmail: selectedEvent.ownerEmail,
+          scheduledDate: scheduleDate,
+          scheduledTime: scheduleTime,
+          durationMinutes: scheduleDuration,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const updatedEvent = data.event as TimetableEvent;
+      updateSingleEvent(updatedEvent);
+      if (data.warning) setEventActionNotice(data.warning as string);
+    } catch (err) {
+      setEventActionError(err instanceof Error ? err.message : 'Unable to schedule event');
+    } finally {
+      setEventActionBusy(false);
+    }
+  }, [scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
+
+  const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'cancel') => {
+    if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+
+    setEventActionBusy(true);
+    setEventActionError(null);
+    setEventActionNotice(null);
+    try {
+      const response = await fetch(ACTION_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventKey: selectedEvent.eventKey,
+          ownerEmail: selectedEvent.ownerEmail,
+          action,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const updatedEvent = data.event as TimetableEvent;
+      const nextSelectedEvent = updateSingleEvent(updatedEvent);
+      if (data.warning) setEventActionNotice(data.warning as string);
+      if (action === 'start' && (nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink)) {
+        window.open(nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink, '_blank', 'noopener,noreferrer');
+      }
+    } catch (err) {
+      setEventActionError(err instanceof Error ? err.message : 'Unable to update event');
+    } finally {
+      setEventActionBusy(false);
+    }
+  }, [selectedEvent, updateSingleEvent]);
+
   const titleLabel = viewMode === 'month'
     ? `${MONTH_NAMES[viewMonth]} ${viewYear}`
     : viewMode === 'week'
-      ? `${weekDates[0].monthName} ${weekDates[0].day} â€“ ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
+      ? `${weekDates[0].monthName} ${weekDates[0].day} - ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
       : `${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}`;
 
   return (
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
-      pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings â€” all in one place"
+      pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings - all in one place"
       userName="Med Maher" userRole="Progress Coach"
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
@@ -696,7 +824,7 @@ export default function CoachTimetablePage() {
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
-                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</p>
+                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</p>
                                     {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
                                       <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
@@ -767,7 +895,7 @@ export default function CoachTimetablePage() {
                                     </div>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-foreground-500">
-                                    <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
+                                    <span><i className="ri-time-line mr-0.5"></i>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
                                     {ev.platform && <span><i className="ri-video-line mr-0.5"></i>{ev.platform}</span>}
                                     {ev.location && <span><i className="ri-map-pin-line mr-0.5"></i>{ev.location}</span>}
                                     {ev.learner && <span className="font-medium text-foreground-600">{ev.learner}</span>}
@@ -825,9 +953,9 @@ export default function CoachTimetablePage() {
                           <div className="flex-1 min-w-0">
                             <p className={`text-sm font-semibold ${tc.text}`}>{ev.title}</p>
                             <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
-                              <span>{formatTime(ev.startHour)} â€“ {formatTime(ev.endHour)}</span>
-                              {ev.learner && <span className="text-foreground-400">Â· {ev.learner}</span>}
-                              {ev.employer && <span className="text-foreground-400">Â· {ev.employer}</span>}
+                              <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
+                              {ev.learner && <span className="text-foreground-400">- {ev.learner}</span>}
+                              {ev.employer && <span className="text-foreground-400">- {ev.employer}</span>}
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -873,18 +1001,30 @@ export default function CoachTimetablePage() {
                   <div className="space-y-2.5">
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-calendar-line text-foreground-400 w-4 text-center"></i>
-                      <span className="font-medium">{DAYS_OF_WEEK[selectedEvent.dayOfWeek]}, {selectedEvent.dayOfMonth} {MONTH_NAMES[selectedEvent.month]}</span>
+                      <span className="font-medium">{formatEventDateLabel(selectedEvent)}</span>
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                       <i className="ri-time-line text-foreground-400 w-4 text-center"></i>
-                      <span className="font-medium">{formatTime(selectedEvent.startHour)} â€“ {formatTime(selectedEvent.endHour)}</span>
+                      <span className="font-medium">{formatTime(selectedEvent.startHour)} - {formatTime(selectedEvent.endHour)}</span>
                       <span className="text-foreground-300">({selectedEvent.endHour - selectedEvent.startHour}h)</span>
                     </div>
+                    {selectedEvent.targetDate && (
+                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
+                        <i className="ri-flag-line text-foreground-400 w-4 text-center"></i>
+                        <span className="font-medium">Target date: {selectedEvent.targetDate}</span>
+                      </div>
+                    )}
+                    {selectedEvent.scheduledDate && selectedEvent.scheduledTime && (
+                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
+                        <i className="ri-calendar-schedule-line text-foreground-400 w-4 text-center"></i>
+                        <span className="font-medium">Scheduled for {selectedEvent.scheduledDate} at {selectedEvent.scheduledTime}</span>
+                      </div>
+                    )}
                     {selectedEvent.learner && (
                       <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                         <i className="ri-user-line text-foreground-400 w-4 text-center"></i>
                         <span className="font-medium">{selectedEvent.learner}</span>
-                        {selectedEvent.programme && <span className="text-foreground-300">â€” {selectedEvent.programme}</span>}
+                        {selectedEvent.programme && <span className="text-foreground-300">- {selectedEvent.programme}</span>}
                       </div>
                     )}
                     {selectedEvent.employer && (
@@ -899,11 +1039,11 @@ export default function CoachTimetablePage() {
                         <span className="font-medium">Tutor: {selectedEvent.tutor}</span>
                       </div>
                     )}
-                    {selectedEvent.platform && (
+                    {selectedEvent.platform && selectedEvent.platform !== '--' && (
                       <div className="flex items-center gap-2 text-[11px] text-foreground-500">
                         <i className="ri-video-line text-foreground-400 w-4 text-center"></i>
                         <span className="font-medium">{selectedEvent.platform}</span>
-                        {selectedEvent.location && <span className="text-foreground-300">/ {selectedEvent.location}</span>}
+                        {selectedEvent.location && selectedEvent.location !== '--' && <span className="text-foreground-300">/ {selectedEvent.location}</span>}
                       </div>
                     )}
                     {selectedEvent.cohort && (
@@ -918,6 +1058,19 @@ export default function CoachTimetablePage() {
                         {statusLabel(selectedEvent.status)}
                       </span>
                     </div>
+                    {selectedEvent.meetingLink && (
+                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
+                        <i className="ri-links-line text-foreground-400 w-4 text-center"></i>
+                        <a
+                          href={selectedEvent.meetingLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-medium text-primary-600 hover:text-primary-700 hover:underline"
+                        >
+                          Open meeting link
+                        </a>
+                      </div>
+                    )}
                     {selectedEvent.notes && (
                       <div className="bg-background-100 rounded-lg p-3 mt-2">
                         <p className="text-[10px] text-foreground-400 uppercase font-semibold mb-1">Notes</p>
@@ -925,14 +1078,90 @@ export default function CoachTimetablePage() {
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 mt-4 pt-3 border-t border-background-200/30">
-                    <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-edit-line mr-1"></i> Edit
-                    </button>
-                    <button className="flex-1 px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-delete-bin-line mr-1"></i> Cancel
-                    </button>
-                  </div>
+                  {(eventActionError || eventActionNotice) && (
+                    <div className={`mt-4 rounded-lg border px-3 py-2 text-[11px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                      {eventActionError || eventActionNotice}
+                    </div>
+                  )}
+                  {selectedEvent.status !== 'completed' && (
+                    <div className="mt-4 rounded-xl border border-background-200/60 bg-background-100/60 p-3">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Schedule Meeting</h4>
+                        {selectedEvent.status === 'not-scheduled' && (
+                          <span className="text-[10px] font-medium text-amber-700">Needs scheduling</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
+                          <input
+                            type="date"
+                            value={scheduleDate}
+                            onChange={(e) => setScheduleDate(e.target.value)}
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Time</span>
+                          <input
+                            type="time"
+                            value={scheduleTime}
+                            onChange={(e) => setScheduleTime(e.target.value)}
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Duration</span>
+                          <select
+                            value={scheduleDuration}
+                            onChange={(e) => setScheduleDuration(Number(e.target.value))}
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                          >
+                            {[30, 45, 60, 90].map(minutes => (
+                              <option key={minutes} value={minutes}>{minutes} min</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                        <button
+                          onClick={handleScheduleSave}
+                          disabled={eventActionBusy}
+                          className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                        >
+                          <i className="ri-calendar-check-line mr-1"></i>
+                          {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                        </button>
+                        {(selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress') && (
+                          <button
+                            onClick={() => handleEventAction('start')}
+                            disabled={eventActionBusy || !(selectedEvent.meetingLink || selectedEvent.graphWebLink)}
+                            className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-play-circle-line mr-1"></i>Start
+                          </button>
+                        )}
+                        {selectedEvent.status === 'in-progress' && (
+                          <button
+                            onClick={() => handleEventAction('complete')}
+                            disabled={eventActionBusy}
+                            className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-check-double-line mr-1"></i>Complete
+                          </button>
+                        )}
+                        {(selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress') && (
+                          <button
+                            onClick={() => handleEventAction('cancel')}
+                            disabled={eventActionBusy}
+                            className="px-3 py-2 bg-background-50 border border-red-200 text-red-700 rounded-lg text-[11px] font-medium hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-close-circle-line mr-1"></i>Cancel
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div>
@@ -974,8 +1203,8 @@ export default function CoachTimetablePage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] font-semibold text-foreground-800 leading-tight truncate">{ev.title}</p>
                           <p className="text-[10px] text-foreground-400">
-                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} Â· {formatTime(ev.startHour)}
-                            {ev.learner && <span> Â· {ev.learner}</span>}
+                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} - {formatTime(ev.startHour)}
+                            {ev.learner && <span> - {ev.learner}</span>}
                           </p>
                         </div>
                       </div>

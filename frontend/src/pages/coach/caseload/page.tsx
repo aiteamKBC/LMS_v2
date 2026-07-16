@@ -130,12 +130,32 @@ const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
 const API_ENDPOINT = '/coach_api/coach/caseload';
+const COACH_RAG_ENDPOINT = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
+const COACH_RAG_OPTIONS = [
+  { value: '', label: EMPTY_VALUE },
+  { value: 'green', label: 'Green' },
+  { value: 'amber', label: 'Amber' },
+  { value: 'red', label: 'Red' },
+];
 
 function displayValue(value?: string | null): string {
   if (!value) return EMPTY_VALUE;
   const trimmed = value.trim();
   if (!trimmed || trimmed === 'â€”' || trimmed === '—') return EMPTY_VALUE;
   return trimmed;
+}
+
+function formatCoachRagValue(value?: string | null): string {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'green') return 'Green';
+  if (normalized === 'amber') return 'Amber';
+  if (normalized === 'red') return 'Red';
+  return EMPTY_VALUE;
+}
+
+function getCoachRagSelectValue(value?: string | null): string {
+  const normalized = (value || '').trim().toLowerCase();
+  return normalized === 'green' || normalized === 'amber' || normalized === 'red' ? normalized : '';
 }
 
 function normalizeLearner(learner: CaseloadApiLearner): Learner {
@@ -164,7 +184,7 @@ function normalizeLearner(learner: CaseloadApiLearner): Learner {
     coachName: displayValue(learner.coachName),
     coachEmail: displayValue(learner.coachEmail),
     rawProgramStatus: displayValue(learner.rawProgramStatus),
-    coachRag: displayValue(learner.coachRag),
+    coachRag: formatCoachRagValue(learner.coachRag),
     otjhStatus: displayValue(learner.otjhStatus),
     ksbStatus: displayValue(learner.ksbStatus),
     email: learner.email || undefined,
@@ -384,6 +404,8 @@ export default function CoachCaseload() {
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showEmployerDropdown, setShowEmployerDropdown] = useState(false);
   const [isTableDragging, setIsTableDragging] = useState(false);
+  const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
+  const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
     isPointerDown: false,
@@ -539,6 +561,42 @@ export default function CoachCaseload() {
   const handleSummaryCardClick = (filter: SummaryFilter) => {
     setSummaryFilter(current => current === filter ? 'all' : filter);
     setCurrentPage(1);
+  };
+
+  const setLearnerCoachRag = (learnerId: string, coachRag: string | null | undefined) => {
+    setLearners(current =>
+      current.map(learner => (
+        learner.id === learnerId
+          ? { ...learner, coachRag: formatCoachRagValue(coachRag) }
+          : learner
+      )),
+    );
+  };
+
+  const handleCoachRagChange = async (learnerId: string, nextValue: string) => {
+    const previousValue = learners.find(learner => learner.id === learnerId)?.coachRag || EMPTY_VALUE;
+    setCoachRagSaveError(null);
+    setSavingCoachRagId(learnerId);
+    setLearnerCoachRag(learnerId, nextValue);
+
+    try {
+      const response = await fetch(COACH_RAG_ENDPOINT(learnerId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coachRag: nextValue || null }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `Request failed with status ${response.status}`);
+      }
+      setLearnerCoachRag(learnerId, payload.coachRag);
+    } catch (err) {
+      console.error('Unable to save coach RAG', err);
+      setLearnerCoachRag(learnerId, previousValue);
+      setCoachRagSaveError('Unable to save Coach RAG right now.');
+    } finally {
+      setSavingCoachRagId(current => (current === learnerId ? null : current));
+    }
   };
 
   const endTableDrag = () => {
@@ -752,6 +810,11 @@ export default function CoachCaseload() {
 
         {/* Data Table */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          {coachRagSaveError && (
+            <div className="border-b border-red-200/60 bg-red-50 px-4 py-2 text-[11px] font-medium text-red-700">
+              {coachRagSaveError}
+            </div>
+          )}
           {loading ? (
             <div className="py-12 text-center">
               <i className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></i>
@@ -849,9 +912,25 @@ export default function CoachCaseload() {
                             <OverflowRevealText text={learner.group} maxWidthClass="max-w-[175px]" />
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${coachRagStyle.bg} ${coachRagStyle.text} whitespace-nowrap`}>
-                              {displayValue(learner.coachRag)}
-                            </span>
+                            <div data-allow-selection="true" className={`relative inline-flex rounded-full border ${coachRagStyle.bg} ${coachRagStyle.text}`}>
+                              <select
+                                value={getCoachRagSelectValue(learner.coachRag)}
+                                onClick={(event) => event.stopPropagation()}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  void handleCoachRagChange(learner.id, event.target.value);
+                                }}
+                                disabled={savingCoachRagId === learner.id}
+                                aria-label={`Coach RAG for ${learner.name}`}
+                                className="appearance-none bg-transparent px-2 py-0.5 pr-5 text-[8px] font-semibold rounded-full focus:outline-none cursor-pointer disabled:cursor-wait"
+                              >
+                                {COACH_RAG_OPTIONS.map(option => (
+                                  <option key={option.label} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                              <i className={`pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] ${savingCoachRagId === learner.id ? 'ri-loader-4-line animate-spin' : 'ri-arrow-down-s-line'}`}></i>
+                            </div>
                           </td>
                           <td className="px-2 py-2 text-center">
                             <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${programStatusStyle.bg} ${programStatusStyle.text} whitespace-nowrap`}>

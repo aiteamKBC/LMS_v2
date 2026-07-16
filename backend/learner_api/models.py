@@ -56,6 +56,8 @@ class EnrolmentUser(models.Model):
     organization = models.TextField(db_column="Orgnization", null=True, blank=True)  # source spelling
     employer = models.TextField(db_column="Employer", null=True, blank=True)
     line_manager = models.TextField(db_column="Line_manager", null=True, blank=True)
+    start_date = models.TextField(db_column="Start_date", null=True, blank=True)
+    end_date = models.TextField(db_column="End_date", null=True, blank=True)
     practical_period_end_date = models.TextField(db_column="Practical_period_end_date", null=True, blank=True)
     apprenticeship_end_date = models.TextField(db_column="Apprenticeship_End_date", null=True, blank=True)
     minimum_required_hours = models.TextField(db_column="Minimum_required_hours", null=True, blank=True)
@@ -113,6 +115,8 @@ class CommercialUser(models.Model):
     programme = models.TextField(db_column="Programme", null=True, blank=True)
     cohort = models.TextField(db_column="Cohort", null=True, blank=True)
     group = models.TextField(db_column="Group", null=True, blank=True)
+    start_date = models.TextField(db_column="Start_date", null=True, blank=True)
+    end_date = models.TextField(db_column="End_date", null=True, blank=True)
     # Cohort delivery window, copied from curriculum."cohort_authoring_details"
     # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
     start_date = models.DateField(db_column="Start_date", null=True, blank=True)
@@ -170,6 +174,7 @@ class ActiveUser(models.Model):
     # reactivation. Real DB columns are lowercase (unlike the rest of this table).
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
+    coach_rag = models.TextField(db_column="coach_rag", null=True, blank=True)
     # Total on-the-job hours the learner has completed, summed from the reflection
     # time on their training_plan_progress records. Stored as text (this table
     # keeps all hour columns as text). Recomputed on every progress submit.
@@ -247,6 +252,7 @@ class UnactiveUser(models.Model):
     end_date = models.DateField(db_column="End_date", null=True, blank=True)
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
+    coach_rag = models.TextField(db_column="coach_rag", null=True, blank=True)
     completed_hours = models.TextField(db_column="Completed_hours", null=True, blank=True)
     # The non-Active status the learner currently holds (e.g. "Withdrawn", "On break").
     status = models.TextField(db_column="status", null=True, blank=True)
