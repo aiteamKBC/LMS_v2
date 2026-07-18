@@ -2484,9 +2484,11 @@ def question_bank(request):
         return "__unassigned__", "Unassigned"
 
     quiz_ids_by_programme = {}
-    questions = []
+    question_programme_info = {}
+    question_usage_by_signature = {}
     for question in all_questions:
         key, programme_name = resolve_programme(question.quiz)
+        question_programme_info[question.id] = (key, programme_name)
         if key not in programme_stats:
             programme_stats[key] = {
                 "name": programme_name,
@@ -2496,9 +2498,31 @@ def question_bank(request):
             }
         programme_stats[key]["questionCount"] += 1
         quiz_ids_by_programme.setdefault(key, set()).add(question.quiz_id)
+        signature = (
+            key,
+            question.question_type,
+            " ".join((question.question_text or "").split()).strip().lower(),
+        )
+        linked_quizzes = question_usage_by_signature.setdefault(signature, {})
+        linked_quizzes[question.quiz_id] = {
+            "id": question.quiz_id,
+            "title": question.quiz.title,
+            "module": question.quiz.module,
+            "status": question.quiz.status,
+        }
+
+    questions = []
+    for question in all_questions:
+        key, programme_name = question_programme_info[question.id]
 
         if selected_programme != "all" and selected_programme != key:
             continue
+
+        signature = (
+            key,
+            question.question_type,
+            " ".join((question.question_text or "").split()).strip().lower(),
+        )
 
         questions.append({
             "id": question.id,
@@ -2511,6 +2535,7 @@ def question_bank(request):
             "quizId": question.quiz_id,
             "quizTitle": question.quiz.title,
             "quizStatus": question.quiz.status,
+            "linkedQuizzes": list(question_usage_by_signature.get(signature, {}).values()),
             "answers": [
                 {
                     "id": answer.id,
