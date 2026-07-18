@@ -31,7 +31,7 @@ export interface CoachCalendarEvent {
   cohort?: string;
   priority?: 'normal' | 'urgent' | 'high';
   status: CoachCalendarStatus;
-  source?: 'mcr' | 'progress-review' | string;
+  source?: 'mcr' | 'progress-review' | 'catch-up' | string;
   sequence?: number;
   notes?: string;
   learnerId?: string;

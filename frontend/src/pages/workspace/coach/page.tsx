@@ -1,11 +1,29 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import {
+  DEFAULT_COACH_EMAIL,
+  type CoachCalendarEvent,
+  eventDisplayDate,
+  eventPeriodLabel,
+  fetchCoachCalendarEvents,
+  formatDateLabel,
+  formatTimeLabel,
+  isAtRiskEvent,
+  isCompletedEvent,
+  parseLocalDate,
+  sortEvents,
+} from '../../coach/shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
 
-type ViewMode = 'all' | 'at-risk' | 'high' | 'new';
+type OtjhFilter = 'all' | 'at-risk' | 'need-attention' | 'on-track';
+type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
+type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
+
+const EMPTY_VALUE = '--';
+const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 
 interface CoachLearner {
   id: string;
@@ -14,91 +32,265 @@ interface CoachLearner {
   programme: string;
   employer: string;
   avatar: string;
-  status: 'on-track' | 'at-risk' | 'high' | 'new-starter';
+  status: PerformanceStatus;
   riskFlags: string[];
   overallProgress: number;
+  overallProgressAvailable?: boolean;
   attendanceRate: number;
+  attendanceRateAvailable?: boolean;
   otjhCompleted: number;
   otjhTarget: number;
+  otjhStatus?: string | null;
   ksbProgress: number;
+  ksbProgressAvailable?: boolean;
   evidenceCount: number;
+  evidenceCountAvailable?: boolean;
   nextCoaching: string;
   nextReview: string;
   lastContact: string;
   recentFlag: string | null;
+  email?: string | null;
+  rawProgramStatus?: string | null;
 }
 
-const COACH_LEARNERS: CoachLearner[] = [
-  {
-    id: 'lrn-001', name: 'Sophie Williams', initials: 'SW', programme: 'Marketing Executive L4', employer: 'Tim Hortons UK', avatar: 'S',
-    status: 'at-risk', riskFlags: ['Attendance 86% — below 90% target', 'OTJH 74/120 — behind pace', 'KSB 38% — needs evidence focus'],
-    overallProgress: 42, attendanceRate: 86, otjhCompleted: 74, otjhTarget: 120, ksbProgress: 38, evidenceCount: 12,
-    nextCoaching: '18 Jun 2026', nextReview: '25 Jun 2026', lastContact: '8 Jun 2026', recentFlag: 'OTJH pace concern',
-  },
-  {
-    id: 'lrn-002', name: 'James Okafor', initials: 'JO', programme: 'Marketing Executive L4', employer: 'Pret A Manger', avatar: 'J',
-    status: 'on-track', riskFlags: [],
-    overallProgress: 48, attendanceRate: 94, otjhCompleted: 82, otjhTarget: 120, ksbProgress: 44, evidenceCount: 15,
-    nextCoaching: '19 Jun 2026', nextReview: '26 Jun 2026', lastContact: '7 Jun 2026', recentFlag: null,
-  },
-  {
-    id: 'lrn-004', name: 'Liam Patel', initials: 'LP', programme: 'Data Analyst L4', employer: 'Costa Coffee', avatar: 'L',
-    status: 'at-risk', riskFlags: ['Pre-Active — QA Rejected', 'Eligibility unresolved', 'DAS not confirmed'],
-    overallProgress: 0, attendanceRate: 0, otjhCompleted: 0, otjhTarget: 120, ksbProgress: 0, evidenceCount: 0,
-    nextCoaching: 'On hold', nextReview: 'On hold', lastContact: '3 Jun 2026', recentFlag: 'Compliance block — QA rejection',
-  },
-  {
-    id: 'lrn-007', name: 'Mia Robinson', initials: 'MR', programme: 'Project Manager L4', employer: 'Tesco', avatar: 'M',
-    status: 'at-risk', riskFlags: ['Attendance 71% — CRITICAL', '4 consecutive missed sessions', '2 overdue assignments', 'OTJH 28/140 — severely behind'],
-    overallProgress: 22, attendanceRate: 71, otjhCompleted: 28, otjhTarget: 140, ksbProgress: 18, evidenceCount: 6,
-    nextCoaching: '11 Jun 2026', nextReview: 'Overdue', lastContact: '1 Jun 2026', recentFlag: 'URGENT — welfare concern',
-  },
-  {
-    id: 'lrn-010', name: 'Connor Walsh', initials: 'CW', programme: 'Marketing Executive L4', employer: "Sainsbury's", avatar: 'C',
-    status: 'at-risk', riskFlags: ['English FS not yet passed', 'Attendance 89%'],
-    overallProgress: 38, attendanceRate: 89, otjhCompleted: 65, otjhTarget: 120, ksbProgress: 32, evidenceCount: 10,
-    nextCoaching: '16 Jun 2026', nextReview: '23 Jun 2026', lastContact: '7 Jun 2026', recentFlag: 'FS English pending',
-  },
-  {
-    id: 'lrn-009', name: 'Priya Sharma', initials: 'PS', programme: 'Business Admin L3', employer: 'NatWest Group', avatar: 'P',
-    status: 'new-starter', riskFlags: [],
-    overallProgress: 10, attendanceRate: 100, otjhCompleted: 14, otjhTarget: 100, ksbProgress: 10, evidenceCount: 3,
-    nextCoaching: '17 Jun 2026', nextReview: '24 Jun 2026', lastContact: '9 Jun 2026', recentFlag: 'Week 2 — new start',
-  },
-];
+interface CaseloadApiLearner extends Partial<CoachLearner> {
+  cohortName?: string | null;
+}
 
-const COACHING_CALENDAR = [
-  { date: '11 Jun', day: 'Wed', time: '15:00–16:00', learner: 'Mia Robinson', type: 'Welfare & Risk Review', status: 'urgent' as const },
-  { date: '16 Jun', day: 'Mon', time: '14:00–15:00', learner: 'Connor Walsh', type: 'Monthly Coaching', status: 'confirmed' as const },
-  { date: '17 Jun', day: 'Tue', time: '11:00–12:00', learner: 'Priya Sharma', type: 'Onboarding Coaching', status: 'confirmed' as const },
-  { date: '18 Jun', day: 'Wed', time: '14:00–15:00', learner: 'Sophie Williams', type: 'Monthly Coaching', status: 'confirmed' as const },
-  { date: '19 Jun', day: 'Thu', time: '10:00–11:00', learner: 'James Okafor', type: 'Monthly Coaching', status: 'confirmed' as const },
-  { date: '24 Jun', day: 'Tue', time: '10:00–11:00', learner: 'Liam Patel', type: 'Compliance Check-in', status: 'scheduled' as const },
-  { date: '25 Jun', day: 'Wed', time: '11:00–12:00', learner: 'Sophie Williams', type: 'Progress Review', status: 'scheduled' as const },
-  { date: '26 Jun', day: 'Thu', time: '10:00–11:00', learner: 'James Okafor', type: 'Progress Review', status: 'scheduled' as const },
-  { date: '30 Jun', day: 'Mon', time: '15:00–16:00', learner: 'Mia Robinson', type: 'Progress Review (Rescheduled)', status: 'scheduled' as const },
-];
+interface CaseloadApiResponse {
+  owner?: {
+    name?: string;
+    email?: string;
+  };
+  learners?: CaseloadApiLearner[];
+}
 
-const EVIDENCE_QUEUE = [
-  { id: 'ev-003', learner: 'Sophie Williams', title: 'STP Model Application — Breakfast Campaign', date: '10 Jun', type: 'Assignment', module: 'Consumer Insight' },
-  { id: 'ev-007', learner: 'James Okafor', title: 'Campaign Planning — Autumn Product Launch', date: '08 Jun', type: 'Assignment', module: 'Marketing Planning' },
-  { id: 'ev-008', learner: 'Mia Robinson', title: 'Project Initiation Document — Store Renovation', date: '03 Jun', type: 'Workplace Document', module: 'Project Initiation' },
-  { id: 'ev-013', learner: 'Emily Chen', title: 'Document Management Process Map', date: '09 Jun', type: 'Workplace Task', module: 'Admin Fundamentals' },
-  { id: 'ev-asn', learner: 'Sophie Williams', title: 'Week 3 Assignment — Audience Persona', date: '07 Jun', type: 'Assignment', module: 'Consumer Insight' },
-  { id: 'ev-asn2', learner: 'Emily Chen', title: 'Week 1 Assignment — Admin Role Overview', date: '11 Jun', type: 'Assignment', module: 'Admin Fundamentals' },
-];
+function displayValue(value?: string | number | null): string {
+  if (value === null || value === undefined) return EMPTY_VALUE;
+  const text = String(value).trim();
+  if (!text || text === EMPTY_VALUE || text === '—') return EMPTY_VALUE;
+  return text;
+}
 
-const ABSENCE_REPORTS = [
-  { id: 'att-005', learner: 'Mia Robinson', date: '11 Jun 2026', session: 'Week 19 — Risk Management', reason: 'No contact — escalated', status: 'pending' as const },
-  { id: 'att-006', learner: 'Mia Robinson', date: '04 Jun 2026', session: 'Week 18 — Project Governance', reason: 'No contact', status: 'pending' as const },
-  { id: 'att-003', learner: 'Sophie Williams', date: '28 May 2026', session: 'Week 2 — Consumer Behaviour', reason: 'Work commitment — employer confirmed', status: 'approved' as const },
-];
+function toNumber(value?: number | string | null): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
 
-const UPCOMING_SESSIONS = [
-  { date: '11 Jun', title: 'Live Session: Customer Segmentation', module: 'Marketing Planning', learners: 18, tutor: 'Crispin Jones', time: '10:00–12:00', platform: 'Teams Live' },
-  { date: '12 Jun', title: 'Live Session: Data Visualisation', module: 'Data Analysis', learners: 14, tutor: 'Dr. Helen Park', time: '10:00–12:00', platform: 'Teams Live' },
-  { date: '13 Jun', title: 'Live Session: Business Communication', module: 'Business Admin', learners: 22, tutor: 'Rachel Myers', time: '09:00–11:00', platform: 'Teams Live' },
-];
+function clampPercent(value?: number | string | null): number {
+  return Math.max(0, Math.min(100, Math.round(toNumber(value))));
+}
+
+function statusFromApi(value?: string | null): PerformanceStatus {
+  if (value === 'at-risk' || value === 'high' || value === 'new-starter') return value;
+  return 'on-track';
+}
+
+function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
+  const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'atrisk') return 'at-risk';
+  if (normalized === 'needattention' || normalized === 'needsattention') return 'need-attention';
+  if (normalized === 'ontrack') return 'on-track';
+  return 'unknown';
+}
+
+const OTJH_STATUS_META: Record<OtjhStatusKey, { label: string; cardLabel: string; sub: string; color: 'primary' | 'emerald' | 'red' | 'amber'; bg: string; text: string; bar: string; avatar: string }> = {
+  'at-risk': {
+    label: 'At Risk',
+    cardLabel: 'At Risk',
+    sub: 'OTJH at risk',
+    color: 'red',
+    bg: 'bg-red-50 border-red-200/50',
+    text: 'text-red-700',
+    bar: 'bg-red-500',
+    avatar: 'bg-red-100 text-red-700 ring-red-200',
+  },
+  'need-attention': {
+    label: 'Need Attention',
+    cardLabel: 'Need Attention',
+    sub: 'Needs support',
+    color: 'amber',
+    bg: 'bg-amber-50 border-amber-200/50',
+    text: 'text-amber-700',
+    bar: 'bg-amber-500',
+    avatar: 'bg-amber-100 text-amber-700 ring-amber-200',
+  },
+  'on-track': {
+    label: 'On Track',
+    cardLabel: 'On Track',
+    sub: 'On target',
+    color: 'emerald',
+    bg: 'bg-emerald-50 border-emerald-200/50',
+    text: 'text-emerald-700',
+    bar: 'bg-emerald-500',
+    avatar: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  },
+  unknown: {
+    label: EMPTY_VALUE,
+    cardLabel: 'Unknown',
+    sub: 'No OTJH status',
+    color: 'primary',
+    bg: 'bg-foreground-50 border-foreground-200/50',
+    text: 'text-foreground-600',
+    bar: 'bg-foreground-400',
+    avatar: 'bg-foreground-100 text-foreground-600 ring-foreground-200',
+  },
+};
+
+function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLearner {
+  const name = displayValue(learner.name);
+  const fallbackName = name === EMPTY_VALUE ? `Learner ${index + 1}` : name;
+  const initials = displayValue(learner.initials);
+  const id = displayValue(learner.id);
+  const programme = displayValue(learner.programme) === EMPTY_VALUE ? displayValue(learner.cohortName) : displayValue(learner.programme);
+
+  return {
+    id: id === EMPTY_VALUE ? `learner-${index}` : id,
+    name: fallbackName,
+    initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
+    programme,
+    employer: displayValue(learner.employer),
+    avatar: displayValue(learner.avatar),
+    status: statusFromApi(learner.status),
+    riskFlags: Array.isArray(learner.riskFlags) ? learner.riskFlags.filter(Boolean) : [],
+    overallProgress: clampPercent(learner.overallProgress),
+    overallProgressAvailable: learner.overallProgressAvailable,
+    attendanceRate: clampPercent(learner.attendanceRate),
+    attendanceRateAvailable: learner.attendanceRateAvailable,
+    otjhCompleted: toNumber(learner.otjhCompleted),
+    otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
+    otjhStatus: displayValue(learner.otjhStatus),
+    ksbProgress: clampPercent(learner.ksbProgress),
+    ksbProgressAvailable: learner.ksbProgressAvailable,
+    evidenceCount: toNumber(learner.evidenceCount),
+    evidenceCountAvailable: learner.evidenceCountAvailable,
+    nextCoaching: displayValue(learner.nextCoaching),
+    nextReview: displayValue(learner.nextReview),
+    lastContact: displayValue(learner.lastContact),
+    recentFlag: displayValue(learner.recentFlag) === EMPTY_VALUE ? null : String(learner.recentFlag),
+    email: learner.email || null,
+    rawProgramStatus: learner.rawProgramStatus || null,
+  };
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = typeof data.detail === 'string' ? data.detail : `Request failed with ${response.status}`;
+    throw new Error(message);
+  }
+  return data as T;
+}
+
+function getFirstName(name: string) {
+  const value = displayValue(name);
+  return value === EMPTY_VALUE ? 'Coach' : value.split(/\s+/)[0];
+}
+
+function eventMatchesLearner(event: CoachCalendarEvent, learner: CoachLearner) {
+  const eventLearnerId = displayValue(event.learnerId);
+  const learnerId = displayValue(learner.id);
+  if (eventLearnerId !== EMPTY_VALUE && eventLearnerId === learnerId) return true;
+
+  const eventEmail = displayValue(event.email).toLowerCase();
+  const learnerEmail = displayValue(learner.email).toLowerCase();
+  if (eventEmail !== EMPTY_VALUE && learnerEmail !== EMPTY_VALUE && eventEmail === learnerEmail) return true;
+
+  return displayValue(event.learner).toLowerCase() === learner.name.toLowerCase();
+}
+
+function nextEventDateForLearner(events: CoachCalendarEvent[], learner: CoachLearner, source: string) {
+  const match = sortEvents(events).find(event => (
+    event.source === source && eventMatchesLearner(event, learner) && !isCompletedEvent(event)
+  ));
+  return match ? formatDateLabel(eventDisplayDate(match)) : EMPTY_VALUE;
+}
+
+function enrichLearnerSchedule(learners: CoachLearner[], events: CoachCalendarEvent[]) {
+  return learners.map(learner => ({
+    ...learner,
+    nextCoaching: nextEventDateForLearner(events, learner, 'mcr'),
+    nextReview: nextEventDateForLearner(events, learner, 'progress-review'),
+  }));
+}
+
+function isWithinNextDays(event: CoachCalendarEvent, daysAhead: number) {
+  const date = parseLocalDate(eventDisplayDate(event));
+  if (!date || isCompletedEvent(event)) return false;
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + daysAhead);
+  return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+}
+
+function formatCalendarMonth(events: CoachCalendarEvent[]) {
+  const first = events.map(event => parseLocalDate(eventDisplayDate(event))).find(Boolean);
+  if (!first) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(first);
+}
+
+function formatCalendarDay(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
+}
+
+function formatCalendarDayNumber(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit' }).format(date);
+}
+
+function eventTypeLabel(event: CoachCalendarEvent) {
+  if (event.source === 'progress-review') return eventPeriodLabel(event);
+  if (event.source === 'mcr') return 'Monthly Coaching';
+  return displayValue(event.title);
+}
+
+function eventStatusClasses(event: CoachCalendarEvent) {
+  if (isAtRiskEvent(event)) {
+    return {
+      row: 'bg-red-50/80 border border-red-200/50',
+      date: 'text-red-600',
+      badge: 'bg-red-100 text-red-700',
+      icon: 'ri-alert-fill text-red-500',
+    };
+  }
+  if (event.status === 'scheduled' || event.status === 'in-progress') {
+    return {
+      row: 'bg-background-100/50 hover:bg-background-100',
+      date: 'text-foreground-400',
+      badge: 'bg-amber-100 text-amber-700',
+      icon: 'ri-time-line text-amber-500',
+    };
+  }
+  if (isCompletedEvent(event)) {
+    return {
+      row: 'hover:bg-background-50',
+      date: 'text-foreground-400',
+      badge: 'bg-primary-100 text-primary-700',
+      icon: 'ri-check-line text-emerald-500',
+    };
+  }
+  return {
+    row: 'bg-background-100/50 hover:bg-background-100',
+    date: 'text-foreground-400',
+    badge: 'bg-orange-100 text-orange-700',
+    icon: 'ri-calendar-schedule-line text-orange-500',
+  };
+}
+
+function buildRiskSummary(learners: CoachLearner[]) {
+  return learners
+    .slice(0, 4)
+    .map(learner => `${learner.name}: ${learner.riskFlags[0] || learner.recentFlag || 'Needs attention'}`)
+    .join('. ');
+}
 
 /* ═══════════════════════════════════════════════════════════
    Scroll Reveal
@@ -155,34 +347,80 @@ function ProgressBar({ pct, color, height = 3 }: { pct: number; color: string; h
 }
 
 export default function CoachDashboard() {
-  const [viewMode, setViewMode] = useState<ViewMode>('all');
+  const [viewMode, setViewMode] = useState<OtjhFilter>('all');
   const [selectedLearner, setSelectedLearner] = useState<CoachLearner | null>(null);
+  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [learners, setLearners] = useState<CoachLearner[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadWarning, setLoadWarning] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function loadDashboard() {
+      setLoading(true);
+      setLoadWarning(null);
+      const warnings: string[] = [];
+
+      const [caseloadResult, timetableResult] = await Promise.allSettled([
+        fetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadApiResponse>(response)),
+        fetchCoachCalendarEvents(controller.signal),
+      ]);
+
+      if (controller.signal.aborted) return;
+
+      if (caseloadResult.status === 'fulfilled') {
+        setOwnerName(displayValue(caseloadResult.value.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseloadResult.value.owner?.name));
+        setLearners((caseloadResult.value.learners || []).map(normalizeLearner));
+      } else {
+        setLearners([]);
+        warnings.push('caseload');
+      }
+
+      if (timetableResult.status === 'fulfilled') {
+        setCalendarEvents(sortEvents(timetableResult.value.events || []));
+        if (displayValue(timetableResult.value.owner?.name) !== EMPTY_VALUE) {
+          setOwnerName(String(timetableResult.value.owner?.name));
+        }
+      } else {
+        setCalendarEvents([]);
+        warnings.push('calendar');
+      }
+
+      setLoadWarning(warnings.length ? `Unable to load ${warnings.join(', ')} data right now.` : null);
+      setLoading(false);
+    }
+
+    loadDashboard();
+    return () => controller.abort();
+  }, []);
+
+  const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
 
   const filteredLearners = viewMode === 'all'
-    ? COACH_LEARNERS
-    : COACH_LEARNERS.filter(l => {
-        if (viewMode === 'at-risk') return l.status === 'at-risk';
-        if (viewMode === 'high') return l.status === 'high';
-        if (viewMode === 'new') return l.status === 'new-starter';
-        return true;
-      });
+    ? enrichedLearners
+    : enrichedLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === viewMode);
 
-  const atRiskCount = COACH_LEARNERS.filter(l => l.status === 'at-risk').length;
-  const onTrackCount = COACH_LEARNERS.filter(l => l.status === 'on-track').length;
-  const highCount = COACH_LEARNERS.filter(l => l.status === 'high').length;
-  const newCount = COACH_LEARNERS.filter(l => l.status === 'new-starter').length;
-  const pendingEvidence = EVIDENCE_QUEUE.length;
-  const pendingAbsence = ABSENCE_REPORTS.filter(a => a.status === 'pending').length;
-  const coachingThisWeek = COACHING_CALENDAR.filter(c => ['11 Jun', '12 Jun', '13 Jun', '14 Jun', '15 Jun'].includes(c.date)).length;
-  const totalCaseload = COACH_LEARNERS.length;
-  const avgAttendance = Math.round(COACH_LEARNERS.reduce((s, l) => s + l.attendanceRate, 0) / totalCaseload);
-  const avgProgress = Math.round(COACH_LEARNERS.reduce((s, l) => s + l.overallProgress, 0) / totalCaseload);
+  const atRiskLearners = enrichedLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk');
+  const needAttentionLearners = enrichedLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention');
+  const onTrackLearners = enrichedLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track');
+  const atRiskCount = atRiskLearners.length;
+  const needAttentionCount = needAttentionLearners.length;
+  const onTrackCount = onTrackLearners.length;
+  const totalCaseload = enrichedLearners.length;
+  const pendingEvidence: number | null = null;
+  const reviewsNext14 = calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)).length;
+  const visibleCalendarEvents = sortEvents(calendarEvents.filter(event => !isCompletedEvent(event))).slice(0, 9);
+  const riskSummary = buildRiskSummary(atRiskLearners);
+  const riskNames = atRiskLearners.slice(0, 3).map(learner => learner.name).join(', ') || EMPTY_VALUE;
+  const overdueCalendarEvents = calendarEvents.filter(event => isAtRiskEvent(event)).length;
 
   return (
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Coach Dashboard" pageSubtitle="Monitor learner progress, manage coaching sessions, and review evidence"
-      userName="Med Maher" userRole="Progress Coach"
+      userName={ownerName} userRole="Progress Coach"
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
@@ -210,7 +448,7 @@ export default function CoachDashboard() {
             <div className="relative h-full flex flex-col justify-center p-6 md:p-8">
               <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
                 <div className="flex-1 min-w-0 max-w-xl">
-                  <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">Good morning, Med</h1>
+                  <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">Good morning, {getFirstName(ownerName)}</h1>
                   <p className="text-[13px] text-white/50 max-w-lg">
                     Manage your complete caseload. Track learner progress, review evidence, and schedule coaching sessions.
                   </p>
@@ -226,17 +464,25 @@ export default function CoachDashboard() {
         <SectionReveal delay={60}>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             <StatCard label="Caseload" value={String(totalCaseload)} sub={`${onTrackCount} on track`} icon="ri-group-line" color="primary" />
-            <StatCard label="At Risk" value={String(atRiskCount)} sub="Needs attention" icon="ri-alert-line" color="red" />
-            <StatCard label="High Perf." value={String(highCount)} sub="Exceeding" icon="ri-star-line" color="accent" />
-            <StatCard label="Evidence" value={String(pendingEvidence)} sub="Awaiting review" icon="ri-file-search-line" color="secondary" />
-            <StatCard label="Absence" value={String(pendingAbsence)} sub="Pending reports" icon="ri-error-warning-line" color="amber" />
-            <StatCard label="Reviews" value="4" sub="Next 14 days" icon="ri-file-chart-line" color="primary" />
+            <StatCard label="On Track" value={String(onTrackCount)} sub={OTJH_STATUS_META['on-track'].sub} icon="ri-checkbox-circle-line" color={OTJH_STATUS_META['on-track'].color} />
+            <StatCard label="At Risk" value={String(atRiskCount)} sub={OTJH_STATUS_META['at-risk'].sub} icon="ri-alert-line" color={OTJH_STATUS_META['at-risk'].color} />
+            <StatCard label="Need Attention" value={String(needAttentionCount)} sub={OTJH_STATUS_META['need-attention'].sub} icon="ri-error-warning-line" color={OTJH_STATUS_META['need-attention'].color} />
+            <StatCard label="Evidence" value={pendingEvidence === null ? EMPTY_VALUE : String(pendingEvidence)} sub="Source pending" icon="ri-file-search-line" color="secondary" />
+            <StatCard label="Reviews" value={String(reviewsNext14)} sub="Next 14 days" icon="ri-file-chart-line" color="primary" />
           </div>
         </SectionReveal>
 
         {/* ═══════════════════════════════════════════════════
             SECTION 3 — RISK ALERT BANNER
             ═══════════════════════════════════════════════════ */}
+        {(loading || loadWarning) && (
+          <SectionReveal delay={70}>
+            <div className={`rounded-xl border p-3 text-[12px] ${loadWarning ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-background-50 border-foreground-200/60 text-foreground-500'}`}>
+              {loading ? 'Loading live coach dashboard data...' : loadWarning}
+            </div>
+          </SectionReveal>
+        )}
+
         {atRiskCount > 0 && (
           <SectionReveal delay={80}>
             <div className="bg-red-50/70 border border-red-200/50 rounded-xl p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
@@ -246,13 +492,8 @@ export default function CoachDashboard() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-800">Risk Alert: {atRiskCount} learners need immediate attention</p>
                 <p className="text-[12px] text-red-600 mt-0.5 truncate">
-                  Mia Robinson — CRITICAL: attendance 71%, 4 missed sessions. Liam Patel — QA rejected. Sophie Williams — OTJH pace concern. Connor Walsh — FS English pending.
+                  {riskSummary || EMPTY_VALUE}
                 </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-phone-line mr-1"></i> Call Mia
-                </button>
               </div>
             </div>
           </SectionReveal>
@@ -279,7 +520,12 @@ export default function CoachDashboard() {
                       <i className="ri-table-line mr-1"></i> Full Overview
                     </Link>
                     <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-                    {([{ key: 'all', label: 'All', count: totalCaseload }, { key: 'at-risk', label: 'At Risk', count: atRiskCount }, { key: 'high', label: 'High', count: highCount }, { key: 'new', label: 'New', count: newCount }] as { key: ViewMode; label: string; count: number }[]).map(tab => (
+                    {([
+                      { key: 'all', label: 'All', count: totalCaseload },
+                      { key: 'at-risk', label: OTJH_STATUS_META['at-risk'].cardLabel, count: atRiskCount },
+                      { key: 'need-attention', label: OTJH_STATUS_META['need-attention'].cardLabel, count: needAttentionCount },
+                      { key: 'on-track', label: OTJH_STATUS_META['on-track'].cardLabel, count: onTrackCount },
+                    ] as { key: OtjhFilter; label: string; count: number }[]).map(tab => (
                       <button
                         key={tab.key}
                         onClick={() => setViewMode(tab.key)}
@@ -302,6 +548,11 @@ export default function CoachDashboard() {
                       onSelect={() => setSelectedLearner(selectedLearner?.id === learner.id ? null : learner)}
                     />
                   ))}
+                  {filteredLearners.length === 0 && (
+                    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6 text-center text-[12px] text-foreground-400">
+                      {loading ? 'Loading learners...' : 'No learners found.'}
+                    </div>
+                  )}
                 </div>
               </section>
             </SectionReveal>
@@ -319,21 +570,19 @@ export default function CoachDashboard() {
                   </Link>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {UPCOMING_SESSIONS.map(session => (
-                    <div key={session.date} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-100 text-primary-700">{session.date}</span>
-                        <span className="text-[9px] text-foreground-400">{session.time}</span>
-                      </div>
-                      <p className="text-[13px] font-semibold text-foreground-900 mb-2 leading-snug">{session.title}</p>
-                      <div className="space-y-1 text-[11px] text-foreground-400">
-                        <p><i className="ri-stack-line mr-1 text-[10px]"></i> {session.module}</p>
-                        <p><i className="ri-user-line mr-1 text-[10px]"></i> {session.learners} learners</p>
-                        <p><i className="ri-user-settings-line mr-1 text-[10px]"></i> Tutor: {session.tutor}</p>
-                        <p><i className="ri-video-line mr-1 text-[10px]"></i> {session.platform}</p>
-                      </div>
+                  <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">{EMPTY_VALUE}</span>
+                      <span className="text-[9px] text-foreground-400">{EMPTY_VALUE}</span>
                     </div>
-                  ))}
+                    <p className="text-[13px] font-semibold text-foreground-900 mb-2 leading-snug">Live session source not connected</p>
+                    <div className="space-y-1 text-[11px] text-foreground-400">
+                      <p><i className="ri-stack-line mr-1 text-[10px]"></i> Module: {EMPTY_VALUE}</p>
+                      <p><i className="ri-user-line mr-1 text-[10px]"></i> Learners: {EMPTY_VALUE}</p>
+                      <p><i className="ri-user-settings-line mr-1 text-[10px]"></i> Tutor: {EMPTY_VALUE}</p>
+                      <p><i className="ri-video-line mr-1 text-[10px]"></i> Platform: {EMPTY_VALUE}</p>
+                    </div>
+                  </div>
                 </div>
               </section>
             </SectionReveal>
@@ -344,35 +593,19 @@ export default function CoachDashboard() {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Awaiting Review</h2>
-                    <p className="text-sm text-foreground-400 mt-0.5">{pendingEvidence} items submitted by your learners</p>
+                    <p className="text-sm text-foreground-400 mt-0.5">Evidence source is not confirmed yet</p>
                   </div>
-                  <Link to="/coach/evidence-validation" className="text-xs font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
+                  <Link to="/coach/marking-queue" className="text-xs font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
                     View All <i className="ri-arrow-right-line ml-1"></i>
                   </Link>
                 </div>
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-                  <div className="divide-y divide-background-200/30">
-                    {EVIDENCE_QUEUE.map(item => (
-                      <div key={item.id} className="p-3.5 flex items-center gap-4 hover:bg-background-100/50 transition-smooth cursor-pointer">
-                        <div className="w-9 h-9 rounded-lg bg-accent-50 flex items-center justify-center shrink-0">
-                          <i className="ri-file-text-line text-accent-600 text-sm"></i>
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-medium text-foreground-900 truncate">{item.title}</p>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <span className="text-[11px] text-foreground-500">{item.learner}</span>
-                            <span className="text-[8px] text-foreground-300">&middot;</span>
-                            <span className="text-[11px] text-foreground-400">{item.module}</span>
-                            <span className="text-[8px] text-foreground-300">&middot;</span>
-                            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">{item.type}</span>
-                          </div>
-                        </div>
-                        <span className="text-[10px] text-foreground-400 shrink-0">{item.date}</span>
-                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          Review
-                        </button>
-                      </div>
-                    ))}
+                  <div className="p-6 text-center text-[12px] text-foreground-400">
+                    <div className="mx-auto mb-2 w-9 h-9 rounded-lg bg-background-100 flex items-center justify-center text-foreground-400">
+                      <i className="ri-file-search-line text-sm"></i>
+                    </div>
+                    <p className="font-medium text-foreground-600">Evidence data source pending</p>
+                    <p className="mt-1">{EMPTY_VALUE}</p>
                   </div>
                 </div>
               </section>
@@ -387,41 +620,35 @@ export default function CoachDashboard() {
               <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-3 md:mb-4">
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Coaching Calendar</h3>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">June 2026</span>
+                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{formatCalendarMonth(visibleCalendarEvents)}</span>
                 </div>
                 <div className="space-y-2 max-h-[420px] overflow-y-auto">
-                  {COACHING_CALENDAR.map((event, i) => (
-                    <div
-                      key={i}
-                      className={`flex items-start gap-3 p-2.5 rounded-lg transition-smooth cursor-pointer ${
-                        event.status === 'urgent' ? 'bg-red-50/80 border border-red-200/50' :
-                        event.status === 'scheduled' ? 'bg-background-100/50 hover:bg-background-100' :
-                        'hover:bg-background-50'
-                      }`}
-                    >
-                      <div className="text-center shrink-0 min-w-[42px]">
-                        <p className={`text-[10px] font-semibold uppercase tracking-wider ${event.status === 'urgent' ? 'text-red-600' : 'text-foreground-400'}`}>{event.day}</p>
-                        <p className={`text-base font-bold ${event.status === 'urgent' ? 'text-red-700' : 'text-foreground-900'}`}>{event.date.split(' ')[0]}</p>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-medium text-foreground-900">{event.learner}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span className="text-[10px] text-foreground-400">{event.time}</span>
-                          <span className="text-[8px] text-foreground-300">&middot;</span>
-                          <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${
-                            event.status === 'urgent' ? 'bg-red-100 text-red-700' :
-                            event.status === 'scheduled' ? 'bg-amber-100 text-amber-700' :
-                            'bg-primary-100 text-primary-700'
-                          }`}>{event.type}</span>
-                        </div>
-                      </div>
-                      <i className={`text-sm shrink-0 ${
-                        event.status === 'urgent' ? 'ri-alert-fill text-red-500' :
-                        event.status === 'scheduled' ? 'ri-time-line text-amber-500' :
-                        'ri-check-line text-emerald-500'
-                      }`}></i>
+                  {visibleCalendarEvents.length === 0 && (
+                    <div className="p-6 text-center text-[12px] text-foreground-400">
+                      {loading ? 'Loading calendar...' : 'No calendar events found.'}
                     </div>
-                  ))}
+                  )}
+                  {visibleCalendarEvents.map(event => {
+                    const classes = eventStatusClasses(event);
+                    const displayDate = eventDisplayDate(event);
+                    return (
+                      <div key={event.eventKey || event.id} className={`flex items-start gap-3 p-2.5 rounded-lg transition-smooth cursor-pointer ${classes.row}`}>
+                        <div className="text-center shrink-0 min-w-[42px]">
+                          <p className={`text-[10px] font-semibold uppercase tracking-wider ${classes.date}`}>{formatCalendarDay(displayDate)}</p>
+                          <p className={`text-base font-bold ${isAtRiskEvent(event) ? 'text-red-700' : 'text-foreground-900'}`}>{formatCalendarDayNumber(displayDate)}</p>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-medium text-foreground-900">{displayValue(event.learner)}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className="text-[10px] text-foreground-400">{formatTimeLabel(event)}</span>
+                            <span className="text-[8px] text-foreground-300">&middot;</span>
+                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${classes.badge}`}>{eventTypeLabel(event)}</span>
+                          </div>
+                        </div>
+                        <i className={`text-sm shrink-0 ${classes.icon}`}></i>
+                      </div>
+                    );
+                  })}
                 </div>
               </section>
             </SectionReveal>
@@ -432,24 +659,22 @@ export default function CoachDashboard() {
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">
                     Absence Reports
-                    <span className="ml-2 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{pendingAbsence} pending</span>
+                    <span className="ml-2 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{EMPTY_VALUE} pending</span>
                   </h3>
                 </div>
                 <div className="space-y-2">
-                  {ABSENCE_REPORTS.map(report => (
-                    <div key={report.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-background-100/50 transition-smooth cursor-pointer">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${report.status === 'pending' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                        <i className="ri-emotion-sad-line text-sm"></i>
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[12px] font-medium text-foreground-900 truncate">{report.learner}</p>
-                        <p className="text-[10px] text-foreground-400 truncate">{report.date} — {report.reason}</p>
-                      </div>
-                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${report.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                        {report.status === 'pending' ? 'Pending' : 'Approved'}
-                      </span>
+                  <div className="flex items-center gap-3 p-2.5 rounded-lg bg-background-100/50">
+                    <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-amber-100 text-amber-600">
+                      <i className="ri-emotion-sad-line text-sm"></i>
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[12px] font-medium text-foreground-900 truncate">Live absence source not connected</p>
+                      <p className="text-[10px] text-foreground-400 truncate">Date {EMPTY_VALUE} - reason {EMPTY_VALUE}</p>
                     </div>
-                  ))}
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">
+                      {EMPTY_VALUE}
+                    </span>
+                  </div>
                 </div>
               </section>
             </SectionReveal>
@@ -466,45 +691,19 @@ export default function CoachDashboard() {
                 <div className="space-y-3">
                   <div className="bg-white/70 rounded-lg p-3">
                     <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>OTJH trend alert:</strong> 3 learners trending 15%+ below OTJH pace. Prioritise Sophie Williams, Connor Walsh, and Mia Robinson.
+                      <strong>Risk focus:</strong> {atRiskCount ? `${atRiskCount} learner(s) need attention. Prioritise ${riskNames}.` : EMPTY_VALUE}
                     </p>
                   </div>
                   <div className="bg-white/70 rounded-lg p-3">
                     <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>Weekly focus:</strong> Prepare for Sophie's coaching session on 18 Jun — discuss OTJH catch-up plan and evidence strategy for KSBs K8-K12.
+                      <strong>Calendar focus:</strong> {calendarEvents.length ? `${overdueCalendarEvents} overdue event(s), ${reviewsNext14} review(s) in the next 14 days.` : EMPTY_VALUE}
                     </p>
                   </div>
                   <div className="bg-white/70 rounded-lg p-3">
                     <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>Engagement pattern:</strong> Priya Sharma showing strong onboarding engagement — consider accelerating to independent study mode in Week 4.
+                      <strong>Evidence focus:</strong> {EMPTY_VALUE}
                     </p>
                   </div>
-                </div>
-              </section>
-            </SectionReveal>
-
-            {/* Quick Actions */}
-            <SectionReveal delay={240}>
-              <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Quick Actions</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { label: 'Schedule Coaching', icon: 'ri-calendar-check-line', to: '/coach/meetings' },
-                    { label: 'Review Evidence', icon: 'ri-file-search-line', to: '/coach/evidence-validation' },
-                    { label: 'Message All', icon: 'ri-mail-send-line', to: '/coach/messages' },
-                    { label: 'Run Reports', icon: 'ri-bar-chart-box-line', to: '/coach/reports' },
-                    { label: 'Employer Call', icon: 'ri-phone-line', to: '/coach/employer-actions' },
-                    { label: 'View Calendar', icon: 'ri-calendar-2-line', to: '/coach/meetings' },
-                  ].map(action => (
-                    <Link
-                      key={action.label}
-                      to={action.to}
-                      className="flex items-center gap-2 px-3 py-2.5 bg-background-100 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-700 transition-smooth cursor-pointer whitespace-nowrap"
-                    >
-                      <i className={`${action.icon} text-sm`}></i>
-                      {action.label}
-                    </Link>
-                  ))}
                 </div>
               </section>
             </SectionReveal>
@@ -585,13 +784,15 @@ function StatCard({ label, value, sub, icon, color }: { label: string; value: st
    Learner Row
    ═══════════════════════════════════════════════════════════ */
 function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; isSelected: boolean; onSelect: () => void }) {
-  const statusConfig: Record<string, { bg: string; text: string; label: string; bar: string }> = {
-    'on-track': { bg: 'bg-emerald-50 border-emerald-200/50', text: 'text-emerald-700', label: 'On Track', bar: 'bg-emerald-500' },
-    'at-risk': { bg: 'bg-red-50 border-red-200/50', text: 'text-red-700', label: 'At Risk', bar: 'bg-red-500' },
-    'high': { bg: 'bg-accent-50 border-accent-200/50', text: 'text-accent-700', label: 'High Performer', bar: 'bg-accent-500' },
-    'new-starter': { bg: 'bg-primary-50 border-primary-200/50', text: 'text-primary-700', label: 'New Starter', bar: 'bg-primary-500' },
-  };
-  const sc = statusConfig[learner.status] || statusConfig['on-track'];
+  const sc = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
+  const otjhLabel = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
+  const ksbLabel = learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE;
+  const attendanceLabel = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
+  const progressLabel = learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE;
+  const evidenceLabel = learner.evidenceCountAvailable ? String(learner.evidenceCount) : EMPTY_VALUE;
+  const attendanceTone = learner.attendanceRateAvailable
+    ? learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'
+    : 'text-foreground-900';
 
   return (
     <div
@@ -599,7 +800,7 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
       onClick={onSelect}
     >
       <div className="flex items-center gap-4">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ring-2 ${learner.status === 'at-risk' ? 'bg-red-100 text-red-700 ring-red-200' : learner.status === 'high' ? 'bg-accent-100 text-accent-700 ring-accent-200' : learner.status === 'new-starter' ? 'bg-primary-100 text-primary-700 ring-primary-200' : 'bg-emerald-100 text-emerald-700 ring-emerald-200'}`}>
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ring-2 ${sc.avatar}`}>
           <span className="text-sm font-bold">{learner.initials}</span>
         </div>
         <div className="flex-1 min-w-0">
@@ -613,9 +814,9 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
           <p className="text-[11px] text-foreground-400 mt-0.5">{learner.programme} · {learner.employer}</p>
         </div>
         <div className="hidden lg:flex items-center gap-4 text-[11px] text-foreground-500 shrink-0">
-          <span>OTJH: {learner.otjhCompleted}/{learner.otjhTarget}</span>
-          <span>KSB: {learner.ksbProgress}%</span>
-          <span>Att: {learner.attendanceRate}%</span>
+          <span>OTJH: {otjhLabel}</span>
+          <span>KSB: {ksbLabel}</span>
+          <span>Att: {attendanceLabel}</span>
         </div>
         <i className={`text-foreground-300 shrink-0 ${isSelected ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
       </div>
@@ -635,14 +836,14 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
           <div className="bg-background-100/50 rounded-lg p-3 text-center">
             <p className="text-[10px] text-foreground-400 mb-1">Progress</p>
             <div className="w-full bg-background-200 rounded-full h-2 mb-1.5">
-              <div className={`h-2 rounded-full transition-smooth ${sc.bar}`} style={{ width: `${learner.overallProgress}%` }}></div>
+              <div className={`h-2 rounded-full transition-smooth ${sc.bar}`} style={{ width: `${learner.overallProgressAvailable ? learner.overallProgress : 0}%` }}></div>
             </div>
-            <p className="text-lg font-bold text-foreground-900">{learner.overallProgress}%</p>
+            <p className="text-lg font-bold text-foreground-900">{progressLabel}</p>
           </div>
           <div className="bg-background-100/50 rounded-lg p-3 text-center">
             <p className="text-[10px] text-foreground-400 mb-1">Attendance</p>
-            <p className={`text-lg font-bold ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{learner.attendanceRate}%</p>
-            <p className="text-[10px] text-foreground-400">{learner.attendanceRate >= 90 ? 'On target' : 'Below 90%'}</p>
+            <p className={`text-lg font-bold ${attendanceTone}`}>{attendanceLabel}</p>
+            <p className="text-[10px] text-foreground-400">{learner.attendanceRateAvailable ? learner.attendanceRate >= 90 ? 'On target' : 'Below 90%' : EMPTY_VALUE}</p>
           </div>
           <div className="bg-background-100/50 rounded-lg p-3 text-center">
             <p className="text-[10px] text-foreground-400 mb-1">Next Coaching</p>
@@ -650,7 +851,7 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
           </div>
           <div className="bg-background-100/50 rounded-lg p-3 text-center">
             <p className="text-[10px] text-foreground-400 mb-1">Evidence</p>
-            <p className="text-lg font-bold text-foreground-900">{learner.evidenceCount}</p>
+            <p className="text-lg font-bold text-foreground-900">{evidenceLabel}</p>
             <p className="text-[10px] text-foreground-400">items submitted</p>
           </div>
           <div className="sm:col-span-4 flex items-center gap-2 mt-1 flex-wrap">
