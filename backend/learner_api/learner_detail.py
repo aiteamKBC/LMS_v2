@@ -12,6 +12,8 @@ programme-wide total.
 """
 import json
 import logging
+import re
+from html import unescape
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
@@ -26,6 +28,19 @@ SOURCE_MODELS = {
     "commercial": CommercialUser,
     "apprenticeship": EnrolmentUser,
 }
+
+IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+
+def _video_url_from_settings(settings):
+    direct = _s(settings.get("videoUrl"))
+    if direct:
+        return direct
+    iframe = _s(settings.get("embedCode"))
+    match = IFRAME_SRC_RE.search(iframe)
+    if match:
+        return unescape(match.group(1))
+    return None
 
 
 def _error(message, status):

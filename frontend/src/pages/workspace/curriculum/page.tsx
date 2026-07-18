@@ -9,7 +9,7 @@ const curriculumNav = roleNavMap.curriculum;
 
 export default function CurriculumStudio() {
   const [tab, setTab] = useState<'programmes' | 'cohorts' | 'modules' | 'ksb'>('programmes');
-  const { data, loading, error } = useCurriculumData();
+  const { data, loading, error } = useCurriculumData({ compact: true });
 
   const programmes = data?.programmes ?? [];
   const modules = data?.modules ?? [];

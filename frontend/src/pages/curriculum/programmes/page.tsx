@@ -92,7 +92,8 @@ export default function CurriculumProgrammes() {
     const needle = search.toLowerCase();
     if (needle && !p.name.toLowerCase().includes(needle) && !p.standard.toLowerCase().includes(needle)) return false;
     if (typeFilter !== 'all' && type !== typeFilter) return false;
-    if (statusFilter === 'all') return status !== 'archived';
+    if (statusFilter === 'live') return status !== 'archived';
+    if (statusFilter === 'all') return true;
     if (status !== statusFilter) return false;
     return true;
   });
@@ -103,24 +104,26 @@ export default function CurriculumProgrammes() {
   const liveProgrammes = programmes.filter(p => programmeStatusBucket(p.status) !== 'archived');
   const typeCountProgrammes = programmes.filter(programme => (
     statusFilter === 'all'
+      ? true
+      : statusFilter === 'live'
       ? programmeStatusBucket(programme.status) !== 'archived'
       : programmeStatusBucket(programme.status) === statusFilter
   ));
-  const freeProgrammes = liveProgrammes.filter(programme => programmeTypeBucket(programme) === 'free').length;
-  const normalProgrammes = liveProgrammes.length - freeProgrammes;
+  const totalProgrammes = programmes.length;
   const filteredTypeFreeProgrammes = typeCountProgrammes.filter(programme => programmeTypeBucket(programme) === 'free').length;
   const filteredTypeNormalProgrammes = typeCountProgrammes.length - filteredTypeFreeProgrammes;
   const visibleProgrammes = liveProgrammes.length;
-  const totalLearners = liveProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
-  const totalCohorts = liveProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
-  const totalModules = liveProgrammes.reduce((a, b) => a + (b.modules || 0), 0);
-  const totalSessions = liveProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
-  const programmesWithKsb = liveProgrammes.filter(programme => programme.ksbTotal > 0);
+  const totalLearners = programmes.reduce((a, b) => a + (b.learners || 0), 0);
+  const totalCohorts = programmes.reduce((a, b) => a + (b.cohorts || 0), 0);
+  const totalModules = programmes.reduce((a, b) => a + (b.modules || 0), 0);
+  const totalSessions = programmes.reduce((a, b) => a + (b.weeks || 0), 0);
+  const programmesWithKsb = programmes.filter(programme => programme.ksbTotal > 0);
   const averageKsbCoverage = programmesWithKsb.length
     ? Math.round(programmesWithKsb.reduce((sum, programme) => sum + ((programme.ksbMapped / programme.ksbTotal) * 100), 0) / programmesWithKsb.length)
     : 0;
   const statusFilterOptions = [
-    { key: 'all', label: 'Live', count: visibleProgrammes },
+    { key: 'all', label: 'All', count: totalProgrammes },
+    { key: 'live', label: 'Live', count: visibleProgrammes },
     { key: 'active', label: 'Active', count: active },
     { key: 'planned', label: 'Planned', count: planned },
     { key: 'archived', label: 'Archive', count: archived },
@@ -130,8 +133,8 @@ export default function CurriculumProgrammes() {
     { key: 'normal' as const, label: 'Normal', count: filteredTypeNormalProgrammes },
     { key: 'free' as const, label: 'Free', count: filteredTypeFreeProgrammes },
   ];
-  const pageSubtitle = `${visibleProgrammes} programmes - ${active} active - ${planned} planned - ${archived} archived - ${totalLearners} learners`;
-  const heroSummary = <><strong>{visibleProgrammes} programmes</strong> - {normalProgrammes} normal - {freeProgrammes} free - {totalCohorts} cohorts</>;
+  const pageSubtitle = `${totalProgrammes} programmes - ${active} active - ${planned} planned - ${archived} archived - ${totalLearners} learners`;
+  const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {visibleProgrammes} live - {archived} archived - {totalCohorts} cohorts</>;
 
   const archivedFiltered = filtered.filter(programme => programmeStatusBucket(programme.status) === 'archived');
   const selectedArchivedProgrammes = archivedFiltered.filter(programme => selectedArchivedIds.has(programme.sourceId || programme.id));
@@ -241,7 +244,7 @@ export default function CurriculumProgrammes() {
               </div>
             </div>
             <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <DashboardStat icon="ri-layout-masonry-line" label="Live programmes" value={String(visibleProgrammes)} detail={`${active} active - ${planned} planned`} />
+              <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${visibleProgrammes} live - ${archived} archived`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
               <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalSessions} planned sessions`} />
               <DashboardStat icon="ri-node-tree" label="KSB coverage" value={`${averageKsbCoverage}%`} detail={programmesWithKsb.length ? 'Average mapped coverage' : 'No mapped KSBs yet'} />

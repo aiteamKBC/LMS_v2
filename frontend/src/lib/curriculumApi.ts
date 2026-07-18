@@ -31,6 +31,15 @@ export interface CurriculumProgramme {
 
 export interface CurriculumModule {
   id: string;
+  // Temporary compatibility: moduleId may be a canonical ID or legacy delivery ID.
+  // Prefer moduleCatalogueId for canonical authoring identity and deliveryRowId for allocation identity.
+  moduleId?: string;
+  moduleCatalogueId?: string;
+  deliveryRowId?: number | string;
+  deliveryModuleId?: string;
+  legacyModuleId?: string;
+  invalidModuleCatalogueId?: string;
+  structureId?: string;
   sourceId: number | string;
   catalogueId?: string;
   relatedCatalogueIds?: string[];
@@ -74,14 +83,19 @@ export interface CurriculumComponent {
   module: string;
   programme: string;
   week: string;
+  weekTitle?: string;
   duration: number;
+  expectedOtjh?: number;
   ksbRefs: string[];
   ksbMappings?: Array<{
     id: string;
     ksbId: string;
     code: string;
     description: string;
+    sourceType?: string;
+    sourceId?: string;
     type: string;
+    classification?: string;
     weight: number;
   }>;
   status: 'published' | 'draft' | 'review';
@@ -184,6 +198,151 @@ export interface CurriculumStandard {
   ksbs?: CurriculumStandardKsb[];
 }
 
+export type CurriculumKsbCoverageStatus = 'missing' | 'partial' | 'fully_covered' | 'over_allocated';
+
+export interface CurriculumKsbTraceMapping {
+  mapping_id: string;
+  mappingId: string;
+  programme_id: string;
+  programmeId: string;
+  programme_name: string;
+  programmeName: string;
+  module_id: string;
+  moduleId: string;
+  module_name: string;
+  moduleName: string;
+  group_id?: string;
+  groupId?: string;
+  group_name?: string;
+  groupName?: string;
+  group?: string;
+  groups?: string[];
+  week_id: string;
+  weekId: string;
+  week_name: string;
+  weekName: string;
+  component_id: string;
+  componentId: string;
+  component_name: string;
+  componentName: string;
+  component_type: string;
+  componentType: string;
+  ksb_id: string;
+  ksbId: string;
+  code: string;
+  description: string;
+  source_type: string;
+  sourceType: string;
+  source_id: string;
+  sourceId: string;
+  classification: 'main' | 'secondary' | 'possible' | string;
+  mapping_level?: 'module' | 'week' | 'component' | string;
+  mappingLevel?: 'module' | 'week' | 'component' | string;
+  weight: number;
+}
+
+export interface CurriculumKsbCoverageItem {
+  ksb_id: string;
+  ksbId: string;
+  code: string;
+  title: string;
+  description: string;
+  ksb_type: 'knowledge' | 'skill' | 'behaviour' | string;
+  ksbType: 'knowledge' | 'skill' | 'behaviour' | string;
+  source_type: string;
+  sourceType: string;
+  source_id: string;
+  sourceId: string;
+  raw_total_weight: number;
+  rawTotalWeight: number;
+  coverage_percentage: number;
+  coveragePercentage: number;
+  progress_bar_percentage: number;
+  progressBarPercentage: number;
+  status: CurriculumKsbCoverageStatus;
+  occurrence_count: number;
+  occurrenceCount: number;
+  mapping_count: number;
+  mappingCount: number;
+  module_count: number;
+  moduleCount: number;
+  week_count: number;
+  weekCount: number;
+  component_count: number;
+  componentCount: number;
+  classification_summary: Record<string, { count: number; weight: number }>;
+  classificationSummary: Record<string, { count: number; weight: number }>;
+  mappings: CurriculumKsbTraceMapping[];
+}
+
+export interface CurriculumKsbCoverageSummaryBucket {
+  required: number;
+  fully_covered: number;
+  partial: number;
+  missing: number;
+  over_allocated: number;
+}
+
+export interface CurriculumKsbCoverageResponse {
+  scope: string;
+  identifier: string;
+  summary: {
+    overall: CurriculumKsbCoverageSummaryBucket;
+    knowledge: CurriculumKsbCoverageSummaryBucket;
+    skills: CurriculumKsbCoverageSummaryBucket;
+    behaviours: CurriculumKsbCoverageSummaryBucket;
+  };
+  items: CurriculumKsbCoverageItem[];
+  heatmap: {
+    modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string }>;
+    rows: Array<{
+      ksb_id: string;
+      ksbId: string;
+      code: string;
+      title: string;
+      ksb_type: string;
+      ksbType: string;
+      status: CurriculumKsbCoverageStatus;
+      total: number;
+      modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string; weight: number; mappings: CurriculumKsbTraceMapping[] }>;
+    }>;
+  };
+}
+
+export interface CurriculumReadinessIssue {
+  severity: 'warning' | 'error' | string;
+  code: string;
+  status: CurriculumKsbCoverageStatus | string;
+  raw_weight: number;
+  rawWeight: number;
+  message: string;
+}
+
+export interface CurriculumReadinessResponse {
+  ready: boolean;
+  canSaveDraft: boolean;
+  issues: CurriculumReadinessIssue[];
+  summary?: CurriculumKsbCoverageResponse['summary'];
+}
+
+export type CurriculumKsbMappingInput = {
+  id?: string;
+  ksbId?: string;
+  code: string;
+  description?: string;
+  sourceType: 'standard' | 'framework' | string;
+  sourceId: string;
+  classification: 'main' | 'secondary' | 'possible' | string;
+  type?: 'main' | 'secondary' | 'possible' | string;
+  weight: number;
+};
+
+export interface CurriculumComponentKsbMappingsResponse {
+  componentId: string;
+  count: number;
+  results: CurriculumKsbTraceMapping[];
+}
+
 export type CurriculumKsbItemInput = {
   id?: string | number;
   type: 'K' | 'S' | 'B';
@@ -231,6 +390,7 @@ export interface CurriculumGroup {
   cohortId: string;
   cohort: string;
   programme: string;
+  programmeId?: string;
   learners: number;
   coach: string;
   tutor: string;
@@ -246,6 +406,18 @@ export interface CurriculumGroup {
 export interface CurriculumSession {
   id: string;
   trainingPlanId: number;
+  deliveryRowId?: number | string;
+  programmeId?: string;
+  cohortId?: string;
+  groupId?: string;
+  // Temporary compatibility: prefer moduleCatalogueId when present.
+  moduleId?: string;
+  moduleCatalogueId?: string;
+  deliveryModuleId?: string;
+  legacyModuleId?: string;
+  invalidModuleCatalogueId?: string;
+  weekId?: string;
+  componentId?: string;
   title: string;
   type: string;
   date: string;
@@ -270,6 +442,33 @@ export interface CurriculumHoliday {
   endDate: string;
   type?: string;
   color?: string;
+}
+
+export interface CurriculumCohortAuthoringDetail {
+  cohortId: string;
+  cohortName: string;
+  programmeId: string;
+  programmeName: string;
+  startDate: string;
+  endDate: string;
+  durationMonths: number;
+  color: string;
+  status: string;
+  trainingPlanIds: string[];
+  groupIds: string[];
+  moduleNames: string[];
+  holidayIds: string[];
+  selectedHolidays: CurriculumHoliday[];
+  holidaysInRange: CurriculumHoliday[];
+  holidaySummary: {
+    global?: number;
+    inRange?: number;
+    selected?: number;
+  };
+  notes?: string;
+  sourceType?: string;
+  sourceId?: string;
+  updatedAt?: string;
 }
 
 export interface CurriculumStaffProfile {
@@ -299,6 +498,7 @@ export interface CurriculumOverview {
   sessions: CurriculumSession[];
   components?: CurriculumComponent[];
   holidays?: CurriculumHoliday[];
+  cohortAuthoringDetails?: CurriculumCohortAuthoringDetail[];
   tutors?: CurriculumStaffProfile[];
   coaches?: CurriculumStaffProfile[];
 }
@@ -379,7 +579,10 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     let detail = '';
     try {
       const payload = await response.json();
-      detail = payload?.error ? `: ${payload.error}` : '';
+      const validation = Array.isArray(payload?.validationErrors)
+        ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
+        : '';
+      detail = payload?.error ? `: ${payload.error}${validation ? ` - ${validation}` : ''}` : '';
     } catch {
       detail = '';
     }
@@ -425,6 +628,80 @@ export function fetchCurriculumStandardDetail(id: string, signal?: AbortSignal):
   return fetchJson<CurriculumStandard>(`/curriculum/standards/${encodeURIComponent(id)}/`, { signal });
 }
 
+export function fetchCurriculumKsbCoverage(params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumModuleKsbCoverage(moduleId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/modules/${encodeURIComponent(moduleId)}/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumWeekKsbCoverage(weekId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/weeks/${encodeURIComponent(weekId)}/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumCohortKsbCoverage(cohortId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/cohorts/${encodeURIComponent(cohortId)}/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumKsbTrace(ksbId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageItem> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumKsbCoverageItem>(`/curriculum/ksb-coverage/trace/${encodeURIComponent(ksbId)}/${suffix}`, { signal });
+}
+
+export function fetchCurriculumReadiness(params: { scope?: string; identifier?: string; sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumReadinessResponse> {
+  const query = new URLSearchParams();
+  if (params.scope) query.set('scope', params.scope);
+  if (params.identifier) query.set('identifier', params.identifier);
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumReadinessResponse>(`/curriculum/readiness/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchComponentKsbMappings(componentId: string, signal?: AbortSignal): Promise<CurriculumComponentKsbMappingsResponse> {
+  return fetchJson<CurriculumComponentKsbMappingsResponse>(`/curriculum/components/${encodeURIComponent(componentId)}/ksb-mappings/`, { signal });
+}
+
+export function createComponentKsbMapping(componentId: string, input: CurriculumKsbMappingInput | { mappings: CurriculumKsbMappingInput[] }) {
+  return postJson<CurriculumComponentKsbMappingsResponse & { created: boolean }>(`/curriculum/components/${encodeURIComponent(componentId)}/ksb-mappings/`, input);
+}
+
+export function updateComponentKsbMapping(mappingId: string, input: Partial<CurriculumKsbMappingInput>) {
+  return patchJson<{ updated: boolean; mapping: CurriculumKsbTraceMapping }>(`/curriculum/ksb-mappings/${encodeURIComponent(mappingId)}/`, input);
+}
+
+export function deleteComponentKsbMapping(mappingId: string) {
+  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-mappings/${encodeURIComponent(mappingId)}/`);
+}
+
 export function createCurriculumKsbFramework(input: CurriculumKsbFrameworkInput) {
   return postJson<{ created: boolean; framework: CurriculumKsbFramework }>('/curriculum/ksb-frameworks/', input);
 }
@@ -453,8 +730,8 @@ export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<Curriculu
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal });
 }
 
-export function fetchCurriculumOverview(signal?: AbortSignal): Promise<CurriculumOverview> {
-  return fetchJson<CurriculumOverview>('/curriculum/overview/', { signal });
+export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean } = {}): Promise<CurriculumOverview> {
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal });
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
