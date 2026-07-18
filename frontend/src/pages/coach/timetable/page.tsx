@@ -406,6 +406,7 @@ function formatDateInputValue(year: number, month: number, day: number) {
 type ViewMode = 'month' | 'week' | 'day';
 type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled';
 type SourceFilter = 'all' | 'mcr' | 'progress-review' | 'catch-up';
+type SchedulableSource = Exclude<SourceFilter, 'all'>;
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
@@ -441,6 +442,57 @@ const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   'catch-up': 'bg-amber-500',
 };
 
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up'];
+const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
+  mcr: {
+    description: 'Monthly coaching reviews waiting for a slot.',
+    icon: 'ri-chat-1-line',
+    accent: 'text-primary-700',
+    surface: 'from-primary-500/10 via-primary-400/5 to-transparent',
+  },
+  'progress-review': {
+    description: 'Generated progress reviews that still need a date.',
+    icon: 'ri-file-chart-line',
+    accent: 'text-secondary-700',
+    surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
+  },
+  'catch-up': {
+    description: 'Learner catch-up bookings waiting for placement.',
+    icon: 'ri-timer-line',
+    accent: 'text-amber-700',
+    surface: 'from-amber-500/10 via-amber-400/5 to-transparent',
+  },
+};
+
+function isSchedulableSource(value?: string): value is SchedulableSource {
+  return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
+}
+
+function eventIdentity(event: TimetableEvent) {
+  return event.eventKey || event.id;
+}
+
+function learnerIdentity(event: TimetableEvent) {
+  return event.learnerId || event.learner || eventIdentity(event);
+}
+
+function formatCompactDate(value?: string | null) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return 'Date TBC';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+function sourceSessionLabel(event: TimetableEvent) {
+  if (!isSchedulableSource(event.source)) return event.title;
+  const baseLabel = SOURCE_FILTER_LABELS[event.source];
+  if (event.source === 'catch-up') return baseLabel;
+  return event.sequence ? `${baseLabel} ${event.sequence}` : baseLabel;
+}
+
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Page
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -466,11 +518,23 @@ export default function CoachTimetablePage() {
   const [eventActionBusy, setEventActionBusy] = useState(false);
   const [eventActionError, setEventActionError] = useState<string | null>(null);
   const [eventActionNotice, setEventActionNotice] = useState<string | null>(null);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
+  const [scheduleModalLearnerKey, setScheduleModalLearnerKey] = useState('');
+  const [scheduleModalEventKey, setScheduleModalEventKey] = useState('');
+  const [scheduleModalDate, setScheduleModalDate] = useState('');
+  const [scheduleModalTime, setScheduleModalTime] = useState('09:00');
+  const [scheduleModalDuration, setScheduleModalDuration] = useState(60);
+  const [scheduleModalBusy, setScheduleModalBusy] = useState(false);
+  const [scheduleModalError, setScheduleModalError] = useState<string | null>(null);
+  const [scheduleModalNotice, setScheduleModalNotice] = useState<string | null>(null);
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
   const todayYear = now.getFullYear();
   const currentHour = now.getHours();
+  const todayWeekdayLabel = DAYS_OF_WEEK[now.getDay() === 0 ? 6 : now.getDay() - 1].toUpperCase();
+  const todayMonthLabel = MONTH_NAMES[todayMonth].slice(0, 3).toUpperCase();
 
   const isToday = useCallback((day: number, month: number, year: number) => {
     return day === todayDay && month === todayMonth && year === todayYear;
@@ -560,6 +624,122 @@ export default function CoachTimetablePage() {
     setEventActionError(null);
     setEventActionNotice(selectedEvent.syncWarning || null);
   }, [selectedEvent]);
+
+  const schedulableEvents = useMemo(() => {
+    return [...events]
+      .filter(event => isSchedulableSource(event.source) && needsSchedulingMetricEvent(event))
+      .sort((a, b) => {
+        const dateDelta = getMetricDate(eventTargetDateValue(a), a).getTime() - getMetricDate(eventTargetDateValue(b), b).getTime();
+        if (dateDelta !== 0) return dateDelta;
+        const learnerDelta = (a.learner || '').localeCompare(b.learner || '');
+        if (learnerDelta !== 0) return learnerDelta;
+        return (a.sequence || 0) - (b.sequence || 0);
+      });
+  }, [events]);
+
+  const scheduleSourceCounts = useMemo(() => {
+    return SCHEDULABLE_SOURCE_ORDER.reduce((acc, source) => {
+      acc[source] = schedulableEvents.filter(event => event.source === source).length;
+      return acc;
+    }, {} as Record<SchedulableSource, number>);
+  }, [schedulableEvents]);
+
+  const scheduleTypeEvents = useMemo(
+    () => schedulableEvents.filter(event => event.source === scheduleModalType),
+    [schedulableEvents, scheduleModalType],
+  );
+
+  const scheduleLearnerOptions = useMemo(() => {
+    const uniqueLearners = new Map<string, { value: string; label: string; meta: string }>();
+    scheduleTypeEvents.forEach(event => {
+      const key = learnerIdentity(event);
+      if (!uniqueLearners.has(key)) {
+        uniqueLearners.set(key, {
+          value: key,
+          label: event.learner || 'Learner',
+          meta: event.programme || event.cohort || event.email || '',
+        });
+      }
+    });
+    return [...uniqueLearners.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [scheduleTypeEvents]);
+
+  const scheduleEventOptions = useMemo(() => {
+    return scheduleTypeEvents.filter(event => {
+      if (!scheduleModalLearnerKey) return true;
+      return learnerIdentity(event) === scheduleModalLearnerKey;
+    });
+  }, [scheduleModalLearnerKey, scheduleTypeEvents]);
+
+  const selectedScheduleEvent = useMemo(() => {
+    return scheduleEventOptions.find(event => eventIdentity(event) === scheduleModalEventKey) || scheduleEventOptions[0] || null;
+  }, [scheduleEventOptions, scheduleModalEventKey]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen) return;
+    if (scheduleSourceCounts[scheduleModalType] > 0) return;
+
+    const firstAvailableType = SCHEDULABLE_SOURCE_ORDER.find(source => scheduleSourceCounts[source] > 0);
+    if (firstAvailableType) {
+      setScheduleModalType(firstAvailableType);
+    }
+  }, [scheduleModalOpen, scheduleModalType, scheduleSourceCounts]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen) return;
+    const currentLearnerStillAvailable = scheduleLearnerOptions.some(option => option.value === scheduleModalLearnerKey);
+    if (currentLearnerStillAvailable) return;
+    setScheduleModalLearnerKey(scheduleLearnerOptions[0]?.value || '');
+  }, [scheduleLearnerOptions, scheduleModalLearnerKey, scheduleModalOpen]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen) return;
+    const currentEventStillAvailable = scheduleEventOptions.some(event => eventIdentity(event) === scheduleModalEventKey);
+    if (currentEventStillAvailable) return;
+    setScheduleModalEventKey(scheduleEventOptions[0] ? eventIdentity(scheduleEventOptions[0]) : '');
+  }, [scheduleEventOptions, scheduleModalEventKey, scheduleModalOpen]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen) return;
+    if (!selectedScheduleEvent) {
+      setScheduleModalDate('');
+      setScheduleModalTime('09:00');
+      setScheduleModalDuration(60);
+      setScheduleModalError(null);
+      setScheduleModalNotice(null);
+      return;
+    }
+
+    setScheduleModalDate(
+      selectedScheduleEvent.scheduledDate
+      || selectedScheduleEvent.targetDate
+      || selectedScheduleEvent.date
+      || formatDateInputValue(viewYear, viewMonth, selectedDay),
+    );
+    setScheduleModalTime(selectedScheduleEvent.scheduledTime || '09:00');
+    setScheduleModalDuration(selectedScheduleEvent.durationMinutes || (selectedScheduleEvent.source === 'catch-up' ? 45 : 60));
+    setScheduleModalError(null);
+    setScheduleModalNotice(selectedScheduleEvent.syncWarning || null);
+  }, [scheduleModalOpen, selectedDay, selectedScheduleEvent, viewMonth, viewYear]);
+
+  useEffect(() => {
+    if (!scheduleModalOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !scheduleModalBusy) {
+        setScheduleModalOpen(false);
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [scheduleModalBusy, scheduleModalOpen]);
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
@@ -660,6 +840,29 @@ export default function CoachTimetablePage() {
     if (viewMode === 'month') setViewMode('day');
   };
 
+  const openScheduleModal = useCallback((presetEvent?: TimetableEvent | null) => {
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+
+    if (presetEvent && isSchedulableSource(presetEvent.source) && needsSchedulingMetricEvent(presetEvent)) {
+      setScheduleModalType(presetEvent.source);
+      setScheduleModalLearnerKey(learnerIdentity(presetEvent));
+      setScheduleModalEventKey(eventIdentity(presetEvent));
+    } else if (!schedulableEvents.length) {
+      setScheduleModalLearnerKey('');
+      setScheduleModalEventKey('');
+    }
+
+    setScheduleModalOpen(true);
+  }, [schedulableEvents.length]);
+
+  const closeScheduleModal = useCallback(() => {
+    if (scheduleModalBusy) return;
+    setScheduleModalOpen(false);
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+  }, [scheduleModalBusy]);
+
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
 
@@ -689,6 +892,49 @@ export default function CoachTimetablePage() {
       setEventActionBusy(false);
     }
   }, [scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
+
+  const handleModalScheduleSave = useCallback(async () => {
+    if (!selectedScheduleEvent?.eventKey || !selectedScheduleEvent.ownerEmail) return;
+
+    setScheduleModalBusy(true);
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+    try {
+      const response = await fetch(SCHEDULE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventKey: selectedScheduleEvent.eventKey,
+          ownerEmail: selectedScheduleEvent.ownerEmail,
+          scheduledDate: scheduleModalDate,
+          scheduledTime: scheduleModalTime,
+          durationMinutes: scheduleModalDuration,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+
+      const updatedEvent = data.event as TimetableEvent;
+      updateSingleEvent(updatedEvent);
+      setCalendarDate(updatedEvent.year, updatedEvent.month, updatedEvent.dayOfMonth);
+      setViewMode('day');
+      setSelectedEvent(updatedEvent);
+      setEventActionError(null);
+      setEventActionNotice(typeof data.warning === 'string' && data.warning ? data.warning : null);
+      setScheduleModalOpen(false);
+    } catch (err) {
+      setScheduleModalError(err instanceof Error ? err.message : 'Unable to schedule event');
+    } finally {
+      setScheduleModalBusy(false);
+    }
+  }, [
+    scheduleModalDate,
+    scheduleModalDuration,
+    scheduleModalTime,
+    selectedScheduleEvent,
+    setCalendarDate,
+    updateSingleEvent,
+  ]);
 
   const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'cancel') => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
@@ -736,19 +982,61 @@ export default function CoachTimetablePage() {
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
         {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
-        <section className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="relative overflow-hidden rounded-[28px] border border-white/10 shadow-[0_22px_60px_-32px_rgba(27,9,68,0.9)]" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute opacity-20" style={{ width: '50%', height: '40%', left: '-5%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-            <div className="absolute opacity-15" style={{ width: '60%', height: '30%', right: '-10%', top: '20%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
+            <div className="absolute opacity-25" style={{ width: '52%', height: '44%', left: '-5%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.32) 0%, transparent 70%)', filter: 'blur(60px)' }} />
+            <div className="absolute opacity-20" style={{ width: '44%', height: '42%', right: '-6%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.28) 0%, transparent 72%)', filter: 'blur(58px)' }} />
           </div>
-          <div className="relative min-h-[150px] px-5 py-5 md:px-7 md:py-6">
-            <div className="flex h-full max-w-2xl flex-col justify-center min-w-0">
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
-                <span className="text-xs font-semibold text-white">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+          <div className="relative flex min-h-[220px] flex-col gap-6 px-5 py-5 md:px-7 md:py-6 lg:flex-row lg:items-center">
+            <div className="min-w-0 flex-1">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <span className="rounded-full border border-accent-300/20 bg-accent-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-accent-200">Progress Coach</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/90">{MONTH_NAMES[viewMonth]} {viewYear}</span>
               </div>
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1">My Calendar</h1>
-              <p className="text-sm font-medium text-white max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
+              <h1 className="max-w-xl text-[28px] font-heading font-bold tracking-tight text-white md:text-[34px]">My Calendar</h1>
+              <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-[15px]">
+                Plan monthly coaching reviews, progress reviews, and learner catch-up bookings from one clean scheduling workspace.
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => openScheduleModal(selectedEvent && needsSchedulingMetricEvent(selectedEvent) ? selectedEvent : null)}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-primary-800 shadow-lg shadow-foreground-950/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
+                >
+                  <i className="ri-add-circle-line text-base"></i>
+                  Create Event
+                </button>
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[12px] text-white/75 backdrop-blur-sm">
+                  Choose an existing <span className="font-semibold text-white">MCR, Progress Review, or Catch-up</span> item and place it straight onto the calendar.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex shrink-0 items-center justify-center lg:w-[380px]">
+              <div className="relative">
+                <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
+                  <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
+                    <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
+                      <div className="flex items-center justify-between">
+                        {[0, 1, 2, 3, 4, 5].map(index => (
+                          <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
+                            <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700"></span>
+                            <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm"></span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="px-4 pb-4 pt-3 text-center">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
+                      <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
+                        {String(todayDay).padStart(2, '0')}
+                      </p>
+                      <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
+                    </div>
+                    <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95"></div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -952,17 +1240,24 @@ export default function CoachTimetablePage() {
 
             {/* MONTH VIEW */}
             {viewMode === 'month' && (
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-                <div className="grid grid-cols-7 border-b border-foreground-200/60">
+              <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-sm">
+                <div className="grid grid-cols-7 border-b border-background-300">
                   {DAYS_OF_WEEK.map(d => (
-                    <div key={d} className="px-2 py-3 text-center bg-background-100/50">
-                      <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wide">{d}</span>
+                    <div key={d} className="bg-background-50 px-2 py-4 text-center">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-500">{d}</span>
                     </div>
                   ))}
                 </div>
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-[4/3] bg-background-50/30 border-b border-r border-background-100/50" />;
+                    if (day === null) {
+                      return (
+                        <div
+                          key={`empty-${idx}`}
+                          className="min-h-[170px] border-b border-r border-background-300 bg-background-50/70"
+                        />
+                      );
+                    }
                     const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -970,27 +1265,38 @@ export default function CoachTimetablePage() {
                       <button
                         key={`d-${day}`}
                         onClick={() => handleDayClick(day)}
-                        className={`aspect-[4/3] border-b border-r border-background-100/50 p-1.5 flex flex-col items-start cursor-pointer transition-all duration-200 ease-out hover:bg-background-50 hover:shadow-sm hover:z-10 text-left ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/40 z-10 rounded-lg shadow-sm' : ''}`}
+                        className={`relative min-h-[170px] border-b border-r p-3 text-left transition-all duration-200 ease-out ${
+                          isSel
+                            ? 'z-10 border-primary-400 bg-primary-50/35 ring-1 ring-primary-300/70 ring-inset'
+                            : 'border-background-300 bg-background-50 hover:bg-primary-50/15'
+                        }`}
                       >
-                        <span className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-200 ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-600'}`}>
+                        <span className={`mb-2 flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold transition-all duration-200 ${
+                          isSel || isTdy
+                            ? 'bg-primary-200 text-primary-800'
+                            : 'text-foreground-700'
+                        }`}>
                           {day}
                         </span>
-                        <div className="flex-1 w-full overflow-hidden space-y-0.5">
+                        <div className="flex w-full flex-1 flex-col gap-1 overflow-hidden">
                           {eventsForDay.slice(0, 3).map(ev => {
                             const tc = eventConfig(ev);
                             return (
                               <div
                                 key={ev.id}
                                 onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }}
-                                className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-sm border-l-2 truncate leading-tight transition-all duration-150 hover:brightness-95 cursor-pointer ${tc.bg} ${tc.border} ${tc.text}`}
+                                className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] font-medium text-foreground-800 transition-all duration-150 hover:bg-background-100/80"
                                 title={ev.title}
                               >
-                                {formatTime(ev.startHour)} {ev.title}
+                                <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
+                                <span className="truncate leading-tight">
+                                  {formatTime(ev.startHour)} {ev.title}
+                                </span>
                               </div>
                             );
                           })}
                           {eventsForDay.length > 3 && (
-                            <span className="text-[9px] text-foreground-400 font-semibold pl-1">+{eventsForDay.length - 3} more</span>
+                            <span className="pl-1 text-[10px] font-semibold text-foreground-400">+{eventsForDay.length - 3} more</span>
                           )}
                         </div>
                       </button>
@@ -1454,6 +1760,212 @@ export default function CoachTimetablePage() {
           </div>
         </div>
       </div>
+
+      {scheduleModalOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeScheduleModal}>
+          <div
+            className="w-full max-w-[920px] max-h-[90vh] overflow-y-auto rounded-[28px] border border-background-200 bg-background-50 shadow-[0_28px_70px_-35px_rgba(15,8,40,0.28)]"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="border-b border-background-200/70 bg-background-50 px-5 py-5 md:px-7">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[11px] font-semibold text-primary-700">
+                    <i className="ri-calendar-schedule-line"></i>
+                    Coach Scheduler
+                  </div>
+                  <h2 className="text-[28px] font-heading font-bold tracking-tight text-foreground-950">Schedule an existing learner event</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">
+                    Work through the queue in three quick steps: choose the source, pick the learner item waiting for a slot, then assign the calendar time.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeScheduleModal}
+                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                  aria-label="Close scheduler"
+                >
+                  <i className="ri-close-line text-lg"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 px-5 py-5 md:px-7 md:py-6">
+              <section>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Event Type</p>
+                    <p className="mt-1 text-[12px] text-foreground-500">Choose which queue you are scheduling from.</p>
+                  </div>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-500">
+                    {scheduleSourceCounts[scheduleModalType]} waiting
+                  </span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {SCHEDULABLE_SOURCE_ORDER.map(source => {
+                    const isActive = scheduleModalType === source;
+                    const meta = SCHEDULABLE_SOURCE_META[source];
+                    return (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() => setScheduleModalType(source)}
+                        className={`rounded-2xl border px-4 py-4 text-left transition-smooth cursor-pointer ${
+                          isActive
+                            ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100'
+                            : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/40'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <span className={`flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br ${meta.surface} ${meta.accent}`}>
+                            <i className={`${meta.icon} text-lg`}></i>
+                          </span>
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${isActive ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'}`}>
+                            {scheduleSourceCounts[source]}
+                          </span>
+                        </div>
+                        <p className="mt-3 text-sm font-heading font-semibold text-foreground-950">{SOURCE_FILTER_LABELS[source]}</p>
+                        <p className="mt-1 text-[12px] leading-5 text-foreground-500">{meta.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              {scheduleTypeEvents.length === 0 ? (
+                <div className="rounded-[24px] border border-dashed border-background-300 bg-background-100/60 px-5 py-10 text-center">
+                  <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-background-50 text-foreground-300">
+                    <i className="ri-inbox-archive-line text-xl"></i>
+                  </span>
+                  <p className="text-sm font-semibold text-foreground-800">No {SOURCE_FILTER_LABELS[scheduleModalType].toLowerCase()} items need scheduling right now.</p>
+                  <p className="mt-1 text-[12px] text-foreground-500">
+                    When a learner item becomes pending or not scheduled, it will appear here automatically.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <section className="grid gap-4 md:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Learner</span>
+                      <select
+                        value={scheduleModalLearnerKey}
+                        onChange={event => setScheduleModalLearnerKey(event.target.value)}
+                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      >
+                        {scheduleLearnerOptions.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}{option.meta ? ` - ${option.meta}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Session</span>
+                      <select
+                        value={scheduleModalEventKey}
+                        onChange={event => setScheduleModalEventKey(event.target.value)}
+                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      >
+                        {scheduleEventOptions.map(event => (
+                          <option key={eventIdentity(event)} value={eventIdentity(event)}>
+                            {sourceSessionLabel(event)} - due {formatCompactDate(event.targetDate || event.date)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="grid gap-4 md:grid-cols-3">
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                      <input
+                        type="date"
+                        value={scheduleModalDate}
+                        onChange={event => setScheduleModalDate(event.target.value)}
+                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Start Time</span>
+                      <input
+                        type="time"
+                        value={scheduleModalTime}
+                        onChange={event => setScheduleModalTime(event.target.value)}
+                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
+                      <select
+                        value={scheduleModalDuration}
+                        onChange={event => setScheduleModalDuration(Number(event.target.value))}
+                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      >
+                        {[30, 45, 60, 90].map(minutes => (
+                          <option key={minutes} value={minutes}>{minutes} minutes</option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
+
+                  <section className="rounded-[24px] border border-primary-200 bg-primary-50/70 px-4 py-4">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary-700">Ready To Schedule</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-foreground-800">
+                      <span className="rounded-full bg-white px-3 py-1 font-semibold text-foreground-900">{SOURCE_FILTER_LABELS[scheduleModalType]}</span>
+                      <span className="rounded-full bg-white px-3 py-1">{selectedScheduleEvent?.learner || 'Choose learner'}</span>
+                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalDate || 'Choose date'}</span>
+                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalTime || '09:00'}</span>
+                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalDuration} min</span>
+                    </div>
+                    {selectedScheduleEvent?.notes && (
+                      <p className="mt-3 text-[12px] leading-5 text-foreground-500">
+                        {selectedScheduleEvent.notes}
+                      </p>
+                    )}
+                  </section>
+                </>
+              )}
+
+              {(scheduleModalError || scheduleModalNotice) && (
+                <div className={`rounded-2xl border px-4 py-3 text-sm ${
+                  scheduleModalError
+                    ? 'border-red-200 bg-red-50 text-red-700'
+                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                }`}>
+                  {scheduleModalError || scheduleModalNotice}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-4">
+                <p className="text-[12px] text-foreground-500">
+                  This keeps the source logic intact and only assigns the selected queue item a time slot.
+                </p>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={closeScheduleModal}
+                    className="rounded-2xl border border-background-200 px-4 py-3 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleModalScheduleSave}
+                    disabled={scheduleModalBusy || !selectedScheduleEvent}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <i className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></i>
+                    {scheduleModalBusy ? 'Scheduling...' : 'Place on Calendar'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </WorkspaceShell>
   );
 }
