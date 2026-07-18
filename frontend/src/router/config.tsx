@@ -115,6 +115,7 @@ const CurriculumStandards = lazy(() => import("../pages/curriculum/standards/pag
 const CurriculumWeekBuilder = lazy(() => import("../pages/curriculum/week-builder/page"));
 const ComponentBuilderPage = lazy(() => import("../pages/curriculum/component-builder/page"));
 const QuizXmlWorkspace = lazy(() => import("../pages/curriculum/quiz-xml/page"));
+const ManualQuizPage = lazy(() => import("../pages/curriculum/quiz-xml/manual/page"));
 const TestBanksPage = lazy(() => import("../pages/curriculum/test-banks/page"));
 const CheckpointsPage = lazy(() => import("../pages/curriculum/checkpoints/page"));
 const TutorSessionsPage = lazy(() => import("../pages/tutor/sessions/page"));
@@ -743,6 +744,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quiz-xml",
     element: <QuizXmlWorkspace />,
+  },
+  {
+    path: "/curriculum/quiz-xml/manual",
+    element: <ManualQuizPage />,
   },
   {
     path: "/curriculum/question-bank",
