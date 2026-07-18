@@ -37,6 +37,10 @@ def load_env_file(path):
 load_env_file(BASE_DIR / '.env')
 
 
+DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
+DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
+
+
 def database_from_url(database_url):
     parsed = urlparse(database_url)
     scheme = parsed.scheme.replace('postgresql', 'postgres')
@@ -65,6 +69,8 @@ def database_from_url(database_url):
         'HOST': parsed.hostname or '',
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
+        'CONN_MAX_AGE': DB_CONN_MAX_AGE,
+        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -150,6 +156,8 @@ if DATABASE_URL:
             "HOST": parsed_db.hostname,
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
+            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
     }
 else:
@@ -215,6 +223,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 LOGGING = {
     'version': 1,

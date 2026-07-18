@@ -36,9 +36,7 @@ import {
   curriculumModuleToCatalogue,
   getDefaultStructure,
   loadModuleStructure,
-  loadLocalModules,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
-  readModuleBuilderSync,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
@@ -547,6 +545,9 @@ function moduleOptionMatches(module: CurriculumModule, identifier: string) {
   if (!requested) return false;
   return [
     moduleOptionId(module),
+    module.moduleCatalogueId,
+    module.moduleId,
+    module.structureId,
     module.catalogueId,
     module.sourceId,
     module.id,
@@ -576,6 +577,9 @@ function mergeCurriculumModule(existing: CurriculumModule | undefined, next: Cur
 function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): CurriculumModule {
   return {
     id: module.id || module.catalogueId,
+    moduleId: module.catalogueId,
+    moduleCatalogueId: module.catalogueId,
+    structureId: module.catalogueId,
     sourceId: module.sourceId || module.catalogueId,
     catalogueId: module.catalogueId,
     name: module.title,
@@ -607,9 +611,7 @@ function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): Curr
 }
 
 function moduleBuilderStructureId(module: CurriculumModule) {
-  const base = curriculumModuleToCatalogue(module);
-  const sourceId = base.sourceModule?.id || base.id;
-  return String(sourceId).startsWith('training-module-') ? String(sourceId) : base.catalogueId;
+  return String(module.moduleCatalogueId || module.catalogueId || module.moduleId || module.structureId || curriculumModuleToCatalogue(module).catalogueId || '');
 }
 
 function moduleSessionCount(module?: CurriculumModule) {
@@ -952,50 +954,22 @@ function moduleBuilderUrlForDraft(draft: ModuleDraft, moduleOptions: CurriculumM
   const moduleIdentifier = selectedModule ? moduleBuilderStructureId(selectedModule) : draft.catalogueId;
   const title = draft.name.trim();
   if (!title && !moduleIdentifier) return '';
-  const draftKey = `${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${draft.localId}`;
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(draftKey, JSON.stringify({
-      programmeId,
-      programme: programmeName || 'Unassigned programme',
-      cohortId: cohort?.sourceId || cohort?.localId || '',
-      cohortName: cohort ? cohortDisplayName(cohort) : '',
-      groupId: group?.sourceId || group?.localId || '',
-      groupName: group?.name || '',
-      title: title || selectedModule?.name || draft.catalogueId || 'Untitled module',
-      description: userFacingNotes(draft.notes),
-      sessionsNumber: Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1),
-      startDate: draft.startDate || todayIso(),
-      endDate: draft.endDate || '',
-    }));
-  }
   const params = new URLSearchParams();
-  params.set('wizardModule', draftKey);
+  params.set('wizardModule', draft.localId);
   if (moduleIdentifier) params.set('module', moduleIdentifier);
   if (title) params.set('moduleTitle', title);
+  params.set('programmeId', programmeId);
+  params.set('programme', programmeName || 'Unassigned programme');
+  params.set('cohortId', cohort?.sourceId || cohort?.localId || '');
+  params.set('cohortName', cohort ? cohortDisplayName(cohort) : '');
+  params.set('groupId', group?.sourceId || group?.localId || '');
+  params.set('groupName', group?.name || '');
+  params.set('title', title || selectedModule?.name || draft.catalogueId || 'Untitled module');
+  params.set('description', userFacingNotes(draft.notes));
+  params.set('sessionsNumber', String(Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1)));
+  params.set('startDate', draft.startDate || todayIso());
+  params.set('endDate', draft.endDate || '');
   return `/curriculum/module-builder?${params.toString()}`;
-}
-
-function moduleBuilderSyncIdentifiers(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
-  const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-  return Array.from(new Set([
-    draft.localId,
-    draft.catalogueId,
-    draft.sourceId,
-    draft.name,
-    selectedModule ? moduleOptionId(selectedModule) : '',
-    selectedModule ? moduleBuilderStructureId(selectedModule) : '',
-    selectedModule?.id,
-    selectedModule?.sourceId,
-    selectedModule?.name,
-  ].map(value => String(value || '').trim()).filter(Boolean)));
-}
-
-function readModuleBuilderSyncForDraft(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
-  for (const identifier of moduleBuilderSyncIdentifiers(draft, moduleOptions)) {
-    const structure = readModuleBuilderSync(identifier);
-    if (structure) return structure;
-  }
-  return null;
 }
 
 function moduleBuilderStructureIdentifierForDraft(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
@@ -1364,73 +1338,6 @@ export function AddCurriculumStructureWizard({
     () => holidays.filter(holiday => cohortForm.holidayIds.includes(holidayId(holiday))),
     [cohortForm.holidayIds, holidays],
   );
-  const syncModuleDraftsFromBuilder = useCallback(() => {
-    setCohortDrafts(previous => {
-      let changed = false;
-      const nextCohorts = previous.map(cohort => {
-        const cohortHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
-        let cohortChanged = false;
-        const nextGroups = cohort.groups.map(group => {
-          let groupChanged = false;
-          const groupDeliveryDay = group.deliveryDays.join(', ');
-          const nextModules = group.modules.map(draft => {
-            const structure = readModuleBuilderSyncForDraft(draft, moduleOptions);
-            if (!structure) return draft;
-            groupChanged = true;
-            cohortChanged = true;
-            return applyModuleBuilderContent(
-              {
-                ...draft,
-                mode: isFreeProgramme ? 'new' : 'existing',
-                catalogueId: isFreeProgramme ? '' : structure.catalogueId || draft.catalogueId,
-                name: structure.title || draft.name,
-                color: structure.sourceModule?.color || draft.color,
-                sessionsNumber: isFreeProgramme ? '1' : String(structure.sessionsNumber || structure.weeks || draft.sessionsNumber || 1),
-                tutor: isFreeProgramme ? '' : draft.tutor,
-                coach: isFreeProgramme ? '' : draft.coach,
-                notes: userFacingNotes(structure.description || draft.notes),
-              },
-              structure,
-              groupDeliveryDay,
-              group.startTime,
-              cohortHolidays,
-            );
-          });
-          return groupChanged ? { ...group, modules: nextModules } : group;
-        });
-        if (!cohortChanged) return cohort;
-        changed = true;
-        return { ...cohort, groups: nextGroups };
-      });
-      return changed ? nextCohorts : previous;
-    });
-  }, [holidays, isFreeProgramme, moduleOptions]);
-
-  const syncModuleDraftsFromBuilderRef = useRef(syncModuleDraftsFromBuilder);
-
-  useEffect(() => {
-    syncModuleDraftsFromBuilderRef.current = syncModuleDraftsFromBuilder;
-  }, [syncModuleDraftsFromBuilder]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const refreshModuleBuilderState = () => {
-      const nextModules = loadLocalModules();
-      setLocalBuilderModules(previous => (
-        JSON.stringify(previous) === JSON.stringify(nextModules) ? previous : nextModules
-      ));
-      syncModuleDraftsFromBuilderRef.current();
-    };
-    refreshModuleBuilderState();
-    window.addEventListener('focus', refreshModuleBuilderState);
-    window.addEventListener('storage', refreshModuleBuilderState);
-    return () => {
-      window.removeEventListener('focus', refreshModuleBuilderState);
-      window.removeEventListener('storage', refreshModuleBuilderState);
-    };
-  }, [isOpen]);
-
   useEffect(() => {
     if (!shouldLoadCatalogueModules) return;
     return reloadCatalogueModules({ silent: true });
@@ -1828,7 +1735,7 @@ export function AddCurriculumStructureWizard({
       if (loadedBuilderStructureKeysRef.current.has(loadKey)) return null;
       loadedBuilderStructureKeysRef.current.add(loadKey);
 
-      const structure = readModuleBuilderSyncForDraft(draft, moduleOptions) || await loadModuleStructure(identifier);
+      const structure = await loadModuleStructure(identifier);
       if (!structure) return null;
       return {
         draftId: draft.localId,
@@ -3328,45 +3235,7 @@ type HolidayTypeDefinition = {
   custom?: boolean;
 };
 
-const HOLIDAY_TYPE_STORE_KEY = 'lms.curriculum.holiday-types.v1';
 const NEW_HOLIDAY_TYPE_BUSY_KEY = '__new_holiday_type__';
-
-function readStoredHolidayTypes(): HolidayTypeDefinition[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(HOLIDAY_TYPE_STORE_KEY);
-    const values = raw ? JSON.parse(raw) : [];
-    return Array.isArray(values)
-      ? values
-          .map(item => ({
-            name: String(item?.name || '').trim(),
-            color: String(item?.color || '#7c3aed'),
-            count: 0,
-            custom: true,
-          }))
-          .filter(item => item.name)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeStoredHolidayTypes(types: HolidayTypeDefinition[]) {
-  if (typeof window === 'undefined') return;
-  const customTypes = types
-    .filter(type => type.custom)
-    .map(type => ({ name: type.name, color: type.color }));
-  window.localStorage.setItem(HOLIDAY_TYPE_STORE_KEY, JSON.stringify(customTypes));
-}
-
-function upsertStoredHolidayType(types: HolidayTypeDefinition[], name: string, color: string) {
-  const nextName = name.trim();
-  const existingIndex = types.findIndex(type => normalise(type.name) === normalise(nextName));
-  if (existingIndex >= 0) {
-    return types.map((type, index) => index === existingIndex ? { ...type, name: nextName, color, custom: true } : type);
-  }
-  return [...types, { name: nextName, color, count: 0, custom: true }];
-}
 
 function HolidayManagerModal({
   holidays,
@@ -3382,13 +3251,12 @@ function HolidayManagerModal({
   const [busyId, setBusyId] = useState<string | number | null>(null);
   const [typeBusy, setTypeBusy] = useState<string | null>(null);
   const [typeDraft, setTypeDraft] = useState<HolidayTypeDraft | null>(null);
-  const [customTypes, setCustomTypes] = useState<HolidayTypeDefinition[]>(() => readStoredHolidayTypes());
   const [collapsedHolidayYears, setCollapsedHolidayYears] = useState<Record<string, boolean>>({});
   const [holidaySearch, setHolidaySearch] = useState('');
   const [holidayTypeFilter, setHolidayTypeFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
   const editing = draft.id !== undefined && draft.id !== null;
-  const typeLibrary = useMemo(() => buildHolidayTypeLibrary(holidays, customTypes), [customTypes, holidays]);
+  const typeLibrary = useMemo(() => buildHolidayTypeLibrary(holidays), [holidays]);
   const filteredHolidays = useMemo(
     () => filterHolidays(holidays, holidaySearch, holidayTypeFilter),
     [holidaySearch, holidayTypeFilter, holidays],
@@ -3398,10 +3266,6 @@ function HolidayManagerModal({
   const canSave = Boolean(draft.label.trim() && draft.startDate && draft.endDate);
 
   const updateDraft = (patch: Partial<HolidayManagerDraft>) => setDraft(current => ({ ...current, ...patch }));
-  const persistCustomTypes = (nextTypes: HolidayTypeDefinition[]) => {
-    setCustomTypes(nextTypes);
-    writeStoredHolidayTypes(nextTypes);
-  };
   const toggleHolidayYear = (year: string) => {
     setCollapsedHolidayYears(current => ({ ...current, [year]: !current[year] }));
   };
@@ -3502,13 +3366,6 @@ function HolidayManagerModal({
           color: typeDraft.color,
         })));
       }
-      const existingCustom = customTypes.some(type => normalise(type.name) === normalise(originalName || nextName));
-      if (!originalName || existingCustom) {
-        const renamedTypes = originalName
-          ? customTypes.filter(type => normalise(type.name) !== normalise(originalName))
-          : customTypes;
-        persistCustomTypes(upsertStoredHolidayType(renamedTypes, nextName, typeDraft.color));
-      }
       if (!originalName || draft.type === originalName) updateDraft({ type: nextName, color: typeDraft.color });
       setTypeDraft(null);
       if (affected.length) onChanged();
@@ -3539,8 +3396,6 @@ function HolidayManagerModal({
           if (affected.length) {
             await Promise.all(affected.map(holiday => updateCurriculumHoliday(holiday.id, { type: '' })));
           }
-          const nextCustomTypes = customTypes.filter(type => normalise(type.name) !== normalise(typeName));
-          if (nextCustomTypes.length !== customTypes.length) persistCustomTypes(nextCustomTypes);
           if (draft.type === typeName) updateDraft({ type: '' });
           if (typeDraft?.original === typeName) setTypeDraft(null);
           if (affected.length) onChanged();
@@ -3937,18 +3792,8 @@ function buildHolidayYearGroups(holidays: CurriculumHoliday[]) {
     }));
 }
 
-function buildHolidayTypeLibrary(holidays: CurriculumHoliday[], customTypes: HolidayTypeDefinition[] = []): HolidayTypeDefinition[] {
+function buildHolidayTypeLibrary(holidays: CurriculumHoliday[]): HolidayTypeDefinition[] {
   const map = new Map<string, HolidayTypeDefinition>();
-  customTypes.forEach(type => {
-    const name = type.name.trim();
-    if (!name) return;
-    map.set(normalise(name), {
-      name,
-      color: type.color || '#7c3aed',
-      count: 0,
-      custom: true,
-    });
-  });
   holidays.forEach(holiday => {
     const name = String(holiday.type || '').trim();
     if (!name) return;
@@ -4978,6 +4823,19 @@ function FreeComponentLmsDetails({
   const getString = (key: string, fallback = '') => String(settings[key] ?? fallback);
   const getNumber = (key: string, fallback = 0) => Number(settings[key] ?? fallback);
   const getBool = (key: string, fallback = false) => Boolean(settings[key] ?? fallback);
+  const videoSourceTypes = ['HTML (MP4)', 'YouTube', 'Vimeo', 'External Link', 'Embed', 'Shortcode'];
+  const normaliseVideoSource = (value: string) => {
+    const clean = String(value || '').trim();
+    if (videoSourceTypes.includes(clean)) return clean;
+    if (clean === 'Upload file') return 'HTML (MP4)';
+    if (clean === 'External link') return 'External Link';
+    return 'YouTube';
+  };
+  const videoSourceType = normaliseVideoSource(getString('sourceType') || getString('provider'));
+  const updateVideoSourceType = (value: string) => {
+    onSettingChange('sourceType', value);
+    onSettingChange('provider', value === 'HTML (MP4)' ? 'Upload file' : value === 'External Link' ? 'External link' : value);
+  };
 
   return (
     <section className="mt-3 rounded-xl border border-background-200 bg-background-100/60 p-3">
@@ -5038,11 +4896,23 @@ function FreeComponentLmsDetails({
 
         {component.type === 'video' && (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <SelectNative label="Video provider" value={getString('provider', 'YouTube')} onChange={value => onSettingChange('provider', value)} options={['YouTube', 'Vimeo', 'Upload file', 'External link']} />
-            <Field label="Video URL" value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} />
+            <SelectNative label="Source type" value={videoSourceType} onChange={updateVideoSourceType} options={videoSourceTypes} />
+            {videoSourceType === 'Embed' ? (
+              <TextArea label="Embed iframe content" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={3} />
+            ) : videoSourceType === 'Shortcode' ? (
+              <TextArea label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} rows={2} />
+            ) : (
+              <Field label={videoSourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'} value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} />
+            )}
             <Field label="Duration minutes" type="number" value={String(getNumber('durationMinutes', 10))} onChange={value => onSettingChange('durationMinutes', Number(value) || 0)} />
+            <FreeCheckbox label="Lesson preview" checked={getBool('lessonPreview')} onChange={value => onSettingChange('lessonPreview', value)} />
             <FreeCheckbox label="Captions available" checked={getBool('captionsAvailable')} onChange={value => onSettingChange('captionsAvailable', value)} />
-            <TextArea label="Learning brief" value={getString('learningBrief')} onChange={value => onSettingChange('learningBrief', value)} rows={2} />
+            <TextArea label="Short description" value={getString('shortDescription') || getString('learningBrief')} onChange={value => { onSettingChange('shortDescription', value); onSettingChange('learningBrief', value); }} rows={2} />
+            <TextArea label="Lesson content" value={getString('lessonContent')} onChange={value => onSettingChange('lessonContent', value)} rows={3} />
+            <TextArea label="Lesson materials" value={getString('lessonMaterialLinks')} onChange={value => onSettingChange('lessonMaterialLinks', value)} rows={2} />
+            <TextArea label="Material instructions" value={getString('lessonMaterialsNotes')} onChange={value => onSettingChange('lessonMaterialsNotes', value)} rows={2} />
+            <TextArea label="Markers and questions" value={getString('markersAndQuestions')} onChange={value => onSettingChange('markersAndQuestions', value)} rows={2} />
+            <TextArea label="Q&A" value={getString('qAndA')} onChange={value => onSettingChange('qAndA', value)} rows={2} />
             <TextArea label="Post-watch task" value={getString('postWatchTask')} onChange={value => onSettingChange('postWatchTask', value)} rows={2} />
           </div>
         )}

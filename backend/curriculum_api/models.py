@@ -79,7 +79,8 @@ class ModuleAuthoringKsbMapping(models.Model):
     CLASSIFICATION_CHOICES = [
         ('main', 'Main'),
         ('secondary', 'Secondary'),
-        ('practice', 'Practice'),
+        ('possible', 'Possible'),
+        ('practice', 'Practice (legacy)'),
     ]
 
     id = models.CharField(max_length=128, primary_key=True)
@@ -89,6 +90,8 @@ class ModuleAuthoringKsbMapping(models.Model):
     ksb_id = models.CharField(max_length=255, blank=True, null=True)
     ksb_code = models.CharField(max_length=64)
     ksb_description = models.TextField(blank=True, default='')
+    source_type = models.CharField(max_length=32, blank=True, default='')
+    source_id = models.CharField(max_length=255, blank=True, default='')
     classification = models.CharField(max_length=32, choices=CLASSIFICATION_CHOICES, default='secondary')
     weight = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -130,4 +133,32 @@ class ModuleAuthoringAdvancedDetails(models.Model):
 
     class Meta:
         db_table = 'curriculum"."module_authoring_advanced_details'
+        managed = False
+
+
+class CohortAuthoringDetails(models.Model):
+    cohort_id = models.CharField(max_length=128, primary_key=True)
+    cohort_name = models.CharField(max_length=500, blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    start_date = models.DateField(blank=True, null=True)
+    end_date = models.DateField(blank=True, null=True)
+    duration_months = models.IntegerField(default=0)
+    color = models.CharField(max_length=32, blank=True, default='')
+    status = models.CharField(max_length=32, default='planned')
+    training_plan_ids = models.JSONField(default=list, blank=True)
+    group_ids = models.JSONField(default=list, blank=True)
+    module_names = models.JSONField(default=list, blank=True)
+    holiday_ids = models.JSONField(default=list, blank=True)
+    selected_holidays = models.JSONField(default=list, blank=True)
+    holidays_in_range = models.JSONField(default=list, blank=True)
+    holiday_summary = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True, default='')
+    source_type = models.CharField(max_length=64, default='training_plan')
+    source_id = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."cohort_authoring_details'
         managed = False

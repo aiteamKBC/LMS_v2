@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import Swal from 'sweetalert2';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
@@ -18,15 +19,13 @@ import {
   duplicateModuleStructure,
   flattenKsbEntries,
   getDefaultStructure,
+  getDefaultComponentSettings,
   loadModuleStructure,
-  loadLocalModules,
-  loadSavedModuleStructure,
   makeAuthoringId,
   recalculateModule,
-  saveLocalModules,
   saveModuleStructure,
+  uploadComponentResource,
   wizardDraftLocalIdFromKey,
-  writeModuleBuilderSync,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -37,6 +36,16 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
 } from './moduleAuthoringData';
+import {
+  MEDIA_SOURCE_TYPES,
+  PODCAST_SOURCE_TYPES,
+  READING_SOURCE_TYPES,
+  firstValidationMessage,
+  normaliseVideoSourceType,
+  providerForVideoSourceType,
+  validateComponentAuthoring,
+  validateModuleAuthoringStructure,
+} from './componentAuthoringModel';
 
 type Selection =
   | { kind: 'week'; weekId: string }
@@ -71,7 +80,9 @@ type ModuleDeliveryUsage = {
   programmeId: string;
   programme: string;
   moduleTitle: string;
+  cohortId?: string;
   cohort: string;
+  groupId?: string;
   group: string;
   deliveryStatus: string;
   startDate?: string;
@@ -183,8 +194,9 @@ export default function ModuleBuilder() {
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
+  const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
+  const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
   const [dragState, setDragState] = useState<DragState>(null);
-  const [localModules, setLocalModules] = useState<ModuleCatalogueItem[]>(() => loadLocalModules());
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
@@ -197,6 +209,7 @@ export default function ModuleBuilder() {
   const deepLinkedModuleRef = useRef('');
   const wizardDraftLocalIdRef = useRef('');
   const savedModuleSnapshotRef = useRef('');
+  const saveRequestRef = useRef(0);
   const { modules, loading, error, reload } = useCurriculumModules();
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes();
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
@@ -207,14 +220,10 @@ export default function ModuleBuilder() {
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
-    const remoteModules = modules.map(module => {
-      const base = curriculumModuleToCatalogue(module);
-      const saved = loadSavedModuleStructure(moduleStructureIdentifier(base)) || loadSavedModuleStructure(base.catalogueId);
-      return saved ? recalculateModule({ ...saved, sourceModule: module }) : base;
-    });
-    return buildMasterModuleList(remoteModules, localModules.map(module => recalculateModule(module)))
+    const remoteModules = modules.map(module => curriculumModuleToCatalogue(module));
+    return buildMasterModuleList(remoteModules, [])
       .filter(module => !hiddenModuleIds.has(module.catalogueId));
-  }, [modules, localModules, storageVersion, hiddenModuleIds]);
+  }, [modules, storageVersion, hiddenModuleIds]);
 
   const programmeOptions = useMemo(() => {
     const byName = new Map<string, string>();
@@ -264,6 +273,8 @@ export default function ModuleBuilder() {
     return ksbSet ? ksbSetSourceId(ksbSet) : '';
   }, [curriculumProgrammes, ksbSets, standards, workingModule]);
 
+  const ksbSourceLabels = useMemo(() => ksbSourceLabelMap(standards, ksbSets), [ksbSets, standards]);
+
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
@@ -298,40 +309,14 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setNoticeAlert(null);
     try {
-      const cached = loadSavedModuleStructure(structureId) || loadSavedModuleStructure(module.catalogueId);
-      const next = recalculateModule(cached ? { ...cached, sourceModule: module.sourceModule || cached.sourceModule } : getDefaultStructure(module));
+      const remote = await loadModuleStructure(structureId);
+      const next = recalculateModule(remote ? { ...remote, sourceModule: module.sourceModule || remote.sourceModule } : getDefaultStructure(module));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
       setSelection(next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null);
       setExpandedWeeks(new Set(next.weekStructure.map(week => week.id)));
       setSettingsOpen(openSettings);
-      if ((next as ModuleCatalogueItem & { localFallback?: boolean }).localFallback) {
-        setNoticeAlert({
-          title: 'Loaded locally',
-          message: 'Backend sync is unavailable, so this module was loaded from local storage.',
-        });
-      }
       await finishLoadingProgress(setOpeningModuleComplete);
-      void loadModuleStructure(structureId).then(remote => {
-        if (!remote) return;
-        const synced = recalculateModule({ ...remote, sourceModule: module.sourceModule || remote.sourceModule });
-        setWorkingModule(current => {
-          if (!current || moduleStructureIdentifier(current) !== structureId) return current;
-          savedModuleSnapshotRef.current = moduleSnapshot(synced);
-          return synced;
-        });
-        setSelection(current => {
-          if (current && synced.weekStructure.some(week => week.id === current.weekId)) return current;
-          return synced.weekStructure[0] ? { kind: 'week', weekId: synced.weekStructure[0].id } : null;
-        });
-        setExpandedWeeks(new Set(synced.weekStructure.map(week => week.id)));
-      }).catch(err => {
-        const message = err instanceof Error ? err.message : 'Unable to refresh module structure.';
-        setNoticeAlert({
-          title: 'Module opened',
-          message: `Opened from the available structure. Background refresh did not complete: ${message}`,
-        });
-      });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
     } finally {
@@ -406,7 +391,7 @@ export default function ModuleBuilder() {
     });
 
     if (!target) {
-      const wizardPayload = readWizardModuleDraft(wizardModuleKey);
+      const wizardPayload = readWizardModuleDraft(params);
       if (wizardPayload?.title) {
         deepLinkedModuleRef.current = requestedKey;
         setOpeningModule({ title: wizardPayload.title, mode: 'builder' });
@@ -429,27 +414,16 @@ export default function ModuleBuilder() {
           status: 'draft',
         }).then(async module => {
           const nextModule = recalculateModule(module);
-          if ((nextModule as ModuleCatalogueItem & { localFallback?: boolean }).localFallback) {
-            const nextLocalModules = [...localModules.filter(item => item.catalogueId !== nextModule.catalogueId), nextModule];
-            setLocalModules(nextLocalModules);
-            saveLocalModules(nextLocalModules);
-            setNoticeAlert({
-              title: 'Saved locally',
-              message: `${nextModule.title} was opened locally because backend sync is unavailable.`,
-            });
-          } else {
-            setNoticeAlert({
-              title: 'Module created',
-              message: `${nextModule.title} was created in Module Builder and saved to the database.`,
-            });
-            reload({ silent: true });
-          }
+          setNoticeAlert({
+            title: 'Module created',
+            message: `${nextModule.title} was created in Module Builder and saved to the database.`,
+          });
+          reload({ silent: true });
           savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
           setWorkingModule(nextModule);
           setSelection(nextModule.weekStructure[0] ? { kind: 'week', weekId: nextModule.weekStructure[0].id } : null);
           setExpandedWeeks(new Set(nextModule.weekStructure.map(week => week.id)));
           setSettingsOpen(false);
-          writeModuleBuilderSync(nextModule, wizardDraftLocalIdRef.current);
           await finishLoadingProgress(setOpeningModuleComplete);
         }).catch(err => {
           setActionMessage(err instanceof Error ? err.message : 'Unable to create module from Curriculum Studio.');
@@ -457,7 +431,6 @@ export default function ModuleBuilder() {
           setOpeningModule(null);
           setOpeningModuleComplete(false);
         });
-        if (wizardModuleKey) window.localStorage.removeItem(wizardModuleKey);
         return;
       }
       if (catalogueModules.length) {
@@ -469,7 +442,7 @@ export default function ModuleBuilder() {
 
     deepLinkedModuleRef.current = requestedKey;
     openModule(target);
-  }, [catalogueModules, finishLoadingProgress, loading, localModules, openModule, programmeFilter, reload, workingModule]);
+  }, [catalogueModules, finishLoadingProgress, loading, openModule, programmeFilter, reload, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
     setSaveSuccess(null);
@@ -534,8 +507,17 @@ export default function ModuleBuilder() {
     });
   };
 
-  const persistWorkingModule = async () => {
-    if (!workingModule) return;
+  const persistWorkingModule = useCallback(async (options: { closeAfterSave?: boolean } = {}) => {
+    const closeAfterSave = options.closeAfterSave !== false;
+    if (!workingModule) return null;
+    const validationIssues = validateModuleAuthoringStructure(workingModule);
+    if (validationIssues.length) {
+      setActionMessage(firstValidationMessage(validationIssues));
+      setSaveSuccess(null);
+      return null;
+    }
+    const requestId = saveRequestRef.current + 1;
+    saveRequestRef.current = requestId;
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
@@ -544,31 +526,40 @@ export default function ModuleBuilder() {
     try {
       setWorkingModule(moduleToSave);
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave);
-      if (localModules.some(module => module.catalogueId === saved.catalogueId)) {
-        const nextLocal = localModules.map(module => (module.catalogueId === saved.catalogueId ? saved : module));
-        setLocalModules(nextLocal);
-        saveLocalModules(nextLocal);
-      }
-      setWorkingModule(saved);
+      const stillCurrent = saveRequestRef.current === requestId;
+      if (!stillCurrent) return;
+      setWorkingModule(current => {
+        if (!current || current.catalogueId !== moduleToSave.catalogueId) return current;
+        return saved;
+      });
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
-      writeModuleBuilderSync(saved, wizardDraftLocalIdRef.current);
-      const savedLocally = Boolean((saved as ModuleCatalogueItem & { localFallback?: boolean }).localFallback);
       setActionMessage(null);
-      setSaveSuccess({
-        title: savedLocally ? 'Saved locally' : 'Module saved',
-        message: wizardDraftLocalIdRef.current
-          ? 'Module structure saved and synced back to the curriculum wizard.'
-          : savedLocally ? 'Your module changes are saved locally. Returning to the modules list.' : 'Module structure saved successfully. Returning to the modules list.',
-      });
+      if (closeAfterSave) {
+        setSaveSuccess({
+          title: 'Module saved',
+          message: wizardDraftLocalIdRef.current
+            ? 'Module structure saved and synced back to the curriculum wizard.'
+            : 'Module structure saved successfully. Returning to the modules list.',
+        });
+      } else {
+        setNoticeAlert({
+          title: 'Module saved',
+          message: 'Module structure saved successfully.',
+        });
+      }
       reload();
+      return saved;
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to save module structure.');
+      return null;
     } finally {
-      setSaving(false);
-      setSaveStartedAt(null);
+      if (saveRequestRef.current === requestId) {
+        setSaving(false);
+        setSaveStartedAt(null);
+      }
     }
-  };
+  }, [reload, workingModule]);
 
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
@@ -576,23 +567,13 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setNoticeAlert(null);
     try {
-      const source = getDefaultStructure((await loadModuleStructure(moduleStructureIdentifier(module))) || loadSavedModuleStructure(module.catalogueId) || module);
+      const source = getDefaultStructure((await loadModuleStructure(moduleStructureIdentifier(module))) || module);
       const duplicate = await duplicateModuleStructure(source);
-      if ((duplicate as ModuleCatalogueItem & { localFallback?: boolean }).localFallback) {
-        const nextLocal = [...localModules.filter(item => item.catalogueId !== duplicate.catalogueId), duplicate];
-        setLocalModules(nextLocal);
-        saveLocalModules(nextLocal);
-        setNoticeAlert({
-          title: 'Saved locally',
-          message: `${duplicate.title} was duplicated locally because backend sync is unavailable.`,
-        });
-      } else {
-        setNoticeAlert({
-          title: 'Module duplicated',
-          message: `${duplicate.title} was created as a draft with its authoring structure.`,
-        });
-        reload();
-      }
+      setNoticeAlert({
+        title: 'Module duplicated',
+        message: `${duplicate.title} was created as a draft with its authoring structure.`,
+      });
+      reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to duplicate module.');
@@ -609,9 +590,6 @@ export default function ModuleBuilder() {
     try {
       await deleteModuleStructure(moduleStructureIdentifier(module));
       setHiddenModuleIds(current => new Set(current).add(module.catalogueId));
-      const nextLocal = localModules.filter(item => item.catalogueId !== module.catalogueId);
-      setLocalModules(nextLocal);
-      saveLocalModules(nextLocal);
       if (workingModule?.catalogueId === module.catalogueId) {
         savedModuleSnapshotRef.current = '';
         setWorkingModule(null);
@@ -656,18 +634,8 @@ export default function ModuleBuilder() {
         programme: programmeIdentity.programmeName,
         programmeId: programmeIdentity.programmeId,
       });
-      if ((module as ModuleCatalogueItem & { localFallback?: boolean }).localFallback) {
-        const nextLocal = [...localModules.filter(item => item.catalogueId !== module.catalogueId), module];
-        setLocalModules(nextLocal);
-        saveLocalModules(nextLocal);
-        setNoticeAlert({
-          title: 'Saved locally',
-          message: `${module.title} was created locally because backend sync is unavailable.`,
-        });
-      } else {
-        setActionMessage(null);
-        reload();
-      }
+      setActionMessage(null);
+      reload();
       setCreateOpen(false);
       await openModule(module, Boolean(options.openSettings));
     } catch (err) {
@@ -704,11 +672,6 @@ export default function ModuleBuilder() {
         status: 'draft',
       });
       const nextModule = recalculateModule(module);
-      if ((nextModule as ModuleCatalogueItem & { localFallback?: boolean }).localFallback) {
-        const nextLocal = [...localModules.filter(item => item.catalogueId !== nextModule.catalogueId), nextModule];
-        setLocalModules(nextLocal);
-        saveLocalModules(nextLocal);
-      }
       savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
       setWorkingModule(nextModule);
       setSelection(null);
@@ -742,23 +705,91 @@ export default function ModuleBuilder() {
     setActionMessage(null);
   };
 
-  const requestCloseWorkingModule = async () => {
-    if (saving) return;
-    if (!hasUnsavedWorkingModuleChanges) {
-      closeWorkingModule();
+  const restoreSavedWorkingModule = useCallback(() => {
+    if (!savedModuleSnapshotRef.current) return workingModule;
+    try {
+      const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
+      setWorkingModule(restored);
+      setExpandedWeeks(new Set(restored.weekStructure.map(week => week.id)));
+      return restored;
+    } catch {
+      return workingModule;
+    }
+  }, [workingModule]);
+
+  const applySelectionSafely = useCallback((nextSelection: Selection, moduleOverride?: ModuleCatalogueItem | null) => {
+    const source = moduleOverride || workingModule;
+    if (!source) return;
+    const week = source.weekStructure.find(item => item.id === nextSelection.weekId);
+    if (!week) {
+      const firstWeek = source.weekStructure[0];
+      setSelection(firstWeek ? { kind: 'week', weekId: firstWeek.id } : null);
       return;
     }
-    await showCurriculumConfirm({
-      title: 'Discard unsaved changes?',
-      text: 'You have edits in this module that have not been saved yet. Continue editing to keep them, or discard to go back.',
+    if (nextSelection.kind === 'component' && !week.components.some(component => component.id === nextSelection.componentId)) {
+      setSelection({ kind: 'week', weekId: week.id });
+      return;
+    }
+    setSelection(nextSelection);
+  }, [workingModule]);
+
+  const requestDirtyNavigation = useCallback(async (onNavigate: (moduleAfterDiscard?: ModuleCatalogueItem | null) => void | Promise<void>) => {
+    if (saving) return;
+    if (!hasUnsavedWorkingModuleChanges) {
+      await onNavigate();
+      return;
+    }
+    const result = await Swal.fire({
+      title: 'Save changes first?',
+      text: 'This module has unsaved edits. Save before continuing, discard the edits, or cancel.',
       icon: 'warning',
-      confirmButtonText: 'Discard changes',
-      cancelButtonText: 'Continue editing',
-      onConfirm: async () => {
-        closeWorkingModule();
+      width: 512,
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'Save',
+      denyButtonText: 'Discard',
+      cancelButtonText: 'Cancel',
+      reverseButtons: true,
+      focusCancel: true,
+      buttonsStyling: false,
+      customClass: {
+        popup: 'kbc-standard-swal-popup',
+        title: 'kbc-standard-swal-title',
+        htmlContainer: 'kbc-standard-swal-text',
+        actions: 'kbc-standard-swal-actions',
+        confirmButton: 'kbc-standard-swal-confirm',
+        denyButton: 'kbc-standard-swal-cancel',
+        cancelButton: 'kbc-standard-swal-cancel',
       },
     });
-  };
+    if (result.isConfirmed) {
+      const saved = await persistWorkingModule({ closeAfterSave: false });
+      if (saved) await onNavigate(saved);
+      return;
+    }
+    if (result.isDenied) {
+      const restored = restoreSavedWorkingModule();
+      await onNavigate(restored);
+    }
+  }, [hasUnsavedWorkingModuleChanges, persistWorkingModule, restoreSavedWorkingModule, saving]);
+
+  const requestSelectionChange = useCallback((nextSelection: Selection) => {
+    applySelectionSafely(nextSelection);
+  }, [applySelectionSafely]);
+
+  useEffect(() => {
+    if (!hasUnsavedWorkingModuleChanges) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedWorkingModuleChanges]);
+
+  const handleStatusChange = useCallback((status: string) => {
+    updateWorkingModule(module => ({ ...module, status }));
+  }, [updateWorkingModule]);
 
   useEffect(() => {
     if (!noticeAlert) return;
@@ -822,20 +853,19 @@ export default function ModuleBuilder() {
           <div className="mx-auto flex w-full max-w-[1840px] flex-col gap-4">
           <WorkspaceHeader
             module={workingModule}
-            modules={[workingModule, ...catalogueModules.filter(module => module.catalogueId !== workingModule.catalogueId)]}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
-            onBack={() => { void requestCloseWorkingModule(); }}
-            onProgrammeChange={programmeName => updateWorkingModule(module => {
-              const programmeIdentity = resolveProgrammeIdentity(programmeName, module.programmeId);
-              return { ...module, programmeName: programmeIdentity.programmeName, programmeId: programmeIdentity.programmeId };
-            })}
-            onModuleChange={catalogueId => {
-              const module = catalogueModules.find(item => item.catalogueId === catalogueId);
-              if (module) openModule(module);
+            onBack={() => { void requestDirtyNavigation(() => closeWorkingModule()); }}
+            onProgrammeChange={programmeName => {
+              void requestDirtyNavigation(() => {
+                updateWorkingModule(module => {
+                  const programmeIdentity = resolveProgrammeIdentity(programmeName, module.programmeId);
+                  return { ...module, programmeName: programmeIdentity.programmeName, programmeId: programmeIdentity.programmeId };
+                });
+              });
             }}
-            onStatusChange={status => updateWorkingModule(module => ({ ...module, status }))}
+            onStatusChange={handleStatusChange}
           />
 
           {(saving || saveSuccess || (actionMessage && !deletingModuleId)) && (
@@ -862,8 +892,8 @@ export default function ModuleBuilder() {
                   return next;
                 });
               }}
-              onSelectWeek={weekId => setSelection({ kind: 'week', weekId })}
-              onSelectComponent={(weekId, componentId) => setSelection({ kind: 'component', weekId, componentId })}
+              onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
+              onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
@@ -951,9 +981,10 @@ export default function ModuleBuilder() {
               ) : selectedWeek ? (
                 <WeekEditor
                   week={selectedWeek}
+                  ksbSourceLabels={ksbSourceLabels}
                   dragState={dragState}
                   onDragState={setDragState}
-                  onSelectComponent={componentId => setSelection({ kind: 'component', weekId: selectedWeek.id, componentId })}
+                  onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
                   onDropReorder={targetComponentId => {
                     if (!dragState || dragState.type !== 'component') return;
                     updateWorkingModule(module => ({ ...module, weekStructure: moveComponent(module.weekStructure, dragState, selectedWeek.id, targetComponentId) }));
@@ -970,6 +1001,7 @@ export default function ModuleBuilder() {
                       weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, components: [...week.components, ...template] } : week),
                     }));
                   }}
+                  onOpenSessionKsbMapping={() => setSessionKsbMappingOpen(true)}
                   onAddLesson={() => {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
@@ -983,13 +1015,15 @@ export default function ModuleBuilder() {
               )}
             </div>
 
-            <ApprenticeshipSettings
-              module={workingModule}
-              week={selectedWeek}
-              component={selectedComponent}
+              <ApprenticeshipSettings
+                module={workingModule}
+                week={selectedWeek}
+                component={selectedComponent}
+                ksbSourceLabels={ksbSourceLabels}
               onAddKsb={target => setKsbTarget(target)}
               onRemoveKsb={(target, mappingId) => updateWorkingModule(module => removeKsbMapping(module, target, mappingId))}
               onUpdateKsbWeight={(target, mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, target, mappingId, weight))}
+              onUpdateKsbClassification={(target, mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, target, mappingId, classification))}
             />
           </div>
           <WorkspaceActionFooter
@@ -1006,6 +1040,7 @@ export default function ModuleBuilder() {
         {settingsOpen && (
           <ModuleSettingsModal
             module={workingModule}
+            ksbSourceLabels={ksbSourceLabels}
             saving={saving}
             saved={Boolean(saveSuccess)}
             onClose={() => setSettingsOpen(false)}
@@ -1016,9 +1051,22 @@ export default function ModuleBuilder() {
             onAddKsb={() => setKsbTarget({ scope: 'module' })}
             onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'module' }, mappingId))}
             onUpdateKsbWeight={(mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, { scope: 'module' }, mappingId, weight))}
+            onUpdateKsbClassification={(mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, { scope: 'module' }, mappingId, classification))}
           />
         )}
         {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
+        {sessionKsbMappingOpen && (
+          <SessionKsbMappingModal
+            module={workingModule}
+            sourceLabels={ksbSourceLabels}
+            saving={saving}
+            saved={!hasUnsavedWorkingModuleChanges}
+            onClose={() => setSessionKsbMappingOpen(false)}
+            onSave={persistWorkingModule}
+            onAddKsb={target => setKsbTarget(target)}
+            onRemoveKsb={(target, mappingId) => updateWorkingModule(module => removeKsbMapping(module, target, mappingId))}
+          />
+        )}
         {lessonPickerWeekId && (
           <LessonTypeModal
             onClose={() => setLessonPickerWeekId(null)}
@@ -1063,7 +1111,7 @@ export default function ModuleBuilder() {
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
-                (current, item) => addKsbMapping(current, ksbTarget, item.option, item.weight),
+                (current, item) => addKsbMapping(current, ksbTarget, item.option, item.weight, item.classification),
                 module,
               ));
               setKsbTarget(null);
@@ -1161,6 +1209,7 @@ export default function ModuleBuilder() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    onKsbMap={() => setKsbMapModule(module)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openModule(module, true)}
                     onDuplicate={() => duplicateModule(module)}
@@ -1185,6 +1234,18 @@ export default function ModuleBuilder() {
             onCreate={input => {
               setCreateOpen(false);
               createQuickModule(input);
+            }}
+          />
+        )}
+        {ksbMapModule && (
+          <ModuleKsbMapModal
+            module={ksbMapModule}
+            sourceLabels={ksbSourceLabels}
+            onClose={() => setKsbMapModule(null)}
+            onBuild={() => {
+              const module = ksbMapModule;
+              setKsbMapModule(null);
+              void openModule(module);
             }}
           />
         )}
@@ -1261,15 +1322,13 @@ function SaveStatusPanel({ saving, elapsedSeconds, success, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, modules, programmeOptions, saving, saved, onBack, onProgrammeChange, onModuleChange, onStatusChange }: {
+function WorkspaceHeader({ module, programmeOptions, saving, saved, onBack, onProgrammeChange, onStatusChange }: {
   module: ModuleCatalogueItem;
-  modules: ModuleCatalogueItem[];
   programmeOptions: string[];
   saving: boolean;
   saved: boolean;
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
-  onModuleChange: (catalogueId: string) => void;
   onStatusChange: (status: string) => void;
 }) {
   const moduleMetrics = [
@@ -1319,18 +1378,12 @@ function WorkspaceHeader({ module, modules, programmeOptions, saving, saved, onB
       </div>
 
       <div className="mt-4 grid gap-3 border-t border-background-200 pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-[220px_minmax(300px,1fr)]">
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:max-w-xs">
           <label className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Programme</span>
             <select value={module.programmeName} onChange={event => onProgrammeChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
               {programmeOptions.map(option => <option key={option}>{option}</option>)}
               {!programmeOptions.includes(module.programmeName) && <option>{module.programmeName}</option>}
-            </select>
-          </label>
-          <label className="block min-w-0">
-            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Open module</span>
-            <select value={module.catalogueId} onChange={event => onModuleChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
-              {modules.map(item => <option key={item.catalogueId} value={item.catalogueId}>{moduleSelectLabel(item)}</option>)}
             </select>
           </label>
         </div>
@@ -1798,23 +1851,20 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
   );
 }
 
-function WeekEditor({ week, dragState, onDragState, onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson }: {
+function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReorder, onSelectComponent, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson }: {
   week: ModuleWeek;
+  ksbSourceLabels: Record<string, string>;
   dragState: DragState;
   onDragState: (state: DragState) => void;
   onDropReorder: (targetComponentId?: string) => void;
   onSelectComponent: (componentId: string) => void;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onApplyTemplate: () => void;
+  onOpenSessionKsbMapping: () => void;
   onAddLesson: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
   const totalPoints = week.components.reduce((total, component) => total + Number(component.points || 0), 0);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-
-  useEffect(() => {
-    setDetailsOpen(Boolean(week.summary || week.learningOutcomes.length));
-  }, [week.id]);
 
   return (
     <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
@@ -1828,13 +1878,13 @@ function WeekEditor({ week, dragState, onDragState, onDropReorder, onSelectCompo
           <h3 className="mt-1.5 truncate text-lg font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <button onClick={() => setDetailsOpen(current => !current)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100">
-            <i className={detailsOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
-            Details
-          </button>
           <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <i className="ri-sparkling-2-line"></i>
             Apply template
+          </button>
+          <button onClick={onOpenSessionKsbMapping} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-50">
+            <i className="ri-node-tree"></i>
+            Session KSB Mapping
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <i className="ri-add-line"></i>
@@ -1851,12 +1901,10 @@ function WeekEditor({ week, dragState, onDragState, onDropReorder, onSelectCompo
             <MiniMetric label="KSB mappings" value={String(uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]).length)} />
           </div>
         </div>
-        {detailsOpen && (
-          <div className="grid grid-cols-1 gap-3 rounded-xl border border-background-200 bg-background-100/35 p-3 2xl:grid-cols-2">
-            <TextArea label="Week summary" value={week.summary} onChange={value => onChange({ summary: value })} rows={3} />
-            <TextArea label="Learning outcomes" value={week.learningOutcomes.join('\n')} onChange={value => onChange({ learningOutcomes: value.split('\n').map(item => item.trim()).filter(Boolean) })} rows={3} />
-          </div>
-        )}
+        <div className="grid grid-cols-1 gap-3 rounded-xl border border-background-200 bg-background-100/35 p-3 2xl:grid-cols-2">
+          <TextArea label="Week summary" value={week.summary} onChange={value => onChange({ summary: value })} rows={3} />
+          <TextArea label="Learning outcomes" value={week.learningOutcomes.join('\n')} onChange={value => onChange({ learningOutcomes: value.split('\n').map(item => item.trim()).filter(Boolean) })} rows={3} />
+        </div>
         <div className="rounded-xl border border-background-200 bg-background-100/35 p-3">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
@@ -1900,7 +1948,7 @@ function WeekEditor({ week, dragState, onDragState, onDropReorder, onSelectCompo
                   <button onClick={() => onSelectComponent(component.id)} className="min-w-0 text-left" title={readableComponentTitle(component.title)}>
                     <p className="truncate text-[12px] font-semibold leading-snug text-foreground-900">{readableComponentTitle(component.title)}</p>
                     <p className="mt-0.5 text-[9px] text-foreground-400">Order {index + 1} · {meta?.label || 'Lesson'}</p>
-                    <ComponentKsbChips mappings={component.ksbMappings} />
+                    <ComponentKsbChips mappings={component.ksbMappings} sourceLabels={ksbSourceLabels} />
                   </button>
                   <div className="hidden items-center gap-2 sm:flex">
                     <ReadOnlyMetricChip label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} suffix="h" tone="emerald" />
@@ -1943,12 +1991,14 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
   quizzes: QuizPackageSummary[];
   quizzesLoading: boolean;
   onChange: (updates: Partial<ModuleComponent>) => void;
-  onSettingChange: (key: string, value: string | number | boolean) => void;
+  onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
   onAddKsb: () => void;
   onRemoveKsb: (mappingId: string) => void;
 }) {
   const meta = componentTypes.find(item => item.type === component.type);
   const tone = componentToneClasses(meta?.tone);
+  const validationIssues = validateComponentAuthoring(component);
+  const fieldError = (path: string) => validationIssues.find(issue => issue.path.endsWith(path))?.message || '';
   return (
     <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
       <div className="border-b border-background-200 bg-background-100/60 px-5 py-4">
@@ -1972,7 +2022,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
       <div className="space-y-5 p-5">
         <EditorSection title="Identity" icon="ri-edit-line">
-          <TextInput label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} />
+          <TextInput label="Title" value={readableComponentTitle(component.title)} onChange={value => onChange({ title: value })} error={fieldError('title')} />
           <TextArea label="Description" value={component.description} onChange={value => onChange({ description: value })} rows={4} />
         </EditorSection>
 
@@ -1986,22 +2036,16 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             quizzes={quizzes}
             quizzesLoading={quizzesLoading}
             onSettingChange={onSettingChange}
+            fieldError={fieldError}
           />
         </EditorSection>
 
         <EditorSection title="Completion and reward" icon="ri-checkbox-circle-line">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} />
-            <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} />
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-            <Checkbox label="Workplace evidence required" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
-            <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+            <NumberInput label="Expected OTJH hours" value={component.expectedOtjh} min={0} step={0.25} onChange={value => onChange({ expectedOtjh: value })} error={fieldError('expectedOtjh')} />
+            <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
-
-        <ComponentAdvancedSettings component={component} onSettingChange={onSettingChange} />
       </div>
     </section>
   );
@@ -2023,49 +2067,6 @@ function EditorSection({ title, icon, children }: { title: string; icon: string;
   );
 }
 
-function ComponentAdvancedSettings({ component, onSettingChange }: { component: ModuleComponent; onSettingChange: (key: string, value: string | number | boolean) => void }) {
-  const setting = (key: string, fallback = '') => String(component.settings[key] ?? fallback);
-  return (
-    <details open className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-foreground-700">
-        <i className="ri-arrow-down-s-line text-foreground-400"></i>
-        <span>Advanced settings</span>
-      </summary>
-      <div className="mt-3 space-y-3">
-        <TextInput
-          label="Completion rule"
-          value={setting('completionRule', defaultCompletionRule(component.type))}
-          onChange={value => onSettingChange('completionRule', value)}
-        />
-        <TextInput
-          label="Evidence required"
-          value={setting('evidenceRequired', defaultEvidenceRequired(component.type))}
-          onChange={value => onSettingChange('evidenceRequired', value)}
-        />
-        <TextArea
-          label="Reflection prompt"
-          value={setting('reflectionPrompt', defaultReflectionPrompt(component.type))}
-          onChange={value => onSettingChange('reflectionPrompt', value)}
-          rows={3}
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <SelectInput
-            label="Status"
-            value={setting('contentStatus', 'Draft')}
-            options={['Draft', 'Ready for QA', 'Needs changes', 'Approved']}
-            onChange={value => onSettingChange('contentStatus', value)}
-          />
-          <TextInput
-            label="Version"
-            value={setting('version', '0.1')}
-            onChange={value => onSettingChange('version', value)}
-          />
-        </div>
-      </div>
-    </details>
-  );
-}
-
 function TypeSpecificFields({
   component,
   module,
@@ -2075,6 +2076,7 @@ function TypeSpecificFields({
   quizzes,
   quizzesLoading,
   onSettingChange,
+  fieldError,
 }: {
   component: ModuleComponent;
   module: ModuleCatalogueItem;
@@ -2083,129 +2085,277 @@ function TypeSpecificFields({
   liveProgrammes: CurriculumProgramme[];
   quizzes: QuizPackageSummary[];
   quizzesLoading: boolean;
-  onSettingChange: (key: string, value: string | number | boolean) => void;
+  onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
+  fieldError: (path: string) => string;
 }) {
   const s = component.settings;
   const getString = (key: string) => String(s[key] ?? '');
   const getNumber = (key: string) => Number(s[key] ?? 0);
   const getBool = (key: string) => Boolean(s[key]);
+  const getStringArray = (key: string) => Array.isArray(s[key]) ? (s[key] as string[]).map(value => String(value || '').trim()).filter(Boolean) : [];
+  const [uploadingResource, setUploadingResource] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint') => {
+    setUploadingResource(true);
+    setUploadError('');
+    try {
+      const result = await uploadComponentResource({
+        moduleCatalogueId: module.catalogueId,
+        componentId: component.id,
+        componentType,
+        file,
+      });
+      const uploaded = result.file;
+      onSettingChange('uploadedFileName', uploaded.fileName);
+      onSettingChange('uploadedFileUrl', uploaded.url);
+      onSettingChange('uploadedFileSize', uploaded.size);
+      onSettingChange('uploadedFileContentType', uploaded.contentType);
+      onSettingChange('uploadSource', 'Device upload');
+      if (componentType === 'podcast') {
+        onSettingChange('podcastSource', 'Device upload');
+        onSettingChange('podcastUrl', uploaded.url);
+      } else {
+        onSettingChange('fileName', uploaded.fileName);
+        onSettingChange('presentationUrl', uploaded.url);
+      }
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
+    } finally {
+      setUploadingResource(false);
+    }
+  };
 
   if (component.type === 'live-session') {
+    const groupOptions = liveSessionGroupOptions(module);
+    const selectedGroupKeys = getStringArray('selectedGroupKeys');
+    const selectedGroupSet = new Set(selectedGroupKeys);
+    const updateSelectedGroups = (nextKeys: string[]) => {
+      const nextSet = new Set(nextKeys);
+      onSettingChange('selectedGroupKeys', nextKeys);
+      onSettingChange('selectedGroupNames', groupOptions.filter(option => nextSet.has(option.key)).map(option => option.group));
+    };
+    const toggleGroup = (key: string) => {
+      const nextSet = new Set(selectedGroupKeys);
+      if (nextSet.has(key)) nextSet.delete(key);
+      else nextSet.add(key);
+      updateSelectedGroups(groupOptions.map(option => option.key).filter(optionKey => nextSet.has(optionKey)));
+    };
     return (
       <EditorBlock title="Live Teams session">
         <p className="rounded-lg bg-primary-50 border border-primary-100 px-3 py-2 text-[11px] font-medium text-primary-700">Teams link, date and attendance sync are added later by MIS when this module is allocated to a cohort.</p>
-        <TextArea label="Tutor-led session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
-        <TextArea label="Learner preparation before session" value={getString('preparationInstructions')} onChange={value => onSettingChange('preparationInstructions', value)} rows={3} />
-        <TextArea label="Reflection questions after the session" value={getString('reflectionQuestions')} onChange={value => onSettingChange('reflectionQuestions', value)} rows={3} />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <Checkbox label="Attendance required" checked={getBool('attendanceRequired')} onChange={value => onSettingChange('attendanceRequired', value)} />
-          <Checkbox label="Recording expected" checked={getBool('recordingExpected')} onChange={value => onSettingChange('recordingExpected', value)} />
+        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
+              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
+            </div>
+            {!!groupOptions.length && (
+              <div className="flex items-center gap-1.5">
+                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                  Select all
+                </button>
+                <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+          {groupOptions.length ? (
+            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {groupOptions.map(option => (
+                <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedGroupSet.has(option.key)}
+                    onChange={() => toggleGroup(option.key)}
+                    className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] font-bold">{option.group}</span>
+                    {option.cohort && <span className="mt-0.5 block truncate text-[10px] font-semibold opacity-70">{option.cohort}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
+              No delivery groups are linked to this module yet.
+            </p>
+          )}
         </div>
+        {!!selectedGroupKeys.length && (
+          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+            <div className="mb-3">
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Teams link</p>
+              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
+            </div>
+            <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+          </div>
+        )}
+        <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
       </EditorBlock>
     );
   }
 
   if (component.type === 'recording-placeholder') {
+    const groupOptions = liveSessionGroupOptions(module);
+    const selectedGroupKeys = getStringArray('selectedGroupKeys');
+    const selectedGroupSet = new Set(selectedGroupKeys);
+    const updateSelectedGroups = (nextKeys: string[]) => {
+      const nextSet = new Set(nextKeys);
+      onSettingChange('selectedGroupKeys', nextKeys);
+      onSettingChange('selectedGroupNames', groupOptions.filter(option => nextSet.has(option.key)).map(option => option.group));
+    };
+    const toggleGroup = (key: string) => {
+      const nextSet = new Set(selectedGroupKeys);
+      if (nextSet.has(key)) nextSet.delete(key);
+      else nextSet.add(key);
+      updateSelectedGroups(groupOptions.map(option => option.key).filter(optionKey => nextSet.has(optionKey)));
+    };
     return (
       <EditorBlock title="Recording placeholder">
         <p className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[11px] font-medium text-foreground-500">Recording files are attached later after cohort allocation. This placeholder reserves the lesson space and completion rule.</p>
-        <TextArea label="Recording purpose" value={getString('recordingPurpose')} onChange={value => onSettingChange('recordingPurpose', value)} rows={3} />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <SelectInput label="Source" value={getString('source')} options={['MIS allocation', 'Tutor upload', 'External link']} onChange={value => onSettingChange('source', value)} />
-          <TextInput label="Expected availability" value={getString('expectedAvailability')} onChange={value => onSettingChange('expectedAvailability', value)} />
+        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
+              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
+            </div>
+            {!!groupOptions.length && (
+              <div className="flex items-center gap-1.5">
+                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                  Select all
+                </button>
+                <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
+                  Clear
+                </button>
+              </div>
+            )}
+          </div>
+          {groupOptions.length ? (
+            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+              {groupOptions.map(option => (
+                <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedGroupSet.has(option.key)}
+                    onChange={() => toggleGroup(option.key)}
+                    className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] font-bold">{option.group}</span>
+                    {option.cohort && <span className="mt-0.5 block truncate text-[10px] font-semibold opacity-70">{option.cohort}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
+              No delivery groups are linked to this module yet.
+            </p>
+          )}
         </div>
-        <Checkbox label="Captions expected" checked={getBool('captionsExpected')} onChange={value => onSettingChange('captionsExpected', value)} />
+        {!!selectedGroupKeys.length && (
+          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+            <div className="mb-3">
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Recording link</p>
+              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
+            </div>
+            <TextInput label="Recording URL" value={getString('recordingUrl')} onChange={value => onSettingChange('recordingUrl', value)} error={fieldError('settings.recordingUrl')} />
+          </div>
+        )}
       </EditorBlock>
     );
   }
 
   if (component.type === 'video') {
+    const sourceType = normaliseVideoSourceType(getString('sourceType') || getString('provider'));
+    const updateSourceType = (value: string) => {
+      onSettingChange('sourceType', value);
+      onSettingChange('provider', providerForVideoSourceType(value));
+      onSettingChange('legacyUnsupportedSource', false);
+      onSettingChange('legacySourceType', '');
+    };
+
     return (
-      <EditorBlock title="Video source">
-        <div className="grid grid-cols-1 md:grid-cols-[160px_minmax(0,1fr)] gap-2">
-          <SelectInput label="Video provider" value={getString('provider')} options={['YouTube', 'Vimeo', 'Upload file', 'External link']} onChange={value => onSettingChange('provider', value)} />
-          <TextInput label="Video URL" value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} />
+      <EditorBlock title="Video lesson">
+        {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
+            This lesson uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.
+          </p>
+        )}
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
+          <SelectInput label="Source type" value={sourceType} options={MEDIA_SOURCE_TYPES} onChange={updateSourceType} />
+          {sourceType === 'Embed' ? (
+            <TextArea label="Embed iframe content" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+          ) : (
+            <TextInput label={sourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'} value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} error={fieldError('settings.videoUrl')} />
+          )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_220px] gap-2 items-end">
-          <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
-          <Checkbox label="Captions available" checked={getBool('captionsAvailable')} onChange={value => onSettingChange('captionsAvailable', value)} />
+
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-2 md:items-end">
+          <NumberInput label="Lesson duration (minutes)" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
+          <NumberInput label="Required progress (%)" value={getNumber('requiredProgressPercentage')} min={0} max={100} step={1} onChange={value => onSettingChange('requiredProgressPercentage', value)} error={fieldError('settings.requiredProgressPercentage')} />
         </div>
-        <TextArea label="Video learning brief" value={getString('learningBrief')} onChange={value => onSettingChange('learningBrief', value)} rows={3} />
-        <TextArea label="Learner task after watching" value={getString('postWatchTask')} onChange={value => onSettingChange('postWatchTask', value)} rows={2} />
+
+        <RichTextDraft label="Lesson content" value={getString('lessonContent')} onChange={value => onSettingChange('lessonContent', value)} rows={10} />
       </EditorBlock>
     );
   }
 
   if (component.type === 'podcast') {
+    const sourceType = getString('podcastSource') || 'External URL';
     return (
       <EditorBlock title="Podcast source">
-        <div className="grid grid-cols-1 md:grid-cols-[160px_minmax(0,1fr)] gap-2">
-          <SelectInput label="Podcast source" value={getString('podcastSource')} options={['External URL', 'Upload', 'LMS resource']} onChange={value => onSettingChange('podcastSource', value)} />
-          <TextInput label="Podcast URL" value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
+          <SelectInput label="Source type" value={sourceType} options={PODCAST_SOURCE_TYPES} onChange={value => onSettingChange('podcastSource', value)} />
+          <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
         </div>
-        <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
-        <TextArea label="Listening focus" value={getString('listeningFocus')} onChange={value => onSettingChange('listeningFocus', value)} rows={3} />
-        <TextArea label="Reflection question" value={getString('podcastReflectionQuestion')} onChange={value => onSettingChange('podcastReflectionQuestion', value)} rows={2} />
+        <ComponentResourceUpload
+          label="Upload podcast audio"
+          accept="audio/*,.mp3,.m4a,.mp4,.wav,.aac,.ogg,.oga,.webm"
+          uploadedName={getString('uploadedFileName')}
+          uploadedUrl={getString('uploadedFileUrl')}
+          uploadedSize={getNumber('uploadedFileSize')}
+          uploading={uploadingResource}
+          error={uploadError}
+          onUpload={file => handleResourceUpload(file, 'podcast')}
+        />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <NumberInput label="Duration in minutes" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
+          <NumberInput label="Required progress (%)" value={getNumber('requiredProgressPercentage')} min={0} max={100} step={1} onChange={value => onSettingChange('requiredProgressPercentage', value)} error={fieldError('settings.requiredProgressPercentage')} />
+        </div>
       </EditorBlock>
     );
   }
 
   if (component.type === 'reading') {
     return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <SelectInput label="Difficulty" value={getString('difficulty') || 'Standard'} options={['Introductory', 'Standard', 'Advanced']} onChange={value => onSettingChange('difficulty', value)} />
-          <SelectInput label="Requirement" value={getString('requirement') || 'Required'} options={['Required', 'Recommended', 'Stretch']} onChange={value => onSettingChange('requirement', value)} />
-        </div>
-        <EditorBlock title="Reading source and content">
-          <SelectInput label="Reading source" value={getString('readingSource')} options={['Written in LMS', 'URL', 'PDF', 'Word document', 'LMS resource']} onChange={value => onSettingChange('readingSource', value)} />
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_260px] gap-3">
-            <RichTextDraft label="Reading content" value={getString('readingContent')} onChange={value => onSettingChange('readingContent', value)} />
-            <div className="space-y-3">
-              <TextArea label="Main learning outcomes" value={getString('mainLearningOutcomes')} onChange={value => onSettingChange('mainLearningOutcomes', value)} rows={5} />
-              <TextArea label="KSBs to evidence" value={getString('ksbEvidenceNotes')} onChange={value => onSettingChange('ksbEvidenceNotes', value)} rows={4} />
-            </div>
-          </div>
-          <TextInput label="Pages or sections to focus on" value={getString('focusSections')} onChange={value => onSettingChange('focusSections', value)} />
-          <TextArea label="Learner instruction" value={getString('learnerInstruction')} onChange={value => onSettingChange('learnerInstruction', value)} rows={2} />
-          <AccordionRow title="Key points, terms and summary" badge={getString('keyPointCount') || '0'} defaultOpen={false}>
-            <TextArea label="Key points" value={getString('keyPoints')} onChange={value => onSettingChange('keyPoints', value)} rows={4} />
-            <TextArea label="Glossary or terminology" value={getString('glossaryTerms')} onChange={value => onSettingChange('glossaryTerms', value)} rows={3} />
-          </AccordionRow>
-          <AccordionRow title="OTJH breakdown" badge={`${getNumber('estimatedReadingTime') || 0} mins`}>
-            <NumberInput label="Estimated reading time" value={getNumber('estimatedReadingTime')} min={0} step={1} onChange={value => onSettingChange('estimatedReadingTime', value)} />
-            <TextArea label="How this contributes to OTJH" value={getString('otjhRationale')} onChange={value => onSettingChange('otjhRationale', value)} rows={2} />
-          </AccordionRow>
-          <AccordionRow title="Voice-over and audio" badge={getBool('audioEnabled') ? 'On' : 'Off'}>
-            <Checkbox label="Audio version available" checked={getBool('audioEnabled')} onChange={value => onSettingChange('audioEnabled', value)} />
-            <TextInput label="Audio URL" value={getString('audioUrl')} onChange={value => onSettingChange('audioUrl', value)} />
-          </AccordionRow>
-          <AccordionRow title="Reflection and evidence" badge={getString('reflectionQuestionCount') || '0 qs'}>
-            <TextArea label="Reflection prompts" value={getString('readingReflectionPrompts')} onChange={value => onSettingChange('readingReflectionPrompts', value)} rows={4} />
-            <TextArea label="Evidence learners should capture" value={getString('readingEvidenceRequired')} onChange={value => onSettingChange('readingEvidenceRequired', value)} rows={3} />
-          </AccordionRow>
-          <AccordionRow title="Completion rules" badge={getString('completionRuleCount') || '3 rules'}>
-            <Checkbox label="Required reading" checked={getBool('requiredReading')} onChange={value => onSettingChange('requiredReading', value)} />
-            <Checkbox label="Learner must confirm completion" checked={getBool('completionConfirmationRequired')} onChange={value => onSettingChange('completionConfirmationRequired', value)} />
-            <TextInput label="Completion rule" value={getString('completionRule')} onChange={value => onSettingChange('completionRule', value)} />
-          </AccordionRow>
-          <AccordionRow title="Linked quizzes, assignments and coaching">
-            <TextInput label="Linked quiz or task" value={getString('linkedActivity')} onChange={value => onSettingChange('linkedActivity', value)} />
-            <TextArea label="Coaching discussion prompt" value={getString('coachingPrompt')} onChange={value => onSettingChange('coachingPrompt', value)} rows={2} />
-          </AccordionRow>
-          <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium text-primary-700">Tip: Map KSBs in the right-hand Apprenticeship panel. They apply to this reading lesson.</p>
-        </EditorBlock>
-      </div>
+      <EditorBlock title="Reading source and content">
+        <SelectInput label="Reading source" value={getString('readingSource')} options={READING_SOURCE_TYPES} onChange={value => onSettingChange('readingSource', value)} />
+        {getString('readingSource') === 'URL' && <TextInput label="Reading URL" value={getString('resourceUrl')} onChange={value => onSettingChange('resourceUrl', value)} error={fieldError('settings.resourceUrl')} />}
+        <RichTextDraft label="Short description of the lesson" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
+        <RichTextDraft label="Lesson content" value={getString('readingContent')} onChange={value => onSettingChange('readingContent', value)} rows={14} />
+      </EditorBlock>
     );
   }
 
   if (component.type === 'powerpoint') {
     return (
       <EditorBlock title="PowerPoint resource">
-        <TextInput label="PowerPoint file name" value={getString('fileName')} onChange={value => onSettingChange('fileName', value)} />
+        <TextInput label="Presentation URL" value={getString('presentationUrl')} onChange={value => onSettingChange('presentationUrl', value)} error={fieldError('settings.presentationUrl')} />
+        <ComponentResourceUpload
+          label="Upload slide deck"
+          accept=".ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf"
+          uploadedName={getString('uploadedFileName') || getString('fileName')}
+          uploadedUrl={getString('uploadedFileUrl')}
+          uploadedSize={getNumber('uploadedFileSize')}
+          uploading={uploadingResource}
+          error={uploadError}
+          onUpload={file => handleResourceUpload(file, 'powerpoint')}
+        />
         <TextInput label="Slide range or deck section" value={getString('slideRange')} onChange={value => onSettingChange('slideRange', value)} />
-        <TextArea label="Speaker notes or learner guidance" value={getString('speakerNotes')} onChange={value => onSettingChange('speakerNotes', value)} rows={3} />
-        <Checkbox label="Learner download allowed" checked={getBool('downloadAllowed')} onChange={value => onSettingChange('downloadAllowed', value)} />
       </EditorBlock>
     );
   }
@@ -2224,8 +2374,6 @@ function TypeSpecificFields({
           loading={quizzesLoading}
           onSettingChange={onSettingChange}
         />
-        <Checkbox label="Affects KSB progression" checked={getBool('affectsKsbProgression')} onChange={value => onSettingChange('affectsKsbProgression', value)} />
-        <TextArea label="Feedback shown after completion" value={getString('completionFeedback')} onChange={value => onSettingChange('completionFeedback', value)} rows={2} />
       </EditorBlock>
     );
   }
@@ -2235,9 +2383,6 @@ function TypeSpecificFields({
       <EditorBlock title="Reflection and guidance">
         <TextArea label="Reflection prompt" value={getString('reflectionPrompt')} onChange={value => onSettingChange('reflectionPrompt', value)} rows={4} />
         <NumberInput label="Minimum word count" value={getNumber('minimumWordCount')} min={0} step={50} onChange={value => onSettingChange('minimumWordCount', value)} />
-        <TextArea label="Learner guidance" value={getString('learnerGuidance')} onChange={value => onSettingChange('learnerGuidance', value)} rows={3} />
-        <TextArea label="Tutor review guidance" value={getString('tutorReviewGuidance')} onChange={value => onSettingChange('tutorReviewGuidance', value)} rows={3} />
-        <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={() => undefined} disabled />
       </EditorBlock>
     );
   }
@@ -2247,10 +2392,6 @@ function TypeSpecificFields({
       <EditorBlock title="Workplace evidence">
         <TextArea label="Evidence instructions" value={getString('evidenceInstructions')} onChange={value => onSettingChange('evidenceInstructions', value)} rows={4} />
         <TextInput label="Accepted evidence types" value={getString('acceptedEvidenceTypes')} onChange={value => onSettingChange('acceptedEvidenceTypes', value)} />
-        <TextArea label="Assessment checklist" value={getString('assessmentChecklist')} onChange={value => onSettingChange('assessmentChecklist', value)} rows={3} />
-        <NumberInput label="Minimum description words" value={getNumber('minimumDescriptionWords')} min={0} step={25} onChange={value => onSettingChange('minimumDescriptionWords', value)} />
-        <Checkbox label="Workplace evidence required" checked={component.workplaceEvidenceRequired} onChange={() => undefined} disabled />
-        <Checkbox label="Tutor validation required" checked={component.tutorValidationRequired} onChange={() => undefined} disabled />
       </EditorBlock>
     );
   }
@@ -2261,8 +2402,6 @@ function TypeSpecificFields({
         <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
         <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
-        <TextArea label="Marking rubric" value={getString('markingRubric')} onChange={value => onSettingChange('markingRubric', value)} rows={4} />
-        <Checkbox label="Tutor validation required" checked={component.tutorValidationRequired} onChange={() => undefined} disabled />
       </EditorBlock>
     );
   }
@@ -2271,9 +2410,6 @@ function TypeSpecificFields({
     return (
       <EditorBlock title="Coaching preparation">
         <TextArea label="Preparation prompt" value={getString('preparationPrompt')} onChange={value => onSettingChange('preparationPrompt', value)} rows={4} />
-        <TextArea label="Evidence or notes to bring" value={getString('evidenceToBring')} onChange={value => onSettingChange('evidenceToBring', value)} rows={3} />
-        <TextArea label="Coach discussion points" value={getString('coachDiscussionPoints')} onChange={value => onSettingChange('coachDiscussionPoints', value)} rows={3} />
-        <Checkbox label="Monthly coaching review linked" checked={getBool('coachingReviewLinked')} onChange={value => onSettingChange('coachingReviewLinked', value)} />
       </EditorBlock>
     );
   }
@@ -2282,8 +2418,6 @@ function TypeSpecificFields({
     <EditorBlock title="Checkpoint quiz">
       <TextInput label="Checkpoint title" value={getString('checkpointTitle')} onChange={value => onSettingChange('checkpointTitle', value)} />
       <TextArea label="Checkpoint questions" value={getString('checkpointQuestions')} onChange={value => onSettingChange('checkpointQuestions', value)} rows={4} />
-      <Checkbox label="Progress review linked" checked={getBool('progressReviewLinked')} onChange={value => onSettingChange('progressReviewLinked', value)} />
-      <Checkbox label="Monthly coaching review linked" checked={getBool('monthlyCoachingReviewLinked')} onChange={value => onSettingChange('monthlyCoachingReviewLinked', value)} />
     </EditorBlock>
   );
 }
@@ -2305,7 +2439,7 @@ function LinkedQuizSelector({
   liveProgrammes: CurriculumProgramme[];
   quizzes: QuizPackageSummary[];
   loading: boolean;
-  onSettingChange: (key: string, value: string | number | boolean) => void;
+  onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
 }) {
   const settings = component.settings;
   const liveProgrammeKeys = new Set(liveProgrammes.map(programme => normaliseQuizText(programme.name)));
@@ -2516,7 +2650,9 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
     programmeId: String(module.programmeId || module.sourceModule?.programmeId || ''),
     programme: module.programmeName || module.sourceModule?.programme || 'Unassigned programme',
     moduleTitle: module.title || module.sourceModule?.name || 'Untitled module',
+    cohortId: String(module.sourceModule?.cohortId || module.cohortId || ''),
     cohort,
+    groupId: String(module.sourceModule?.groupId || module.groupId || ''),
     group,
     deliveryStatus: deliveryStatusText(module.deliveryStatus || module.sourceModule?.deliveryStatus).replace(/^Delivery: /, ''),
     startDate: module.startDate || module.sourceModule?.startDate,
@@ -2540,86 +2676,239 @@ function findModuleForDeliveryPath(
   }) || null;
 }
 
-function defaultCompletionRule(type: ModuleComponentType) {
-  const rules: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attend or watch recording',
-    'recording-placeholder': 'Mark complete after watching',
-    video: 'Watch video and mark complete',
-    podcast: 'Listen and mark complete',
-    reading: 'Read the material and confirm completion',
-    powerpoint: 'Review slide deck',
-    quiz: 'Submit',
-    'monthly-ksb-quiz': 'Submit monthly KSB quiz',
-    reflection: 'Submit reflection',
-    'workplace-evidence': 'Upload + describe',
-    assignment: 'Submit assignment',
-    checkpoint: 'Complete checkpoint',
-    'coaching-preparation': 'Complete coaching preparation',
+type RichTextMode = 'design' | 'html';
+
+function RichTextDraft({ label, value, onChange, rows = 9, compact = false }: { label: string; value: string; onChange: (value: string) => void; rows?: number; compact?: boolean }) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [mode, setMode] = useState<RichTextMode>('design');
+  const [fullscreen, setFullscreen] = useState(false);
+  const lastHtmlRef = useRef(value || '');
+  const placeholder = compact
+    ? 'Briefly introduce what the learner will read.'
+    : 'Use headings, short paragraphs, bold key terms, and bullet lists. You can paste prepared HTML here.';
+  const plainText = htmlToPlainText(value);
+  const wordCount = plainText ? plainText.split(/\s+/).filter(Boolean).length : 0;
+  const minHeight = compact ? 'min-h-[220px]' : 'min-h-[360px]';
+
+  useEffect(() => {
+    if (mode !== 'design') return;
+    const editor = editorRef.current;
+    if (!editor || document.activeElement === editor || value === lastHtmlRef.current) return;
+    editor.innerHTML = value || '';
+    lastHtmlRef.current = value || '';
+  }, [mode, value]);
+
+  const commitHtml = useCallback((html: string) => {
+    lastHtmlRef.current = html;
+    onChange(html);
+  }, [onChange]);
+
+  const syncFromEditor = useCallback(() => {
+    const html = editorRef.current?.innerHTML || '';
+    commitHtml(html);
+  }, [commitHtml]);
+
+  const focusEditor = () => {
+    if (mode !== 'design') return;
+    editorRef.current?.focus();
   };
-  return rules[type] || 'Mark complete';
-}
 
-function defaultEvidenceRequired(type: ModuleComponentType) {
-  const evidence: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attendance or recording completion',
-    reflection: 'Reflection + signature',
-    'workplace-evidence': 'File + 100-word description',
-    assignment: 'Submission file',
-    'coaching-preparation': 'Preparation notes',
-    checkpoint: 'Quiz result',
-    quiz: 'Quiz result',
-    'monthly-ksb-quiz': 'Quiz result',
+  const runCommand = (command: string, commandValue?: string) => {
+    if (mode !== 'design') return;
+    focusEditor();
+    document.execCommand(command, false, commandValue);
+    syncFromEditor();
   };
-  return evidence[type] || '-';
-}
 
-function defaultReflectionPrompt(type: ModuleComponentType) {
-  if (type === 'workplace-evidence') return 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?';
-  if (type === 'quiz' || type === 'monthly-ksb-quiz' || type === 'checkpoint') return 'Which questions or topics do you need to revisit after this activity?';
-  return 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
-}
+  const insertHtml = (html: string) => {
+    if (mode !== 'design') return;
+    focusEditor();
+    document.execCommand('insertHTML', false, html);
+    syncFromEditor();
+  };
 
-function RichTextDraft({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const addLink = () => {
+    const url = window.prompt('Enter link URL');
+    if (!url) return;
+    runCommand('createLink', url);
+  };
+
+  const addImage = () => {
+    const url = window.prompt('Enter image URL');
+    if (!url) return;
+    insertHtml(`<img src="${escapeAttribute(url)}" alt="" style="max-width:100%;height:auto;" />`);
+  };
+
+  const addVideo = () => {
+    const url = window.prompt('Enter video URL');
+    if (!url) return;
+    insertHtml(`<video controls src="${escapeAttribute(url)}" style="max-width:100%;height:auto;"></video>`);
+  };
+
+  const pasteAsHtml = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const html = event.clipboardData.getData('text/html');
+    if (!html) return;
+    event.preventDefault();
+    insertHtml(html);
+  };
+
+  const shellClass = fullscreen
+    ? 'fixed inset-4 z-[80] flex flex-col rounded-xl border border-foreground-200 bg-background-50 shadow-2xl'
+    : 'mt-1 overflow-hidden rounded-lg border border-foreground-200/60 bg-background-50';
+
   return (
-    <label className="block">
-      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <div className="mt-1 overflow-hidden rounded-lg border border-foreground-200/60 bg-background-50">
-        <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-1.5 text-[11px] text-foreground-500">
-          {['B', 'I', 'U', 'H1', 'H2'].map(item => <span key={item} className="rounded px-1.5 py-0.5 font-bold">{item}</span>)}
-          <i className="ri-list-unordered text-sm"></i>
-          <i className="ri-link text-sm"></i>
-          <i className="ri-double-quotes-l text-sm"></i>
-          <span className="ml-auto rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-bold text-primary-700">Visual</span>
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold text-foreground-500">HTML</span>
+    <div className="block">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase text-foreground-400">{label}</span>
+        <div className="flex items-center gap-1 rounded-lg bg-background-100 p-0.5">
+          <button type="button" onClick={() => setMode('design')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'design' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>Design</button>
+          <button type="button" onClick={() => setMode('html')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'html' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>HTML</button>
         </div>
-        <textarea value={value} onChange={event => onChange(event.target.value)} rows={9} className="w-full resize-y bg-background-50 px-3 py-2 text-[13px] text-foreground-900 outline-none" placeholder="Write headings, lists, bold text, links, or paste prepared content here." />
       </div>
-    </label>
+      <div className={shellClass}>
+        <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-2 text-[11px] text-foreground-600">
+          <RichSelect title="Block style" disabled={mode !== 'design'} defaultValue="P" onChange={tag => runCommand('formatBlock', tag)}>
+            <option value="P">Paragraph</option>
+            <option value="H1">Heading 1</option>
+            <option value="H2">Heading 2</option>
+            <option value="H3">Heading 3</option>
+            <option value="BLOCKQUOTE">Quote</option>
+          </RichSelect>
+          <RichSelect title="Font" disabled={mode !== 'design'} defaultValue="" onChange={font => font && runCommand('fontName', font)}>
+            <option value="">System Font</option>
+            <option value="Arial">Arial</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Times New Roman">Times</option>
+            <option value="Courier New">Courier</option>
+          </RichSelect>
+          <RichSelect title="Size" disabled={mode !== 'design'} defaultValue="3" onChange={size => runCommand('fontSize', size)}>
+            <option value="2">13px</option>
+            <option value="3">16px</option>
+            <option value="4">18px</option>
+            <option value="5">24px</option>
+            <option value="6">32px</option>
+          </RichSelect>
+          <RichToolbarDivider />
+          <RichTool icon="ri-arrow-go-back-line" label="Undo" disabled={mode !== 'design'} onClick={() => runCommand('undo')} />
+          <RichTool icon="ri-arrow-go-forward-line" label="Redo" disabled={mode !== 'design'} onClick={() => runCommand('redo')} />
+          <RichToolbarDivider />
+          <RichTool icon="ri-bold" label="Bold" disabled={mode !== 'design'} onClick={() => runCommand('bold')} />
+          <RichTool icon="ri-italic" label="Italic" disabled={mode !== 'design'} onClick={() => runCommand('italic')} />
+          <RichTool icon="ri-underline" label="Underline" disabled={mode !== 'design'} onClick={() => runCommand('underline')} />
+          <RichTool icon="ri-strikethrough" label="Strikethrough" disabled={mode !== 'design'} onClick={() => runCommand('strikeThrough')} />
+          <label title="Text color" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
+            <i className="ri-font-color text-base"></i>
+            <input type="color" className="sr-only" onChange={event => runCommand('foreColor', event.target.value)} />
+          </label>
+          <label title="Highlight" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
+            <i className="ri-mark-pen-line text-base"></i>
+            <input type="color" className="sr-only" onChange={event => runCommand('hiliteColor', event.target.value)} />
+          </label>
+          <RichToolbarDivider />
+          <RichTool icon="ri-link" label="Link" disabled={mode !== 'design'} onClick={addLink} />
+          <RichTool icon="ri-image-line" label="Image" disabled={mode !== 'design'} onClick={addImage} />
+          <RichTool icon="ri-video-line" label="Video" disabled={mode !== 'design'} onClick={addVideo} />
+          <RichTool icon="ri-separator" label="Divider" disabled={mode !== 'design'} onClick={() => insertHtml('<hr />')} />
+          <RichToolbarDivider />
+          <RichTool icon="ri-align-left" label="Align left" disabled={mode !== 'design'} onClick={() => runCommand('justifyLeft')} />
+          <RichTool icon="ri-align-center" label="Align center" disabled={mode !== 'design'} onClick={() => runCommand('justifyCenter')} />
+          <RichTool icon="ri-align-right" label="Align right" disabled={mode !== 'design'} onClick={() => runCommand('justifyRight')} />
+          <RichTool icon="ri-list-unordered" label="Bullet list" disabled={mode !== 'design'} onClick={() => runCommand('insertUnorderedList')} />
+          <RichTool icon="ri-list-ordered" label="Numbered list" disabled={mode !== 'design'} onClick={() => runCommand('insertOrderedList')} />
+          <RichTool icon="ri-indent-increase" label="Indent" disabled={mode !== 'design'} onClick={() => runCommand('indent')} />
+          <RichTool icon="ri-indent-decrease" label="Outdent" disabled={mode !== 'design'} onClick={() => runCommand('outdent')} />
+          <RichTool icon="ri-format-clear" label="Clear formatting" disabled={mode !== 'design'} onClick={() => runCommand('removeFormat')} />
+          <RichTool icon={fullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(open => !open)} />
+          <span className="ml-auto rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{wordCount} words</span>
+        </div>
+        {mode === 'design' ? (
+          <div className="relative">
+            {!plainText && (
+              <span className="pointer-events-none absolute left-4 top-4 text-[13px] text-foreground-300">{placeholder}</span>
+            )}
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={syncFromEditor}
+              onBlur={syncFromEditor}
+              onPaste={pasteAsHtml}
+              className={`rich-text-surface ${minHeight} max-h-[70vh] overflow-y-auto bg-background-50 px-4 py-4 text-[14px] leading-relaxed text-foreground-900 outline-none`}
+              dangerouslySetInnerHTML={{ __html: value || '' }}
+            />
+          </div>
+        ) : (
+          <textarea
+            value={value}
+            onChange={event => commitHtml(event.target.value)}
+            rows={rows}
+            className={`${minHeight} max-h-[70vh] w-full resize-y bg-[#0f172a] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#e2e8f0] outline-none`}
+            placeholder="<h2>Section heading</h2><p>Paste prepared HTML here...</p>"
+          />
+        )}
+        <div className="border-t border-background-200 bg-background-100/70 px-3 py-1.5 text-[10px] font-semibold text-foreground-400">
+          {mode === 'design' ? 'p' : 'HTML source'}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function AccordionRow({ title, badge, defaultOpen = false, children }: { title: string; badge?: string; defaultOpen?: boolean; children?: React.ReactNode }) {
+function RichTool({ icon, label, onClick, disabled = false }: { icon: string; label: string; onClick: () => void; disabled?: boolean }) {
   return (
-    <details open={defaultOpen} className="rounded-lg border border-background-200 bg-background-50">
-      <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[12px] font-bold text-foreground-700">
-        <i className="ri-arrow-right-s-line text-foreground-400"></i>
-        <span className="min-w-0 flex-1 truncate">{title}</span>
-        {badge && <span className="rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{badge}</span>}
-      </summary>
-      <div className="space-y-3 border-t border-background-200 p-3">
-        {children}
-      </div>
-    </details>
+    <button
+      type="button"
+      title={label}
+      disabled={disabled}
+      onMouseDown={event => event.preventDefault()}
+      onClick={onClick}
+      className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-700 transition-smooth hover:bg-background-200 hover:text-foreground-950 disabled:pointer-events-none disabled:opacity-35"
+    >
+      <i className={`${icon} text-base`}></i>
+    </button>
   );
 }
 
-function ApprenticeshipSettings({ module, week, component, onAddKsb, onRemoveKsb, onUpdateKsbWeight }: {
+function RichSelect({ title, defaultValue, onChange, disabled, children }: { title: string; defaultValue: string; onChange: (value: string) => void; disabled?: boolean; children: React.ReactNode }) {
+  return (
+    <select
+      title={title}
+      defaultValue={defaultValue}
+      disabled={disabled}
+      onMouseDown={event => event.stopPropagation()}
+      onChange={event => onChange(event.target.value)}
+      className="h-8 rounded-md border border-transparent bg-background-50 px-2 text-[12px] font-semibold text-foreground-700 outline-none hover:border-background-200 disabled:opacity-40"
+    >
+      {children}
+    </select>
+  );
+}
+
+function RichToolbarDivider() {
+  return <span className="mx-1 h-6 w-px bg-background-200" />;
+}
+
+function htmlToPlainText(html: string) {
+  if (!html) return '';
+  if (typeof document === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const element = document.createElement('div');
+  element.innerHTML = html;
+  return (element.textContent || element.innerText || '').trim();
+}
+
+function escapeAttribute(value: string) {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
   module: ModuleCatalogueItem;
   week: ModuleWeek | null;
   component: ModuleComponent | null;
+  ksbSourceLabels: Record<string, string>;
   onAddKsb: (target: KsbTarget) => void;
   onRemoveKsb: (target: KsbTarget, mappingId: string) => void;
   onUpdateKsbWeight: (target: KsbTarget, mappingId: string, weight: number) => void;
+  onUpdateKsbClassification: (target: KsbTarget, mappingId: string, classification: KsbMappingType) => void;
 }) {
   if (!week) {
     return (
@@ -2678,21 +2967,25 @@ function ApprenticeshipSettings({ module, week, component, onAddKsb, onRemoveKsb
             <MiniMetric label="Quality" value={`${module.qualityScore}%`} />
           </div>
           <KsbWeightSummary summary={weekWeightSummary} />
-          <WeekKsbCodeSection mappings={mappedKsbs} />
+          <WeekKsbCodeSection mappings={mappedKsbs} sourceLabels={ksbSourceLabels} />
         </div>
       </aside>
     );
   }
 
+  const inheritedWeekMappings = uniqueMappings(week.ksbMappings).filter(weekMapping => (
+    !component.ksbMappings.some(componentMapping => String(componentMapping.code || '').trim().toUpperCase() === String(weekMapping.code || '').trim().toUpperCase())
+  ));
+  const effectiveComponentMappings = uniqueMappings([...component.ksbMappings, ...inheritedWeekMappings]);
   const componentChecks = [
     { label: 'Content', ready: component.description.trim().length > 0 },
     { label: 'OTJH', ready: Number(component.expectedOtjh || 0) > 0 },
     { label: 'Points', ready: Number(component.points || 0) > 0 },
-    { label: 'KSBs', ready: component.ksbMappings.length > 0 },
+    { label: 'KSBs', ready: effectiveComponentMappings.length > 0 },
   ];
   const componentReadyCount = componentChecks.filter(item => item.ready).length;
   const componentReadyPercent = Math.round((componentReadyCount / componentChecks.length) * 100);
-  const componentWeightSummary = ksbWeightSummary(component.ksbMappings);
+  const componentWeightSummary = ksbWeightSummary(effectiveComponentMappings);
 
   return (
     <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
@@ -2730,19 +3023,23 @@ function ApprenticeshipSettings({ module, week, component, onAddKsb, onRemoveKsb
           <i className="ri-add-line"></i>
           Add KSBs
         </button>
+        {!!inheritedWeekMappings.length && <KsbCards title="Inherited week KSBs" mappings={inheritedWeekMappings} sourceLabels={ksbSourceLabels} />}
         <KsbCards
-          title="KSBs"
+          title={inheritedWeekMappings.length ? 'Component KSBs' : 'KSBs'}
           mappings={component.ksbMappings}
+          sourceLabels={ksbSourceLabels}
           onRemove={mappingId => onRemoveKsb({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId)}
           onWeightChange={(mappingId, weight) => onUpdateKsbWeight({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId, weight)}
+          onClassificationChange={(mappingId, classification) => onUpdateKsbClassification({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId, classification)}
         />
       </div>
     </aside>
   );
 }
 
-function ModuleSettingsModal({ module, saving, saved, onClose, onSave, onChange, onCompletionChange, onAdvancedChange, onAddKsb, onRemoveKsb, onUpdateKsbWeight }: {
+function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, onSave, onChange, onCompletionChange, onAdvancedChange, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
   module: ModuleCatalogueItem;
+  ksbSourceLabels: Record<string, string>;
   saving: boolean;
   saved: boolean;
   onClose: () => void;
@@ -2753,6 +3050,7 @@ function ModuleSettingsModal({ module, saving, saved, onClose, onSave, onChange,
   onAddKsb: () => void;
   onRemoveKsb: (mappingId: string) => void;
   onUpdateKsbWeight: (mappingId: string, weight: number) => void;
+  onUpdateKsbClassification: (mappingId: string, classification: KsbMappingType) => void;
 }) {
   const checklist = calculateQualityChecklist(module);
   const moduleWeightSummary = ksbWeightSummary(module.moduleKsbMappings);
@@ -2785,7 +3083,7 @@ function ModuleSettingsModal({ module, saving, saved, onClose, onSave, onChange,
               <i className="ri-add-line"></i>
               Add KSBs
             </button>
-            <KsbCards title="KSBs" mappings={module.moduleKsbMappings} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} />
+            <KsbCards title="KSBs" mappings={module.moduleKsbMappings} sourceLabels={ksbSourceLabels} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} onClassificationChange={onUpdateKsbClassification} />
           </SettingsSection>
 
           <SettingsSection title="Compliance/context fields">
@@ -2844,6 +3142,223 @@ function ModuleSettingsModal({ module, saving, saved, onClose, onSave, onChange,
   );
 }
 
+function SessionKsbMappingModal({ module, sourceLabels, saving, saved, onClose, onSave, onAddKsb, onRemoveKsb }: {
+  module: ModuleCatalogueItem;
+  sourceLabels: Record<string, string>;
+  saving: boolean;
+  saved: boolean;
+  onClose: () => void;
+  onSave: () => void | Promise<ModuleCatalogueItem | null | undefined>;
+  onAddKsb: (target: KsbTarget) => void;
+  onRemoveKsb: (target: KsbTarget, mappingId: string) => void;
+}) {
+  const components = module.weekStructure.flatMap(week => week.components.map(component => ({ week, component })));
+  const uniqueMappedCount = uniqueMappings(components.flatMap(item => item.component.ksbMappings)).length;
+  const occurrenceCount = components.reduce((total, item) => total + item.component.ksbMappings.length, 0);
+  const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
+  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save';
+
+  return (
+    <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Trace</p>
+            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Session KSB Mapping</h3>
+            <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{module.title}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <MetricPill label="Components" value={String(components.length)} />
+            <MetricPill label="KSB codes" value={String(uniqueMappedCount)} />
+            <MetricPill label="Mappings" value={String(occurrenceCount)} />
+            <button onClick={onClose} className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
+              <i className="ri-close-line"></i>
+            </button>
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {module.weekStructure.length ? (
+            <div className="space-y-4">
+              {module.weekStructure.map(week => (
+                <section key={week.id} className="overflow-hidden rounded-2xl border border-background-200 bg-background-50">
+                  <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase text-primary-600">Week {week.weekNumber}</p>
+                      <h4 className="text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h4>
+                    </div>
+                    <span className="w-fit rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
+                  </div>
+                  <div className="divide-y divide-background-200">
+                    {week.components.map(component => (
+                      <SessionKsbMappingRow
+                        key={component.id}
+                        module={module}
+                        week={week}
+                        component={component}
+                        sourceLabels={sourceLabels}
+                        onAddKsb={() => onAddKsb({ scope: 'component', weekId: week.id, componentId: component.id })}
+                        onRemoveKsb={mappingId => onRemoveKsb({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId)}
+                      />
+                    ))}
+                    {!week.components.length && (
+                      <div className="px-4 py-6">
+                        <EmptyState text="No components in this week yet." />
+                      </div>
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <EmptyState text="No weeks have been added to this module yet." />
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[11px] font-semibold text-foreground-500">
+            Changes update the same component KSB mappings used by the main editor.
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
+              Done
+            </button>
+            <button type="button" onClick={() => { void onSave(); }} disabled={saving} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-smooth disabled:opacity-70 ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
+              <i className={saveButtonIcon}></i>{saveButtonLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white">
+      <span className="text-white/60">{label}</span>
+      <span>{value}</span>
+    </span>
+  );
+}
+
+function SessionKsbMappingRow({ module, week, component, sourceLabels, onAddKsb, onRemoveKsb }: {
+  module: ModuleCatalogueItem;
+  week: ModuleWeek;
+  component: ModuleComponent;
+  sourceLabels: Record<string, string>;
+  onAddKsb: () => void;
+  onRemoveKsb: (mappingId: string) => void;
+}) {
+  const meta = componentTypes.find(item => item.type === component.type);
+  const tone = componentToneClasses(meta?.tone);
+  const groups = componentGroupLabels(module, component);
+  return (
+    <div className="grid gap-3 px-4 py-3 xl:grid-cols-[minmax(260px,0.95fr)_minmax(180px,0.55fr)_repeat(3,minmax(160px,1fr))_auto] xl:items-start">
+      <div className="min-w-0">
+        <div className="flex items-start gap-2.5">
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
+            <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
+            <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} · {meta?.label || component.type}</p>
+            <p className="mt-1 text-[10px] text-foreground-400">{component.ksbMappings.length} mapping{component.ksbMappings.length === 1 ? '' : 's'}</p>
+          </div>
+        </div>
+      </div>
+      <div>
+        <p className="mb-1 text-[9px] font-bold uppercase text-foreground-400 xl:hidden">Groups</p>
+        <div className="flex flex-wrap gap-1">
+          {groups.map(group => (
+            <span key={group} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary-700">{group}</span>
+          ))}
+          {!groups.length && <span className="text-[10px] font-semibold text-foreground-300">No group selected</span>}
+        </div>
+      </div>
+      {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
+        <SessionKsbColumn
+          key={kind}
+          kind={kind}
+          mappings={component.ksbMappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
+          sourceLabels={sourceLabels}
+          onRemove={onRemoveKsb}
+        />
+      ))}
+      <div className="flex justify-start xl:justify-end">
+        <button type="button" onClick={onAddKsb} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
+          <i className="ri-add-line"></i>
+          Add KSBs
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SessionKsbColumn({ kind, mappings, sourceLabels, onRemove }: {
+  kind: 'knowledge' | 'skill' | 'behaviour';
+  mappings: KsbMapping[];
+  sourceLabels: Record<string, string>;
+  onRemove: (mappingId: string) => void;
+}) {
+  const labels = {
+    knowledge: 'Knowledge',
+    skill: 'Skills',
+    behaviour: 'Behaviours',
+  };
+  return (
+    <div className="min-w-0 rounded-xl border border-background-200 bg-background-100/45 p-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">{labels[kind]}</p>
+        <span className="rounded-full bg-background-50 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{mappings.length}</span>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {mappings.map(mapping => (
+          <SessionKsbChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} onRemove={() => onRemove(mapping.id)} />
+        ))}
+        {!mappings.length && <span className="text-[10px] font-semibold text-foreground-300">None</span>}
+      </div>
+    </div>
+  );
+}
+
+function SessionKsbChip({ mapping, sourceLabels, onRemove }: { mapping: KsbMapping; sourceLabels: Record<string, string>; onRemove: () => void }) {
+  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
+  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  return (
+    <span
+      title={`${mapping.description || mapping.code} - ${sourceLabel}`}
+      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
+    >
+      <span>{mapping.code}</span>
+      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold capitalize">{classification}</span>
+      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{clampKsbWeight(mapping.weight)}%</span>
+      <span className="max-w-[90px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
+      <button type="button" onClick={onRemove} className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-red-500 transition-smooth hover:bg-red-50" aria-label={`Remove ${mapping.code}`}>
+        <i className="ri-close-line text-[11px]"></i>
+      </button>
+    </span>
+  );
+}
+
+function sessionKsbKind(code: string): 'knowledge' | 'skill' | 'behaviour' {
+  const prefix = String(code || '').trim().toUpperCase().slice(0, 1);
+  if (prefix === 'S') return 'skill';
+  if (prefix === 'B') return 'behaviour';
+  return 'knowledge';
+}
+
+function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComponent) {
+  const settings = component.settings || {};
+  const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
+  const keys = Array.isArray(settings.selectedGroupKeys) ? settings.selectedGroupKeys : [];
+  const fallback = [module.group, module.groupId].filter(Boolean);
+  const labels = [...names, ...(names.length ? [] : keys), ...(names.length || keys.length ? [] : fallback)]
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  return [...new Set(labels)];
+}
+
 function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
@@ -2851,21 +3366,24 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   ksbSetsLoading: boolean;
   initialSourceId: string;
   onClose: () => void;
-  onAddMany: (items: Array<{ option: KsbOption; weight: number }>) => void;
+  onAddMany: (items: Array<{ option: KsbOption; weight: number; classification: KsbMappingType }>) => void;
 }) {
   const [weightsByKsbId, setWeightsByKsbId] = useState<Record<string, number>>({});
+  const [classificationsByKsbId, setClassificationsByKsbId] = useState<Record<string, KsbMappingType>>({});
   const [selectedKsbIds, setSelectedKsbIds] = useState<Set<string>>(new Set());
   const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId);
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>(initialSourceId.startsWith('profile:') ? 'profile' : 'standard');
+  const [addingKsbs, setAddingKsbs] = useState(false);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
       label: `${standard.code} - ${standard.name} (${standard.total} KSBs)`,
       options: standardToKsbOptions(standard),
     })), [standards]);
   const profileSourceOptions = useMemo(() => ksbSets.map(set => {
-    const options = flattenKsbEntries(set.ksbs);
+    const sourceId = ksbSetSourceId(set);
+    const options = flattenKsbEntries(set.ksbs).map(option => ({ ...option, sourceType: 'framework', sourceId }));
     return {
-      id: ksbSetSourceId(set),
+      id: sourceId,
       label: `${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''} (${options.length} KSBs)`,
       options,
     };
@@ -2889,9 +3407,13 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
     ...sourceOptions.map(source => [source.id, source.label]),
   ]);
   const sourceKsbOptions = selectedSource?.options || [];
-  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight();
+  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(classificationForOption(option));
   const updateOptionWeight = (option: KsbOption, value: number) => {
     setWeightsByKsbId(current => ({ ...current, [option.id]: clampKsbWeight(value) }));
+  };
+  const classificationForOption = (option: KsbOption) => classificationsByKsbId[option.id] ?? DEFAULT_KSB_MAPPING_TYPE;
+  const updateOptionClassification = (option: KsbOption, value: string) => {
+    setClassificationsByKsbId(current => ({ ...current, [option.id]: normaliseKsbMappingType(value) }));
   };
   const toggleOption = (option: KsbOption) => {
     setSelectedKsbIds(current => {
@@ -2903,7 +3425,41 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   };
   const selectedItems = sourceKsbOptions
     .filter(option => selectedKsbIds.has(option.id))
-    .map(option => ({ option, weight: clampKsbWeight(weightForOption(option)) }));
+    .map(option => ({ option, weight: clampKsbWeight(weightForOption(option)), classification: classificationForOption(option) }));
+  const handleAddSelectedKsbs = () => {
+    if (!selectedItems.length || addingKsbs) return;
+    const count = selectedItems.length;
+    setAddingKsbs(true);
+    void Swal.fire({
+      title: 'Adding KSBs...',
+      text: `Mapping ${count} selected KSB${count === 1 ? '' : 's'}.`,
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      showConfirmButton: false,
+      customClass: {
+        popup: 'kbc-standard-swal-popup',
+        title: 'kbc-standard-swal-title',
+        htmlContainer: 'kbc-standard-swal-text',
+      },
+      didOpen: () => Swal.showLoading(),
+    });
+    window.setTimeout(() => {
+      onAddMany(selectedItems);
+      void Swal.fire({
+        icon: 'success',
+        title: 'KSBs added',
+        text: `${count} KSB${count === 1 ? ' has' : 's have'} been mapped successfully.`,
+        timer: 1400,
+        timerProgressBar: true,
+        showConfirmButton: false,
+        customClass: {
+          popup: 'kbc-standard-swal-popup',
+          title: 'kbc-standard-swal-title',
+          htmlContainer: 'kbc-standard-swal-text',
+        },
+      });
+    }, 250);
+  };
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
@@ -2927,6 +3483,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       setSourceMode(item.mode);
                       setSelectedSourceId('');
                       setWeightsByKsbId({});
+                      setClassificationsByKsbId({});
                       setSelectedKsbIds(new Set());
                     }}
                     className={`rounded-xl border px-3 py-2 text-left transition-smooth ${sourceMode === item.mode ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
@@ -2945,6 +3502,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               onChange={value => {
                 setSelectedSourceId(value);
                 setWeightsByKsbId({});
+                setClassificationsByKsbId({});
                 setSelectedKsbIds(new Set());
               }}
             />
@@ -2975,17 +3533,28 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <p className="mt-1 text-[11px] text-foreground-600 leading-relaxed">{option.description}</p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-end gap-2">
+                  <div className="grid shrink-0 grid-cols-2 gap-2 sm:w-48">
+                    <label className="block">
+                      <span className="text-[9px] font-semibold uppercase text-foreground-400">Class</span>
+                      <select
+                        value={classificationForOption(option)}
+                        onChange={event => updateOptionClassification(option, event.target.value)}
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
+                      >
+                        <option value="main">Main</option>
+                        <option value="secondary">Secondary</option>
+                        <option value="possible">Possible</option>
+                      </select>
+                    </label>
                     <label className="block">
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight</span>
                       <input
                         type="number"
                         min={0}
-                        max={100}
                         step={1}
                         value={clampKsbWeight(weightForOption(option))}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
-                        className="mt-1 h-8 w-20 rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
+                        className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
                       />
                     </label>
                   </div>
@@ -3000,11 +3569,11 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
             <p className="text-[11px] font-semibold text-foreground-500">{selectedItems.length} KSB{selectedItems.length === 1 ? '' : 's'} selected</p>
             <button
               type="button"
-              disabled={!selectedItems.length}
-              onClick={() => onAddMany(selectedItems)}
+              disabled={!selectedItems.length || addingKsbs}
+              onClick={handleAddSelectedKsbs}
               className="h-9 rounded-lg bg-primary-500 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-foreground-200 disabled:text-foreground-400"
             >
-              Add KSBs
+              {addingKsbs ? 'Adding...' : 'Add KSBs'}
             </button>
           </div>
         </div>
@@ -3312,7 +3881,7 @@ function KsbMappingPanel({ mappings, onAdd, onRemove }: { mappings: KsbMapping[]
   return <KsbCards title="KSB mappings" mappings={mappings} onAdd={onAdd} onRemove={onRemove} />;
 }
 
-function ComponentKsbChips({ mappings }: { mappings: KsbMapping[] }) {
+function ComponentKsbChips({ mappings, sourceLabels }: { mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
   if (!mappings.length) {
     return <span className="mt-1 block text-[9px] font-medium text-foreground-300">No KSBs mapped</span>;
   }
@@ -3321,11 +3890,12 @@ function ComponentKsbChips({ mappings }: { mappings: KsbMapping[] }) {
       {mappings.map(mapping => (
         <span
           key={mapping.id}
-          title={mapping.description || `${mapping.code} applied`}
+          title={`${mapping.description || `${mapping.code} applied`} - ${ksbSourceLabel(mapping, sourceLabels)}`}
           className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${ksbCodeChipClass(mapping.code)}`}
         >
           {mapping.code} applied
           <span className="rounded-full bg-white/70 px-1 text-[8px]">{Number(mapping.weight || 0)}%</span>
+          <span className="max-w-[120px] truncate rounded-full bg-white/70 px-1 text-[8px] font-semibold">{ksbSourceLabel(mapping, sourceLabels)}</span>
         </span>
       ))}
     </span>
@@ -3338,6 +3908,9 @@ function standardToKsbOptions(standard: CurriculumStandard): KsbOption[] {
     code: ksb.code,
     description: ksb.description,
     type: ksb.type,
+    title: ksb.code,
+    sourceType: 'standard',
+    sourceId: ksbStandardSourceId(standard),
   }));
 }
 
@@ -3348,6 +3921,29 @@ function ksbStandardSourceId(standard: CurriculumStandard) {
 function ksbSetSourceId(set: CurriculumKsbSet) {
   const key = set.frameworkId || set.profileId || set.programmeId || set.programmeName || set.standard;
   return `profile:${String(key || 'ksb-set').trim()}`;
+}
+
+function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumKsbSet[]) {
+  const labels: Record<string, string> = {};
+  standards.forEach(standard => {
+    labels[ksbStandardSourceId(standard)] = `Skills standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
+  });
+  ksbSets.forEach(set => {
+    const label = `KSB profile: ${set.programmeName || set.standard || set.profileId || set.frameworkId || 'Profile'}${set.standard ? ` (${set.standard})` : ''}`;
+    labels[ksbSetSourceId(set)] = label;
+  });
+  return labels;
+}
+
+function ksbSourceLabel(mapping: KsbMapping, sourceLabels: Record<string, string> = {}) {
+  const sourceId = String(mapping.sourceId || '').trim();
+  if (sourceId && sourceLabels[sourceId]) return sourceLabels[sourceId];
+  const sourceType = String(mapping.sourceType || '').trim().toLowerCase();
+  if (sourceId && sourceId.startsWith('profile:')) return `KSB profile: ${sourceId.replace(/^profile:/, '')}`;
+  if (sourceId && sourceId.startsWith('standard:')) return `Skills standard: ${sourceId.replace(/^standard:/, '')}`;
+  if (sourceType === 'framework') return sourceId ? `KSB profile: ${sourceId}` : 'KSB profile';
+  if (sourceType === 'standard') return sourceId ? `Skills standard: ${sourceId}` : 'Skills standard';
+  return 'Legacy source';
 }
 
 function standardForModule(standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
@@ -3435,7 +4031,7 @@ function KsbWeightSummary({ summary }: { summary: ReturnType<typeof ksbWeightSum
   );
 }
 
-function KsbCards({ title, mappings, onAdd, onRemove, onWeightChange }: { title: string; mappings: KsbMapping[]; onAdd?: () => void; onRemove: (mappingId: string) => void; onWeightChange?: (mappingId: string, weight: number) => void }) {
+function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeightChange, onClassificationChange }: { title: string; mappings: KsbMapping[]; sourceLabels?: Record<string, string>; onAdd?: () => void; onRemove?: (mappingId: string) => void; onWeightChange?: (mappingId: string, weight: number) => void; onClassificationChange?: (mappingId: string, classification: KsbMappingType) => void }) {
   const totalWeight = mappings.reduce((total, mapping) => total + Number(mapping.weight || 0), 0);
   return (
     <div className="space-y-2 rounded-xl border border-background-200 bg-background-100/35 p-3">
@@ -3456,8 +4052,10 @@ function KsbCards({ title, mappings, onAdd, onRemove, onWeightChange }: { title:
           <KsbCard
             key={mapping.id}
             mapping={mapping}
-            onRemove={() => onRemove(mapping.id)}
+            sourceLabels={sourceLabels}
+            onRemove={onRemove ? () => onRemove(mapping.id) : undefined}
             onWeightChange={onWeightChange ? weight => onWeightChange(mapping.id, weight) : undefined}
+            onClassificationChange={onClassificationChange ? classification => onClassificationChange(mapping.id, classification) : undefined}
           />
         ))}
         {!mappings.length && <p className="text-[11px] text-foreground-400">No KSBs mapped.</p>}
@@ -3466,8 +4064,10 @@ function KsbCards({ title, mappings, onAdd, onRemove, onWeightChange }: { title:
   );
 }
 
-function KsbCard({ mapping, onRemove, onWeightChange }: { mapping: KsbMapping; onRemove?: () => void; onWeightChange?: (weight: number) => void }) {
+function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClassificationChange }: { mapping: KsbMapping; sourceLabels?: Record<string, string>; onRemove?: () => void; onWeightChange?: (weight: number) => void; onClassificationChange?: (classification: KsbMappingType) => void }) {
   const tone = ksbVisualTone(mapping.code, mapping.type);
+  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
   return (
     <div className={`rounded-lg border border-l-4 p-2 ${tone.row}`} title={mapping.description || `${mapping.code} applied`}>
       <div className="flex items-center gap-2">
@@ -3478,22 +4078,43 @@ function KsbCard({ mapping, onRemove, onWeightChange }: { mapping: KsbMapping; o
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             <p className="truncate text-[11px] font-bold text-foreground-900">{mapping.code} applied</p>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
+            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold capitalize text-foreground-600">{classification}</span>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.weightClass}`}>{Number(mapping.weight || 0)}%</span>
           </div>
-          {onWeightChange && (
-            <label className="mt-1 flex items-center gap-2 text-[10px] font-semibold uppercase text-foreground-400">
-              Weight
-              <input
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={Number(mapping.weight || 0)}
-                onChange={event => onWeightChange(clampKsbWeight(Number(event.target.value)))}
-                className="h-7 w-20 rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
-              />
-              %
-            </label>
+          <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">{sourceLabel}</p>
+          {(onWeightChange || onClassificationChange) && (
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_88px]">
+              {onClassificationChange && (
+                <label className="text-[10px] font-semibold uppercase text-foreground-400">
+                  Classification
+                  <select
+                    value={classification}
+                    onChange={event => onClassificationChange(normaliseKsbMappingType(event.target.value))}
+                    className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
+                  >
+                    <option value="main">Main</option>
+                    <option value="secondary">Secondary</option>
+                    <option value="possible">Possible</option>
+                  </select>
+                </label>
+              )}
+              {onWeightChange && (
+                <label className="text-[10px] font-semibold uppercase text-foreground-400">
+                  Weight
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={Number(mapping.weight || 0)}
+                    onChange={event => onWeightChange(clampKsbWeight(Number(event.target.value)))}
+                    className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
+                  />
+                </label>
+              )}
+            </div>
+          )}
+          {Number(mapping.weight || 0) <= 0 && (
+            <p className="mt-1 text-[10px] font-semibold text-amber-700">Set a positive weight before saving.</p>
           )}
         </div>
         {onRemove && <button onClick={onRemove} className="h-6 w-6 shrink-0 rounded-md text-red-500 hover:bg-red-50"><i className="ri-close-line text-xs"></i></button>}
@@ -3502,7 +4123,7 @@ function KsbCard({ mapping, onRemove, onWeightChange }: { mapping: KsbMapping; o
   );
 }
 
-function WeekKsbCodeSection({ mappings }: { mappings: KsbMapping[] }) {
+function WeekKsbCodeSection({ mappings, sourceLabels }: { mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
   const groups = [
     { key: 'K', label: 'Knowledge', items: mappings.filter(mapping => String(mapping.code || '').toUpperCase().startsWith('K')) },
     { key: 'S', label: 'Skills', items: mappings.filter(mapping => String(mapping.code || '').toUpperCase().startsWith('S')) },
@@ -3520,7 +4141,7 @@ function WeekKsbCodeSection({ mappings }: { mappings: KsbMapping[] }) {
             <div key={group.key} className="space-y-1">
               <p className="text-[9px] font-bold uppercase text-foreground-400">{group.label}</p>
               <div className="flex flex-wrap gap-1">
-                {group.items.map(mapping => <KsbCodeOnlyChip key={mapping.id} mapping={mapping} />)}
+                {group.items.map(mapping => <KsbCodeOnlyChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} />)}
               </div>
             </div>
           ) : null)}
@@ -3532,13 +4153,15 @@ function WeekKsbCodeSection({ mappings }: { mappings: KsbMapping[] }) {
   );
 }
 
-function KsbCodeOnlyChip({ mapping }: { mapping: KsbMapping }) {
+function KsbCodeOnlyChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceLabels: Record<string, string> }) {
+  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
   return (
     <span
-      title={mapping.description || mapping.code}
-      className={`rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
+      title={`${mapping.description || mapping.code} - ${sourceLabel}`}
+      className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
     >
-      {mapping.code}
+      <span>{mapping.code}</span>
+      <span className="max-w-[140px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
     </span>
   );
 }
@@ -3604,11 +4227,80 @@ function EditorBlock({ title, children }: { title: string; children: React.React
   );
 }
 
-function TextInput({ label, value, onChange, required }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
+function ComponentResourceUpload({
+  label,
+  accept,
+  uploadedName,
+  uploadedUrl,
+  uploadedSize,
+  uploading,
+  error,
+  onUpload,
+}: {
+  label: string;
+  accept: string;
+  uploadedName: string;
+  uploadedUrl: string;
+  uploadedSize: number;
+  uploading: boolean;
+  error: string;
+  onUpload: (file: File) => void | Promise<void>;
+}) {
+  const inputId = useMemo(() => `component-upload-${Math.random().toString(36).slice(2)}`, []);
+  return (
+    <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
+          <p className="mt-1 truncate text-[12px] font-semibold text-foreground-700">
+            {uploadedName ? uploadedName : 'No file uploaded yet'}
+            {uploadedSize > 0 && <span className="ml-2 text-foreground-400">{formatFileSize(uploadedSize)}</span>}
+          </p>
+          {uploadedUrl && (
+            <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
+              <i className="ri-external-link-line"></i>
+              Open uploaded file
+            </a>
+          )}
+        </div>
+        <div className="shrink-0">
+          <input
+            id={inputId}
+            type="file"
+            accept={accept}
+            disabled={uploading}
+            className="hidden"
+            onChange={event => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void onUpload(file);
+            }}
+          />
+          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
+            <i className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></i>
+            {uploading ? 'Uploading...' : 'Upload from device'}
+          </label>
+        </div>
+      </div>
+      {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+function formatFileSize(size: number) {
+  const value = Number(size || 0);
+  if (value <= 0) return '';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function TextInput({ label, value, onChange, required, error }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}{required ? ' *' : ''}</span>
-      <input required={required} value={value} onChange={event => onChange(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-[13px] text-foreground-900 transition-smooth focus:border-primary-300 focus:outline-none" />
+      <input required={required} value={value} onChange={event => onChange(event.target.value)} className={`mt-1 h-10 w-full rounded-lg border bg-background-50 px-3 text-[13px] text-foreground-900 transition-smooth focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`} />
+      {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
     </label>
   );
 }
@@ -3631,11 +4323,12 @@ function ReadOnlyInput({ label, value }: { label: string; value: string }) {
   );
 }
 
-function TextArea({ label, value, onChange, rows = 3 }: { label: string; value: string; onChange: (value: string) => void; rows?: number }) {
+function TextArea({ label, value, onChange, rows = 3, error }: { label: string; value: string; onChange: (value: string) => void; rows?: number; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <textarea value={value} onChange={event => onChange(event.target.value)} rows={rows} className="mt-1 w-full resize-y rounded-lg border border-foreground-200/60 bg-background-50 px-3 py-2 text-[13px] text-foreground-900 transition-smooth focus:border-primary-300 focus:outline-none" />
+      <textarea value={value} onChange={event => onChange(event.target.value)} rows={rows} className={`mt-1 w-full resize-y rounded-lg border bg-background-50 px-3 py-2 text-[13px] text-foreground-900 transition-smooth focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`} />
+      {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
     </label>
   );
 }
@@ -3650,7 +4343,7 @@ function parseNumberDraft(value: string) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function NumberInput({ label, value, onChange, min, max, step }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number }) {
+function NumberInput({ label, value, onChange, min, max, step, error }: { label: string; value: number; onChange: (value: number) => void; min?: number; max?: number; step?: number; error?: string }) {
   const [draft, setDraft] = useState(formatNumberDraft(value));
   const [focused, setFocused] = useState(false);
 
@@ -3683,8 +4376,9 @@ function NumberInput({ label, value, onChange, min, max, step }: { label: string
           setDraft(parsed === null ? formatNumberDraft(value) : formatNumberDraft(parsed));
         }}
         onChange={event => updateDraft(event.target.value)}
-        className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300"
+        className={`mt-1 w-full rounded-lg border bg-background-50 px-3 py-2 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`}
       />
+      {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
     </label>
   );
 }
@@ -3710,13 +4404,14 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-function SelectInput({ label, value, options, labels, onChange }: { label: string; value: string; options: string[]; labels?: Record<string, string>; onChange: (value: string) => void }) {
+function SelectInput({ label, value, options, labels, onChange, error }: { label: string; value: string; options: readonly string[]; labels?: Record<string, string>; onChange: (value: string) => void; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <select value={value} onChange={event => onChange(event.target.value)} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300">
+      <select value={value} onChange={event => onChange(event.target.value)} className={`mt-1 w-full rounded-lg border bg-background-50 px-3 py-2 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`}>
         {options.map(option => <option key={option || 'empty'} value={option}>{labels?.[option] || option}</option>)}
       </select>
+      {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
     </label>
   );
 }
@@ -3738,18 +4433,23 @@ function StatusBadge({ status }: { status: string }) {
 
 function ModuleCatalogueCard({
   module,
+  onKsbMap,
   onBuild,
   onSettings,
   onDuplicate,
   onDelete,
 }: {
   module: ModuleBuilderListItem;
+  onKsbMap: () => void;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  const structureComponentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  const componentCount = module.lessonCount || structureComponentCount;
+  const weekCount = module.weekStructure.length || module.weeks || 0;
+  const sessionCount = module.sessionsNumber || module.sourceModule?.sessionsNumber || module.sourceModule?.weeks || module.weeks || weekCount;
   const hasContent = componentCount > 0;
 
   return (
@@ -3771,8 +4471,8 @@ function ModuleCatalogueCard({
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
               {cleanModuleMeta(module.programmeName) || 'No programme'}
             </span>
-            <ModuleMetricPill icon="ri-calendar-check-line" label={`${module.sessionsNumber || module.weeks || 0} sessions`} />
-            <ModuleMetricPill icon="ri-stack-line" label={`${module.weekStructure.length || module.weeks || 0} weeks`} />
+            <ModuleMetricPill icon="ri-calendar-check-line" label={`${sessionCount} sessions`} />
+            <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
             <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
           </div>
         </div>
@@ -3780,6 +4480,10 @@ function ModuleCatalogueCard({
         <ModuleDeliverySummary module={module} />
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <button onClick={onKsbMap} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+            <i className="ri-node-tree"></i>
+            KSB Map
+          </button>
           <button onClick={onBuild} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
             <i className="ri-hammer-line"></i>
             Build
@@ -3790,6 +4494,165 @@ function ModuleCatalogueCard({
         </div>
       </div>
     </article>
+  );
+}
+
+function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
+  module: ModuleBuilderListItem;
+  sourceLabels: Record<string, string>;
+  onClose: () => void;
+  onBuild: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [kindFilter, setKindFilter] = useState<'all' | 'K' | 'S' | 'B'>('all');
+  const rows = moduleKsbMapRows(module, sourceLabels);
+  const filteredRows = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return rows.filter(row => {
+      const kind = row.code.toUpperCase().slice(0, 1);
+      const matchesKind = kindFilter === 'all' || kind === kindFilter;
+      const matchesSearch = !search || [
+        row.code,
+        row.description,
+        row.source,
+        ...row.locations,
+      ].some(value => String(value || '').toLowerCase().includes(search));
+      return matchesKind && matchesSearch;
+    });
+  }, [kindFilter, query, rows]);
+  const groups = [
+    { key: 'K' as const, title: 'Knowledge', icon: 'ri-book-open-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('K')) },
+    { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
+    { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
+  ];
+  const totalWeight = rows.reduce((total, row) => total + row.weight, 0);
+  const countByKind = {
+    K: rows.filter(row => row.code.toUpperCase().startsWith('K')).length,
+    S: rows.filter(row => row.code.toUpperCase().startsWith('S')).length,
+    B: rows.filter(row => row.code.toUpperCase().startsWith('B')).length,
+  };
+
+  return (
+    <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Module KSB map</p>
+              <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
+              <p className="mt-1 text-[11px] font-semibold text-white/70">Mapped from module, week and component KSB assignments.</p>
+            </div>
+            <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
+              <i className="ri-close-line"></i>
+            </button>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
+            <ModuleKsbMapMetric label="Unique KSBs" value={rows.length} />
+            <ModuleKsbMapMetric label="Total weight" value={`${totalWeight}%`} />
+            <ModuleKsbMapMetric label="Knowledge" value={countByKind.K} />
+            <ModuleKsbMapMetric label="Skills" value={countByKind.S} />
+            <ModuleKsbMapMetric label="Behaviours" value={countByKind.B} />
+          </div>
+        </div>
+        <div className="border-b border-background-200 bg-background-50 px-5 py-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="relative">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search KSB code, profile, description or location..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+            </div>
+            <div className="flex flex-wrap gap-1 rounded-xl border border-background-200 bg-background-100 p-1">
+              {[
+                { key: 'all' as const, label: 'All', count: rows.length },
+                { key: 'K' as const, label: 'Knowledge', count: countByKind.K },
+                { key: 'S' as const, label: 'Skills', count: countByKind.S },
+                { key: 'B' as const, label: 'Behaviours', count: countByKind.B },
+              ].map(item => (
+                <button key={item.key} type="button" onClick={() => setKindFilter(item.key)} className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-bold transition-smooth ${kindFilter === item.key ? 'bg-primary-500 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-50'}`}>
+                  {item.label}
+                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${kindFilter === item.key ? 'bg-white/20 text-white' : 'bg-background-50 text-foreground-500'}`}>{item.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="min-h-0 overflow-y-auto p-5">
+          {rows.length ? (
+            filteredRows.length ? (
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              {groups.map(group => (
+                <section key={group.key} className="rounded-2xl border border-background-200 bg-background-100/35">
+                  <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-background-200 bg-background-100/95 px-3 py-3 backdrop-blur">
+                    <div className="flex items-center gap-2">
+                      <span className={`grid h-8 w-8 place-items-center rounded-lg ${ksbVisualTone(group.key).iconClass}`}>
+                        <i className={`${group.icon} text-sm`}></i>
+                      </span>
+                      <h4 className="text-[11px] font-bold uppercase text-foreground-600">{group.title}</h4>
+                    </div>
+                    <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{group.rows.length}</span>
+                  </div>
+                  <div className="max-h-[48vh] space-y-2 overflow-y-auto p-3">
+                    {group.rows.map(row => (
+                      <div key={`${row.code}-${row.source}`} className="rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm transition-smooth hover:border-primary-200">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className={`rounded-md border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
+                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.locations.length} location{row.locations.length === 1 ? '' : 's'}</span>
+                            </div>
+                            <p className="mt-1 truncate text-[10px] font-bold text-foreground-500">{row.source}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${ksbCodeChipClass(row.code)}`}>{row.weight}%</span>
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
+                          <div className={`h-full rounded-full ${row.code.toUpperCase().startsWith('S') ? 'bg-amber-400' : row.code.toUpperCase().startsWith('B') ? 'bg-emerald-400' : 'bg-primary-500'}`} style={{ width: `${Math.min(Math.max(row.weight, 4), 100)}%` }} />
+                        </div>
+                        <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-foreground-600">{row.description || 'No description available.'}</p>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {row.locations.slice(0, 2).map(location => (
+                            <span key={location} className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-600">{location}</span>
+                          ))}
+                          {row.locations.length > 2 && <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-black text-foreground-500">+{row.locations.length - 2}</span>}
+                        </div>
+                      </div>
+                    ))}
+                    {!group.rows.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
+                  </div>
+                </section>
+              ))}
+            </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-4 py-12 text-center">
+                <i className="ri-search-line mb-2 block text-3xl text-foreground-300"></i>
+                <p className="text-[13px] font-bold text-foreground-700">No KSBs match your filters</p>
+                <button type="button" onClick={() => { setQuery(''); setKindFilter('all'); }} className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 hover:bg-background-100">Reset filters</button>
+              </div>
+            )
+          ) : (
+            <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-4 py-12 text-center">
+              <i className="ri-node-tree mb-2 block text-3xl text-foreground-300"></i>
+              <p className="text-[13px] font-bold text-foreground-700">No KSBs mapped yet</p>
+              <p className="mt-1 text-[12px] text-foreground-500">Open the builder and map KSBs to weeks or components.</p>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-background-200 bg-background-100/60 px-5 py-3">
+          <button onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">Close</button>
+          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
+            <i className="ri-hammer-line"></i>
+            Open builder
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbMapMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-2">
+      <p className="text-[9px] font-bold uppercase text-white/60">{label}</p>
+      <p className="mt-0.5 text-lg font-heading font-black leading-tight text-white">{value}</p>
+    </div>
   );
 }
 
@@ -3877,6 +4740,8 @@ function buildMasterModuleList(remoteModules: ModuleCatalogueItem[], localModule
 }
 
 function moduleDefinitionKey(module: ModuleCatalogueItem) {
+  const canonicalId = cleanModuleMeta(module.catalogueId || module.sourceModule?.moduleCatalogueId || module.sourceModule?.moduleId);
+  if (canonicalId) return `catalogue::${canonicalId}`;
   const title = cleanModuleMeta(module.title).toLowerCase();
   const programme = cleanModuleMeta(module.programmeName).toLowerCase();
   if (!module.sourceModule) return `local::${programme}::${title || module.catalogueId}`;
@@ -3895,14 +4760,16 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
       cohort,
       group,
     ].filter(Boolean).join('::'),
-    moduleId: String(module.sourceModule?.id || module.id || ''),
+    moduleId: String(module.sourceModule?.moduleId || module.sourceModule?.moduleCatalogueId || module.catalogueId || module.id || ''),
     sourceId: String(module.sourceModule?.sourceId || module.sourceId || ''),
     catalogueId: String(module.catalogueId || ''),
     structureId: moduleStructureIdentifier(module),
     programmeId: String(module.programmeId || module.sourceModule?.programmeId || ''),
     programme: module.programmeName || module.sourceModule?.programme || 'Unassigned programme',
     moduleTitle: module.title || module.sourceModule?.name || 'Untitled module',
+    cohortId: String(module.cohortId || module.sourceModule?.cohortId || ''),
     cohort,
+    groupId: String(module.groupId || module.sourceModule?.groupId || ''),
     group,
     deliveryStatus: deliveryStatusText(module.deliveryStatus || module.sourceModule?.deliveryStatus).replace(/^Delivery: /, ''),
     startDate: module.startDate || module.sourceModule?.startDate,
@@ -3919,6 +4786,31 @@ function uniqueDeliveryUsages(usages: ModuleDeliveryUsage[]) {
     seen.add(key);
     return true;
   });
+}
+
+function liveSessionGroupOptions(module: ModuleCatalogueItem) {
+  const usages = uniqueDeliveryUsages([
+    ...((module as ModuleBuilderListItem).deliveryUsages || []),
+    moduleDeliveryUsageFallback(module),
+  ]);
+  const seen = new Set<string>();
+  return usages
+    .map(usage => {
+      const group = cleanModuleMeta(usage.group);
+      if (!group) return null;
+      const cohort = cleanModuleMeta(usage.cohort);
+      const groupId = cleanModuleMeta(usage.groupId);
+      const cohortId = cleanModuleMeta(usage.cohortId);
+      const key = groupId || [cohortId || cohort, group].filter(Boolean).join('::') || group;
+      return { key, group, cohort, groupId, cohortId };
+    })
+    .filter((option): option is { key: string; group: string; cohort: string; groupId: string; cohortId: string } => Boolean(option?.key && option.group))
+    .filter(option => {
+      const uniqueKey = normaliseQuizText(option.key);
+      if (seen.has(uniqueKey)) return false;
+      seen.add(uniqueKey);
+      return true;
+    });
 }
 
 function preferMasterModule(current: ModuleCatalogueItem, candidate: ModuleCatalogueItem) {
@@ -3947,9 +4839,17 @@ function normaliseDeepLinkValue(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+function isCanonicalModuleCatalogueId(value: unknown) {
+  return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
+}
+
 function moduleDeepLinkIdentifiers(module: ModuleBuilderListItem) {
   const values = [
     module.catalogueId,
+    module.sourceModule?.moduleId,
+    module.sourceModule?.moduleCatalogueId,
+    module.sourceModule?.structureId,
+    module.sourceModule?.deliveryModuleId,
     module.id,
     module.sourceId,
     module.sourceModule?.id,
@@ -3974,20 +4874,29 @@ function moduleDeepLinkIdentifiers(module: ModuleBuilderListItem) {
   return Array.from(identifiers);
 }
 
-function readWizardModuleDraft(storageKey: string): WizardModuleDraftPayload | null {
-  if (!storageKey || typeof window === 'undefined') return null;
-  try {
-    const raw = window.localStorage.getItem(storageKey);
-    if (!raw) return null;
-    return JSON.parse(raw) as WizardModuleDraftPayload;
-  } catch {
-    return null;
-  }
+function readWizardModuleDraft(params: URLSearchParams): WizardModuleDraftPayload | null {
+  const title = params.get('title') || params.get('moduleTitle') || '';
+  if (!title.trim()) return null;
+  return {
+    programmeId: params.get('programmeId') || '',
+    programme: params.get('programme') || '',
+    cohortId: params.get('cohortId') || '',
+    cohortName: params.get('cohortName') || '',
+    groupId: params.get('groupId') || '',
+    groupName: params.get('groupName') || '',
+    title,
+    description: params.get('description') || '',
+    sessionsNumber: Number(params.get('sessionsNumber') || 1),
+    startDate: params.get('startDate') || '',
+    endDate: params.get('endDate') || '',
+  };
 }
 
 function moduleOptionKey(module: ModuleCatalogueItem) {
   return [
     module.catalogueId,
+    module.sourceModule?.moduleId,
+    module.sourceModule?.moduleCatalogueId,
     module.id,
     module.sourceModule?.id,
     module.sourceModule?.sourceId,
@@ -3997,6 +4906,14 @@ function moduleOptionKey(module: ModuleCatalogueItem) {
 }
 
 function moduleStructureIdentifier(module: ModuleCatalogueItem) {
+  if (isCanonicalModuleCatalogueId(module.catalogueId)) return module.catalogueId;
+  const canonicalId = [
+    module.sourceModule?.moduleCatalogueId,
+    module.sourceModule?.moduleId,
+    module.sourceModule?.structureId,
+  ].map(value => String(value || '').trim()).find(isCanonicalModuleCatalogueId);
+  if (canonicalId) return canonicalId;
+  // Temporary legacy fallback for unlinked Training_plan rows.
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
 }
@@ -4039,11 +4956,6 @@ function calculateWeeklyEndDate(startDate: string, sessionsNumber: number) {
   const endMonth = String(date.getMonth() + 1).padStart(2, '0');
   const endDay = String(date.getDate()).padStart(2, '0');
   return `${endYear}-${endMonth}-${endDay}`;
-}
-
-function moduleSelectLabel(module: ModuleCatalogueItem) {
-  const identity = moduleIdentityText(module);
-  return identity ? `${module.title} - ${identity}` : module.title;
 }
 
 function moduleListSubLabel(module: ModuleCatalogueItem) {
@@ -4190,25 +5102,57 @@ function ModuleListSkeleton() {
 }
 
 const DEFAULT_KSB_MAPPING_TYPE: KsbMappingType = 'main';
-const DEFAULT_KSB_WEIGHT = 10;
+const DEFAULT_KSB_WEIGHTS: Record<KsbMappingType, number> = {
+  main: 50,
+  secondary: 30,
+  possible: 20,
+};
 
-function defaultKsbWeight() {
-  return DEFAULT_KSB_WEIGHT;
+function defaultKsbWeight(classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE) {
+  return DEFAULT_KSB_WEIGHTS[normaliseKsbMappingType(classification)];
 }
 
 function clampKsbWeight(value: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
+  return Math.max(0, Math.round(parsed * 100) / 100);
 }
 
-function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight()): ModuleCatalogueItem {
+function normaliseKsbMappingType(value?: string): KsbMappingType {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'main' || raw === 'secondary' || raw === 'possible') return raw;
+  if (raw === 'practice') return 'possible';
+  return 'secondary';
+}
+
+function ksbMappingIdentity(value: Pick<KsbMapping, 'code' | 'sourceType' | 'sourceId'> | Pick<KsbOption, 'code' | 'sourceType' | 'sourceId'>) {
+  return [
+    String(value.code || '').trim().toUpperCase(),
+    String(value.sourceType || '').trim().toLowerCase(),
+    String(value.sourceId || '').trim().toLowerCase(),
+  ].join('|');
+}
+
+function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
+  if (target.scope === 'module') return module.moduleKsbMappings;
+  const week = module.weekStructure.find(item => item.id === target.weekId);
+  if (!week) return [];
+  if (target.scope === 'week') return week.ksbMappings;
+  return week.components.find(component => component.id === target.componentId)?.ksbMappings || [];
+}
+
+function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE): ModuleCatalogueItem {
+  const nextIdentity = ksbMappingIdentity(option);
+  if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
   const mapping: KsbMapping = {
     id: makeAuthoringId('KSBMAP'),
     ksbId: option.id,
     code: option.code,
     description: option.description,
-    type: DEFAULT_KSB_MAPPING_TYPE,
+    sourceType: option.sourceType,
+    sourceId: option.sourceId,
+    type: normaliseKsbMappingType(classification),
+    classification: normaliseKsbMappingType(classification),
     weight: clampKsbWeight(weight),
   };
   if (target.scope === 'module') return { ...module, moduleKsbMappings: [...module.moduleKsbMappings, mapping] };
@@ -4225,6 +5169,21 @@ function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: K
 function updateKsbMappingWeight(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, weight: number): ModuleCatalogueItem {
   const updateMappings = (mappings: KsbMapping[]) => mappings.map(mapping => (
     mapping.id === mappingId ? { ...mapping, weight: clampKsbWeight(weight) } : mapping
+  ));
+  if (target.scope === 'module') return { ...module, moduleKsbMappings: updateMappings(module.moduleKsbMappings) };
+  return {
+    ...module,
+    weekStructure: module.weekStructure.map(week => {
+      if (week.id !== target.weekId) return week;
+      if (target.scope === 'week') return { ...week, ksbMappings: updateMappings(week.ksbMappings) };
+      return { ...week, components: week.components.map(component => component.id === target.componentId ? { ...component, ksbMappings: updateMappings(component.ksbMappings) } : component) };
+    }),
+  };
+}
+
+function updateKsbMappingClassification(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, classification: KsbMappingType): ModuleCatalogueItem {
+  const updateMappings = (mappings: KsbMapping[]) => mappings.map(mapping => (
+    mapping.id === mappingId ? { ...mapping, type: normaliseKsbMappingType(classification), classification: normaliseKsbMappingType(classification) } : mapping
   ));
   if (target.scope === 'module') return { ...module, moduleKsbMappings: updateMappings(module.moduleKsbMappings) };
   return {
@@ -4285,6 +5244,45 @@ function uniqueMappings(mappings: KsbMapping[]) {
     seen.add(key);
     return true;
   });
+}
+
+function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>) {
+  const rows = new Map<string, {
+    code: string;
+    description: string;
+    source: string;
+    weight: number;
+    locations: string[];
+  }>();
+  const addMapping = (mapping: KsbMapping, location: string) => {
+    const code = String(mapping.code || '').trim().toUpperCase();
+    if (!code) return;
+    const source = ksbSourceLabel(mapping, sourceLabels);
+    const key = `${code}::${String(mapping.sourceId || source).trim()}`;
+    const current = rows.get(key) || {
+      code,
+      description: mapping.description || '',
+      source,
+      weight: 0,
+      locations: [],
+    };
+    current.weight += Number(mapping.weight || 0);
+    if (!current.description && mapping.description) current.description = mapping.description;
+    if (!current.locations.includes(location)) current.locations.push(location);
+    rows.set(key, current);
+  };
+
+  module.moduleKsbMappings.forEach(mapping => addMapping(mapping, 'Module'));
+  module.weekStructure.forEach(week => {
+    const weekLabel = week.title || `Week ${week.weekNumber}`;
+    week.ksbMappings.forEach(mapping => addMapping(mapping, weekLabel));
+    week.components.forEach(component => {
+      const location = `${weekLabel} / ${readableComponentTitle(component.title) || 'Component'}`;
+      component.ksbMappings.forEach(mapping => addMapping(mapping, location));
+    });
+  });
+
+  return Array.from(rows.values()).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
 }
 
 function componentDisplayTitle(title: string) {
@@ -4350,10 +5348,12 @@ function createWeekTemplateComponents(week: ModuleWeek, options: { skipExistingT
     { type: 'live-session', title: 'Live Teams session', otjh: 2, points: 20, description: `Tutor-led live session for Week ${week.weekNumber}.` },
     { type: 'recording-placeholder', title: 'Recorded session placeholder', otjh: 2, points: 10, description: `Auto-published recording placeholder for Week ${week.weekNumber}.` },
     { type: 'video', title: 'Pre-recorded video', otjh: 0, points: 10, description: 'Short video introducing the weekly topic.' },
-    { type: 'podcast', title: 'Podcast', otjh: 2, points: 10, description: 'Audio learning resource for this week.' },
+    { type: 'podcast', title: 'Podcast', otjh: 2, points: 10, description: 'Audio learning activity for the weekly topic.' },
     { type: 'reading', title: 'Reading text', otjh: 2, points: 10, description: 'Core reading material for the weekly topic.' },
     { type: 'powerpoint', title: 'PowerPoint', otjh: 2, points: 5, description: 'Slide deck for the week.' },
     { type: 'quiz', title: 'Weekly quiz', otjh: 2, points: 20, description: 'Knowledge check for this week.' },
+    { type: 'reflection', title: 'Reflection activity', otjh: 0.5, points: 15, description: 'Learner reflection activity for the week.' },
+    { type: 'workplace-evidence', title: 'Workplace evidence upload', otjh: 0.5, points: 20, description: 'Workplace evidence upload for the weekly KSBs.' },
   ];
 
   return templates
