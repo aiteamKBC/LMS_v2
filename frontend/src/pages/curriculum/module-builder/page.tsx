@@ -3749,7 +3749,10 @@ function ModuleCatalogueCard({
   onDuplicate: () => void;
   onDelete: () => void;
 }) {
-  const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // weekStructure is only populated once a module is opened/built. For modules
+  // fetched from the catalogue it stays empty, so fall back to lessonCount,
+  // which the backend sets to the real authored component count.
+  const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0) || module.lessonCount || 0;
   const hasContent = componentCount > 0;
 
   return (

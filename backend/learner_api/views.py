@@ -17,7 +17,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import sync_active_user
+from .active_users import cohort_dates, sync_active_user
 from .constants import STATUS_CHOICES, TYPE_CHOICES, PROGRAMME_STATUS_CHOICES
 from .mappers import (
     ValidationError,
@@ -112,6 +112,13 @@ def enrolment_users(request):
         stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
         fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
 
+        # Stamp the cohort's delivery window from the authored cohort table.
+        start, end = cohort_dates(fields.get("programme"), fields.get("cohort"))
+        if start is not None:
+            fields["start_date"] = start
+        if end is not None:
+            fields["end_date"] = end
+
         try:
             user = EnrolmentUser.objects.create(**fields)
         except DatabaseError as exc:
@@ -152,6 +159,14 @@ def enrolment_user_detail(request, pk):
             fields = write_fields(payload)
         except ValidationError as exc:
             return _error(str(exc), 400)
+        # If the cohort/programme changed, refresh the delivery window too.
+        if "cohort" in fields or "programme" in fields:
+            start, end = cohort_dates(
+                fields.get("programme", user.programme),
+                fields.get("cohort", user.cohort),
+            )
+            fields["start_date"] = start
+            fields["end_date"] = end
         if fields:
             for attr, value in fields.items():
                 setattr(user, attr, value)
@@ -183,6 +198,13 @@ def commercial_users(request):
         except ValidationError as exc:
             return _error(str(exc), 400)
 
+        # Stamp the cohort's delivery window from the authored cohort table.
+        start, end = cohort_dates(fields.get("programme"), fields.get("cohort"))
+        if start is not None:
+            fields["start_date"] = start
+        if end is not None:
+            fields["end_date"] = end
+
         try:
             user = CommercialUser.objects.create(**fields)
         except DatabaseError as exc:
@@ -210,6 +232,14 @@ def commercial_user_detail(request, pk):
             fields = write_commercial_fields(payload)
         except ValidationError as exc:
             return _error(str(exc), 400)
+        # If the cohort/programme changed, refresh the delivery window too.
+        if "cohort" in fields or "programme" in fields:
+            start, end = cohort_dates(
+                fields.get("programme", user.programme),
+                fields.get("cohort", user.cohort),
+            )
+            fields["start_date"] = start
+            fields["end_date"] = end
         if fields:
             for attr, value in fields.items():
                 setattr(user, attr, value)

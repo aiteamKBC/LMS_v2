@@ -3,6 +3,7 @@ import csv
 import html
 import io
 import base64
+import logging
 import mimetypes
 import re
 import zipfile
@@ -21,6 +22,8 @@ from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
 from learner_api.models import ActiveUser
+
+logger = logging.getLogger(__name__)
 
 AI_GENERATION_MAX_FILE_SIZE = 50 * 1024 * 1024
 AI_GENERATION_MAX_CONTENT_CHARS = 60000
@@ -366,7 +369,18 @@ def _extract_text_from_ai_files_with_report(files):
     extracted_chunks = []
     unreadable_files = []
     for uploaded_file in sorted(files[:10], key=lambda file: file.name.lower()):
-        extracted = _extract_text_for_ai(uploaded_file).strip()
+        try:
+            extracted = _extract_text_for_ai(uploaded_file).strip()
+        except ValueError:
+            # File-level validation problems (too large, unsupported type) must
+            # surface to the caller as a 400, not be swallowed here.
+            raise
+        except Exception:
+            # A single unreadable/corrupt file, or a missing optional extraction
+            # dependency, should mark that file unreadable rather than 500 the
+            # whole generation request.
+            logger.exception("AI source extraction failed for %s", getattr(uploaded_file, "name", "?"))
+            extracted = ""
         if extracted:
             extracted_chunks.append((uploaded_file.name, extracted))
         else:
@@ -1321,7 +1335,7 @@ def _safe_scorm_member_path(destination, member_name):
 
 
 def _ensure_scorm_extracted(quiz):
-    if quiz.package_type != "scorm" or not quiz.uploaded_file:
+    if quiz.package_type != "scorm" or not _scorm_uploaded_file_readable(quiz):
         raise Http404
 
     destination = (settings.MEDIA_ROOT / "scorm_runtime" / f"quiz_{quiz.id}").resolve()
@@ -2227,13 +2241,17 @@ def _quiz_xml_response(quiz):
     return response
 
 
-def _quiz_scorm_response(quiz):
-    if quiz.uploaded_file:
-        filename = quiz.file_name or _safe_download_name(quiz, "zip")
-        if not filename.lower().endswith(".zip"):
-            filename = _safe_download_name(quiz, "zip")
-        return FileResponse(quiz.uploaded_file.open("rb"), as_attachment=True, filename=filename)
+def _scorm_uploaded_file_readable(quiz):
+    """True only when the quiz has an uploaded package that actually exists on disk."""
+    if not quiz.uploaded_file:
+        return False
+    try:
+        return quiz.uploaded_file.storage.exists(quiz.uploaded_file.name)
+    except Exception:
+        return False
 
+
+def _scorm_index_html(quiz):
     questions = [
         {
             "text": question.question_text,
@@ -2252,7 +2270,7 @@ def _quiz_scorm_response(quiz):
         "module": quiz.module,
         "questions": questions,
     })
-    index_html = f"""<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -2289,6 +2307,16 @@ def _quiz_scorm_response(quiz):
 </body>
 </html>
 """
+
+
+def _quiz_scorm_response(quiz):
+    if _scorm_uploaded_file_readable(quiz):
+        filename = quiz.file_name or _safe_download_name(quiz, "zip")
+        if not filename.lower().endswith(".zip"):
+            filename = _safe_download_name(quiz, "zip")
+        return FileResponse(quiz.uploaded_file.open("rb"), as_attachment=True, filename=filename)
+
+    index_html = _scorm_index_html(quiz)
     manifest = f"""<?xml version="1.0" encoding="UTF-8"?>
 <manifest identifier="quiz-{quiz.id}" version="1.2"
   xmlns="http://www.imsproject.org/xsd/imscp_rootv1p1p2"
@@ -2347,6 +2375,17 @@ def quiz_scorm_launch(request, pk, asset_path=""):
         quiz = QuizPackage.objects.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
+
+    if quiz.package_type != "scorm":
+        raise Http404
+
+    # No real package on disk (or it never uploaded): serve a generated preview
+    # built from the quiz's saved questions instead of returning a 500/404 that
+    # the browser renders as an empty, broken iframe.
+    if not _scorm_uploaded_file_readable(quiz):
+        if asset_path and normpath(asset_path.replace("\\", "/")).lstrip("/") not in ("", ".", "index.html"):
+            raise Http404
+        return HttpResponse(_scorm_index_html(quiz), content_type="text/html; charset=utf-8")
 
     destination, launch_path = _ensure_scorm_extracted(quiz)
     requested_path = asset_path or launch_path

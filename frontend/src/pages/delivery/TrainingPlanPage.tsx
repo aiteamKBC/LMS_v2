@@ -209,52 +209,31 @@ export default function TrainingPlanPage() {
     [moduleOptions, plan],
   );
 
+  // Adding a module pulls its full authored definition — every week and each
+  // week's linked components — and adds them all by default, so the officer
+  // doesn't build the tree by hand. The weeks/components aren't shown on this
+  // page (kept short); they're visible on the Review step and in the saved plan.
   const addModule = (item: CurriculumItem) => {
     setPlan((prev) => [...prev, { ...item, weeks: [] }]);
     fetchWeeks(item.id)
-      .then((w) => setWeekOptions((prev) => ({ ...prev, [item.id]: w })))
-      .catch((e) => error('Could not load weeks', e.message));
+      .then(async (weeks) => {
+        setWeekOptions((prev) => ({ ...prev, [item.id]: weeks }));
+        // Fetch every week's components in parallel, then build the full tree.
+        const compsByWeek = await Promise.all(
+          weeks.map((w) => fetchComponents(w.id).catch(() => [] as ComponentItem[])),
+        );
+        setComponentOptions((prev) => {
+          const next = { ...prev };
+          weeks.forEach((w, i) => { next[w.id] = compsByWeek[i]; });
+          return next;
+        });
+        const builtWeeks: BuiltWeek[] = weeks.map((w, i) => ({ ...w, components: compsByWeek[i] }));
+        setPlan((prev) => prev.map((m) => m.id === item.id ? { ...m, weeks: builtWeeks } : m));
+      })
+      .catch((e) => error('Could not load module content', e.message));
   };
   const removeModule = (moduleId: string) =>
     setPlan((prev) => prev.filter((m) => m.id !== moduleId));
-
-  const addWeek = (moduleId: string, item: CurriculumItem) => {
-    const week = (weekOptions[moduleId] || []).find((w) => w.id === item.id);
-    if (!week) return;
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId ? { ...m, weeks: [...m.weeks, { ...week, components: [] }] } : m));
-    // Pull the week's linked components and add them all by default (each stays
-    // removable, and any removed one can be re-added from the dropdown).
-    fetchComponents(week.id)
-      .then((c) => {
-        setComponentOptions((prev) => ({ ...prev, [week.id]: c }));
-        setPlan((prev) => prev.map((m) =>
-          m.id === moduleId
-            ? { ...m, weeks: m.weeks.map((w) => w.id === week.id ? { ...w, components: c } : w) }
-            : m));
-      })
-      .catch((e) => error('Could not load components', e.message));
-  };
-  const removeWeek = (moduleId: string, weekId: string) =>
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId ? { ...m, weeks: m.weeks.filter((w) => w.id !== weekId) } : m));
-
-  const addComponent = (moduleId: string, weekId: string, item: CurriculumItem) => {
-    const comp = (componentOptions[weekId] || []).find((c) => c.id === item.id);
-    if (!comp) return;
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId
-        ? { ...m, weeks: m.weeks.map((w) => w.id === weekId ? { ...w, components: [...w.components, comp] } : w) }
-        : m));
-  };
-  const removeComponent = (moduleId: string, weekId: string, compId: string) =>
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId
-        ? { ...m, weeks: m.weeks.map((w) => w.id === weekId ? { ...w, components: w.components.filter((c) => c.id !== compId) } : w) }
-        : m));
-
-  const asItems = (weeks: WeekItem[] | undefined, taken: string[]): CurriculumItem[] =>
-    (weeks || []).filter((w) => !taken.includes(w.id));
 
   // ---- save ----
   const handleSave = async () => {
@@ -381,66 +360,30 @@ export default function TrainingPlanPage() {
                 )}
                 {plan.length === 0 && programme && <EmptyState text="No modules added yet." />}
 
-                <div className="space-y-4">
+                {/* Each added module brings its authored weeks + components in by
+                    default; we only list the modules here to keep the page short.
+                    The full breakdown is on the Review step. */}
+                <ul className="space-y-2">
                   {plan.map((m) => {
-                    const takenWeeks = m.weeks.map((w) => w.id);
+                    const weekCount = m.weeks.length;
+                    const compCount = m.weeks.reduce((k, w) => k + w.components.length, 0);
                     return (
-                      <div key={m.id} className="rounded-xl border border-foreground-200/70 overflow-hidden">
-                        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-100">
-                          <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
-                            <i className="ri-book-2-line text-primary-600" />{m.title}
+                      <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-foreground-200/70 px-4 py-3 bg-background-100/40">
+                        <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
+                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[11px] text-foreground-500">
+                            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {compCount} {compCount === 1 ? 'component' : 'components'}
                           </span>
                           <button onClick={() => removeModule(m.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${m.title}`}>
                             <i className="ri-delete-bin-line" />
                           </button>
                         </div>
-                        <div className="p-4 space-y-3">
-                          <AddSelect
-                            placeholder="Add a week…"
-                            options={asItems(weekOptions[m.id], takenWeeks)}
-                            onAdd={(item) => addWeek(m.id, item)}
-                          />
-                          {m.weeks.length === 0 && <EmptyState text="No weeks added yet." />}
-                          <div className="space-y-3 pl-3 border-l-2 border-foreground-100">
-                            {m.weeks.map((w) => {
-                              const takenComps = w.components.map((c) => c.id);
-                              return (
-                                <div key={w.id} className="rounded-lg border border-foreground-100 p-3 space-y-2">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <span className="text-[12px] font-medium text-foreground-800 inline-flex items-center gap-1.5">
-                                      <i className="ri-calendar-line text-secondary-600" />{w.title}
-                                    </span>
-                                    <button onClick={() => removeWeek(m.id, w.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${w.title}`}>
-                                      <i className="ri-close-line" />
-                                    </button>
-                                  </div>
-                                  <AddSelect
-                                    placeholder="Add a component…"
-                                    options={asItems(componentOptions[w.id], takenComps)}
-                                    onAdd={(item) => addComponent(m.id, w.id, item)}
-                                  />
-                                  {w.components.length > 0 && (
-                                    <ul className="flex flex-wrap gap-2 pt-1">
-                                      {w.components.map((c) => (
-                                        <li key={c.id} className="inline-flex items-center gap-1.5 text-[11px] bg-background-100 border border-foreground-200/60 rounded-full pl-2.5 pr-1.5 py-1 text-foreground-700">
-                                          <i className="ri-checkbox-blank-circle-fill text-[6px] text-accent-500" />
-                                          {c.title}
-                                          <button onClick={() => removeComponent(m.id, w.id, c.id)} className="w-4 h-4 rounded-full hover:bg-background-200 flex items-center justify-center cursor-pointer" aria-label={`Remove ${c.title}`}>
-                                            <i className="ri-close-line text-[11px]" />
-                                          </button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               </div>
             )}
 
