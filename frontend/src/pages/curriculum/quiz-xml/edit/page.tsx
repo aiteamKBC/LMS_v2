@@ -5,6 +5,8 @@ import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
+import { formatQuizGradeRange, useQuizGradeSettings } from '@/lib/quizGradeSettings';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -42,19 +44,6 @@ const quizStatusOptions: { value: QuizStatus; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'trash', label: 'Archive' },
   { value: 'private', label: 'Private' },
-];
-
-const gradeRows = [
-  { grade: 'A+', point: '5', range: '95-100%', color: 'bg-blue-500' },
-  { grade: 'A', point: '4.5', range: '90-94%', color: 'bg-blue-600' },
-  { grade: 'A-', point: '4', range: '85-89%', color: 'bg-blue-600' },
-  { grade: 'B+', point: '3.5', range: '80-84%', color: 'bg-emerald-500' },
-  { grade: 'B', point: '3', range: '75-79%', color: 'bg-green-600' },
-  { grade: 'B-', point: '2.5', range: '70-74%', color: 'bg-emerald-600' },
-  { grade: 'C+', point: '2', range: '65-69%', color: 'bg-red-500' },
-  { grade: 'C', point: '1.5', range: '60-64%', color: 'bg-red-600' },
-  { grade: 'C-', point: '1', range: '55-59%', color: 'bg-red-600' },
-  { grade: 'D', point: '0', range: '50-54%', color: 'bg-foreground-400' },
 ];
 
 interface QuizPackage {
@@ -196,6 +185,25 @@ function normalizeAnswersForQuestionType(answers: QuizQuestion['answers'], type:
   return nextAnswers.map((answer, index) => ({ ...answer, isCorrect: index === firstCorrectIndex }));
 }
 
+function createDraftQuestion(order: number, questionType: QuestionType = 'single_choice'): QuizQuestion {
+  const questionId = -Date.now();
+  const baseAnswerId = questionId * 10;
+
+  return {
+    id: questionId,
+    text: `New question ${order}`,
+    questionType,
+    explanation: '',
+    isArchived: false,
+    answers: normalizeAnswersForQuestionType([
+      { id: baseAnswerId - 1, text: '', isCorrect: true },
+      { id: baseAnswerId - 2, text: '', isCorrect: false },
+      { id: baseAnswerId - 3, text: '', isCorrect: false },
+      { id: baseAnswerId - 4, text: '', isCorrect: false },
+    ], questionType),
+  };
+}
+
 function normalizeQuizStyle(value: string) {
   return ['default', 'pagination', 'global'].includes(value) ? value : 'default';
 }
@@ -275,11 +283,14 @@ export default function QuizEditPage() {
   const [draggedAnswerId, setDraggedAnswerId] = useState<number | null>(null);
   const [dragOverAnswerId, setDragOverAnswerId] = useState<number | null>(null);
   const [pageError, setPageError] = useState('');
+  const [gradeSettings] = useQuizGradeSettings();
 
   const activeQuestions = useMemo(() => data?.questions.filter(question => !question.isArchived) ?? [], [data?.questions]);
   const archivedQuestions = useMemo(() => data?.questions.filter(question => question.isArchived) ?? [], [data?.questions]);
   const activeQuestion = activeQuestions.find(question => question.id === activeQuestionId) ?? activeQuestions[0];
   const activeQuestionIndex = activeQuestion ? activeQuestions.findIndex(question => question.id === activeQuestion.id) : -1;
+  const hintGradeRow = gradeSettings.rows.find(row => row.point === 4.5) ?? gradeSettings.rows[1] ?? gradeSettings.rows[0];
+  const hintGradeIndex = hintGradeRow ? gradeSettings.rows.findIndex(row => row.grade === hintGradeRow.grade && row.min === hintGradeRow.min) : -1;
   const questionDirty = Boolean(data && serializeQuestions(data.questions) !== questionBaseline);
   const settingsDirty = Boolean(settings && serializeSettings(settings) !== settingsBaseline);
   const courseLinksDirty = Boolean(courseLinks && serializeCourseLinks(courseLinks) !== courseLinksBaseline);
@@ -451,6 +462,22 @@ export default function QuizEditPage() {
     setDragOverQuestionId(null);
   };
 
+  const addQuestion = () => {
+    setData(prev => {
+      if (!prev) return prev;
+      const nextQuestion = createDraftQuestion(
+        prev.questions.filter(question => !question.isArchived).length + 1,
+        prev.quiz.defaultQuestionType || 'single_choice',
+      );
+      setActiveQuestionId(nextQuestion.id);
+      setActiveTab('questions');
+      return {
+        ...prev,
+        questions: [...prev.questions.filter(question => !question.isArchived), nextQuestion, ...prev.questions.filter(question => question.isArchived)],
+      };
+    });
+  };
+
   const persistQuestionList = async (questions: QuizQuestion[], nextActiveQuestionId: number | null, title: string, message: string) => {
     if (!data || savingQuestions) return;
     setSavingQuestions(true);
@@ -477,14 +504,23 @@ export default function QuizEditPage() {
     }
   };
 
-  const archiveQuestion = (questionId: number) => {
+  const archiveQuestion = async (questionId: number) => {
     if (!data || savingQuestions) return;
-    const nextQuestions = data.questions.map(question => question.id === questionId ? { ...question, isArchived: true } : question);
-    const nextActive = nextQuestions.find(question => !question.isArchived);
-    setData({ ...data, questions: nextQuestions });
-    setActiveQuestionId(activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId);
-    setActiveTab('archive');
-    void persistQuestionList(nextQuestions, activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId, 'Question archived', 'The question was moved to the archive.');
+    const targetQuestion = data.questions.find(question => question.id === questionId);
+    await showCurriculumConfirm({
+      title: 'Archive question?',
+      text: `Are you sure you want to archive "${targetQuestion?.text || 'this question'}"?`,
+      icon: 'warning',
+      confirmButtonText: 'Archive question',
+      onConfirm: async () => {
+        const nextQuestions = data.questions.map(question => question.id === questionId ? { ...question, isArchived: true } : question);
+        const nextActive = nextQuestions.find(question => !question.isArchived);
+        setData({ ...data, questions: nextQuestions });
+        setActiveQuestionId(activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId);
+        setActiveTab('archive');
+        await persistQuestionList(nextQuestions, activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId, 'Question archived', 'The question was moved to the archive.');
+      },
+    });
   };
 
   const restoreQuestion = (questionId: number) => {
@@ -496,13 +532,22 @@ export default function QuizEditPage() {
     void persistQuestionList(nextQuestions, questionId, 'Question restored', 'The question is back in the quiz.');
   };
 
-  const deleteQuestionForever = (questionId: number) => {
+  const deleteQuestionForever = async (questionId: number) => {
     if (!data || savingQuestions) return;
-    const nextQuestions = data.questions.filter(question => question.id !== questionId);
-    const nextActive = nextQuestions.find(question => !question.isArchived);
-    setData({ ...data, questions: nextQuestions });
-    setActiveQuestionId(activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId);
-    void persistQuestionList(nextQuestions, activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId, 'Question deleted', 'The archived question was deleted permanently.');
+    const targetQuestion = data.questions.find(question => question.id === questionId);
+    await showCurriculumConfirm({
+      title: 'Delete question permanently?',
+      text: `Are you sure you want to permanently delete "${targetQuestion?.text || 'this question'}"? This cannot be undone.`,
+      icon: 'warning',
+      confirmButtonText: 'Delete permanently',
+      onConfirm: async () => {
+        const nextQuestions = data.questions.filter(question => question.id !== questionId);
+        const nextActive = nextQuestions.find(question => !question.isArchived);
+        setData({ ...data, questions: nextQuestions });
+        setActiveQuestionId(activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId);
+        await persistQuestionList(nextQuestions, activeQuestionId === questionId ? nextActive?.id ?? null : activeQuestionId, 'Question deleted', 'The archived question was deleted permanently.');
+      },
+    });
   };
 
   const addAnswer = (questionId: number) => {
@@ -580,7 +625,7 @@ export default function QuizEditPage() {
     }
   };
 
-  const updateQuizStatus = async (nextStatus: QuizStatus) => {
+  const performQuizStatusUpdate = async (nextStatus: QuizStatus) => {
     if (!data || data.quiz.status === nextStatus || savingStatus) return;
     setSavingStatus(true);
     try {
@@ -601,6 +646,21 @@ export default function QuizEditPage() {
     } finally {
       setSavingStatus(false);
     }
+  };
+
+  const updateQuizStatus = async (nextStatus: QuizStatus) => {
+    if (!data || data.quiz.status === nextStatus || savingStatus) return;
+    if (nextStatus === 'trash') {
+      await showCurriculumConfirm({
+        title: 'Archive quiz?',
+        text: `Are you sure you want to archive "${data.quiz.title}"? You can restore it later from Archive.`,
+        icon: 'warning',
+        confirmButtonText: 'Archive quiz',
+        onConfirm: () => performQuizStatusUpdate('trash'),
+      });
+      return;
+    }
+    await performQuizStatusUpdate(nextStatus);
   };
 
   if (loading) {
@@ -675,6 +735,15 @@ export default function QuizEditPage() {
           {activeTab === 'questions' && (
             <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
               <aside className="border border-[#dfe4ec] rounded-2xl bg-[#f8fafc] p-3 max-h-[680px] overflow-y-auto quiz-preview-scroll">
+                <button
+                  type="button"
+                  onClick={addQuestion}
+                  disabled={savingQuestions}
+                  className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#5b2dbb] text-sm font-semibold text-white transition-smooth hover:bg-[#4c1d95] disabled:cursor-wait disabled:opacity-50"
+                >
+                  <i className="ri-add-line"></i>
+                  Add question
+                </button>
                 <div className="mb-3 rounded-xl bg-[#f2f0ff] border border-[#ded8ff] px-3 py-2 text-[11px] text-[#5b2dbb] flex items-center gap-2">
                   <i className="ri-draggable"></i>
                   Drag questions to reorder, then save changes.
@@ -711,7 +780,7 @@ export default function QuizEditPage() {
                           </div>
                           <p className="text-xs text-foreground-800 line-clamp-2">{question.text}</p>
                         </button>
-                        <button onClick={() => archiveQuestion(question.id)} disabled={savingQuestions} title="Archive question" className="w-7 h-7 rounded-md bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5] shrink-0 disabled:opacity-50 disabled:cursor-wait"><i className="ri-archive-line text-xs"></i></button>
+                        <button onClick={() => void archiveQuestion(question.id)} disabled={savingQuestions} title="Archive question" className="w-7 h-7 rounded-md bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5] shrink-0 disabled:opacity-50 disabled:cursor-wait"><i className="ri-archive-line text-xs"></i></button>
                       </div>
                     </div>
                   ))}
@@ -724,7 +793,7 @@ export default function QuizEditPage() {
                     <div>
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                         <label className="block text-xs font-semibold text-foreground-600">Question text</label>
-                        <button onClick={() => archiveQuestion(activeQuestion.id)} disabled={savingQuestions} className="h-8 px-2 rounded-lg bg-[#fff7ed] text-xs font-semibold text-[#c2410c] hover:bg-[#ffedd5] self-start sm:self-auto disabled:opacity-50 disabled:cursor-wait">
+                        <button onClick={() => void archiveQuestion(activeQuestion.id)} disabled={savingQuestions} className="h-8 px-2 rounded-lg bg-[#fff7ed] text-xs font-semibold text-[#c2410c] hover:bg-[#ffedd5] self-start sm:self-auto disabled:opacity-50 disabled:cursor-wait">
                           <i className="ri-archive-line mr-1"></i>Archive
                         </button>
                       </div>
@@ -865,7 +934,18 @@ export default function QuizEditPage() {
                     </div>
                   </div>
                 ) : (
-                  <div className="py-16 text-center text-sm text-foreground-400">No questions available.</div>
+                  <div className="py-16 text-center">
+                    <p className="text-sm text-foreground-400">No questions available.</p>
+                    <button
+                      type="button"
+                      onClick={addQuestion}
+                      disabled={savingQuestions}
+                      className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#5b2dbb] px-4 text-sm font-semibold text-white transition-smooth hover:bg-[#4c1d95] disabled:cursor-wait disabled:opacity-50"
+                    >
+                      <i className="ri-add-line"></i>
+                      Add question
+                    </button>
+                  </div>
                 )}
               </section>
             </div>
@@ -984,7 +1064,9 @@ export default function QuizEditPage() {
               </div>
 
               <div className="rounded-xl bg-[#f3f6fb] border border-[#e2e8f0] p-4 flex items-center justify-between gap-4">
-                <p className="text-sm text-foreground-700"><strong>Hint:</strong> 4.5 Points = 90-94% or "A" grade</p>
+                <p className="text-sm text-foreground-700">
+                  <strong>Hint:</strong> {hintGradeRow ? `${hintGradeRow.point} Points = ${formatQuizGradeRange(gradeSettings.rows, hintGradeIndex)} or "${hintGradeRow.grade}" grade` : 'Configure default grades from Grade Settings'}
+                </p>
                 <button onClick={() => setShowGradesTable(true)} className="h-9 px-4 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95]">See table</button>
               </div>
 
@@ -1048,7 +1130,7 @@ export default function QuizEditPage() {
                           <button onClick={() => restoreQuestion(question.id)} disabled={savingQuestions} className="h-9 px-3 rounded-lg bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100 whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
                             <i className="ri-arrow-go-back-line mr-1"></i>Restore
                           </button>
-                          <button onClick={() => deleteQuestionForever(question.id)} disabled={savingQuestions} className="h-9 px-3 rounded-lg bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
+                          <button onClick={() => void deleteQuestionForever(question.id)} disabled={savingQuestions} className="h-9 px-3 rounded-lg bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
                             <i className="ri-delete-bin-line mr-1"></i>Delete
                           </button>
                         </div>
@@ -1178,13 +1260,13 @@ export default function QuizEditPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {gradeRows.map(row => (
+                    {gradeSettings.rows.map((row, index) => (
                       <tr key={row.grade} className="border-b border-foreground-200/70 last:border-b-0">
                         <td className="py-2.5 px-2">
-                          <span className={`inline-flex min-w-9 h-6 items-center justify-center rounded-full px-2 text-sm font-bold text-white ${row.color}`}>{row.grade}</span>
+                          <span className="inline-flex min-w-9 h-6 items-center justify-center rounded-full px-2 text-sm font-bold text-white" style={{ backgroundColor: row.color }}>{row.grade}</span>
                         </td>
                         <td className="py-2.5 px-2 text-sm text-foreground-900">{row.point}</td>
-                        <td className="py-2.5 px-2 text-sm text-foreground-900">{row.range}</td>
+                        <td className="py-2.5 px-2 text-sm text-foreground-900">{formatQuizGradeRange(gradeSettings.rows, index)}</td>
                       </tr>
                     ))}
                   </tbody>

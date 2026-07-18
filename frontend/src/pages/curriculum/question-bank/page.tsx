@@ -39,6 +39,12 @@ interface QuestionBankQuestion {
   module: string;
   quizId: number;
   quizTitle: string;
+  linkedQuizzes?: {
+    id: number;
+    title: string;
+    module: string;
+    status: string;
+  }[];
   answers: {
     id: number;
     text: string;
@@ -168,19 +174,26 @@ export default function QuestionBankPage() {
     { value: 'all' as const, label: 'All types' },
     ...questionTypeOptions,
   ], []);
-  const targetQuizOptions = useMemo(() => {
+  const selectedQuestionCurrentQuiz = useMemo(() => {
+    if (!selectedQuestion) return null;
+    return (questionBank?.quizzes ?? []).find(quiz => quiz.id === selectedQuestion.quizId) ?? null;
+  }, [questionBank?.quizzes, selectedQuestion]);
+  const availableTargetQuizzes = useMemo(() => {
     if (!selectedQuestion) return [];
     return (questionBank?.quizzes ?? [])
-      .filter(quiz => quiz.programmeKey === selectedQuestion.programmeKey)
+      .filter(quiz => quiz.programmeKey === selectedQuestion.programmeKey && quiz.id !== selectedQuestion.quizId);
+  }, [questionBank?.quizzes, selectedQuestion]);
+  const targetQuizOptions = useMemo(() => {
+    return availableTargetQuizzes
       .map(quiz => ({
         value: String(quiz.id),
         label: `${quiz.title} (${quiz.questions} questions)`,
       }));
-  }, [questionBank?.quizzes, selectedQuestion]);
+  }, [availableTargetQuizzes]);
 
   const openAddToQuiz = (question: QuestionBankQuestion) => {
     const options = (questionBank?.quizzes ?? [])
-      .filter(quiz => quiz.programmeKey === question.programmeKey);
+      .filter(quiz => quiz.programmeKey === question.programmeKey && quiz.id !== question.quizId);
     setSelectedQuestion(question);
     setTargetQuizId(options[0] ? String(options[0].id) : '');
   };
@@ -199,6 +212,34 @@ export default function QuestionBankPage() {
         throw new Error(payload?.error || 'Could not add question to quiz');
       }
       const targetQuiz = questionBank?.quizzes.find(quiz => String(quiz.id) === targetQuizId);
+      if (targetQuiz) {
+        const sourceQuestion = selectedQuestion;
+        setQuestionBank(prev => prev ? ({
+          ...prev,
+          questions: prev.questions.map(question => {
+            const sameQuestion = question.programmeKey === sourceQuestion.programmeKey
+              && question.questionType === sourceQuestion.questionType
+              && question.text.trim().toLowerCase() === sourceQuestion.text.trim().toLowerCase();
+            if (!sameQuestion) return question;
+            const existingLinked = question.linkedQuizzes?.length
+              ? question.linkedQuizzes
+              : [{ id: question.quizId, title: question.quizTitle, module: question.module, status: question.quizStatus }];
+            const nextLinked = existingLinked.some(quiz => quiz.id === targetQuiz.id)
+              ? existingLinked
+              : [
+                ...existingLinked,
+                {
+                  id: targetQuiz.id,
+                  title: targetQuiz.title,
+                  module: targetQuiz.module,
+                  status: targetQuiz.status,
+                },
+              ];
+            return { ...question, linkedQuizzes: nextLinked };
+          }),
+          quizzes: prev.quizzes.map(quiz => quiz.id === targetQuiz.id ? { ...quiz, questions: quiz.questions + 1 } : quiz),
+        }) : prev);
+      }
       success('Question added', targetQuiz ? `Added to ${targetQuiz.title}.` : 'Question copied to the selected quiz.');
       setSelectedQuestion(null);
       setTargetQuizId('');
@@ -372,6 +413,20 @@ export default function QuestionBankPage() {
                                 <p className="text-xs text-[#647083] mt-2">
                                   {question.module || 'No module'} - {question.quizTitle}
                                 </p>
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  {(question.linkedQuizzes?.length ? question.linkedQuizzes : [{ id: question.quizId, title: question.quizTitle, module: question.module, status: question.quizStatus }]).map(linkedQuiz => {
+                                    const isCurrent = linkedQuiz.id === question.quizId;
+                                    return (
+                                      <span
+                                        key={linkedQuiz.id}
+                                        className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm ${isCurrent ? 'border-[#c4b5fd] bg-[#ede9fe] text-[#43207d]' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
+                                      >
+                                        <i className={isCurrent ? 'ri-folder-info-line text-[#5b2dbb]' : 'ri-links-line text-emerald-600'}></i>
+                                        {isCurrent ? 'Currently in' : 'Also in'}: {linkedQuiz.title}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
                                 {hasKsbTag && <span className="w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-[#eefcf7] text-emerald-700">KSB tagged</span>}
@@ -413,21 +468,63 @@ export default function QuestionBankPage() {
                   <p className="text-xs text-[#647083] mt-2">{selectedQuestion.programme} - from {selectedQuestion.quizTitle}</p>
                 </div>
 
+                <div className="rounded-xl border border-[#ddd6fe] bg-[#fbf9ff] p-4">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#5b2dbb] mb-2">Currently used in</p>
+                  <div className="space-y-2">
+                    {(selectedQuestion.linkedQuizzes?.length ? selectedQuestion.linkedQuizzes : [{
+                      id: selectedQuestion.quizId,
+                      title: selectedQuestionCurrentQuiz?.title ?? selectedQuestion.quizTitle,
+                      module: selectedQuestionCurrentQuiz?.module || selectedQuestion.module,
+                      status: selectedQuestionCurrentQuiz?.status ?? selectedQuestion.quizStatus,
+                    }]).map(linkedQuiz => {
+                      const isCurrent = linkedQuiz.id === selectedQuestion.quizId;
+                      return (
+                        <div key={linkedQuiz.id} className={`rounded-lg border px-3 py-2 ${isCurrent ? 'border-[#c4b5fd] bg-white' : 'border-emerald-200 bg-emerald-50'}`}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-[#1f2937]">{linkedQuiz.title}</p>
+                              <p className="mt-1 text-xs text-[#647083]">
+                                {(linkedQuiz.module || 'No module')} - {statusLabel(linkedQuiz.status)}
+                              </p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${isCurrent ? 'bg-[#ede9fe] text-[#43207d]' : 'bg-white text-emerald-700'}`}>
+                              {isCurrent ? 'Current' : 'Linked'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {targetQuizOptions.length > 0 ? (
-                  <div>
-                    <label className="block text-xs font-semibold text-foreground-600 mb-2">Choose target quiz</label>
-                    <ThemedSelect
-                      value={targetQuizId}
-                      options={targetQuizOptions}
-                      onChange={setTargetQuizId}
-                      buttonClassName="h-11"
-                      menuClassName="max-h-56"
-                    />
-                    <p className="text-xs text-[#647083] mt-2">Only quizzes linked to the same programme are shown, so questions do not mix across programmes.</p>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-foreground-600 mb-2">Available quizzes to add this question to</label>
+                      <ThemedSelect
+                        value={targetQuizId}
+                        options={targetQuizOptions}
+                        onChange={setTargetQuizId}
+                        buttonClassName="h-11"
+                        menuClassName="max-h-56"
+                      />
+                      <p className="text-xs text-[#647083] mt-2">Only other quizzes linked to the same programme are shown, so questions do not mix across programmes.</p>
+                    </div>
+                    <div className="rounded-xl border border-[#e2e8f0] bg-white p-3">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-[#647083] mb-2">Available in this programme</p>
+                      <div className="space-y-2 max-h-36 overflow-y-auto quiz-preview-scroll pr-1">
+                        {availableTargetQuizzes.map(quiz => (
+                          <div key={quiz.id} className={`rounded-lg border px-3 py-2 text-xs ${String(quiz.id) === targetQuizId ? 'border-[#a78bfa] bg-[#f2f0ff] text-[#43207d]' : 'border-[#e2e8f0] bg-[#f8fafc] text-[#475569]'}`}>
+                            <p className="font-semibold">{quiz.title}</p>
+                            <p className="mt-1 text-[#647083]">{quiz.module || 'No module'} - {quiz.questions} questions - {statusLabel(quiz.status)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                    No other quizzes are available in this programme yet.
+                    This question is already in its current quiz, and there are no other available quizzes in the same programme yet.
                   </div>
                 )}
               </div>
