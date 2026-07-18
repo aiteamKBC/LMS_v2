@@ -10,6 +10,34 @@ import { RewardCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 
 const engagementNav = roleNavMap.engagement;
 
+// Reward artwork points at external image URLs (some are on-demand generated
+// placeholders that redirect and get rate-limited when the whole grid loads at
+// once, some are third-party CDNs that can 404). Rather than let a failed load
+// render the browser's broken-image glyph, fall back to a branded icon tile so
+// every card stays visually consistent.
+function RewardImage({ src, alt }: { src: string; alt: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed || !src) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary-100 to-secondary-100">
+        <i className="ri-gift-2-line text-3xl text-primary-400"></i>
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      // object-contain (not cover): reward artwork comes in at varying sizes
+      // from the backend, so fit the whole photo inside the tile instead of
+      // zooming in and cropping the item off the edges.
+      className="w-full h-full object-contain p-2"
+    />
+  );
+}
+
 // Placeholder artwork for rewards created via "Create Reward" — there's no
 // image upload flow yet, so new items share a generic catalogue image.
 const DEFAULT_REWARD_IMAGE = 'https://readdy.ai/api/search-image?query=generic%20gift%20reward%20box%20modern%20minimalist%20design&width=200&height=200&seq=reward-default&orientation=squarish';
@@ -361,7 +389,7 @@ export default function RewardsShopPage() {
           {filtered.map(reward => (
             <div key={reward.id} className={`bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden card-premium hover:border-primary-200/50 transition-smooth ${reward.active ? '' : 'opacity-60'}`}>
               <div className="relative h-32 bg-background-100">
-                <img src={reward.image} alt={reward.name} className="w-full h-full object-cover" />
+                <RewardImage src={reward.image} alt={reward.name} />
                 {reward.popular && <span className="absolute top-2 right-2 bg-accent-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">POPULAR</span>}
                 {reward.stock === 0 ? (
                   <span className="absolute top-2 left-2 bg-foreground-900 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">OUT OF STOCK</span>
