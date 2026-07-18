@@ -765,10 +765,9 @@ export default function CoachCaseload() {
         </section>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2 md:gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2 md:gap-3">
           <MiniStatCard label="Total" value={String(summaryCounts.total)} icon="ri-group-line" color="primary" active={summaryFilter === 'all'} onClick={() => handleSummaryCardClick('all')} />
           <MiniStatCard label="Active" value={String(summaryCounts.active)} icon="ri-check-double-line" color="emerald" active={summaryFilter === 'active'} onClick={() => handleSummaryCardClick('active')} />
-          <MiniStatCard label="Withdrawn" value={String(summaryCounts.withdrawn)} icon="ri-user-unfollow-line" color="foreground" active={summaryFilter === 'withdrawn'} onClick={() => handleSummaryCardClick('withdrawn')} />
           <MiniStatCard label="Break" value={String(summaryCounts.break)} icon="ri-pause-circle-line" color="amber" active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
           <MiniStatCard label="Ready to Enrol" value={String(summaryCounts.readyToEnrol)} icon="ri-user-add-line" color="primary" active={summaryFilter === 'ready-to-enrol'} onClick={() => handleSummaryCardClick('ready-to-enrol')} />
           <MiniStatCard label="On Track" value={String(summaryCounts.onTrack)} icon="ri-thumb-up-line" color="emerald" active={summaryFilter === 'on-track'} onClick={() => handleSummaryCardClick('on-track')} />

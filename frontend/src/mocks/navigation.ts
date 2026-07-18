@@ -118,7 +118,6 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
       { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports', badge: 3 },
-      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-timer-line', href: '/coach/catchup-queue', badge: 5 },
     ],
   },
   {

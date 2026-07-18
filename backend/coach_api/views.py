@@ -2194,7 +2194,11 @@ def coach_timetable_event_action(request):
     return JsonResponse({"event": updated_event, "warning": warning})
 
 
-def serialize_attendance_learner(learner: dict, attendance_metrics: dict | None) -> dict:
+def serialize_attendance_learner(
+    learner: dict,
+    attendance_metrics: dict | None,
+    catchup_count: int = 0,
+) -> dict:
     sessions = attendance_metrics.get("sessions", 0) if attendance_metrics else 0
     present = attendance_metrics.get("present", 0) if attendance_metrics else 0
     absent = attendance_metrics.get("absent", 0) if attendance_metrics else 0
@@ -2218,7 +2222,7 @@ def serialize_attendance_learner(learner: dict, attendance_metrics: dict | None)
         "present": present if sessions else None,
         "absent": absent if sessions else None,
         "late": None,
-        "catchup": None,
+        "catchup": catchup_count,
         "trend": attendance_metrics.get("trend", "stable") if attendance_metrics else "stable",
         "risk": risk,
         "employer": learner["employer"],
@@ -2347,11 +2351,21 @@ def coach_attendance(request):
         attendance_data = fetch_attendance_data(email_keys)
         active_attendance_data = fetch_attendance_data(active_email_keys)
         metrics_by_email = attendance_data["metrics"]
+        catchup_records = list(
+            CoachCalendarEvent.objects.filter(
+                owner_email__iexact=owner_email,
+                event_type__iexact=CATCH_UP_EVENT_TYPE,
+            )
+        )
+        catchups_by_learner_id: dict[int, int] = {}
+        for record in catchup_records:
+            catchups_by_learner_id[record.learner_id] = catchups_by_learner_id.get(record.learner_id, 0) + 1
 
         attendance_learners = [
             serialize_attendance_learner(
                 learner,
                 metrics_by_email.get(normalize_email(learner.get("email"))),
+                catchups_by_learner_id.get(int(learner["id"]), 0),
             )
             for learner in caseload_learners
         ]
@@ -2370,6 +2384,22 @@ def coach_attendance(request):
     total_sessions = sum(learner["sessions"] or 0 for learner in learners_with_attendance)
     total_present = sum(learner["present"] or 0 for learner in learners_with_attendance)
     total_absent = sum(learner["absent"] or 0 for learner in learners_with_attendance)
+    pending_catchups = [
+        record
+        for record in catchup_records
+        if record.status not in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_CANCELLED}
+    ]
+    scheduled_catchups = [
+        record
+        for record in catchup_records
+        if record.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+    ]
+    today = date.today()
+    overdue_catchups = [
+        record
+        for record in pending_catchups
+        if (record.scheduled_date or record.target_date) < today
+    ]
 
     summary = {
         "totalLearners": len(attendance_learners),
@@ -2385,9 +2415,9 @@ def coach_attendance(request):
         "needsAttention": sum(1 for learner in learners_with_attendance if learner["risk"] == "amber"),
         "atRisk": sum(1 for learner in learners_with_attendance if learner["risk"] == "red"),
         "unknown": len(metric_learners) - len(learners_with_attendance),
-        "catchupsPending": None,
-        "scheduledCatchups": None,
-        "overdueCatchups": None,
+        "catchupsPending": len(pending_catchups),
+        "scheduledCatchups": len(scheduled_catchups),
+        "overdueCatchups": len(overdue_catchups),
     }
 
     owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"

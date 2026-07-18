@@ -6,6 +6,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { ABSENCE_REPORTS_DATA, type AbsenceReport } from '@/mocks/absence-reports';
 
 const coachNav = roleNavMap.coach;
+const TABLE_DATA_COMING_SOON = true;
 
 function FilterDropdown({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; allLabel?: string }) {
   return (
@@ -317,7 +318,18 @@ export default function CoachAbsenceReports() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
-                {paginatedData.length === 0 ? (
+                {TABLE_DATA_COMING_SOON ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-20 text-center">
+                      <div className="flex flex-col items-center gap-3">
+                        <span className="w-12 h-12 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center">
+                          <i className="ri-time-line text-xl"></i>
+                        </span>
+                        <p className="text-sm text-foreground-600 font-semibold">Coming Soon</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : paginatedData.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3">
@@ -454,7 +466,7 @@ export default function CoachAbsenceReports() {
           </div>
 
           {/* Pagination */}
-          {filteredData.length > 0 && (
+          {!TABLE_DATA_COMING_SOON && filteredData.length > 0 && (
             <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-[11px] text-foreground-400">
                 <span>Showing {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–{Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} reports</span>
