@@ -30,7 +30,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type MeetingFilter = 'this-week' | 'at-risk' | 'due-soon' | 'scheduled' | 'completed' | 'cancelled' | 'all';
+type MeetingFilter = 'this-week' | 'at-risk' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled' | 'all';
 
 const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }> = {
   'this-week': {
@@ -44,6 +44,10 @@ const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }>
   'due-soon': {
     label: 'Due Soon',
     description: 'Monthly coaching meetings not scheduled yet and due within the next 14 days.',
+  },
+  'needs-schedule': {
+    label: 'Needs Schedule',
+    description: 'Monthly coaching meetings that still need a calendar booking, including cancelled meetings that can be scheduled again.',
   },
   scheduled: {
     label: 'Scheduled',
@@ -108,6 +112,7 @@ export default function CoachMeetings() {
   const thisWeekEvents = events.filter(event => isEventThisWeek(event));
   const atRiskEvents = events.filter(event => isAtRiskEvent(event));
   const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
+  const needsScheduleEvents = events.filter(needsScheduling);
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
   const cancelledEvents = events.filter(event => isCancelledEvent(event));
@@ -115,6 +120,7 @@ export default function CoachMeetings() {
     if (filter === 'this-week') return isEventThisWeek(event);
     if (filter === 'at-risk') return isAtRiskEvent(event);
     if (filter === 'due-soon') return isDueSoonEvent(event);
+    if (filter === 'needs-schedule') return needsScheduling(event);
     if (filter === 'scheduled') return isScheduledEvent(event);
     if (filter === 'completed') return isCompletedEvent(event);
     if (filter === 'cancelled') return isCancelledEvent(event);
@@ -191,13 +197,14 @@ export default function CoachMeetings() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Coaching Meetings</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{events.length} meetings</strong> generated from {ownerName}'s active learners. {thisWeekEvents.length} this week, {atRiskEvents.length} overdue, {dueSoonEvents.length} due soon.
+                <strong>{events.length} meetings</strong> generated from {ownerName}'s active learners. {thisWeekEvents.length} this week, {atRiskEvents.length} overdue, {dueSoonEvents.length} due soon, {needsScheduleEvents.length} need scheduling.
               </p>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex flex-wrap items-center justify-start sm:justify-end gap-3 shrink-0">
               <MetricCard value={events.length} label="Total" />
               <MetricCard value={thisWeekEvents.length} label="This Week" />
               <MetricCard value={atRiskEvents.length} label="Overdue" tone="text-red-300" />
+              <MetricCard value={needsScheduleEvents.length} label="Needs Schedule" tone="text-amber-300" />
               <MetricCard value={scheduledEvents.length} label="Scheduled" />
             </div>
           </div>
@@ -207,6 +214,7 @@ export default function CoachMeetings() {
           <FilterButton active={filter === 'this-week'} onClick={() => setFilter('this-week')} label={FILTER_COPY['this-week'].label} count={thisWeekEvents.length} description={FILTER_COPY['this-week'].description} />
           <FilterButton active={filter === 'at-risk'} onClick={() => setFilter('at-risk')} label={FILTER_COPY['at-risk'].label} count={atRiskEvents.length} description={FILTER_COPY['at-risk'].description} />
           <FilterButton active={filter === 'due-soon'} onClick={() => setFilter('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoonEvents.length} description={FILTER_COPY['due-soon'].description} />
+          <FilterButton active={filter === 'needs-schedule'} onClick={() => setFilter('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={needsScheduleEvents.length} description={FILTER_COPY['needs-schedule'].description} />
           <FilterButton active={filter === 'scheduled'} onClick={() => setFilter('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
           <FilterButton active={filter === 'completed'} onClick={() => setFilter('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
           <FilterButton active={filter === 'cancelled'} onClick={() => setFilter('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />

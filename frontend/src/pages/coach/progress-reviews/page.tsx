@@ -30,7 +30,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type ReviewTab = 'this-week' | 'overdue' | 'due-soon' | 'scheduled' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
+type ReviewTab = 'this-week' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
 
 const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
   'this-week': {
@@ -44,6 +44,10 @@ const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
   'due-soon': {
     label: 'Due Soon',
     description: 'Progress reviews not scheduled yet and due within the next 14 days.',
+  },
+  'needs-schedule': {
+    label: 'Needs Schedule',
+    description: 'Progress reviews that still need a calendar booking, including cancelled reviews that can be scheduled again.',
   },
   scheduled: {
     label: 'Scheduled',
@@ -115,10 +119,11 @@ export default function CoachProgressReviews() {
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
   const cancelledEvents = events.filter(event => isCancelledEvent(event));
+  const needsScheduleEvents = events.filter(needsScheduling);
   const thisWeek = thisWeekEvents.length;
   const overdue = overdueEvents.length;
   const dueSoon = dueSoonEvents.length;
-  const pendingSchedule = events.filter(needsScheduling).length;
+  const pendingSchedule = needsScheduleEvents.length;
   const prepForms = 0;
   const data = tab === 'this-week'
     ? thisWeekEvents
@@ -126,15 +131,17 @@ export default function CoachProgressReviews() {
       ? overdueEvents
       : tab === 'due-soon'
         ? dueSoonEvents
-        : tab === 'scheduled'
-          ? scheduledEvents
-          : tab === 'completed'
-            ? completedEvents
-            : tab === 'cancelled'
-              ? cancelledEvents
-              : tab === 'all'
-                ? events
-                : [];
+        : tab === 'needs-schedule'
+          ? needsScheduleEvents
+          : tab === 'scheduled'
+            ? scheduledEvents
+            : tab === 'completed'
+              ? completedEvents
+              : tab === 'cancelled'
+                ? cancelledEvents
+                : tab === 'all'
+                  ? events
+                  : [];
 
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvents(prevEvents => sortEvents(prevEvents.map(event => (
@@ -209,10 +216,11 @@ export default function CoachProgressReviews() {
                 <strong>{events.length} generated</strong> reviews. {thisWeek} this week, {overdue} overdue, {dueSoon} due soon, {pendingSchedule} need scheduling.
               </p>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex flex-wrap items-center justify-start sm:justify-end gap-3 shrink-0">
               <MetricCard value={thisWeek} label="This Week" />
               <MetricCard value={overdue} label="Overdue" tone="text-red-300" />
               <MetricCard value={dueSoon} label="Due Soon" tone="text-amber-300" />
+              <MetricCard value={pendingSchedule} label="Needs Schedule" tone="text-amber-300" />
               <MetricCard value={scheduledEvents.length} label="Scheduled" />
               <MetricCard value={completedEvents.length} label="Completed" tone="text-emerald-300" />
             </div>
@@ -223,6 +231,7 @@ export default function CoachProgressReviews() {
           <TabButton active={tab === 'this-week'} onClick={() => setTab('this-week')} label={FILTER_COPY['this-week'].label} count={thisWeek} description={FILTER_COPY['this-week'].description} />
           <TabButton active={tab === 'overdue'} onClick={() => setTab('overdue')} label={FILTER_COPY.overdue.label} count={overdue} description={FILTER_COPY.overdue.description} />
           <TabButton active={tab === 'due-soon'} onClick={() => setTab('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoon} description={FILTER_COPY['due-soon'].description} />
+          <TabButton active={tab === 'needs-schedule'} onClick={() => setTab('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={pendingSchedule} description={FILTER_COPY['needs-schedule'].description} />
           <TabButton active={tab === 'scheduled'} onClick={() => setTab('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
           <TabButton active={tab === 'completed'} onClick={() => setTab('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
           <TabButton active={tab === 'cancelled'} onClick={() => setTab('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />

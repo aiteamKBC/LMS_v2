@@ -60,6 +60,10 @@ interface TimetableSummaryMetrics {
   scheduledEvents: number;
   inProgressEvents: number;
   needsScheduling: number;
+  thisWeekEvents: number;
+  overdueEvents: number;
+  dueSoonEvents: number;
+  cancelledEvents: number;
   completionRate: number;
   coachingEvents: number;
   reviewEvents: number;
@@ -71,6 +75,7 @@ interface TimetableSummary extends TimetableSummaryMetrics {
   sourceBreakdown?: {
     mcr: TimetableSummaryMetrics;
     progressReview: TimetableSummaryMetrics;
+    catchUp: TimetableSummaryMetrics;
   };
 }
 
@@ -89,6 +94,10 @@ const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
   scheduledEvents: 0,
   inProgressEvents: 0,
   needsScheduling: 0,
+  thisWeekEvents: 0,
+  overdueEvents: 0,
+  dueSoonEvents: 0,
+  cancelledEvents: 0,
   completionRate: 0,
   coachingEvents: 0,
   reviewEvents: 0,
@@ -100,6 +109,7 @@ const EMPTY_SUMMARY: TimetableSummary = {
   sourceBreakdown: {
     mcr: { ...EMPTY_SUMMARY_METRICS },
     progressReview: { ...EMPTY_SUMMARY_METRICS },
+    catchUp: { ...EMPTY_SUMMARY_METRICS },
   },
 };
 
@@ -124,7 +134,16 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
-  const base = typeConfig(event.type);
+  const catchUpTheme = {
+    label: 'Catch-up',
+    bg: 'bg-amber-100',
+    border: 'border-amber-300',
+    text: 'text-amber-800',
+    icon: 'ri-timer-line',
+    dot: 'bg-amber-500',
+    barBg: 'bg-amber-500',
+  };
+  const base = event.source === 'catch-up' ? catchUpTheme : typeConfig(event.type);
   const statusThemeMap: Partial<Record<TimetableEvent['status'], Pick<ReturnType<typeof typeConfig>, 'bg' | 'border' | 'text' | 'dot' | 'barBg'>>> = {
     completed: {
       bg: 'bg-emerald-50',
@@ -207,17 +226,78 @@ function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 
   return new Date(event.year, event.month, event.dayOfMonth);
 }
 
-function formatEventDateLabel(event: TimetableEvent) {
-  return `${DAYS_OF_WEEK[event.dayOfWeek]}, ${event.dayOfMonth} ${MONTH_NAMES[event.month]}`;
+function parseDateOnly(value?: string | null) {
+  if (!value) return null;
+  const [datePart] = value.split('T');
+  const parts = datePart.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+  return new Date(parts[0], parts[1] - 1, parts[2]);
 }
 
-function getPreferredDisplayDate(events: TimetableEvent[], now: Date) {
-  if (!events.length) return now;
+function startOfDay(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
 
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const sortedEvents = [...events].sort((a, b) => parseEventDate(a).getTime() - parseEventDate(b).getTime());
-  const upcomingEvent = sortedEvents.find(event => parseEventDate(event).getTime() >= today.getTime());
-  return parseEventDate(upcomingEvent || sortedEvents[sortedEvents.length - 1]);
+function currentWeekRange(referenceDate = new Date()) {
+  const today = startOfDay(referenceDate);
+  const day = today.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const start = new Date(today);
+  start.setDate(today.getDate() + mondayOffset);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+function eventDisplayDateValue(event: TimetableEvent) {
+  return event.scheduledDate || event.date || event.targetDate || '';
+}
+
+function eventTargetDateValue(event: TimetableEvent) {
+  return event.targetDate || event.date || event.scheduledDate || '';
+}
+
+function getMetricDate(value: string, fallbackEvent: TimetableEvent) {
+  return parseDateOnly(value) || parseEventDate(fallbackEvent);
+}
+
+function isCompletedMetricEvent(event: TimetableEvent) {
+  return event.status === 'completed' || event.status === 'confirmed';
+}
+
+function isScheduledMetricEvent(event: TimetableEvent) {
+  return event.status === 'scheduled' || event.status === 'in-progress';
+}
+
+function needsSchedulingMetricEvent(event: TimetableEvent) {
+  return event.status === 'pending' || event.status === 'not-scheduled' || event.status === 'cancelled';
+}
+
+function isOverdueMetricEvent(event: TimetableEvent, referenceDate = new Date()) {
+  if (!needsSchedulingMetricEvent(event)) return false;
+  const targetDate = getMetricDate(eventTargetDateValue(event), event);
+  return targetDate.getTime() < startOfDay(referenceDate).getTime();
+}
+
+function isDueSoonMetricEvent(event: TimetableEvent, referenceDate = new Date(), daysAhead = 14) {
+  if (!needsSchedulingMetricEvent(event) || isOverdueMetricEvent(event, referenceDate)) return false;
+  const targetDate = getMetricDate(eventTargetDateValue(event), event);
+  const today = startOfDay(referenceDate);
+  const cutoff = new Date(today);
+  cutoff.setDate(today.getDate() + daysAhead);
+  return targetDate.getTime() >= today.getTime() && targetDate.getTime() <= cutoff.getTime();
+}
+
+function isThisWeekMetricEvent(event: TimetableEvent, referenceDate = new Date()) {
+  if (isCompletedMetricEvent(event)) return false;
+  const displayDate = getMetricDate(eventDisplayDateValue(event), event);
+  const { start, end } = currentWeekRange(referenceDate);
+  return displayDate.getTime() >= start.getTime() && displayDate.getTime() <= end.getTime();
+}
+
+function formatEventDateLabel(event: TimetableEvent) {
+  return `${DAYS_OF_WEEK[event.dayOfWeek]}, ${event.dayOfMonth} ${MONTH_NAMES[event.month]}`;
 }
 
 function statusBadge(status: TimetableEvent['status']) {
@@ -230,19 +310,23 @@ function statusBadge(status: TimetableEvent['status']) {
 function statusLabel(status: TimetableEvent['status']) {
   if (status === 'completed') return 'Completed';
   if (status === 'scheduled') return 'Scheduled';
-  if (status === 'not-scheduled') return 'Not Scheduled';
+  if (status === 'not-scheduled') return 'Needs Schedule';
   if (status === 'in-progress') return 'In Progress';
   if (status === 'confirmed') return 'Confirmed';
   if (status === 'pending') return 'Pending';
   return 'Cancelled';
 }
 
-function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics {
+function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
   const totalEvents = events.length;
-  const completedEvents = events.filter(event => event.status === 'completed' || event.status === 'confirmed').length;
-  const scheduledEvents = events.filter(event => event.status === 'scheduled').length;
+  const completedEvents = events.filter(isCompletedMetricEvent).length;
+  const scheduledEvents = events.filter(isScheduledMetricEvent).length;
   const inProgressEvents = events.filter(event => event.status === 'in-progress').length;
-  const needsScheduling = events.filter(event => event.status === 'pending' || event.status === 'not-scheduled').length;
+  const needsScheduling = events.filter(needsSchedulingMetricEvent).length;
+  const thisWeekEvents = events.filter(event => isThisWeekMetricEvent(event, referenceDate)).length;
+  const overdueEvents = events.filter(event => isOverdueMetricEvent(event, referenceDate)).length;
+  const dueSoonEvents = events.filter(event => isDueSoonMetricEvent(event, referenceDate)).length;
+  const cancelledEvents = events.filter(event => event.status === 'cancelled').length;
 
   return {
     totalEvents,
@@ -250,6 +334,10 @@ function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics 
     scheduledEvents,
     inProgressEvents,
     needsScheduling,
+    thisWeekEvents,
+    overdueEvents,
+    dueSoonEvents,
+    cancelledEvents,
     completionRate: totalEvents > 0 ? Math.round((completedEvents / totalEvents) * 100) : 0,
     coachingEvents: events.filter(event => event.type === 'coaching').length,
     reviewEvents: events.filter(event => event.type === 'review').length,
@@ -257,68 +345,24 @@ function buildSummaryMetrics(events: TimetableEvent[]): TimetableSummaryMetrics 
   };
 }
 
-function buildFallbackSummary(events: TimetableEvent[]): TimetableSummary {
+function buildFallbackSummary(events: TimetableEvent[], referenceDate = new Date()): TimetableSummary {
   return {
-    ...buildSummaryMetrics(events),
+    ...buildSummaryMetrics(events, referenceDate),
     sourceBreakdown: {
-      mcr: buildSummaryMetrics(events.filter(event => event.source === 'mcr')),
-      progressReview: buildSummaryMetrics(events.filter(event => event.source === 'progress-review')),
+      mcr: buildSummaryMetrics(events.filter(event => event.source === 'mcr'), referenceDate),
+      progressReview: buildSummaryMetrics(events.filter(event => event.source === 'progress-review'), referenceDate),
+      catchUp: buildSummaryMetrics(events.filter(event => event.source === 'catch-up'), referenceDate),
     },
   };
 }
 
 function normalizeSummary(summary: TimetableSummary, events: TimetableEvent[]): TimetableSummary {
-  if (summary.sourceBreakdown) return summary;
+  const liveSummary = buildFallbackSummary(events);
   return {
     ...summary,
-    sourceBreakdown: buildFallbackSummary(events).sourceBreakdown,
+    ...liveSummary,
+    timeAvailability: summary.timeAvailability,
   };
-}
-
-type HeroMetricTone = 'emerald' | 'amber' | 'secondary' | 'accent' | 'red' | 'white';
-type HeroMetricItem = { label: string; value: number; tone: HeroMetricTone };
-
-const HERO_METRIC_TONES: Record<HeroMetricTone, string> = {
-  emerald: 'text-emerald-300',
-  amber: 'text-amber-300',
-  secondary: 'text-secondary-300',
-  accent: 'text-accent-300',
-  red: 'text-red-300',
-  white: 'text-white',
-};
-
-function HeroMetric({ label, value, tone }: { label: string; value: number; tone: HeroMetricTone }) {
-  return (
-    <div className="min-w-0 rounded-lg bg-white/8 px-3 py-2 text-center backdrop-blur-sm">
-      <p className={`font-heading text-lg font-bold leading-none ${HERO_METRIC_TONES[tone]}`}>{value}</p>
-      <p className="mt-1 truncate text-[10px] font-medium leading-tight text-white/55">{label}</p>
-    </div>
-  );
-}
-
-function HeroSourcePanel({ title, summary, typeMetrics }: { title: string; summary: TimetableSummaryMetrics; typeMetrics: HeroMetricItem[] }) {
-  const statusMetrics: HeroMetricItem[] = [
-    { label: 'Completed', value: summary.completedEvents, tone: 'emerald' },
-    { label: 'Scheduled', value: summary.scheduledEvents, tone: 'amber' },
-    { label: 'In Progress', value: summary.inProgressEvents, tone: 'secondary' },
-    { label: 'Needs Plan', value: summary.needsScheduling, tone: 'amber' },
-  ];
-
-  return (
-    <div className="min-w-0 rounded-xl border border-white/10 bg-white/5 p-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-wide text-white/55">{title}</p>
-        <p className="shrink-0 font-heading text-sm font-bold text-white">
-          {summary.totalEvents}<span className="ml-1 text-[10px] font-normal text-white/35">events</span>
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {[...statusMetrics, ...typeMetrics].map(metric => (
-          <HeroMetric key={`${title}-${metric.label}`} {...metric} />
-        ))}
-      </div>
-    </div>
-  );
 }
 
 /* â”€â”€â”€ Month calendar helpers â”€â”€â”€ */
@@ -349,6 +393,15 @@ function getWeekDates(year: number, month: number, selectedDay: number) {
   return week;
 }
 
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function formatDateInputValue(year: number, month: number, day: number) {
+  const safeDay = Math.min(day, getDaysInMonth(year, month));
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(safeDay).padStart(2, '0')}`;
+}
+
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white/10' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
@@ -364,6 +417,42 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white
 }
 
 type ViewMode = 'month' | 'week' | 'day';
+type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled';
+type SourceFilter = 'all' | 'mcr' | 'progress-review' | 'catch-up';
+
+const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
+  all: 'All',
+  overdue: 'Overdue',
+  'due-soon': 'Due Soon',
+  'needs-schedule': 'Needs Schedule',
+  scheduled: 'Scheduled',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
+  all: 'bg-foreground-400',
+  overdue: 'bg-red-500',
+  'due-soon': 'bg-amber-500',
+  'needs-schedule': 'bg-orange-500',
+  scheduled: 'bg-accent-500',
+  completed: 'bg-emerald-500',
+  cancelled: 'bg-red-500',
+};
+
+const SOURCE_FILTER_LABELS: Record<SourceFilter, string> = {
+  all: 'All Sources',
+  mcr: 'MCR',
+  'progress-review': 'Progress Reviews',
+  'catch-up': 'Catch-up',
+};
+
+const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
+  all: 'bg-foreground-400',
+  mcr: 'bg-primary-500',
+  'progress-review': 'bg-secondary-500',
+  'catch-up': 'bg-amber-500',
+};
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Page
@@ -376,7 +465,9 @@ export default function CoachTimetablePage() {
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [selectedDay, setSelectedDay] = useState(now.getDate());
   const [selectedEvent, setSelectedEvent] = useState<TimetableEvent | null>(null);
-  const [filterType, setFilterType] = useState<string>('all');
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
+  const [filterSource, setFilterSource] = useState<SourceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [events, setEvents] = useState<TimetableEvent[]>([]);
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
@@ -430,7 +521,7 @@ export default function CoachTimetablePage() {
 
         const nextEvents = data.events || [];
         const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
-        const anchorDate = getPreferredDisplayDate(nextEvents, new Date());
+        const anchorDate = new Date();
 
         setEvents(nextEvents);
         setSummary(nextSummary);
@@ -483,12 +574,40 @@ export default function CoachTimetablePage() {
     setEventActionNotice(selectedEvent.syncWarning || null);
   }, [selectedEvent]);
 
-  const getEventsForDay = useCallback((day: number, month: number, year: number): TimetableEvent[] => {
-    return events.filter(ev => ev.dayOfMonth === day && ev.month === month && ev.year === year);
-  }, [events]);
+  const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
+  const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
+  const visibleRangeEvents = useMemo(() => {
+    if (viewMode === 'day') {
+      return events.filter(event => event.dayOfMonth === selectedDay && event.month === viewMonth && event.year === viewYear);
+    }
 
-  const filteredEvents = events.filter(e => {
-    if (filterType !== 'all' && e.type !== filterType) return false;
+    if (viewMode === 'week') {
+      const weekKeys = new Set(weekDates.map(date => `${date.year}-${date.month}-${date.day}`));
+      return events.filter(event => weekKeys.has(`${event.year}-${event.month}-${event.dayOfMonth}`));
+    }
+
+    return events.filter(event => event.month === viewMonth && event.year === viewYear);
+  }, [events, selectedDay, viewMode, viewMonth, viewYear, weekDates]);
+
+  const sourceFilterOptions = useMemo(() => {
+    return (['all', 'mcr', 'progress-review', 'catch-up'] as SourceFilter[]).map(source => ({
+      value: source,
+      label: SOURCE_FILTER_LABELS[source],
+      dot: SOURCE_FILTER_DOTS[source],
+      count: source === 'all'
+        ? visibleRangeEvents.length
+        : visibleRangeEvents.filter(event => event.source === source).length,
+    }));
+  }, [visibleRangeEvents]);
+
+  const filteredEvents = useMemo(() => visibleRangeEvents.filter(e => {
+    if (filterStatus === 'overdue' && !isOverdueMetricEvent(e)) return false;
+    if (filterStatus === 'due-soon' && !isDueSoonMetricEvent(e)) return false;
+    if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
+    if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
+    if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
+    if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
+    if (filterSource !== 'all' && e.source !== filterSource) return false;
     if (searchTerm && !(
       e.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       e.learner?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -497,16 +616,34 @@ export default function CoachTimetablePage() {
       e.programme?.toLowerCase().includes(searchTerm.toLowerCase())
     )) return false;
     return true;
-  });
+  }), [visibleRangeEvents, filterStatus, filterSource, searchTerm]);
 
-  const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
-  const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
-  const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth, viewYear), [selectedDay, viewMonth, viewYear, getEventsForDay]);
+  const selectedDayEvents = useMemo(
+    () => filteredEvents.filter(ev => ev.dayOfMonth === selectedDay && ev.month === viewMonth && ev.year === viewYear),
+    [filteredEvents, selectedDay, viewMonth, viewYear],
+  );
+  const statusFilterCounts: Record<StatusFilter, number> = {
+    all: visibleRangeEvents.length,
+    overdue: visibleRangeEvents.filter(event => isOverdueMetricEvent(event)).length,
+    'due-soon': visibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
+    'needs-schedule': visibleRangeEvents.filter(needsSchedulingMetricEvent).length,
+    scheduled: visibleRangeEvents.filter(isScheduledMetricEvent).length,
+    completed: visibleRangeEvents.filter(isCompletedMetricEvent).length,
+    cancelled: visibleRangeEvents.filter(event => event.status === 'cancelled').length,
+  };
 
   const totalEvents = summary.totalEvents;
   const completionRate = summary.completionRate;
   const mcrSummary = summary.sourceBreakdown?.mcr || EMPTY_SUMMARY_METRICS;
   const progressReviewSummary = summary.sourceBreakdown?.progressReview || EMPTY_SUMMARY_METRICS;
+  const catchUpSummary = summary.sourceBreakdown?.catchUp || EMPTY_SUMMARY_METRICS;
+  const datePickerValue = formatDateInputValue(viewYear, viewMonth, selectedDay);
+
+  const setCalendarDate = useCallback((year: number, month: number, day: number) => {
+    setViewYear(year);
+    setViewMonth(month);
+    setSelectedDay(Math.min(day, getDaysInMonth(year, month)));
+  }, []);
 
   const handlePrev = () => {
     if (viewMode === 'month') { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
@@ -519,6 +656,22 @@ export default function CoachTimetablePage() {
     else { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() + 7); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
   };
   const handleToday = () => { setViewYear(todayYear); setViewMonth(todayMonth); setSelectedDay(todayDay); };
+
+  const handleMonthPickerChange = (month: number) => {
+    setCalendarDate(viewYear, month, selectedDay);
+  };
+
+  const handleYearPickerChange = (year: number) => {
+    if (!Number.isFinite(year) || year < 1900 || year > 2200) return;
+    setCalendarDate(year, viewMonth, selectedDay);
+  };
+
+  const handleDatePickerChange = (value: string) => {
+    const parsedDate = parseDateOnly(value);
+    if (!parsedDate) return;
+    setCalendarDate(parsedDate.getFullYear(), parsedDate.getMonth(), parsedDate.getDate());
+    setDatePickerOpen(false);
+  };
 
   const handleDayClick = (day: number) => {
     setSelectedDay(day);
@@ -610,40 +763,27 @@ export default function CoachTimetablePage() {
             <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
-                <span className="text-xs font-medium text-white/40">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+                <span className="text-xs font-semibold text-white">{MONTH_NAMES[viewMonth]} {viewYear}</span>
               </div>
               <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1">My Calendar</h1>
-              <p className="text-sm text-white/40 max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
+              <p className="text-sm font-medium text-white max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
             </div>
-            <div className="xl:w-[860px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t xl:border-t-0 xl:border-l border-accent-400/10 flex items-center">
-              <div className="flex w-full flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:gap-5">
-                <div className="flex items-center gap-3 shrink-0">
-                  <div className="relative">
-                    <DonutRing pct={completionRate} size={68} stroke={6} color="emerald" />
-                    <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-lg font-heading font-bold text-white leading-none">{completionRate}%</span></div>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs text-white/40 mb-0.5">Completion</p>
-                    <p className="text-base font-heading font-bold text-white leading-tight">{totalEvents}<span className="text-white/30 text-sm font-normal"> events</span></p>
+            <div className="px-5 md:px-7 py-5 md:py-6 border-t xl:border-t-0 xl:border-l border-accent-400/10 flex flex-col justify-center gap-3">
+              <div className="flex items-center gap-3">
+                <div className="relative shrink-0">
+                  <DonutRing pct={completionRate} size={44} stroke={5} color="emerald" trackClass="text-white/20" />
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <span className="font-heading text-[11px] font-bold text-white leading-none">{completionRate}%</span>
                   </div>
                 </div>
-                <div className="hidden h-28 w-px shrink-0 bg-accent-400/10 2xl:block" />
-                <div className="grid w-full flex-1 grid-cols-1 gap-3 md:grid-cols-2">
-                  <HeroSourcePanel
-                    title="MCR"
-                    summary={mcrSummary}
-                    typeMetrics={[{ label: 'Coaching', value: mcrSummary.coachingEvents, tone: 'accent' }]}
-                  />
-                  <HeroSourcePanel
-                    title="Progress Reviews"
-                    summary={progressReviewSummary}
-                    typeMetrics={[
-                      { label: 'Reviews', value: progressReviewSummary.reviewEvents, tone: 'secondary' },
-                      { label: 'Support', value: progressReviewSummary.supportEvents, tone: 'red' },
-                    ]}
-                  />
-                </div>
+                <span className="text-xs font-medium text-white/55">Total events</span>
+                <span className="font-heading text-sm font-bold text-white leading-none">{totalEvents}<span className="ml-1 text-white/55 text-[11px] font-normal">events</span></span>
               </div>
+              <p className="text-xs font-medium leading-relaxed text-white/60 max-w-md">
+                MCR <span className="font-heading font-bold text-white">{mcrSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{mcrSummary.thisWeekEvents}</span> this week,{' '}
+                Progress Reviews <span className="font-heading font-bold text-white">{progressReviewSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{progressReviewSummary.thisWeekEvents}</span> this week,{' '}
+                Catch-up <span className="font-heading font-bold text-white">{catchUpSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{catchUpSummary.thisWeekEvents}</span> this week
+              </p>
             </div>
           </div>
         </section>
@@ -662,7 +802,7 @@ export default function CoachTimetablePage() {
         )}
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
+          <div className="flex items-center gap-1 rounded-2xl border border-background-200 bg-background-50 p-1 shadow-sm">
             {([
               { key: 'month' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },
               { key: 'week' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },
@@ -670,18 +810,102 @@ export default function CoachTimetablePage() {
             ]).map(v => (
               <button
                 key={v.key}
+                aria-pressed={viewMode === v.key}
                 onClick={() => { setViewMode(v.key); if (v.key === 'month') setSelectedDay(todayDay); }}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}
+                className={`flex items-center gap-1.5 rounded-xl border px-4 py-2 text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
+                  viewMode === v.key
+                    ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                    : 'border-transparent text-foreground-500 hover:bg-background-100 hover:text-foreground-900'
+                }`}
               >
                 <i className={`${v.icon} text-xs`}></i>{v.label}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={handlePrev} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-left-s-line"></i></button>
-            <button onClick={handleToday} className="px-3 py-1.5 text-[11px] font-semibold text-primary-600 bg-primary-100 rounded-lg hover:bg-primary-200 transition-smooth cursor-pointer whitespace-nowrap">Today</button>
-            <span className="text-sm font-heading font-bold text-foreground-900 min-w-[150px] text-center whitespace-nowrap">{titleLabel}</span>
-            <button onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-right-s-line"></i></button>
+            <button
+              onClick={handlePrev}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground-500 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200"
+              aria-label="Previous period"
+            >
+              <i className="ri-arrow-left-s-line"></i>
+            </button>
+            <button onClick={handleToday} className="rounded-xl border border-primary-200 bg-primary-100 px-3.5 py-2 text-[11px] font-semibold text-primary-700 shadow-sm transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-200">Today</button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setDatePickerOpen(open => !open)}
+                className="min-w-[150px] rounded-xl border border-transparent px-3 py-2 text-center text-sm font-heading font-bold text-foreground-900 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 whitespace-nowrap"
+                title="Change calendar date"
+              >
+                {titleLabel}
+                <i className={`ri-arrow-down-s-line ml-1 text-xs transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></i>
+              </button>
+              {datePickerOpen && (
+                <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-xl shadow-foreground-900/10">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-heading font-bold text-foreground-900">Jump to date</p>
+                      <p className="text-[10px] text-foreground-400">
+                        {viewMode === 'month' ? 'Choose month and year' : 'Choose a specific day'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDatePickerOpen(false)}
+                      className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700"
+                      aria-label="Close date picker"
+                    >
+                      <i className="ri-close-line"></i>
+                    </button>
+                  </div>
+                  {viewMode === 'month' ? (
+                    <div className="grid grid-cols-[1fr_96px] gap-2">
+                      <label className="block">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Month</span>
+                        <select
+                          value={viewMonth}
+                          onChange={(event) => handleMonthPickerChange(Number(event.target.value))}
+                          className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        >
+                          {MONTH_NAMES.map((monthName, index) => (
+                            <option key={monthName} value={index}>{monthName}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Year</span>
+                        <input
+                          type="number"
+                          value={viewYear}
+                          min={1900}
+                          max={2200}
+                          onChange={(event) => handleYearPickerChange(Number(event.target.value))}
+                          className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        />
+                      </label>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
+                      <input
+                        type="date"
+                        value={datePickerValue}
+                        onChange={(event) => handleDatePickerChange(event.target.value)}
+                        className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                      />
+                    </label>
+                  )}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={handleNext}
+              className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground-500 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200"
+              aria-label="Next period"
+            >
+              <i className="ri-arrow-right-s-line"></i>
+            </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
@@ -693,19 +917,45 @@ export default function CoachTimetablePage() {
               />
             </div>
             <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-              {(['all', 'coaching', 'live-session', 'review', 'employer-meeting', 'welfare'] as const).map(type => {
-                const isAll = type === 'all';
-                const label = isAll ? 'All' : typeConfig(type).label;
-                const dot = isAll ? 'bg-foreground-400' : typeConfig(type).dot;
-                const isActive = filterType === type;
+              {(['overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled', 'all'] as StatusFilter[]).map(status => {
+                const isActive = filterStatus === status;
                 return (
                   <button
-                    key={type}
-                    onClick={() => setFilterType(isActive ? 'all' : type)}
-                    className={`px-2 py-1 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1 ${isActive ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}
+                    key={status}
+                    type="button"
+                    onClick={() => setFilterStatus(isActive ? 'all' : status)}
+                    title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
+                    className={`border px-2 py-1 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                      isActive
+                        ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20 ring-2 ring-primary-200'
+                        : 'border-transparent text-foreground-500 hover:bg-background-50 hover:text-foreground-800'
+                    }`}
                   >
-                    <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
-                    {label}
+                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : STATUS_FILTER_DOTS[status]}`}></span>
+                    {STATUS_FILTER_LABELS[status]}
+                    <span className={`text-[9px] ${isActive ? 'opacity-90' : 'opacity-55'}`}>({statusFilterCounts[status]})</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
+              <span className="px-2 text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Source</span>
+              {sourceFilterOptions.map(option => {
+                const isActive = filterSource === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    onClick={() => setFilterSource(isActive ? 'all' : option.value)}
+                    title={`${option.label} (${option.count})`}
+                    className={`border px-2 py-1 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                      isActive
+                        ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20 ring-2 ring-primary-200'
+                        : 'border-transparent text-foreground-500 hover:bg-background-50 hover:text-foreground-800'
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : option.dot}`}></span>
+                    {option.label}
+                    <span className={`text-[9px] ${isActive ? 'opacity-90' : 'opacity-55'}`}>({option.count})</span>
                   </button>
                 );
               })}
@@ -801,7 +1051,8 @@ export default function CoachTimetablePage() {
                           <span className="text-[11px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map(wd => {
-                          const eventsInSlot = getEventsForDay(wd.day, wd.month, wd.year).filter(ev => {
+                          const eventsInSlot = filteredEvents.filter(ev => {
+                            if (ev.dayOfMonth !== wd.day || ev.month !== wd.month || ev.year !== wd.year) return false;
                             const startH = ev.startHour;
                             return startH >= hour && startH < hour + 1;
                           });
@@ -1133,12 +1384,12 @@ export default function CoachTimetablePage() {
                           {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                         </button>
                         {(selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress') && (
-                          <button
-                            onClick={() => handleEventAction('start')}
-                            disabled={eventActionBusy || !(selectedEvent.meetingLink || selectedEvent.graphWebLink)}
-                            className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
-                          >
-                            <i className="ri-play-circle-line mr-1"></i>Start
+                        <button
+                          onClick={() => handleEventAction('start')}
+                          disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
+                          className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                        >
+                          <i className="ri-play-circle-line mr-1"></i>Start
                           </button>
                         )}
                         {selectedEvent.status === 'in-progress' && (
