@@ -109,7 +109,9 @@ function buildCycleRow(learner: CaseloadLearner, events: CoachCalendarEvent[], y
     ksbComplete,
     otjhLabel: `${otjhCompleted}/${otjhTarget} hrs`,
     otjhProgress: otjhTarget > 0 ? Math.min(100, Math.round((otjhCompleted / otjhTarget) * 100)) : 0,
-    evidenceLabel: `${evidenceCount} item${evidenceCount === 1 ? '' : 's'}`,
+    evidenceLabel: evidenceCount > 0
+      ? `${evidenceCount} item${evidenceCount === 1 ? '' : 's'}`
+      : '-',
     ksbLabel: ksbTarget > 0 ? `${ksbCompleted}/${ksbTarget}` : '--',
     ksbProgress: ksbTarget > 0 ? Math.min(100, Math.round((ksbCompleted / ksbTarget) * 100)) : 0,
   };

@@ -209,11 +209,50 @@ export function useCoachLearnerCaseFileData(args: {
       setLoading(true);
       setError(null);
 
-      const [caseloadResult, attendanceResult, markingResult] = await Promise.allSettled([
+      // These are independent requests. Start learner detail immediately when the
+      // URL already contains a numeric id instead of waiting for all coach-wide
+      // collections first (the old flow added both request times together).
+      const coachDataPromise = Promise.allSettled([
         fetchCoachCaseload(),
         fetchCoachAttendance(),
         fetchCoachMarkingQueue(),
       ]);
+      const directId = numericId(rawLearnerId);
+      const directDetailPromise = directId
+        ? fetchAnyLearnerDetail(directId, args.kind ?? undefined)
+        : null;
+
+      let detail: LearnerDetail | null = null;
+      let resolvedKind: LearnerKind | null = null;
+      let detailError: string | null = null;
+
+      if (directDetailPromise) {
+        try {
+          const detailResult = await directDetailPromise;
+          detail = detailResult.detail;
+          resolvedKind = detailResult.kind;
+
+          // Show the useful learner view as soon as its focused detail arrives.
+          // Coach metrics continue enriching it in the background.
+          const initialData = buildCaseFileData({
+            learnerId: directId,
+            kind: resolvedKind,
+            snapshot: null,
+            attendance: null,
+            evidence: null,
+            detail,
+            caseload: [],
+          });
+          if (!cancelled && initialData) {
+            setData(initialData);
+            setLoading(false);
+          }
+        } catch (loadErr) {
+          detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';
+        }
+      }
+
+      const [caseloadResult, attendanceResult, markingResult] = await coachDataPromise;
 
       if (cancelled) {
         return;
@@ -228,11 +267,9 @@ export function useCoachLearnerCaseFileData(args: {
       const evidence = resolveMarkingItem(marking, rawLearnerId, rawLearnerName);
       const resolvedId = snapshot?.id || attendanceLearner?.id || evidence?.learnerId || numericId(rawLearnerId);
 
-      let detail: LearnerDetail | null = null;
-      let resolvedKind: LearnerKind | null = null;
-      let detailError: string | null = null;
-
-      if (resolvedId) {
+      // Non-numeric routes need coach data to resolve the id. Numeric routes have
+      // already loaded detail above, concurrently with the coach requests.
+      if (resolvedId && !directDetailPromise) {
         try {
           const detailResult = await fetchAnyLearnerDetail(resolvedId, args.kind ?? undefined);
           detail = detailResult.detail;
@@ -369,6 +406,25 @@ export function quizGradeValue(attempt: LearnerQuizAttempt) {
 }
 
 async function request<T>(url: string): Promise<T> {
+  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const pendingRequest = requestUncached<T>(url);
+  pendingRequests.set(url, pendingRequest);
+  try {
+    return await pendingRequest;
+  } finally {
+    pendingRequests.delete(url);
+  }
+}
+
+// React StrictMode intentionally re-runs effects in development. Sharing an
+// in-flight GET prevents that check from doubling slow database work.
+const pendingRequests = new Map<string, Promise<unknown>>();
+
+async function requestUncached<T>(url: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
