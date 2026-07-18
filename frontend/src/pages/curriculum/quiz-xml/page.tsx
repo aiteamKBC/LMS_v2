@@ -632,7 +632,14 @@ export default function QuizXmlWorkspacePage() {
 
     try {
       const response = await fetch(`/quiz_api/quizzes/?${params.toString()}`);
-      if (!response.ok) throw new Error('Could not load quizzes');
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok) {
+        const payload = contentType.includes('application/json') ? await response.json().catch(() => null) : null;
+        throw new Error(payload?.error || `Could not load quizzes (${response.status})`);
+      }
+      if (!contentType.includes('application/json')) {
+        throw new Error('Could not load quizzes: quiz API returned a non-JSON response.');
+      }
       const data = await response.json();
       setQuizzes(data.results);
     } catch (err) {
