@@ -403,19 +403,6 @@ function formatDateInputValue(year: number, month: number, day: number) {
 }
 
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
-function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white/10' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(pct, 100) / 100) * circ;
-  const colorMap: Record<string, string> = { primary: 'stroke-primary-400', accent: 'stroke-accent-400', emerald: 'stroke-emerald-400', amber: 'stroke-amber-400', red: 'stroke-red-400' };
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-    </svg>
-  );
-}
-
 type ViewMode = 'month' | 'week' | 'day';
 type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled';
 type SourceFilter = 'all' | 'mcr' | 'progress-review' | 'catch-up';
@@ -632,11 +619,6 @@ export default function CoachTimetablePage() {
     cancelled: visibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
 
-  const totalEvents = summary.totalEvents;
-  const completionRate = summary.completionRate;
-  const mcrSummary = summary.sourceBreakdown?.mcr || EMPTY_SUMMARY_METRICS;
-  const progressReviewSummary = summary.sourceBreakdown?.progressReview || EMPTY_SUMMARY_METRICS;
-  const catchUpSummary = summary.sourceBreakdown?.catchUp || EMPTY_SUMMARY_METRICS;
   const datePickerValue = formatDateInputValue(viewYear, viewMonth, selectedDay);
 
   const setCalendarDate = useCallback((year: number, month: number, day: number) => {
@@ -759,8 +741,8 @@ export default function CoachTimetablePage() {
             <div className="absolute opacity-20" style={{ width: '50%', height: '40%', left: '-5%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute opacity-15" style={{ width: '60%', height: '30%', right: '-10%', top: '20%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative flex flex-col xl:flex-row items-stretch min-h-[150px]">
-            <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
+          <div className="relative min-h-[150px] px-5 py-5 md:px-7 md:py-6">
+            <div className="flex h-full max-w-2xl flex-col justify-center min-w-0">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">Progress Coach</span>
                 <span className="text-xs font-semibold text-white">{MONTH_NAMES[viewMonth]} {viewYear}</span>
@@ -768,30 +750,31 @@ export default function CoachTimetablePage() {
               <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1">My Calendar</h1>
               <p className="text-sm font-medium text-white max-w-lg">Manage your coaching sessions, live classes, reviews, and employer meetings</p>
             </div>
-            <div className="px-5 md:px-7 py-5 md:py-6 border-t xl:border-t-0 xl:border-l border-accent-400/10 flex flex-col justify-center gap-3">
-              <div className="flex items-center gap-3">
-                <div className="relative shrink-0">
-                  <DonutRing pct={completionRate} size={44} stroke={5} color="emerald" trackClass="text-white/20" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="font-heading text-[11px] font-bold text-white leading-none">{completionRate}%</span>
-                  </div>
-                </div>
-                <span className="text-xs font-medium text-white/55">Total events</span>
-                <span className="font-heading text-sm font-bold text-white leading-none">{totalEvents}<span className="ml-1 text-white/55 text-[11px] font-normal">events</span></span>
-              </div>
-              <p className="text-xs font-medium leading-relaxed text-white/60 max-w-md">
-                MCR <span className="font-heading font-bold text-white">{mcrSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{mcrSummary.thisWeekEvents}</span> this week,{' '}
-                Progress Reviews <span className="font-heading font-bold text-white">{progressReviewSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{progressReviewSummary.thisWeekEvents}</span> this week,{' '}
-                Catch-up <span className="font-heading font-bold text-white">{catchUpSummary.totalEvents}</span> total &middot; <span className="font-heading font-bold text-amber-300">{catchUpSummary.thisWeekEvents}</span> this week
-              </p>
-            </div>
           </div>
         </section>
 
         {/* â•â•â•â•â•â•â•â•â•â•â• CONTROLS BAR â•â•â•â•â•â•â•â•â•â•â• */}
         {loading && (
-          <div className="rounded-xl border border-primary-200/60 bg-primary-50 px-4 py-3 text-sm text-primary-700">
-            Loading timetable data...
+          <div className="overflow-hidden rounded-[24px] border border-primary-200/70 bg-gradient-to-r from-primary-50 via-background-50 to-primary-50 shadow-sm">
+            <div className="flex flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-5">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary-500 text-white shadow-md shadow-primary-500/20">
+                  <i className="ri-loader-4-line animate-spin text-lg"></i>
+                </span>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
+                  <p className="mt-1 text-sm font-heading font-semibold text-foreground-900">Loading your coaching calendar</p>
+                  <p className="mt-1 text-[12px] leading-5 text-foreground-500">
+                    Preparing sessions, reviews, and catch-up events for the current view.
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 md:min-w-[240px]">
+                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
+                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
+                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -917,7 +900,7 @@ export default function CoachTimetablePage() {
               />
             </div>
             <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-              {(['overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled', 'all'] as StatusFilter[]).map(status => {
+              {(['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled'] as StatusFilter[]).map(status => {
                 const isActive = filterStatus === status;
                 return (
                   <button
@@ -939,7 +922,6 @@ export default function CoachTimetablePage() {
               })}
             </div>
             <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-              <span className="px-2 text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Source</span>
               {sourceFilterOptions.map(option => {
                 const isActive = filterSource === option.value;
                 return (

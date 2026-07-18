@@ -566,7 +566,6 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
         </span>
         <span className="flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
         <span className="flex items-center gap-1 shrink-0">
-          {item.badge && <NavBadge count={item.badge} />}
           <i className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs text-white/30`}></i>
         </span>
       </button>
@@ -585,7 +584,6 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
                 <span className="whitespace-nowrap text-sm">{child.label}</span>
                 <span className="flex items-center gap-1 ml-auto">
                   {child.statusDot && <StatusDot color={child.statusDot} />}
-                  {child.badge && <NavBadge count={child.badge} />}
                 </span>
               </Link>
             );
@@ -613,7 +611,6 @@ function MobileNavLink({ item, isActive }: {
       <span className="flex-1 whitespace-nowrap text-sm font-medium">{item.label}</span>
       <span className="flex items-center gap-1.5 shrink-0">
         {item.statusDot && <StatusDot color={item.statusDot} />}
-        {item.badge && <NavBadge count={item.badge} />}
       </span>
     </Link>
   );
@@ -637,14 +634,6 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
       </span>
       <span className="flex-1 whitespace-nowrap">{label}</span>
     </Link>
-  );
-}
-
-function NavBadge({ count }: { count: number }) {
-  return (
-    <span className="bg-accent-500/90 text-foreground-950 text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center leading-none animate-pulse-slow">
-      {count}
-    </span>
   );
 }
 
