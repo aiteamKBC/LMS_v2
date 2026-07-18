@@ -332,6 +332,42 @@ def _resolve_from_master(modules, weeks, components):
         if not isinstance(settings, dict):
             settings = {}
         video_url = _s(settings.get("videoUrl")) or None
+        # Generalised content payload per component type (mirrors the authoring
+        # settings_json keys in the Module Builder). Lets the learner open a
+        # podcast / reading / slide deck / reflection the same way as a video.
+        # Podcast audio may be an external listening-page link (podcastUrl) or an
+        # uploaded file (uploadedFileUrl) — either can be a real audio source.
+        audio_url = (
+            _s(settings.get("podcastUrl"))
+            or _s(settings.get("audioUrl"))
+            or _s(settings.get("uploadedFileUrl"))
+            or None
+        )
+        content_html = _s(settings.get("readingContent")) or None
+        file_name = (
+            _s(settings.get("fileName"))
+            or _s(settings.get("uploadedFileName"))
+            or None
+        )
+        download_allowed = bool(settings.get("downloadAllowed"))
+        reflection_prompt = (
+            _s(settings.get("reflectionPrompt"))
+            or _s(settings.get("podcastReflectionQuestion"))
+            or _s(settings.get("readingReflectionPrompts"))
+            or _s(settings.get("learnerGuidance"))
+            or None
+        )
+        # PowerPoint (presentationUrl / uploadedFileUrl) and any other component
+        # with an attached link/file all resolve to the same resourceUrl field.
+        resource_url = (
+            _s(settings.get("resourceUrl"))
+            or _s(settings.get("presentationUrl"))
+            or _s(settings.get("externalUrl"))
+            or _s(settings.get("fileUrl"))
+            or _s(settings.get("uploadedFileUrl"))
+            or _s(settings.get("url"))
+            or None
+        )
         duration = settings.get("durationMinutes")
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
@@ -339,6 +375,12 @@ def _resolve_from_master(modules, weeks, components):
             "type": ctype,
             "description": _s(cdesc) or None,
             "videoUrl": video_url,
+            "audioUrl": audio_url,
+            "contentHtml": content_html,
+            "fileName": file_name,
+            "downloadAllowed": download_allowed,
+            "reflectionPrompt": reflection_prompt,
+            "resourceUrl": resource_url,
             "durationMinutes": duration if isinstance(duration, (int, float)) else None,
         })
 
@@ -375,6 +417,12 @@ def _resolve_from_master(modules, weeks, components):
                     "type": comp["type"],
                     "description": comp["description"],
                     "videoUrl": comp["videoUrl"],
+                    "audioUrl": comp["audioUrl"],
+                    "contentHtml": comp["contentHtml"],
+                    "fileName": comp["fileName"],
+                    "downloadAllowed": comp["downloadAllowed"],
+                    "reflectionPrompt": comp["reflectionPrompt"],
+                    "resourceUrl": comp["resourceUrl"],
                     "durationMinutes": comp["durationMinutes"],
                 })
 

@@ -5,7 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
-import { buildLearnerJourney, componentTypeMeta, gradePercent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 
 /** Resolve a stored (id-only) attempt question to display text using the fetched
  * quiz. Free-text types carry chosenText; others resolve answer ids -> text. */
@@ -52,6 +52,11 @@ export function RealLearnerPlanView({
   learnerId?: string;
 }) {
   const journey = buildLearnerJourney(real);
+  // Component ids the learner has already completed (videos + generic components).
+  const completedIds = new Set<string>([
+    ...(real?.videoProgress || []).map((v) => v.componentId),
+    ...(real?.componentProgress || []).map((c) => c.componentId),
+  ]);
   const totalOtjh = real?.totalExpectedOtjh ?? 0;
   const totalWeeks = journey.reduce((n, m) => n + m.weeks.length, 0);
   const totalComponents = journey.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
@@ -114,7 +119,7 @@ export function RealLearnerPlanView({
         ) : (
           <div className="space-y-3">
             {journey.map((mod, i) => (
-              <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} />
+              <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} completedIds={completedIds} />
             ))}
           </div>
         )}
@@ -143,8 +148,8 @@ export function RealLearnerPlanView({
 /* ═══════════════════════════════════════════════════════
    MODULE SECTION — collapsible group of weeks
    ═══════════════════════════════════════════════════════ */
-function ModuleSection({ module, defaultOpen, kind, learnerId }: {
-  module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string;
+function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
+  module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string; completedIds: Set<string>;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultOpen);
   const weekCount = module.weeks.length;
@@ -188,7 +193,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId }: {
               <div className="absolute left-7 md:left-[34px] top-0 bottom-0 w-px bg-background-300" />
               <div className="space-y-2">
                 {module.weeks.map((w) => (
-                  <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} />
+                  <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} completedIds={completedIds} />
                 ))}
               </div>
             </div>
@@ -202,8 +207,8 @@ function ModuleSection({ module, defaultOpen, kind, learnerId }: {
 /* ═══════════════════════════════════════════════════════
    WEEK CARD — collapsible list of components
    ═══════════════════════════════════════════════════════ */
-function WeekCard({ week, module, kind, learnerId }: {
-  week: JourneyWeek; module: string; kind?: string; learnerId?: string;
+function WeekCard({ week, module, kind, learnerId, completedIds }: {
+  week: JourneyWeek; module: string; kind?: string; learnerId?: string; completedIds: Set<string>;
 }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
@@ -252,6 +257,7 @@ function WeekCard({ week, module, kind, learnerId }: {
                     kind={kind}
                     learnerId={learnerId}
                     canStartQuiz={canStartQuiz}
+                    completed={!!c.componentId && completedIds.has(c.componentId)}
                     navigate={navigate}
                   />
                 ))}
@@ -267,13 +273,14 @@ function WeekCard({ week, module, kind, learnerId }: {
 /* ═══════════════════════════════════════════════════════
    COMPONENT ROW — with quiz start/retake + past-attempt breakdown
    ═══════════════════════════════════════════════════════ */
-function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, navigate }: {
+function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, completed, navigate }: {
   component: JourneyComponent;
   module: string;
   week: string;
   kind?: string;
   learnerId?: string;
   canStartQuiz: boolean;
+  completed?: boolean;
   navigate: NavigateFunction;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
@@ -282,6 +289,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
 
   // Grade is stored as a 0-1 decimal now; render as a whole percent.
   const gradeOf = (a: LearnerQuizAttempt | null) => (a ? `${gradePercent(a.grade)}%` : '');
@@ -353,13 +361,27 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
           </button>
         )}
+        {completed && !c.isQuiz && (
+          <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
+            <i className="ri-checkbox-circle-line text-[10px]" />Done
+          </span>
+        )}
         {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer"
           >
-            <i className="ri-play-fill text-[10px]" />
-            Play
+            <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
+            {completed ? 'Rewatch' : 'Play'}
+          </button>
+        )}
+        {!c.isQuiz && c.type !== 'video' && c.componentId && canOpenComponent && (
+          <button
+            onClick={() => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
+            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
+          >
+            <i className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
+            {completed ? 'Review again' : 'Open'}
           </button>
         )}
       </div>

@@ -711,6 +711,10 @@ export interface CalendarEvent {
   description: string;
   color?: string;
   reminderMinutes?: number;
+  /** Exact ISO date (YYYY-MM-DD) for DB-backed events — display `date` only carries day+month. */
+  isoDate?: string;
+  /** Teams/meeting join URL for coach-scheduled sessions. */
+  meetingLink?: string;
 }
 
 export interface ClubResource {

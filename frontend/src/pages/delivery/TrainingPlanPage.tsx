@@ -6,11 +6,13 @@ import { useToast } from '@/hooks/useToast';
 import { Hero, inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';
 import {
   fetchProgrammes, fetchCohorts, fetchGroups, fetchModules, fetchWeeks, fetchComponents,
+  fetchLegacyOtjh, legacyOtjhKey,
   type CurriculumItem, type WeekItem, type ComponentItem,
 } from '@/api/curriculum';
 import { fetchCommercialUser, updateCommercialProgramme } from '@/api/commercialUsers';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import type { TrainingPlan } from '@/api/trainingPlan';
+import { formatHoursMinutes } from '@/utils/learnerJourney';
 
 // ============================================================================
 // Training-plan WIZARD for a single learner.
@@ -168,16 +170,43 @@ export default function TrainingPlanPage() {
             id: w.weekId,
             title: w.weekTitle,
             weekNumber: weeksForModule.find((wo) => wo.id === w.weekId)?.weekNumber ?? 0,
-            components: w.components.map((c) => ({
-              id: c.componentId,
-              title: c.componentTitle,
-              type: comps.find((co) => co.id === c.componentId)?.type ?? '',
-            })),
+            components: w.components.map((c) => {
+              const master = comps.find((co) => co.id === c.componentId);
+              return {
+                id: c.componentId,
+                title: c.componentTitle,
+                type: master?.type ?? '',
+                expectedOtjh: master?.expectedOtjh ?? null,
+              };
+            }),
           });
         }
         builtModules.push({ id: m.moduleId, title: m.moduleTitle, weeks: builtWeeks });
       }
       if (cancelled) return;
+
+      // Plans saved before the structured format existed carry client-generated
+      // week/component ids (e.g. "component-mrc76lez-...") that don't exist in
+      // curriculum.module_authoring_components, so the id-based lookup above
+      // leaves their expectedOtjh null. Recover what we can by title instead —
+      // unmatched ones (module/week renamed since the plan was saved) stay null.
+      const legacyLookups: { moduleId: string; weekId: string; module: string; week: string; component: string }[] = [];
+      builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
+        if (c.expectedOtjh == null) legacyLookups.push({ moduleId: m.id, weekId: w.id, module: m.title, week: w.title, component: c.title });
+      })));
+      if (legacyLookups.length > 0) {
+        const hoursByKey = await fetchLegacyOtjh(legacyLookups.map((l) => ({ module: l.module, week: l.week, component: l.component })));
+        if (cancelled) return;
+        if (Object.keys(hoursByKey).length > 0) {
+          builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
+            if (c.expectedOtjh == null) {
+              const hours = hoursByKey[legacyOtjhKey(m.title, w.title, c.title)];
+              if (hours != null) c.expectedOtjh = hours;
+            }
+          })));
+        }
+      }
+
       setWeekOptions(nextWeekOptions);
       setComponentOptions(nextComponentOptions);
       setPlan(builtModules);
@@ -266,8 +295,11 @@ export default function TrainingPlanPage() {
   };
 
   // ---- step gating ----
+  const moduleHours = (m: BuiltModule) =>
+    m.weeks.reduce((k, w) => k + w.components.reduce((n, c) => n + (c.expectedOtjh || 0), 0), 0);
   const totalComponents = plan.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
   const totalWeeks = plan.reduce((n, m) => n + m.weeks.length, 0);
+  const totalHours = plan.reduce((n, m) => n + moduleHours(m), 0);
   const canNext = step === 1 ? !!programme : true;
   const next = () => setStep((s) => Math.min(3, s + 1));
   const back = () => setStep((s) => Math.max(1, s - 1));
@@ -363,10 +395,16 @@ export default function TrainingPlanPage() {
                 {/* Each added module brings its authored weeks + components in by
                     default; we only list the modules here to keep the page short.
                     The full breakdown is on the Review step. */}
+                {plan.length > 0 && (
+                  <p className="text-[12px] text-foreground-500">
+                    <strong className="text-foreground-800">{totalWeeks}</strong> {totalWeeks === 1 ? 'week' : 'weeks'} · <strong className="text-foreground-800">{totalComponents}</strong> {totalComponents === 1 ? 'component' : 'components'} · <strong className="text-foreground-800">{formatHoursMinutes(totalHours)}</strong> OTJ
+                  </p>
+                )}
                 <ul className="space-y-2">
                   {plan.map((m) => {
                     const weekCount = m.weeks.length;
                     const compCount = m.weeks.reduce((k, w) => k + w.components.length, 0);
+                    const hours = moduleHours(m);
                     return (
                       <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-foreground-200/70 px-4 py-3 bg-background-100/40">
                         <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
@@ -374,7 +412,7 @@ export default function TrainingPlanPage() {
                         </span>
                         <div className="flex items-center gap-3">
                           <span className="text-[11px] text-foreground-500">
-                            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {compCount} {compCount === 1 ? 'component' : 'components'}
+                            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {compCount} {compCount === 1 ? 'component' : 'components'} · {formatHoursMinutes(hours)} OTJ
                           </span>
                           <button onClick={() => removeModule(m.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${m.title}`}>
                             <i className="ri-delete-bin-line" />
@@ -403,6 +441,7 @@ export default function TrainingPlanPage() {
                   <span><strong className="text-foreground-800">{plan.length}</strong> modules</span>
                   <span><strong className="text-foreground-800">{totalWeeks}</strong> weeks</span>
                   <span><strong className="text-foreground-800">{totalComponents}</strong> components</span>
+                  <span><strong className="text-foreground-800">{formatHoursMinutes(totalHours)}</strong> OTJ</span>
                 </div>
                 {plan.length === 0 ? (
                   <EmptyState text="No modules in this plan yet — go back to step 2 to add content." />
@@ -410,7 +449,10 @@ export default function TrainingPlanPage() {
                   <div className="space-y-3">
                     {plan.map((m) => (
                       <div key={m.id} className="rounded-xl border border-foreground-100 p-4">
-                        <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2"><i className="ri-book-2-line text-primary-600" />{m.title}</p>
+                        <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
+                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                          <span className="text-[11px] font-normal text-foreground-400">· {formatHoursMinutes(moduleHours(m))} OTJ</span>
+                        </p>
                         {m.weeks.length === 0 ? (
                           <p className="text-[12px] text-foreground-400 italic mt-1">No weeks</p>
                         ) : (

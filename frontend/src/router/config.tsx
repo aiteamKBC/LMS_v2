@@ -648,6 +648,14 @@ const routes: RouteObject[] = [
     path: "/learner/video/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
 
   {
     path: "/learner/modules",
@@ -691,6 +699,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-cycle",
+    element: <MonthlyCyclePage />,
+  },
+  {
+    path: "/learner/monthly-cycle/:kind/:id",
     element: <MonthlyCyclePage />,
   },
   {
