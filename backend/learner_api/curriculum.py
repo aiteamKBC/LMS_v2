@@ -24,8 +24,11 @@ How the authoring tables link together:
 So a group's modules come from Training_plan.module_name; each module's weeks
 and components follow the module_catalogue_id / week_id chain.
 """
+import json
+
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
 
 def _conn():
@@ -144,11 +147,60 @@ def components(request):
     if not week:
         return _error("week query param is required.", 400)
     return _guard(lambda: [
-        {"id": r["id"], "title": r["title"] or r["type"], "type": r["type"]}
+        {
+            "id": r["id"], "title": r["title"] or r["type"], "type": r["type"],
+            "expectedOtjh": float(r["expected_otjh"]) if r["expected_otjh"] is not None else None,
+        }
         for r in _rows(
-            "SELECT id, type, title FROM curriculum.module_authoring_components "
+            "SELECT id, type, title, expected_otjh FROM curriculum.module_authoring_components "
             "WHERE week_id = %s "
             "ORDER BY display_order",
             [week],
         )
     ])
+
+
+@csrf_exempt
+def legacy_otjh(request):
+    """expected_otjh lookup for training-plan-wizard components saved BEFORE
+    the structured plan format existed. Those components carry no real
+    curriculum.module_authoring_components id (their componentId/weekId are
+    client-generated, e.g. "component-mrc76lez-no9vis"), so `components?week=`
+    can't resolve them by id — this endpoint resolves by (module, week,
+    component) TITLE instead, reusing the same fallback the learner-facing
+    training-plan view uses for legacy plans.
+
+        POST /learner_api/curriculum/legacy-otjh/
+        body: {"items": [{"module": "...", "week": "...", "component": "..."}, ...]}
+        -> {"results": {"<module>|<week>|<component>": 2.0, ...}}  (hours, or omitted if unmatched)
+    """
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    # Imported here (not module level) to avoid learner_detail's heavier import
+    # chain (models, mappers) loading for every curriculum lookup request.
+    from .learner_detail import _otjh_by_legacy_title
+
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _error("Invalid JSON body.", 400)
+
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return _error("items must be a list of {module, week, component}.", 400)
+
+    # _otjh_by_legacy_title expects legacy-shaped component dicts (no componentId).
+    components_arg = [
+        {"module": it.get("module"), "week": it.get("week"), "component": it.get("component")}
+        for it in items if isinstance(it, dict)
+    ]
+
+    def run():
+        by_key = _otjh_by_legacy_title(components_arg)
+        return {
+            f"{mod}|{wk}|{comp}": otjh
+            for (mod, wk, comp), otjh in by_key.items()
+            if otjh is not None
+        }
+
+    return _guard(run)

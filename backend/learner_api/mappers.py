@@ -463,6 +463,9 @@ def to_learner_detail(source, active):
     progress = _as_list(active.training_plan_progress) if active else []
     quiz_attempts = [r for r in progress if r.get("kind", "quiz") == "quiz"]
     video_progress = [r for r in progress if r.get("kind") == "video"]
+    # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
+    # written by learner_api.components.submit_component_progress.
+    component_progress = [r for r in progress if r.get("kind") == "component"]
     # Activity log, newest first for the feed (full history is kept in the column).
     activity_feed = list(reversed(_as_list(active.activity_feed))) if active else []
 
@@ -483,5 +486,6 @@ def to_learner_detail(source, active):
         "ksbs": _as_list(active.ksbs) if active else [],
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
+        "componentProgress": component_progress,
         "activityFeed": activity_feed,
     }

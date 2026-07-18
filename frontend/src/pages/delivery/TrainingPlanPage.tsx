@@ -6,11 +6,13 @@ import { useToast } from '@/hooks/useToast';
 import { Hero, inputClass, btnPrimary, btnSecondary, EmptyState } from '@/pages/users/components/ui';
 import {
   fetchProgrammes, fetchCohorts, fetchGroups, fetchModules, fetchWeeks, fetchComponents,
+  fetchLegacyOtjh, legacyOtjhKey,
   type CurriculumItem, type WeekItem, type ComponentItem,
 } from '@/api/curriculum';
 import { fetchCommercialUser, updateCommercialProgramme } from '@/api/commercialUsers';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import type { TrainingPlan } from '@/api/trainingPlan';
+import { formatHoursMinutes } from '@/utils/learnerJourney';
 
 // ============================================================================
 // Training-plan WIZARD for a single learner.
@@ -168,16 +170,43 @@ export default function TrainingPlanPage() {
             id: w.weekId,
             title: w.weekTitle,
             weekNumber: weeksForModule.find((wo) => wo.id === w.weekId)?.weekNumber ?? 0,
-            components: w.components.map((c) => ({
-              id: c.componentId,
-              title: c.componentTitle,
-              type: comps.find((co) => co.id === c.componentId)?.type ?? '',
-            })),
+            components: w.components.map((c) => {
+              const master = comps.find((co) => co.id === c.componentId);
+              return {
+                id: c.componentId,
+                title: c.componentTitle,
+                type: master?.type ?? '',
+                expectedOtjh: master?.expectedOtjh ?? null,
+              };
+            }),
           });
         }
         builtModules.push({ id: m.moduleId, title: m.moduleTitle, weeks: builtWeeks });
       }
       if (cancelled) return;
+
+      // Plans saved before the structured format existed carry client-generated
+      // week/component ids (e.g. "component-mrc76lez-...") that don't exist in
+      // curriculum.module_authoring_components, so the id-based lookup above
+      // leaves their expectedOtjh null. Recover what we can by title instead —
+      // unmatched ones (module/week renamed since the plan was saved) stay null.
+      const legacyLookups: { moduleId: string; weekId: string; module: string; week: string; component: string }[] = [];
+      builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
+        if (c.expectedOtjh == null) legacyLookups.push({ moduleId: m.id, weekId: w.id, module: m.title, week: w.title, component: c.title });
+      })));
+      if (legacyLookups.length > 0) {
+        const hoursByKey = await fetchLegacyOtjh(legacyLookups.map((l) => ({ module: l.module, week: l.week, component: l.component })));
+        if (cancelled) return;
+        if (Object.keys(hoursByKey).length > 0) {
+          builtModules.forEach((m) => m.weeks.forEach((w) => w.components.forEach((c) => {
+            if (c.expectedOtjh == null) {
+              const hours = hoursByKey[legacyOtjhKey(m.title, w.title, c.title)];
+              if (hours != null) c.expectedOtjh = hours;
+            }
+          })));
+        }
+      }
+
       setWeekOptions(nextWeekOptions);
       setComponentOptions(nextComponentOptions);
       setPlan(builtModules);
@@ -209,52 +238,31 @@ export default function TrainingPlanPage() {
     [moduleOptions, plan],
   );
 
+  // Adding a module pulls its full authored definition — every week and each
+  // week's linked components — and adds them all by default, so the officer
+  // doesn't build the tree by hand. The weeks/components aren't shown on this
+  // page (kept short); they're visible on the Review step and in the saved plan.
   const addModule = (item: CurriculumItem) => {
     setPlan((prev) => [...prev, { ...item, weeks: [] }]);
     fetchWeeks(item.id)
-      .then((w) => setWeekOptions((prev) => ({ ...prev, [item.id]: w })))
-      .catch((e) => error('Could not load weeks', e.message));
+      .then(async (weeks) => {
+        setWeekOptions((prev) => ({ ...prev, [item.id]: weeks }));
+        // Fetch every week's components in parallel, then build the full tree.
+        const compsByWeek = await Promise.all(
+          weeks.map((w) => fetchComponents(w.id).catch(() => [] as ComponentItem[])),
+        );
+        setComponentOptions((prev) => {
+          const next = { ...prev };
+          weeks.forEach((w, i) => { next[w.id] = compsByWeek[i]; });
+          return next;
+        });
+        const builtWeeks: BuiltWeek[] = weeks.map((w, i) => ({ ...w, components: compsByWeek[i] }));
+        setPlan((prev) => prev.map((m) => m.id === item.id ? { ...m, weeks: builtWeeks } : m));
+      })
+      .catch((e) => error('Could not load module content', e.message));
   };
   const removeModule = (moduleId: string) =>
     setPlan((prev) => prev.filter((m) => m.id !== moduleId));
-
-  const addWeek = (moduleId: string, item: CurriculumItem) => {
-    const week = (weekOptions[moduleId] || []).find((w) => w.id === item.id);
-    if (!week) return;
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId ? { ...m, weeks: [...m.weeks, { ...week, components: [] }] } : m));
-    // Pull the week's linked components and add them all by default (each stays
-    // removable, and any removed one can be re-added from the dropdown).
-    fetchComponents(week.id)
-      .then((c) => {
-        setComponentOptions((prev) => ({ ...prev, [week.id]: c }));
-        setPlan((prev) => prev.map((m) =>
-          m.id === moduleId
-            ? { ...m, weeks: m.weeks.map((w) => w.id === week.id ? { ...w, components: c } : w) }
-            : m));
-      })
-      .catch((e) => error('Could not load components', e.message));
-  };
-  const removeWeek = (moduleId: string, weekId: string) =>
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId ? { ...m, weeks: m.weeks.filter((w) => w.id !== weekId) } : m));
-
-  const addComponent = (moduleId: string, weekId: string, item: CurriculumItem) => {
-    const comp = (componentOptions[weekId] || []).find((c) => c.id === item.id);
-    if (!comp) return;
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId
-        ? { ...m, weeks: m.weeks.map((w) => w.id === weekId ? { ...w, components: [...w.components, comp] } : w) }
-        : m));
-  };
-  const removeComponent = (moduleId: string, weekId: string, compId: string) =>
-    setPlan((prev) => prev.map((m) =>
-      m.id === moduleId
-        ? { ...m, weeks: m.weeks.map((w) => w.id === weekId ? { ...w, components: w.components.filter((c) => c.id !== compId) } : w) }
-        : m));
-
-  const asItems = (weeks: WeekItem[] | undefined, taken: string[]): CurriculumItem[] =>
-    (weeks || []).filter((w) => !taken.includes(w.id));
 
   // ---- save ----
   const handleSave = async () => {
@@ -287,8 +295,11 @@ export default function TrainingPlanPage() {
   };
 
   // ---- step gating ----
+  const moduleHours = (m: BuiltModule) =>
+    m.weeks.reduce((k, w) => k + w.components.reduce((n, c) => n + (c.expectedOtjh || 0), 0), 0);
   const totalComponents = plan.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
   const totalWeeks = plan.reduce((n, m) => n + m.weeks.length, 0);
+  const totalHours = plan.reduce((n, m) => n + moduleHours(m), 0);
   const canNext = step === 1 ? !!programme : true;
   const next = () => setStep((s) => Math.min(3, s + 1));
   const back = () => setStep((s) => Math.max(1, s - 1));
@@ -381,66 +392,36 @@ export default function TrainingPlanPage() {
                 )}
                 {plan.length === 0 && programme && <EmptyState text="No modules added yet." />}
 
-                <div className="space-y-4">
+                {/* Each added module brings its authored weeks + components in by
+                    default; we only list the modules here to keep the page short.
+                    The full breakdown is on the Review step. */}
+                {plan.length > 0 && (
+                  <p className="text-[12px] text-foreground-500">
+                    <strong className="text-foreground-800">{totalWeeks}</strong> {totalWeeks === 1 ? 'week' : 'weeks'} · <strong className="text-foreground-800">{totalComponents}</strong> {totalComponents === 1 ? 'component' : 'components'} · <strong className="text-foreground-800">{formatHoursMinutes(totalHours)}</strong> OTJ
+                  </p>
+                )}
+                <ul className="space-y-2">
                   {plan.map((m) => {
-                    const takenWeeks = m.weeks.map((w) => w.id);
+                    const weekCount = m.weeks.length;
+                    const compCount = m.weeks.reduce((k, w) => k + w.components.length, 0);
+                    const hours = moduleHours(m);
                     return (
-                      <div key={m.id} className="rounded-xl border border-foreground-200/70 overflow-hidden">
-                        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-100">
-                          <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
-                            <i className="ri-book-2-line text-primary-600" />{m.title}
+                      <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-foreground-200/70 px-4 py-3 bg-background-100/40">
+                        <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
+                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[11px] text-foreground-500">
+                            {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {compCount} {compCount === 1 ? 'component' : 'components'} · {formatHoursMinutes(hours)} OTJ
                           </span>
                           <button onClick={() => removeModule(m.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${m.title}`}>
                             <i className="ri-delete-bin-line" />
                           </button>
                         </div>
-                        <div className="p-4 space-y-3">
-                          <AddSelect
-                            placeholder="Add a week…"
-                            options={asItems(weekOptions[m.id], takenWeeks)}
-                            onAdd={(item) => addWeek(m.id, item)}
-                          />
-                          {m.weeks.length === 0 && <EmptyState text="No weeks added yet." />}
-                          <div className="space-y-3 pl-3 border-l-2 border-foreground-100">
-                            {m.weeks.map((w) => {
-                              const takenComps = w.components.map((c) => c.id);
-                              return (
-                                <div key={w.id} className="rounded-lg border border-foreground-100 p-3 space-y-2">
-                                  <div className="flex items-center justify-between gap-3">
-                                    <span className="text-[12px] font-medium text-foreground-800 inline-flex items-center gap-1.5">
-                                      <i className="ri-calendar-line text-secondary-600" />{w.title}
-                                    </span>
-                                    <button onClick={() => removeWeek(m.id, w.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${w.title}`}>
-                                      <i className="ri-close-line" />
-                                    </button>
-                                  </div>
-                                  <AddSelect
-                                    placeholder="Add a component…"
-                                    options={asItems(componentOptions[w.id], takenComps)}
-                                    onAdd={(item) => addComponent(m.id, w.id, item)}
-                                  />
-                                  {w.components.length > 0 && (
-                                    <ul className="flex flex-wrap gap-2 pt-1">
-                                      {w.components.map((c) => (
-                                        <li key={c.id} className="inline-flex items-center gap-1.5 text-[11px] bg-background-100 border border-foreground-200/60 rounded-full pl-2.5 pr-1.5 py-1 text-foreground-700">
-                                          <i className="ri-checkbox-blank-circle-fill text-[6px] text-accent-500" />
-                                          {c.title}
-                                          <button onClick={() => removeComponent(m.id, w.id, c.id)} className="w-4 h-4 rounded-full hover:bg-background-200 flex items-center justify-center cursor-pointer" aria-label={`Remove ${c.title}`}>
-                                            <i className="ri-close-line text-[11px]" />
-                                          </button>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               </div>
             )}
 
@@ -460,6 +441,7 @@ export default function TrainingPlanPage() {
                   <span><strong className="text-foreground-800">{plan.length}</strong> modules</span>
                   <span><strong className="text-foreground-800">{totalWeeks}</strong> weeks</span>
                   <span><strong className="text-foreground-800">{totalComponents}</strong> components</span>
+                  <span><strong className="text-foreground-800">{formatHoursMinutes(totalHours)}</strong> OTJ</span>
                 </div>
                 {plan.length === 0 ? (
                   <EmptyState text="No modules in this plan yet — go back to step 2 to add content." />
@@ -467,7 +449,10 @@ export default function TrainingPlanPage() {
                   <div className="space-y-3">
                     {plan.map((m) => (
                       <div key={m.id} className="rounded-xl border border-foreground-100 p-4">
-                        <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2"><i className="ri-book-2-line text-primary-600" />{m.title}</p>
+                        <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
+                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                          <span className="text-[11px] font-normal text-foreground-400">· {formatHoursMinutes(moduleHours(m))} OTJ</span>
+                        </p>
                         {m.weeks.length === 0 ? (
                           <p className="text-[12px] text-foreground-400 italic mt-1">No weeks</p>
                         ) : (

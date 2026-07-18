@@ -7,10 +7,58 @@ export interface JourneyComponent {
   type?: string | null;
   description?: string | null;
   videoUrl?: string | null;
+  audioUrl?: string | null;
+  contentHtml?: string | null;
+  fileName?: string | null;
+  downloadAllowed?: boolean;
+  reflectionPrompt?: string | null;
+  resourceUrl?: string | null;
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
+}
+
+/* ═══════════════════════════════════════════════════════
+   COMPONENT COMPLETION MODEL
+   Which component types a learner can OPEN + complete (with
+   the reflection/KSBs/time flow) and how they're rendered.
+   Quizzes and videos have their own dedicated flows.
+   ═══════════════════════════════════════════════════════ */
+export type ContentKind = 'video' | 'audio' | 'reading' | 'slides' | 'reflection' | 'resource';
+
+/** Map a component's type to how its content should be presented. */
+export function componentContentKind(type: string | null | undefined): ContentKind {
+  const t = (type || '').toLowerCase();
+  if (t === 'video') return 'video';
+  if (t === 'podcast') return 'audio';
+  if (t === 'reading') return 'reading';
+  if (t === 'powerpoint') return 'slides';
+  if (t === 'reflection') return 'reflection';
+  return 'resource';
+}
+
+/** Short noun used in the reflection copy ("this podcast", "this reading…"). */
+export function componentNoun(type: string | null | undefined): string {
+  const t = (type || '').toLowerCase();
+  return ({
+    video: 'video', podcast: 'podcast', reading: 'reading', powerpoint: 'slide deck',
+    reflection: 'reflection', activity: 'activity', workplace_evidence: 'evidence task',
+    'workplace-evidence': 'evidence task', live_session: 'session',
+    recording_placeholder: 'recording', 'recording placeholder': 'recording',
+  } as Record<string, string>)[t] || 'activity';
+}
+
+/** Can the learner open + complete this component on the component page?
+ * Every backend-configured non-quiz component is available through the shared
+ * component flow. Videos still require a playable source for their dedicated
+ * player; the other types can present their authored instructions/resources
+ * and collect the completion reflection. */
+export function isOpenableComponent(c: JourneyComponent): boolean {
+  if (c.isQuiz || !c.componentId) return false;
+  const t = (c.type || '').toLowerCase();
+  if (t === 'video') return !!c.videoUrl;
+  return true;
 }
 export interface JourneyWeek {
   week: string;
@@ -178,6 +226,8 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
             componentId: c.componentId, type: c.type, description: c.description,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
+            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
+            downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
             quizAttempts: c.isQuiz && c.quizMeta
               ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
               : undefined,

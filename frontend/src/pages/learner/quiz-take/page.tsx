@@ -9,6 +9,7 @@ import {
 } from '@/api/quizzes';
 import { fetchLearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api/learnerDetail';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { rememberLearner } from '@/hooks/useMyLearner';
 
 const learnerNav = roleNavMap.learner;
 
@@ -16,6 +17,8 @@ type Phase = 'intro' | 'quiz' | 'reflect' | 'results';
 
 export default function QuizTakePage() {
   const { kind, id, quizId } = useParams<{ kind: string; id: string; quizId: string }>();
+  // Keep sidebar self-view pointing at this learner after the quiz.
+  useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const moduleTitle = searchParams.get('module');

@@ -116,6 +116,38 @@ def recompute_completed_hours(learner_id):
         return None
 
 
+def cohort_dates(programme, cohort):
+    """(start_date, end_date) for a learner's cohort, or (None, None).
+
+    Looked up from curriculum."cohort_authoring_details" by matching the learner's
+    free-text Programme + Cohort against the authored cohort's programme_name +
+    cohort_name (case-insensitive, trimmed) — the learner tables have no cohort_id
+    to join on. Newest updated_at wins if a (programme, cohort) pair repeats.
+    Best-effort: any DB/lookup error returns (None, None) so it never breaks a
+    learner create or mirror sync.
+    """
+    prog = _s(programme)
+    coh = _s(cohort)
+    if not prog or not coh:
+        return None, None
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                'SELECT start_date, end_date FROM curriculum."cohort_authoring_details" '
+                "WHERE lower(btrim(programme_name)) = lower(%s) "
+                "AND lower(btrim(cohort_name)) = lower(%s) "
+                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                [prog, coh],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not look up cohort dates for %r / %r: %s", prog, coh, exc)
+        return None, None
+    if not row:
+        return None, None
+    return row[0], row[1]
+
+
 def _fetch_ksb_items(programme):
     """The KSBs for `programme`, from curriculum.ksb_profiles.ksb_items.
 
@@ -184,7 +216,7 @@ def _insert_with_id(source_id, fields):
 # source enrolment tables). These must survive the Active <-> Unactive round-trip
 # so a learner keeps their coach, hours, and progress when re-activated.
 PRESERVED_FIELDS = (
-    "coach_name", "coach_email", "completed_hours",
+    "coach_name", "coach_email", "coach_rag", "completed_hours",
     "training_plan", "ksbs", "training_plan_progress", "activity_feed",
 )
 
@@ -284,6 +316,9 @@ def sync_active_user(source):
         _archive_active_user(source.id, status)
         return None
 
+    start_date, end_date = cohort_dates(
+        getattr(source, "programme", None), getattr(source, "cohort", None)
+    )
     fields = {
         "username": _s(getattr(source, "username", "")) or None,
         "email": _s(getattr(source, "email", "")) or None,
@@ -292,6 +327,9 @@ def sync_active_user(source):
         "programme_status": status,
         "cohort": _s(getattr(source, "cohort", "")) or None,
         "group": _s(getattr(source, "group", "")) or None,
+        # Cohort delivery window, looked up from the authored cohort table.
+        "start_date": start_date,
+        "end_date": end_date,
         # The learner's structured plan, copied through as-is: modules contain
         # weeks, weeks contain components (Commercial_users.Training_plan /
         # Enrolment_Users.Learning_plan — same shape, see mappers.py).
