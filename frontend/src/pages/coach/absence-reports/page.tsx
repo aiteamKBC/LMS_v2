@@ -1,12 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { ABSENCE_REPORTS_DATA, type AbsenceReport } from '@/mocks/absence-reports';
+import type { AbsenceReport } from '@/mocks/absence-reports';
 
 const coachNav = roleNavMap.coach;
-const TABLE_DATA_COMING_SOON = true;
+const API_ENDPOINT = '/coach_api/coach/absence-reports';
 
 function FilterDropdown({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; allLabel?: string }) {
   return (
@@ -22,6 +22,9 @@ function FilterDropdown({ label, value, onChange, options, allLabel }: { label: 
 
 export default function CoachAbsenceReports() {
   const { success, error } = useToast();
+  const [reports, setReports] = useState<AbsenceReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState(true);
+  const [reportsError, setReportsError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [programmeFilter, setProgrammeFilter] = useState<string>('all');
@@ -32,19 +35,43 @@ export default function CoachAbsenceReports() {
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [selectedEvidence, setSelectedEvidence] = useState<AbsenceReport | null>(null);
   const [actionModal, setActionModal] = useState<{ type: 'approve' | 'decline'; reportId: string } | null>(null);
   const [sendNotification, setSendNotification] = useState(true);
   const [coachNoteText, setCoachNoteText] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(8);
 
-  const programmes = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.programme))].sort(), []);
-  const cohorts = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.cohort))].sort(), []);
-  const reportedByOptions = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.reportedBy))].sort(), []);
-  const reasonCategories = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.reasonCategory))].sort(), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(API_ENDPOINT, { signal: controller.signal })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+        return data as { items?: AbsenceReport[] };
+      })
+      .then(data => {
+        setReports(data.items || []);
+        setReportsError(null);
+      })
+      .catch(requestError => {
+        if (controller.signal.aborted) return;
+        setReports([]);
+        setReportsError(requestError instanceof Error ? requestError.message : 'Unable to load absence reports.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingReports(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  const programmes = useMemo(() => [...new Set(reports.map(r => r.programme))].sort(), [reports]);
+  const cohorts = useMemo(() => [...new Set(reports.map(r => r.cohort))].sort(), [reports]);
+  const reportedByOptions = useMemo(() => [...new Set(reports.map(r => r.reportedBy))].sort(), [reports]);
+  const reasonCategories = useMemo(() => [...new Set(reports.map(r => r.reasonCategory))].sort(), [reports]);
 
   const filteredData = useMemo(() => {
-    let data = ABSENCE_REPORTS_DATA;
+    let data = reports;
     if (statusFilter !== 'all') data = data.filter(r => r.status === statusFilter);
     if (programmeFilter !== 'all') data = data.filter(r => r.programme === programmeFilter);
     if (cohortFilter !== 'all') data = data.filter(r => r.cohort === cohortFilter);
@@ -73,42 +100,43 @@ export default function CoachAbsenceReports() {
       if (a.status !== 'pending' && b.status === 'pending') return 1;
       return 0;
     });
-  }, [statusFilter, programmeFilter, cohortFilter, reportedByFilter, reasonFilter, searchQuery, dateFrom, dateTo]);
+  }, [reports, statusFilter, programmeFilter, cohortFilter, reportedByFilter, reasonFilter, searchQuery, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  const selectedReport = ABSENCE_REPORTS_DATA.find(r => r.id === selectedReportId) || null;
+  const selectedReport = reports.find(r => r.id === selectedReportId) || null;
 
-  const pending = ABSENCE_REPORTS_DATA.filter(r => r.status === 'pending').length;
-  const approved = ABSENCE_REPORTS_DATA.filter(r => r.status === 'approved').length;
-  const declined = ABSENCE_REPORTS_DATA.filter(r => r.status === 'declined').length;
-  const total = ABSENCE_REPORTS_DATA.length;
-  const withEvidence = ABSENCE_REPORTS_DATA.filter(r => r.evidenceProvided).length;
+  const pending = reports.filter(r => r.status === 'pending').length;
+  const approved = reports.filter(r => r.status === 'approved').length;
+  const declined = reports.filter(r => r.status === 'declined').length;
+  const total = reports.length;
+  const withEvidence = reports.filter(r => r.evidenceProvided).length;
 
-  const handleApprove = (reportId: string) => {
-    const report = ABSENCE_REPORTS_DATA.find(r => r.id === reportId);
-    if (report) {
-      success(`Approved absence for ${report.learner}`, report.sessionTitle);
-      if (sendNotification) {
-        success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
-      }
+  const saveDecision = async (reportId: string, status: 'approved' | 'declined') => {
+    const report = reports.find(item => item.id === reportId);
+    if (!report) return;
+    try {
+      const response = await fetch(API_ENDPOINT, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: reportId, status, coachNote: coachNoteText }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      setReports(current => current.map(item => item.id === reportId ? data.item as AbsenceReport : item));
+      if (status === 'approved') success(`Approved absence for ${report.learner}`, report.sessionTitle);
+      else error(`Declined absence for ${report.learner}`, report.sessionTitle);
+      if (sendNotification) success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
+      setCoachNoteText('');
+      setActionModal(null);
+    } catch (requestError) {
+      error('Unable to save absence decision', requestError instanceof Error ? requestError.message : 'Please try again.');
     }
-    setCoachNoteText('');
-    setActionModal(null);
   };
 
-  const handleDecline = (reportId: string) => {
-    const report = ABSENCE_REPORTS_DATA.find(r => r.id === reportId);
-    if (report) {
-      error(`Declined absence for ${report.learner}`, report.sessionTitle);
-      if (sendNotification) {
-        success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
-      }
-    }
-    setCoachNoteText('');
-    setActionModal(null);
-  };
+  const handleApprove = (reportId: string) => saveDecision(reportId, 'approved');
+  const handleDecline = (reportId: string) => saveDecision(reportId, 'declined');
 
   const reasonCategoryLabel: Record<string, string> = {
     illness: 'Illness',
@@ -310,7 +338,6 @@ export default function CoachAbsenceReports() {
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Date</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Reason</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Evidence</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Reported By</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Prev. Absences</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Attendance</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Status</th>
@@ -318,26 +345,15 @@ export default function CoachAbsenceReports() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
-                {TABLE_DATA_COMING_SOON ? (
+                {paginatedData.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-20 text-center">
-                      <div className="flex flex-col items-center gap-3">
-                        <span className="w-12 h-12 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center">
-                          <i className="ri-time-line text-xl"></i>
-                        </span>
-                        <p className="text-sm text-foreground-600 font-semibold">Coming Soon</p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : paginatedData.length === 0 ? (
-                  <tr>
-                    <td colSpan={10} className="px-4 py-16 text-center">
+                    <td colSpan={9} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3">
                         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center">
-                          <i className="ri-inbox-line text-foreground-300 text-xl"></i>
+                          <i className={`${loadingReports ? 'ri-loader-4-line animate-spin' : reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></i>
                         </span>
-                        <p className="text-[13px] text-foreground-400 font-medium">No absence reports found</p>
-                        <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>
+                        <p className="text-[13px] text-foreground-400 font-medium">{loadingReports ? 'Loading absence reports...' : reportsError || 'No absence reports found'}</p>
+                        {!loadingReports && !reportsError && <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>}
                         {hasActiveFilters && (
                           <button onClick={clearFilters} className="px-3 py-1.5 bg-background-100 text-foreground-500 rounded-lg text-[11px] font-medium hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
                             <i className="ri-close-line mr-1"></i>Clear Filters
@@ -389,21 +405,24 @@ export default function CoachAbsenceReports() {
                         </td>
                         <td className="px-3 py-3 text-center">
                           {row.evidenceProvided ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                              <i className="ri-check-line text-[9px]"></i>
-                              {row.evidenceType || 'Yes'}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedEvidence(row);
+                              }}
+                              className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2.5 py-1.5 rounded-lg hover:bg-primary-100 hover:border-primary-300 transition-smooth cursor-pointer whitespace-nowrap"
+                              aria-label={`View ${row.evidenceKind === 'image' ? 'image' : 'text'} evidence for ${row.learner}`}
+                            >
+                              <i className={`${row.evidenceKind === 'image' ? 'ri-image-line' : 'ri-file-text-line'} text-[12px]`}></i>
+                              View {row.evidenceKind === 'image' ? 'image' : 'text'}
+                            </button>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground-400 bg-foreground-50 px-2 py-0.5 rounded-full">
                               <i className="ri-close-line text-[9px]"></i>
                               None
                             </span>
                           )}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${row.reportedBy === 'Learner' ? 'bg-accent-100 text-accent-700' : row.reportedBy === 'Employer' ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>
-                            {row.reportedBy}
-                          </span>
                         </td>
                         <td className="px-3 py-3 text-center">
                           <span className={`text-[12px] font-semibold ${row.previousAbsences >= 5 ? 'text-red-600' : row.previousAbsences >= 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
@@ -466,7 +485,7 @@ export default function CoachAbsenceReports() {
           </div>
 
           {/* Pagination */}
-          {!TABLE_DATA_COMING_SOON && filteredData.length > 0 && (
+          {filteredData.length > 0 && (
             <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-[11px] text-foreground-400">
                 <span>Showing {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–{Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} reports</span>
@@ -685,6 +704,65 @@ export default function CoachAbsenceReports() {
       </RightSlidePanel>
 
       {/* ═══════ Action Confirmation Modal ═══════ */}
+      {selectedEvidence && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onClick={() => setSelectedEvidence(null)}>
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm"></div>
+          <div className="relative w-full max-w-[560px] overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
+                  <i className={`${selectedEvidence.evidenceKind === 'image' ? 'ri-image-line' : 'ri-file-text-line'} text-lg`}></i>
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-foreground-900">Absence evidence</h3>
+                  <p className="truncate text-[11px] text-foreground-400">{selectedEvidence.learner} · {selectedEvidence.sessionTitle}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSelectedEvidence(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close evidence preview">
+                <i className="ri-close-line text-lg"></i>
+              </button>
+            </div>
+
+            <div className="p-5">
+              {selectedEvidence.evidenceKind === 'image' ? (
+                <div className="relative flex min-h-[290px] items-center justify-center overflow-hidden rounded-xl border border-foreground-200 bg-background-100">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-foreground-400">
+                    <i className="ri-image-line text-4xl"></i>
+                    <span className="text-xs font-medium">Image evidence attached</span>
+                  </div>
+                  {selectedEvidence.evidenceImageUrl && (
+                    <img
+                      src={selectedEvidence.evidenceImageUrl}
+                      alt={`Evidence submitted by ${selectedEvidence.learner}`}
+                      className="relative z-10 max-h-[430px] w-full object-contain bg-white"
+                      onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-foreground-200 bg-background-100 p-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Submitted text</p>
+                  <p className="whitespace-pre-wrap text-[13px] leading-6 text-foreground-800">
+                    {selectedEvidence.evidenceText || selectedEvidence.reason || 'No text was provided.'}
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-background-100 p-3 text-[11px]">
+                <div>
+                  <p className="text-foreground-400">Session date</p>
+                  <p className="mt-0.5 font-semibold text-foreground-800">{selectedEvidence.sessionDate}</p>
+                </div>
+                <div>
+                  <p className="text-foreground-400">Evidence type</p>
+                  <p className="mt-0.5 font-semibold capitalize text-foreground-800">{selectedEvidence.evidenceKind || selectedEvidence.evidenceType || 'Evidence'}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {actionModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center" onClick={() => setActionModal(null)}>
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
@@ -706,7 +784,7 @@ export default function CoachAbsenceReports() {
 
             {/* Report Summary */}
             {(() => {
-              const r = ABSENCE_REPORTS_DATA.find(x => x.id === actionModal.reportId);
+              const r = reports.find(x => x.id === actionModal.reportId);
               if (!r) return null;
               return (
                 <div className="bg-background-100 rounded-xl p-3 mb-4 space-y-1.5">

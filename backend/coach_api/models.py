@@ -44,3 +44,49 @@ class CoachCalendarEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
+
+
+class CoachAbsenceReport(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_DECLINED = "declined"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_DECLINED, "Declined"),
+    ]
+
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    owner_name = models.CharField(max_length=255, blank=True)
+    learner_id = models.IntegerField(db_index=True)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(max_length=255, blank=True)
+    session_title = models.CharField(max_length=255)
+    session_date = models.DateField(db_index=True)
+    session_time = models.TimeField(null=True, blank=True)
+    reason_category = models.CharField(max_length=64, blank=True)
+    reason = models.TextField()
+    reported_by = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    evidence_provided = models.BooleanField(default=False)
+    evidence_kind = models.CharField(max_length=20, default="none")
+    evidence_text = models.TextField(blank=True)
+    evidence_image_url = models.URLField(max_length=1000, blank=True)
+    previous_absences = models.PositiveIntegerField(default=0)
+    attendance_rate = models.PositiveSmallIntegerField(null=True, blank=True)
+    coach_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'Coach"."coach_absence_report'
+        ordering = ["-session_date", "learner_name"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(attendance_rate__isnull=True) | models.Q(attendance_rate__gte=0, attendance_rate__lte=100),
+                name="coach_absence_attendance_0_100",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Absence for {self.learner_name} on {self.session_date}"

@@ -306,7 +306,8 @@ export function useCoachLearnerCaseFileData(args: {
 
       setData(finalData);
 
-      if (!detail && detailError) {
+      const missingDetailOnly = Boolean(detailError && /learner not found|\b404\b/i.test(detailError));
+      if (!detail && detailError && !missingDetailOnly) {
         setError(detailError);
       } else if (caseloadResult.status === 'rejected' && !snapshot) {
         setError(caseloadResult.reason instanceof Error ? caseloadResult.reason.message : 'Could not load coach caseload.');

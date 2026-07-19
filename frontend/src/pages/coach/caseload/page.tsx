@@ -124,8 +124,6 @@ interface CaseloadApiResponse {
 }
 
 const coachNav = roleNavMap.coach;
-const THREAD_MAP: Record<string, string> = {};
-const EMPLOYER_THREAD_MAP: Record<string, string> = {};
 const PAGE_SIZE = 10;
 const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
@@ -411,7 +409,6 @@ export default function CoachCaseload() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [showProgressReport, setShowProgressReport] = useState(false);
-  const [showEmployerDropdown, setShowEmployerDropdown] = useState(false);
   const [isTableDragging, setIsTableDragging] = useState(false);
   const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
   const [openCoachRagId, setOpenCoachRagId] = useState<string | null>(null);
@@ -691,47 +688,8 @@ export default function CoachCaseload() {
     setSelectedLearnerId(isSelected ? null : learnerId);
   };
 
-  const handleSendMessage = () => {
-    if (!selectedLearner) return;
-    const threadId = THREAD_MAP[selectedLearner.name];
-    if (threadId) {
-      navigate(`/coach/messages?thread=${threadId}`);
-    } else {
-      navigate('/coach/messages');
-    }
-  };
-
   const handleViewProgressReport = () => {
     setShowProgressReport(true);
-  };
-
-  const handleContactEmployerMessage = () => {
-    if (!selectedLearner) return;
-    const threadId = EMPLOYER_THREAD_MAP[selectedLearner.employer];
-    if (threadId) {
-      navigate(`/coach/messages?thread=${threadId}`);
-    } else {
-      navigate('/coach/messages');
-    }
-    setShowEmployerDropdown(false);
-  };
-
-  const handleEmailEmployer = () => {
-    if (!selectedLearner?.employerEmail) return;
-    window.open(`mailto:${selectedLearner.employerEmail}`, '_blank');
-    setShowEmployerDropdown(false);
-  };
-
-  const handleZoomCall = () => {
-    if (!selectedLearner?.employerEmail) return;
-    window.open(`https://zoom.us/start/videomeeting?email=${encodeURIComponent(selectedLearner.employerEmail)}`, '_blank');
-    setShowEmployerDropdown(false);
-  };
-
-  const handleOutlookCall = () => {
-    if (!selectedLearner?.employerEmail) return;
-    window.open(`https://outlook.office.com/calendar/deeplink/compose?to=${encodeURIComponent(selectedLearner.employerEmail)}`, '_blank');
-    setShowEmployerDropdown(false);
   };
 
   const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
@@ -858,7 +816,7 @@ export default function CoachCaseload() {
                       <ThSort label="OTJH" sortKey="otjh" current={sortKey} dir={sortDir} onClick={() => handleSort('otjh')} className="w-[102px] text-center text-[9px]" contentClassName="justify-center" />
                       <ThSort label="KSB" sortKey="ksb" current={sortKey} dir={sortDir} onClick={() => handleSort('ksb')} className="w-[80px] text-center text-[9px]" contentClassName="justify-center" />
                       <ThSort label="Components" sortKey="attendance" current={sortKey} dir={sortDir} onClick={() => handleSort('attendance')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
-                      <ThSort label="Progress" sortKey="progress" current={sortKey} dir={sortDir} onClick={() => handleSort('progress')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="OTJH Progress" sortKey="progress" current={sortKey} dir={sortDir} onClick={() => handleSort('progress')} className="w-[104px] text-center text-[9px]" contentClassName="justify-center" />
                       <th className="w-[88px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Start Date</th>
                       <th className="w-[96px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Gateway Review</th>
                       <th className="w-[48px] pr-3 py-2.5"></th>
@@ -1087,7 +1045,7 @@ export default function CoachCaseload() {
         {/* Right Slide Panel — Learner Detail */}
         <RightSlidePanel
           isOpen={selectedLearner !== null}
-          onClose={() => { setSelectedLearnerId(null); setShowEmployerDropdown(false); }}
+          onClose={() => setSelectedLearnerId(null)}
           title={selectedLearner?.name || 'Learner Detail'}
           width="w-[520px]"
         >
@@ -1235,53 +1193,9 @@ export default function CoachCaseload() {
 
               {/* Actions */}
               <div className="flex flex-col gap-2 pt-2">
-                <button className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-chat-smile-2-line mr-1.5"></i> Start Coaching Session
-                </button>
                 <button onClick={handleViewProgressReport} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap text-center">
                   <i className="ri-file-chart-line mr-1.5"></i> View Full Progress Report
                 </button>
-                <button onClick={handleSendMessage} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap text-center">
-                  <i className="ri-mail-line mr-1.5"></i> Send Message
-                </button>
-                <div className="relative">
-                  <button onClick={() => setShowEmployerDropdown(!showEmployerDropdown)} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap text-center flex items-center justify-center gap-1">
-                    <i className="ri-building-2-line mr-1.5"></i> Contact Employer
-                    <i className={`ri-arrow-down-s-line text-xs transition-transform ${showEmployerDropdown ? 'rotate-180' : ''}`}></i>
-                  </button>
-                  {showEmployerDropdown && (
-                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-background-50 rounded-xl border border-background-200 shadow-xl overflow-hidden z-50">
-                      <button onClick={handleContactEmployerMessage} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer">
-                        <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center text-primary-600"><i className="ri-message-3-line text-xs"></i></span>
-                        <div>
-                          <p className="font-medium">Send Message</p>
-                          <p className="text-[10px] text-foreground-400">Open in-app chat</p>
-                        </div>
-                      </button>
-                      <button onClick={handleEmailEmployer} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                        <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center text-accent-600"><i className="ri-mail-send-line text-xs"></i></span>
-                        <div>
-                          <p className="font-medium">Email</p>
-                          <p className="text-[10px] text-foreground-400">{selectedLearner.employerEmail || 'No employer email available'}</p>
-                        </div>
-                      </button>
-                      <button onClick={handleZoomCall} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                        <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600"><i className="ri-video-line text-xs"></i></span>
-                        <div>
-                          <p className="font-medium">Call via Zoom</p>
-                          <p className="text-[10px] text-foreground-400">Start video meeting</p>
-                        </div>
-                      </button>
-                      <button onClick={handleOutlookCall} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                        <span className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600"><i className="ri-calendar-event-line text-xs"></i></span>
-                        <div>
-                          <p className="font-medium">Schedule via Outlook</p>
-                          <p className="text-[10px] text-foreground-400">Book calendar meeting</p>
-                        </div>
-                      </button>
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
           )}

@@ -19,6 +19,7 @@ has already been committed by the caller.
 """
 import json
 import logging
+from datetime import timedelta
 
 from django.db import DatabaseError, connections
 
@@ -330,6 +331,7 @@ def sync_active_user(source):
         # Cohort delivery window, looked up from the authored cohort table.
         "start_date": start_date,
         "end_date": end_date,
+        "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
         # The learner's structured plan, copied through as-is: modules contain
         # weeks, weeks contain components (Commercial_users.Training_plan /
         # Enrolment_Users.Learning_plan — same shape, see mappers.py).
