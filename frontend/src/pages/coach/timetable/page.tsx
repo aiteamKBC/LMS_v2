@@ -1,5 +1,6 @@
 ﻿import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -52,6 +53,7 @@ interface TimetableEvent {
   meetingLink?: string;
   graphWebLink?: string;
   syncWarning?: string;
+  schedulerOnly?: boolean;
 }
 
 interface TimetableSummaryMetrics {
@@ -86,6 +88,9 @@ interface TimetableResponse {
   };
   summary?: TimetableSummary;
   events?: TimetableEvent[];
+  schedulerQueues?: {
+    catchUp?: TimetableEvent[];
+  };
 }
 
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
@@ -267,11 +272,15 @@ function isCompletedMetricEvent(event: TimetableEvent) {
 }
 
 function isScheduledMetricEvent(event: TimetableEvent) {
-  return event.status === 'scheduled' || event.status === 'in-progress';
+  return event.status === 'scheduled';
+}
+
+function isInProgressMetricEvent(event: TimetableEvent) {
+  return event.status === 'in-progress';
 }
 
 function needsSchedulingMetricEvent(event: TimetableEvent) {
-  return event.status === 'pending' || event.status === 'not-scheduled' || event.status === 'cancelled';
+  return event.status === 'pending' || event.status === 'not-scheduled';
 }
 
 function isOverdueMetricEvent(event: TimetableEvent, referenceDate = new Date()) {
@@ -321,7 +330,7 @@ function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date(
   const totalEvents = events.length;
   const completedEvents = events.filter(isCompletedMetricEvent).length;
   const scheduledEvents = events.filter(isScheduledMetricEvent).length;
-  const inProgressEvents = events.filter(event => event.status === 'in-progress').length;
+  const inProgressEvents = events.filter(isInProgressMetricEvent).length;
   const needsScheduling = events.filter(needsSchedulingMetricEvent).length;
   const thisWeekEvents = events.filter(event => isThisWeekMetricEvent(event, referenceDate)).length;
   const overdueEvents = events.filter(event => isOverdueMetricEvent(event, referenceDate)).length;
@@ -473,7 +482,7 @@ function eventIdentity(event: TimetableEvent) {
 }
 
 function learnerIdentity(event: TimetableEvent) {
-  return event.learnerId || event.learner || eventIdentity(event);
+  return event.learnerId || event.email || event.learner || eventIdentity(event);
 }
 
 function formatCompactDate(value?: string | null) {
@@ -489,8 +498,52 @@ function formatCompactDate(value?: string | null) {
 function sourceSessionLabel(event: TimetableEvent) {
   if (!isSchedulableSource(event.source)) return event.title;
   const baseLabel = SOURCE_FILTER_LABELS[event.source];
-  if (event.source === 'catch-up') return baseLabel;
+  if (event.source === 'catch-up') return event.schedulerOnly ? 'New Catch-up Session' : baseLabel;
   return event.sequence ? `${baseLabel} ${event.sequence}` : baseLabel;
+}
+
+function scheduleSessionOptionLabel(event: TimetableEvent) {
+  if (event.source === 'catch-up' && event.schedulerOnly) {
+    return `${event.learner || 'Learner'} · New Catch-up Session`;
+  }
+  return `${event.learner || 'Learner'} · ${sourceSessionLabel(event)} · due ${formatCompactDate(event.targetDate || event.date)}`;
+}
+
+function scheduleLearnerOptionLabel(event: TimetableEvent) {
+  return event.programme ? `${event.learner || 'Learner'} · ${event.programme}` : (event.learner || 'Learner');
+}
+
+function isSelectableScheduleEvent(event: TimetableEvent) {
+  if (!isSchedulableSource(event.source)) return false;
+  if (event.source === 'catch-up') {
+    return !['completed', 'confirmed', 'in-progress'].includes(event.status);
+  }
+  return needsSchedulingMetricEvent(event);
+}
+
+function compareSchedulablePriority(a: TimetableEvent, b: TimetableEvent) {
+  const aNeedsBooking = needsSchedulingMetricEvent(a) ? 0 : 1;
+  const bNeedsBooking = needsSchedulingMetricEvent(b) ? 0 : 1;
+  if (aNeedsBooking !== bNeedsBooking) return aNeedsBooking - bNeedsBooking;
+
+  const aTemplatePenalty = a.schedulerOnly ? 1 : 0;
+  const bTemplatePenalty = b.schedulerOnly ? 1 : 0;
+  if (aTemplatePenalty !== bTemplatePenalty) return aTemplatePenalty - bTemplatePenalty;
+
+  const aOverdue = isOverdueMetricEvent(a) ? 0 : 1;
+  const bOverdue = isOverdueMetricEvent(b) ? 0 : 1;
+  if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+
+  const dateDelta = getMetricDate(eventTargetDateValue(a), a).getTime() - getMetricDate(eventTargetDateValue(b), b).getTime();
+  if (dateDelta !== 0) return dateDelta;
+
+  const sequenceDelta = (a.sequence || 0) - (b.sequence || 0);
+  if (sequenceDelta !== 0) return sequenceDelta;
+
+  const learnerDelta = (a.learner || '').localeCompare(b.learner || '');
+  if (learnerDelta !== 0) return learnerDelta;
+
+  return sourceSessionLabel(a).localeCompare(sourceSessionLabel(b));
 }
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -509,6 +562,7 @@ export default function CoachTimetablePage() {
   const [filterSource, setFilterSource] = useState<SourceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [events, setEvents] = useState<TimetableEvent[]>([]);
+  const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -552,7 +606,28 @@ export default function CoachTimetablePage() {
   }, []);
 
   const updateSingleEvent = useCallback((updatedEvent: TimetableEvent) => {
-    const nextEvents = events.map(event => event.id === updatedEvent.id ? updatedEvent : event);
+    const existingIndex = events.findIndex(event => event.id === updatedEvent.id);
+    const nextEvents = existingIndex >= 0
+      ? events.map(event => event.id === updatedEvent.id ? updatedEvent : event)
+      : [...events, updatedEvent];
+    nextEvents.sort((a, b) => {
+      const dateDelta = parseEventDate(a).getTime() - parseEventDate(b).getTime();
+      if (dateDelta !== 0) return dateDelta;
+      const timeDelta = a.startHour - b.startHour;
+      if (timeDelta !== 0) return timeDelta;
+      return (a.learner || '').localeCompare(b.learner || '');
+    });
+
+    if (updatedEvent.source === 'catch-up') {
+      setSchedulerCatchUpEvents(current => {
+        const hasMatch = current.some(event => eventIdentity(event) === eventIdentity(updatedEvent));
+        if (hasMatch) {
+          return current.map(event => eventIdentity(event) === eventIdentity(updatedEvent) ? updatedEvent : event);
+        }
+        return [...current, updatedEvent];
+      });
+    }
+
     const nextSelectedEvent = applyEventsUpdate(nextEvents, updatedEvent.id);
     return nextSelectedEvent || updatedEvent;
   }, [applyEventsUpdate, events]);
@@ -575,6 +650,7 @@ export default function CoachTimetablePage() {
         const anchorDate = new Date();
 
         setEvents(nextEvents);
+        setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
         setSummary(nextSummary);
         setViewYear(anchorDate.getFullYear());
         setViewMonth(anchorDate.getMonth());
@@ -585,6 +661,7 @@ export default function CoachTimetablePage() {
 
         setError(err instanceof Error ? err.message : 'Unable to load timetable data');
         setEvents([]);
+        setSchedulerCatchUpEvents([]);
         setSummary(EMPTY_SUMMARY);
         setSelectedEvent(null);
       } finally {
@@ -626,16 +703,22 @@ export default function CoachTimetablePage() {
   }, [selectedEvent]);
 
   const schedulableEvents = useMemo(() => {
-    return [...events]
-      .filter(event => isSchedulableSource(event.source) && needsSchedulingMetricEvent(event))
-      .sort((a, b) => {
-        const dateDelta = getMetricDate(eventTargetDateValue(a), a).getTime() - getMetricDate(eventTargetDateValue(b), b).getTime();
-        if (dateDelta !== 0) return dateDelta;
-        const learnerDelta = (a.learner || '').localeCompare(b.learner || '');
-        if (learnerDelta !== 0) return learnerDelta;
-        return (a.sequence || 0) - (b.sequence || 0);
+    const nonCatchUpEvents = events.filter(event => event.source !== 'catch-up' && isSelectableScheduleEvent(event));
+    const catchUpEventMap = new Map<string, TimetableEvent>();
+
+    schedulerCatchUpEvents.forEach(event => {
+      catchUpEventMap.set(eventIdentity(event), event);
+    });
+
+    events
+      .filter(event => event.source === 'catch-up')
+      .forEach(event => {
+        catchUpEventMap.set(eventIdentity(event), event);
       });
-  }, [events]);
+
+    const catchUpScheduleEvents = [...catchUpEventMap.values()].filter(isSelectableScheduleEvent);
+    return [...nonCatchUpEvents, ...catchUpScheduleEvents].sort(compareSchedulablePriority);
+  }, [events, schedulerCatchUpEvents]);
 
   const scheduleSourceCounts = useMemo(() => {
     return SCHEDULABLE_SOURCE_ORDER.reduce((acc, source) => {
@@ -650,40 +733,45 @@ export default function CoachTimetablePage() {
   );
 
   const scheduleLearnerOptions = useMemo(() => {
-    const uniqueLearners = new Map<string, { value: string; label: string; meta: string }>();
+    const uniqueLearners = new Map<string, { value: string; label: string; event: TimetableEvent }>();
+
     scheduleTypeEvents.forEach(event => {
       const key = learnerIdentity(event);
-      if (!uniqueLearners.has(key)) {
+      const existing = uniqueLearners.get(key);
+      if (!existing || compareSchedulablePriority(event, existing.event) < 0) {
         uniqueLearners.set(key, {
           value: key,
-          label: event.learner || 'Learner',
-          meta: event.programme || event.cohort || event.email || '',
+          label: scheduleLearnerOptionLabel(event),
+          event,
         });
       }
     });
-    return [...uniqueLearners.values()].sort((a, b) => a.label.localeCompare(b.label));
+
+    return [...uniqueLearners.values()]
+      .sort((a, b) => {
+        const priorityDelta = compareSchedulablePriority(a.event, b.event);
+        if (priorityDelta !== 0) return priorityDelta;
+        return a.label.localeCompare(b.label);
+      })
+      .map(({ value, label }) => ({ value, label }));
   }, [scheduleTypeEvents]);
 
-  const scheduleEventOptions = useMemo(() => {
-    return scheduleTypeEvents.filter(event => {
-      if (!scheduleModalLearnerKey) return true;
-      return learnerIdentity(event) === scheduleModalLearnerKey;
-    });
-  }, [scheduleModalLearnerKey, scheduleTypeEvents]);
+  const scheduleEventOptions = useMemo(
+    () => scheduleTypeEvents.filter(event => !scheduleModalLearnerKey || learnerIdentity(event) === scheduleModalLearnerKey),
+    [scheduleModalLearnerKey, scheduleTypeEvents],
+  );
+
+  const scheduleEventSelectOptions = useMemo(
+    () => scheduleEventOptions.map(event => ({
+      value: eventIdentity(event),
+      label: scheduleSessionOptionLabel(event),
+    })),
+    [scheduleEventOptions],
+  );
 
   const selectedScheduleEvent = useMemo(() => {
     return scheduleEventOptions.find(event => eventIdentity(event) === scheduleModalEventKey) || scheduleEventOptions[0] || null;
   }, [scheduleEventOptions, scheduleModalEventKey]);
-
-  useEffect(() => {
-    if (!scheduleModalOpen) return;
-    if (scheduleSourceCounts[scheduleModalType] > 0) return;
-
-    const firstAvailableType = SCHEDULABLE_SOURCE_ORDER.find(source => scheduleSourceCounts[source] > 0);
-    if (firstAvailableType) {
-      setScheduleModalType(firstAvailableType);
-    }
-  }, [scheduleModalOpen, scheduleModalType, scheduleSourceCounts]);
 
   useEffect(() => {
     if (!scheduleModalOpen) return;
@@ -837,24 +925,31 @@ export default function CoachTimetablePage() {
 
   const handleDayClick = (day: number) => {
     setSelectedDay(day);
-    if (viewMode === 'month') setViewMode('day');
   };
 
   const openScheduleModal = useCallback((presetEvent?: TimetableEvent | null) => {
     setScheduleModalError(null);
     setScheduleModalNotice(null);
 
-    if (presetEvent && isSchedulableSource(presetEvent.source) && needsSchedulingMetricEvent(presetEvent)) {
+    if (presetEvent && isSelectableScheduleEvent(presetEvent)) {
       setScheduleModalType(presetEvent.source);
       setScheduleModalLearnerKey(learnerIdentity(presetEvent));
       setScheduleModalEventKey(eventIdentity(presetEvent));
-    } else if (!schedulableEvents.length) {
-      setScheduleModalLearnerKey('');
-      setScheduleModalEventKey('');
+    } else {
+      const preferredEvent = schedulableEvents[0];
+
+      if (preferredEvent) {
+        setScheduleModalType(preferredEvent.source);
+        setScheduleModalLearnerKey(learnerIdentity(preferredEvent));
+        setScheduleModalEventKey(eventIdentity(preferredEvent));
+      } else {
+        setScheduleModalLearnerKey('');
+        setScheduleModalEventKey('');
+      }
     }
 
     setScheduleModalOpen(true);
-  }, [schedulableEvents.length]);
+  }, [schedulableEvents]);
 
   const closeScheduleModal = useCallback(() => {
     if (scheduleModalBusy) return;
@@ -1000,7 +1095,7 @@ export default function CoachTimetablePage() {
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => openScheduleModal(selectedEvent && needsSchedulingMetricEvent(selectedEvent) ? selectedEvent : null)}
+                  onClick={() => openScheduleModal(selectedEvent && isSelectableScheduleEvent(selectedEvent) ? selectedEvent : null)}
                   className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-primary-800 shadow-lg shadow-foreground-950/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
                 >
                   <i className="ri-add-circle-line text-base"></i>
@@ -1764,42 +1859,39 @@ export default function CoachTimetablePage() {
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeScheduleModal}>
           <div
-            className="w-full max-w-[920px] max-h-[90vh] overflow-y-auto rounded-[28px] border border-background-200 bg-background-50 shadow-[0_28px_70px_-35px_rgba(15,8,40,0.28)]"
+            className="w-full max-w-[720px] max-h-[88vh] overflow-y-auto rounded-[24px] border border-background-200 bg-background-50 shadow-[0_24px_60px_-32px_rgba(15,8,40,0.32)]"
             onClick={event => event.stopPropagation()}
           >
-            <div className="border-b border-background-200/70 bg-background-50 px-5 py-5 md:px-7">
+            <div className="border-b border-background-200/70 bg-background-50 px-4 py-4 md:px-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[11px] font-semibold text-primary-700">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[10px] font-semibold text-primary-700">
                     <i className="ri-calendar-schedule-line"></i>
                     Coach Scheduler
                   </div>
-                  <h2 className="text-[28px] font-heading font-bold tracking-tight text-foreground-950">Schedule an existing learner event</h2>
-                  <p className="mt-2 max-w-3xl text-sm leading-6 text-foreground-500">
-                    Work through the queue in three quick steps: choose the source, pick the learner item waiting for a slot, then assign the calendar time.
+                  <h2 className="text-[21px] font-heading font-bold tracking-tight text-foreground-950">Place session on calendar</h2>
+                  <p className="mt-1 text-[13px] leading-5 text-foreground-500">
+                    Choose source, select item, then set time.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={closeScheduleModal}
-                  className="flex h-10 w-10 items-center justify-center rounded-2xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
                   aria-label="Close scheduler"
                 >
-                  <i className="ri-close-line text-lg"></i>
+                  <i className="ri-close-line text-base"></i>
                 </button>
               </div>
             </div>
 
-            <div className="space-y-5 px-5 py-5 md:px-7 md:py-6">
+            <div className="space-y-4 px-4 py-4 md:px-5 md:py-5">
               <section>
-                <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="mb-2">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Event Type</p>
-                    <p className="mt-1 text-[12px] text-foreground-500">Choose which queue you are scheduling from.</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Source</p>
+                    <p className="mt-1 text-[12px] text-foreground-500">Pick the queue.</p>
                   </div>
-                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-500">
-                    {scheduleSourceCounts[scheduleModalType]} waiting
-                  </span>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
                   {SCHEDULABLE_SOURCE_ORDER.map(source => {
@@ -1810,22 +1902,22 @@ export default function CoachTimetablePage() {
                         key={source}
                         type="button"
                         onClick={() => setScheduleModalType(source)}
-                        className={`rounded-2xl border px-4 py-4 text-left transition-smooth cursor-pointer ${
+                        className={`rounded-[18px] border px-3.5 py-3 text-left transition-smooth cursor-pointer ${
                           isActive
                             ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100'
                             : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/40'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <span className={`flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br ${meta.surface} ${meta.accent}`}>
-                            <i className={`${meta.icon} text-lg`}></i>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${meta.surface} ${meta.accent}`}>
+                            <i className={`${meta.icon} text-base`}></i>
                           </span>
-                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${isActive ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'}`}>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'}`}>
                             {scheduleSourceCounts[source]}
                           </span>
                         </div>
-                        <p className="mt-3 text-sm font-heading font-semibold text-foreground-950">{SOURCE_FILTER_LABELS[source]}</p>
-                        <p className="mt-1 text-[12px] leading-5 text-foreground-500">{meta.description}</p>
+                        <p className="mt-2 text-[15px] font-heading font-semibold text-foreground-950">{SOURCE_FILTER_LABELS[source]}</p>
+                        <p className="mt-0.5 text-[11px] leading-5 text-foreground-500">{meta.description}</p>
                       </button>
                     );
                   })}
@@ -1833,76 +1925,115 @@ export default function CoachTimetablePage() {
               </section>
 
               {scheduleTypeEvents.length === 0 ? (
-                <div className="rounded-[24px] border border-dashed border-background-300 bg-background-100/60 px-5 py-10 text-center">
-                  <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-background-50 text-foreground-300">
-                    <i className="ri-inbox-archive-line text-xl"></i>
+                <div className="rounded-[20px] border border-dashed border-background-300 bg-background-100/60 px-4 py-8 text-center">
+                  <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-300">
+                    <i className="ri-inbox-archive-line text-lg"></i>
                   </span>
-                  <p className="text-sm font-semibold text-foreground-800">No {SOURCE_FILTER_LABELS[scheduleModalType].toLowerCase()} items need scheduling right now.</p>
-                  <p className="mt-1 text-[12px] text-foreground-500">
-                    When a learner item becomes pending or not scheduled, it will appear here automatically.
+                  <p className="text-sm font-semibold text-foreground-800">No {SOURCE_FILTER_LABELS[scheduleModalType].toLowerCase()} items are available right now.</p>
+                  <p className="mt-1 text-[11px] text-foreground-500">
+                    Switch source or come back when a learner item is ready to be placed on the calendar.
                   </p>
                 </div>
               ) : (
                 <>
-                  <section className="grid gap-4 md:grid-cols-2">
-                    <label className="block">
-                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Learner</span>
-                      <select
-                        value={scheduleModalLearnerKey}
-                        onChange={event => setScheduleModalLearnerKey(event.target.value)}
-                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                      >
-                        {scheduleLearnerOptions.map(option => (
-                          <option key={option.value} value={option.value}>
-                            {option.label}{option.meta ? ` - ${option.meta}` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="block">
-                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Session</span>
-                      <select
-                        value={scheduleModalEventKey}
-                        onChange={event => setScheduleModalEventKey(event.target.value)}
-                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
-                      >
-                        {scheduleEventOptions.map(event => (
-                          <option key={eventIdentity(event)} value={eventIdentity(event)}>
-                            {sourceSessionLabel(event)} - due {formatCompactDate(event.targetDate || event.date)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                  <section>
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Selection</p>
+                        <p className="mt-1 text-[12px] text-foreground-500">Choose learner first, then the session.</p>
+                      </div>
+                      <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                        {scheduleLearnerOptions.length} learner{scheduleLearnerOptions.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Learner</p>
+                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                            {scheduleLearnerOptions.length}
+                          </span>
+                        </div>
+                        <ThemedSelect
+                          value={scheduleModalLearnerKey}
+                          options={scheduleLearnerOptions}
+                          onChange={setScheduleModalLearnerKey}
+                          placeholder="Choose learner"
+                          className="w-full"
+                          buttonClassName="h-[50px] rounded-[18px] border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
+                          menuClassName="rounded-[18px] border-background-200 py-2 shadow-2xl shadow-foreground-900/10"
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Session</p>
+                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                            {scheduleEventOptions.length}
+                          </span>
+                        </div>
+                        <ThemedSelect
+                          value={scheduleModalEventKey}
+                          options={scheduleEventSelectOptions}
+                          onChange={setScheduleModalEventKey}
+                          placeholder="Choose session"
+                          disabled={!scheduleModalLearnerKey || scheduleEventSelectOptions.length === 0}
+                          className="w-full"
+                          buttonClassName="h-[50px] rounded-[18px] border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
+                          menuClassName="rounded-[18px] border-background-200 py-2 shadow-2xl shadow-foreground-900/10"
+                        />
+                      </div>
+                    </div>
+                    {selectedScheduleEvent && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] font-semibold text-foreground-900">
+                            {selectedScheduleEvent.learner || 'Learner'}
+                          </span>
+                          {selectedScheduleEvent.programme && (
+                            <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] text-foreground-600">
+                              {selectedScheduleEvent.programme}
+                            </span>
+                          )}
+                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] text-foreground-600">
+                            Due {formatCompactDate(selectedScheduleEvent.targetDate || selectedScheduleEvent.date)}
+                          </span>
+                      </div>
+                    )}
                   </section>
 
-                  <section className="grid gap-4 md:grid-cols-3">
+                  <section>
+                    <div className="mb-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Schedule Details</p>
+                      <p className="mt-1 text-[12px] text-foreground-500">Set date, time, and duration.</p>
+                    </div>
+                  </section>
+
+                  <section className="grid gap-3 md:grid-cols-3">
                     <label className="block">
-                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
                       <input
                         type="date"
                         value={scheduleModalDate}
                         onChange={event => setScheduleModalDate(event.target.value)}
-                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       />
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Start Time</span>
+                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Start Time</span>
                       <input
                         type="time"
                         value={scheduleModalTime}
                         onChange={event => setScheduleModalTime(event.target.value)}
-                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       />
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
+                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
                       <select
                         value={scheduleModalDuration}
                         onChange={event => setScheduleModalDuration(Number(event.target.value))}
-                        className="w-full rounded-2xl border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       >
                         {[30, 45, 60, 90].map(minutes => (
                           <option key={minutes} value={minutes}>{minutes} minutes</option>
@@ -1911,21 +2042,22 @@ export default function CoachTimetablePage() {
                     </label>
                   </section>
 
-                  <section className="rounded-[24px] border border-primary-200 bg-primary-50/70 px-4 py-4">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary-700">Ready To Schedule</p>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-foreground-800">
-                      <span className="rounded-full bg-white px-3 py-1 font-semibold text-foreground-900">{SOURCE_FILTER_LABELS[scheduleModalType]}</span>
-                      <span className="rounded-full bg-white px-3 py-1">{selectedScheduleEvent?.learner || 'Choose learner'}</span>
-                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalDate || 'Choose date'}</span>
-                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalTime || '09:00'}</span>
-                      <span className="rounded-full bg-white px-3 py-1">{scheduleModalDuration} min</span>
-                    </div>
-                    {selectedScheduleEvent?.notes && (
-                      <p className="mt-3 text-[12px] leading-5 text-foreground-500">
-                        {selectedScheduleEvent.notes}
-                      </p>
-                    )}
-                  </section>
+                  {selectedScheduleEvent && (
+                    <section className="rounded-[18px] border border-primary-200/70 bg-primary-50/60 px-3.5 py-3">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-foreground-700">
+                        <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-foreground-900">{SOURCE_FILTER_LABELS[scheduleModalType]}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1">{selectedScheduleEvent.learner || 'Learner'}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDate || 'Choose date'}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalTime || '09:00'}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDuration} min</span>
+                      </div>
+                      {selectedScheduleEvent.notes && (
+                        <p className="mt-2 text-[11px] leading-5 text-foreground-500">
+                          {selectedScheduleEvent.notes}
+                        </p>
+                      )}
+                    </section>
+                  )}
                 </>
               )}
 
@@ -1939,15 +2071,15 @@ export default function CoachTimetablePage() {
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-4">
-                <p className="text-[12px] text-foreground-500">
-                  This keeps the source logic intact and only assigns the selected queue item a time slot.
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
+                <p className="text-[11px] text-foreground-500">
+                  The original learner item stays linked to its source record.
                 </p>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
                     onClick={closeScheduleModal}
-                    className="rounded-2xl border border-background-200 px-4 py-3 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                    className="rounded-[18px] border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -1955,7 +2087,7 @@ export default function CoachTimetablePage() {
                     type="button"
                     onClick={handleModalScheduleSave}
                     disabled={scheduleModalBusy || !selectedScheduleEvent}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-primary-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-[18px] bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <i className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></i>
                     {scheduleModalBusy ? 'Scheduling...' : 'Place on Calendar'}

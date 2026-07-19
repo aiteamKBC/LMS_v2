@@ -265,6 +265,10 @@ def build_timetable_event_key(learner_id: int, event_type: str, sequence: int, t
     return f"{event_type}:{learner_id}:{sequence}:{target_date.isoformat()}"
 
 
+def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
+    return f"{CATCH_UP_EVENT_TYPE}:{normalize_email(owner_email)}:{learner_id}:template"
+
+
 def get_graph_settings() -> dict[str, str]:
     load_env_file()
     return {
@@ -1568,8 +1572,57 @@ def fetch_owner_name(owner_email: str, fallback: str = "Med Maher") -> str:
     )
 
 
+def calendar_record_has_launch_url(record: CoachCalendarEvent) -> bool:
+    return bool(clean_text(record.meeting_link) or clean_text(record.graph_web_link))
+
+
+def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
+    if record.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}:
+        return False
+    event_type = clean_text(record.event_type).lower()
+    if event_type not in {"mcr", "progress-review", CATCH_UP_EVENT_TYPE}:
+        return False
+    return not calendar_record_has_launch_url(record)
+
+
+def repair_calendar_record_to_needs_schedule(
+    record: CoachCalendarEvent,
+    *,
+    reason: str | None = None,
+) -> CoachCalendarEvent:
+    default_reason = "Teams meeting details were not stored, so this event has been returned to Needs Schedule."
+    if clean_text(record.graph_event_id):
+        delete_calendar_event_from_graph(record)
+
+    record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+    record.scheduled_date = None
+    record.scheduled_time = None
+    record.meeting_provider = ""
+    record.meeting_link = ""
+    record.graph_web_link = ""
+    record.graph_event_id = ""
+    record.last_graph_sync_error = clean_text(reason) or default_reason
+    record.save()
+    return record
+
+
+def normalize_calendar_records(records: list[CoachCalendarEvent]) -> list[CoachCalendarEvent]:
+    normalized_records: list[CoachCalendarEvent] = []
+    for record in records:
+        if calendar_record_needs_schedule_repair(record):
+            normalized_records.append(
+                repair_calendar_record_to_needs_schedule(
+                    record,
+                    reason=clean_text(record.last_graph_sync_error),
+                )
+            )
+            continue
+        normalized_records.append(record)
+    return normalized_records
+
+
 def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> list[str]:
-    lines = [f"Catch-up session booked by the learner. Target date: {format_date(target_date)}."]
+    lines = [f"Catch-up session managed by the coach. Target date: {format_date(target_date)}."]
     if record.scheduled_date and record.scheduled_time:
         lines.append(
             f"Scheduled for {format_date(record.scheduled_date)} at {record.scheduled_time.strftime('%H:%M')}."
@@ -1579,6 +1632,61 @@ def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> l
     if clean_text(record.last_graph_sync_error):
         lines.append(f"Microsoft sync warning: {clean_text(record.last_graph_sync_error)}")
     return lines
+
+
+def build_catchup_template_event(
+    learner: ActiveUser,
+    *,
+    owner_email: str,
+    owner_name: str,
+) -> dict:
+    target_date = date.today()
+    learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
+    learner_email = clean_text(getattr(learner, "email", None)) or None
+    programme = clean_text(getattr(learner, "programme", None)) or "--"
+    cohort = clean_text(getattr(learner, "cohort", None)) or "--"
+
+    return {
+        "eventKey": build_catchup_template_event_key(owner_email, int(learner.id)),
+        "id": build_catchup_template_event_key(owner_email, int(learner.id)),
+        "ownerEmail": owner_email,
+        "ownerName": owner_name,
+        "learnerId": str(learner.id),
+        "learner": learner_name,
+        "email": learner_email,
+        "programme": programme,
+        "cohort": cohort,
+        "source": CATCH_UP_EVENT_TYPE,
+        "sequence": 1,
+        "title": "Catch-up Session",
+        "type": "coaching",
+        "targetDate": target_date.isoformat(),
+        "date": target_date.isoformat(),
+        "year": target_date.year,
+        "month": target_date.month - 1,
+        "dayOfMonth": target_date.day,
+        "dayOfWeek": target_date.weekday(),
+        "startHour": 9,
+        "endHour": 10,
+        "durationMinutes": TIMETABLE_DEFAULT_DURATION_MINUTES,
+        "timeLabel": "Time TBC",
+        "isTimeEstimated": True,
+        "priority": "normal",
+        "status": CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+        "sourceStatus": schedule_status_label(CoachCalendarEvent.STATUS_NOT_SCHEDULED),
+        "rawPlanned": target_date.isoformat(),
+        "rawStatus": schedule_status_label(CoachCalendarEvent.STATUS_NOT_SCHEDULED),
+        "notes": "Coach can create a catch-up session for this learner.",
+        "scheduledDate": None,
+        "scheduledTime": None,
+        "meetingProvider": "",
+        "meetingLink": "",
+        "graphWebLink": "",
+        "platform": "--",
+        "location": "--",
+        "syncWarning": "",
+        "schedulerOnly": True,
+    }
 
 
 def build_catchup_calendar_event(
@@ -1656,20 +1764,64 @@ def fetch_calendar_event_records(owner_email: str, event_keys: list[str]) -> dic
     if not event_keys:
         return {}
 
-    records = CoachCalendarEvent.objects.filter(
-        owner_email__iexact=owner_email,
-        event_key__in=event_keys,
+    records = normalize_calendar_records(
+        list(
+            CoachCalendarEvent.objects.filter(
+                owner_email__iexact=owner_email,
+                event_key__in=event_keys,
+            )
+        )
     )
     return {record.event_key: record for record in records}
 
 
 def fetch_catchup_event_records(owner_email: str) -> list[CoachCalendarEvent]:
-    return list(
-        CoachCalendarEvent.objects.filter(
-            owner_email__iexact=owner_email,
-            event_type__iexact=CATCH_UP_EVENT_TYPE,
-        ).order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
+    return normalize_calendar_records(
+        list(
+            CoachCalendarEvent.objects.filter(
+                owner_email__iexact=owner_email,
+                event_type__iexact=CATCH_UP_EVENT_TYPE,
+            ).order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
+        )
     )
+
+
+def build_catchup_scheduler_events(
+    owner_email: str,
+    owner_name: str,
+    active_rows: list[ActiveUser],
+    active_user_map: dict[int, ActiveUser],
+    persisted_records: list[CoachCalendarEvent],
+) -> list[dict]:
+    scheduler_events = [
+        build_catchup_calendar_event(
+            record,
+            owner_name=owner_name,
+            learner=active_user_map.get(record.learner_id),
+        )
+        for record in persisted_records
+    ]
+
+    selectable_record_ids: dict[int, bool] = {}
+    for record in persisted_records:
+        status = clean_text(record.status).lower()
+        if status in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_IN_PROGRESS, "confirmed"}:
+            continue
+        selectable_record_ids[record.learner_id] = True
+
+    for learner in active_rows:
+        learner_id = int(getattr(learner, "id", 0) or 0)
+        if learner_id <= 0 or selectable_record_ids.get(learner_id):
+            continue
+        scheduler_events.append(
+            build_catchup_template_event(
+                learner,
+                owner_email=owner_email,
+                owner_name=owner_name,
+            )
+        )
+
+    return scheduler_events
 
 
 def build_generated_calendar_event(
@@ -1876,11 +2028,32 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
         record.graph_web_link = ""
         return str(exc)
 
+    response_event_id = clean_text(response.get("id")) or clean_text(record.graph_event_id)
     online_meeting = response.get("onlineMeeting") or {}
-    record.graph_event_id = clean_text(response.get("id")) or clean_text(record.graph_event_id)
-    record.meeting_provider = "Microsoft Teams"
-    record.meeting_link = clean_text(online_meeting.get("joinUrl")) or clean_text(response.get("webLink"))
-    record.graph_web_link = clean_text(response.get("webLink"))
+    response_web_link = clean_text(response.get("webLink"))
+    response_join_url = clean_text(online_meeting.get("joinUrl"))
+
+    if response_event_id and not (response_join_url or response_web_link):
+        event_key = urllib_parse.quote(response_event_id, safe="")
+        try:
+            refreshed_response = microsoft_graph_request(
+                "GET",
+                f"users/{owner_key}/events/{event_key}",
+            )
+        except RuntimeError:
+            refreshed_response = {}
+
+        if refreshed_response:
+            response = refreshed_response
+            online_meeting = response.get("onlineMeeting") or {}
+            response_event_id = clean_text(response.get("id")) or response_event_id
+            response_web_link = clean_text(response.get("webLink"))
+            response_join_url = clean_text(online_meeting.get("joinUrl"))
+
+    record.graph_event_id = response_event_id
+    record.meeting_provider = "Microsoft Teams" if (response_event_id or response_join_url or response_web_link) else ""
+    record.meeting_link = response_join_url or response_web_link
+    record.graph_web_link = response_web_link
     return ""
 
 
@@ -1954,14 +2127,22 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             )
             source_counts["progressReviewRows"] += 1
 
+    persisted_catchup_records = fetch_catchup_event_records(owner_email)
     persisted_catchups = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
             learner=active_user_map.get(record.learner_id),
         )
-        for record in fetch_catchup_event_records(owner_email)
+        for record in persisted_catchup_records
     ]
+    scheduler_catchups = build_catchup_scheduler_events(
+        owner_email,
+        owner_name,
+        active_rows,
+        active_user_map,
+        persisted_catchup_records,
+    )
     source_counts["catchUpRows"] = len(persisted_catchups)
 
     record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
@@ -1992,11 +2173,14 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
     events = assign_timetable_slots(events)
     events = sorted(events, key=lambda event: (event["date"], event["startHour"], event["learner"]))
     summary = build_timetable_summary(events, needs_scheduling, source_counts, source_needs_scheduling)
-    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up sessions come from learner-booked calendar records."
+    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up sessions can be created by the coach for any learner in their caseload."
     return {
         "owner_name": owner_name,
         "events": events,
         "summary": summary,
+        "schedulerQueues": {
+            "catchUp": scheduler_catchups,
+        },
     }
 
 
@@ -2022,8 +2206,34 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
         event_key=event_key,
         event_type__iexact=CATCH_UP_EVENT_TYPE,
     ).first()
+    if record and calendar_record_needs_schedule_repair(record):
+        record = repair_calendar_record_to_needs_schedule(
+            record,
+            reason=clean_text(record.last_graph_sync_error),
+        )
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(record.owner_name) or "Med Maher") if record else fetch_owner_name(owner_email)
     return record, owner_name
+
+
+def find_catchup_template_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
+    active_rows = fetch_owner_active_user_rows(owner_email)
+    owner_name = next(
+        (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
+        "Med Maher",
+    )
+
+    for learner in active_rows:
+        learner_id = int(getattr(learner, "id", 0) or 0)
+        if learner_id <= 0:
+            continue
+        if build_catchup_template_event_key(owner_email, learner_id) == event_key:
+            return build_catchup_template_event(
+                learner,
+                owner_email=owner_email,
+                owner_name=owner_name,
+            ), owner_name
+
+    return None, owner_name
 
 
 @csrf_exempt
@@ -2056,6 +2266,7 @@ def coach_timetable_schedule_event(request):
         catchup_record.scheduled_date = scheduled_date
         catchup_record.scheduled_time = scheduled_time
         catchup_record.duration_minutes = duration_minutes
+        catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
         learner = fetch_owner_active_user_rows(owner_email)
@@ -2066,13 +2277,70 @@ def coach_timetable_schedule_event(request):
             learner=learner_map.get(catchup_record.learner_id),
         )
         warning = sync_calendar_event_to_graph(catchup_record, base_event)
-        catchup_record.last_graph_sync_error = warning
-        catchup_record.save()
+        if not calendar_record_has_launch_url(catchup_record):
+            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            catchup_record = repair_calendar_record_to_needs_schedule(catchup_record, reason=warning)
+        else:
+            catchup_record.last_graph_sync_error = warning
+            catchup_record.save()
 
         updated_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
             learner=learner_map.get(catchup_record.learner_id),
+        )
+        return JsonResponse({"event": updated_event, "warning": warning})
+
+    catchup_template_event, owner_name = find_catchup_template_event(owner_email, event_key)
+    if catchup_template_event:
+        learner_rows = fetch_owner_active_user_rows(owner_email)
+        learner_map = build_active_user_map(learner_rows)
+        learner_id = int(catchup_template_event["learnerId"])
+        target_date = scheduled_date
+
+        record, _ = CoachCalendarEvent.objects.get_or_create(
+            event_key=event_key,
+            defaults={
+                "owner_email": owner_email,
+                "owner_name": owner_name,
+                "learner_id": learner_id,
+                "learner_name": clean_text(catchup_template_event.get("learner")),
+                "learner_email": clean_text(catchup_template_event.get("email")),
+                "event_type": CATCH_UP_EVENT_TYPE,
+                "sequence": int(catchup_template_event.get("sequence") or 1),
+                "target_date": target_date,
+            },
+        )
+        record.owner_email = owner_email
+        record.owner_name = owner_name
+        record.learner_id = learner_id
+        record.learner_name = clean_text(catchup_template_event.get("learner"))
+        record.learner_email = clean_text(catchup_template_event.get("email"))
+        record.event_type = CATCH_UP_EVENT_TYPE
+        record.sequence = int(catchup_template_event.get("sequence") or 1)
+        record.target_date = target_date
+        record.scheduled_date = scheduled_date
+        record.scheduled_time = scheduled_time
+        record.duration_minutes = duration_minutes
+        record.status = CoachCalendarEvent.STATUS_SCHEDULED
+
+        base_event = build_catchup_calendar_event(
+            record,
+            owner_name=owner_name,
+            learner=learner_map.get(record.learner_id),
+        )
+        warning = sync_calendar_event_to_graph(record, base_event)
+        if not calendar_record_has_launch_url(record):
+            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            record = repair_calendar_record_to_needs_schedule(record, reason=warning)
+        else:
+            record.last_graph_sync_error = warning
+            record.save()
+
+        updated_event = build_catchup_calendar_event(
+            record,
+            owner_name=owner_name,
+            learner=learner_map.get(record.learner_id),
         )
         return JsonResponse({"event": updated_event, "warning": warning})
 
@@ -2113,8 +2381,12 @@ def coach_timetable_schedule_event(request):
     record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
     warning = sync_calendar_event_to_graph(record, base_event)
-    record.last_graph_sync_error = warning
-    record.save()
+    if not calendar_record_has_launch_url(record):
+        warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+        record = repair_calendar_record_to_needs_schedule(record, reason=warning)
+    else:
+        record.last_graph_sync_error = warning
+        record.save()
 
     updated_event = overlay_calendar_record(base_event, record)
     return JsonResponse({"event": updated_event, "warning": warning})
@@ -2141,6 +2413,8 @@ def coach_timetable_event_action(request):
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
         warning = ""
+        if action == "start" and not calendar_record_has_launch_url(catchup_record):
+            return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
         if action == "start":
             catchup_record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
         elif action == "complete":
@@ -2173,9 +2447,17 @@ def coach_timetable_event_action(request):
     record = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email, event_key=event_key).first()
     if not record:
         return JsonResponse({"detail": "This event has not been scheduled yet."}, status=400)
+    if calendar_record_needs_schedule_repair(record):
+        repair_calendar_record_to_needs_schedule(
+            record,
+            reason=clean_text(record.last_graph_sync_error),
+        )
+        return JsonResponse({"detail": "This event does not have a Teams link anymore and was moved back to Needs Schedule."}, status=409)
 
     record.owner_name = owner_name
     warning = ""
+    if action == "start" and not calendar_record_has_launch_url(record):
+        return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
     if action == "start":
         record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
     elif action == "complete":
@@ -2261,6 +2543,7 @@ def coach_timetable(request):
             "owner": {"name": timetable_payload["owner_name"], "email": owner_email},
             "summary": timetable_payload["summary"],
             "events": timetable_payload["events"],
+            "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
         }
     )
 
