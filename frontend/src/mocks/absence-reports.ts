@@ -14,6 +14,9 @@ export interface AbsenceReport {
   reportedDate: string;
   evidenceProvided: boolean;
   evidenceType?: string;
+  evidenceKind?: 'image' | 'text' | 'none';
+  evidenceText?: string;
+  evidenceImageUrl?: string;
   previousAbsences: number;
   attendanceRate: number;
   coachNotes?: string;

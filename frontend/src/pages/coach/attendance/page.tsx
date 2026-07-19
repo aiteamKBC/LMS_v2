@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import SparklineChart from '@/components/feature/SparklineChart';
-import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import TrendChart from './components/TrendChart';
 import RiskPieChart from './components/RiskPieChart';
@@ -13,8 +10,8 @@ const API_ENDPOINT = '/coach_api/coach/attendance';
 const MISSING_VALUE = '--';
 
 type RiskTone = 'red' | 'amber' | 'green' | null;
-type TrendDirection = 'up' | 'down' | 'stable';
 type TrendView = 'week' | 'month' | 'year';
+type AttendanceKpi = 'average' | 'on-track' | 'at-risk' | 'needs-attention' | 'catchups';
 
 interface AttendanceLearner {
   id: string;
@@ -34,7 +31,6 @@ interface AttendanceLearner {
   absent: number | null;
   late: number | null;
   catchup: number | null;
-  trend: TrendDirection;
   risk: RiskTone;
   employer: string;
   overallProgress: number;
@@ -170,38 +166,6 @@ function getAttendanceBar(value?: number | null): string {
   return 'bg-red-500';
 }
 
-function safePercentage(numerator: number, denominator: number): number {
-  if (denominator <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((numerator / denominator) * 100)));
-}
-
-function DonutChart({ percentage, size = 72, strokeWidth = 6, color = 'primary' }: { percentage: number; size?: number; strokeWidth?: number; color?: string }) {
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (percentage / 100) * circumference;
-
-  const colorMap: Record<string, { stroke: string; text: string }> = {
-    primary: { stroke: 'stroke-primary-500', text: 'text-primary-700' },
-    accent: { stroke: 'stroke-accent-500', text: 'text-accent-700' },
-    emerald: { stroke: 'stroke-emerald-500', text: 'text-emerald-700' },
-    amber: { stroke: 'stroke-amber-500', text: 'text-amber-700' },
-    red: { stroke: 'stroke-red-500', text: 'text-red-700' },
-  };
-  const c = colorMap[color] || colorMap.primary;
-
-  return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg className="transform -rotate-90" width={size} height={size}>
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className="stroke-background-200" strokeWidth={strokeWidth} />
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" className={`${c.stroke} transition-all duration-700`} strokeWidth={strokeWidth} strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className={`text-sm font-bold ${c.text}`}>{percentage}%</span>
-      </div>
-    </div>
-  );
-}
-
 function FilterDropdown({ value, onChange, options, allLabel }: { value: string; onChange: (v: string) => void; options: string[]; allLabel: string }) {
   return (
     <div className="relative">
@@ -214,7 +178,7 @@ function FilterDropdown({ value, onChange, options, allLabel }: { value: string;
   );
 }
 
-function StatCard({ icon, label, value, hint, tone = 'primary' }: { icon: string; label: string; value: string; hint?: string; tone?: 'primary' | 'emerald' | 'red' | 'amber' }) {
+function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { icon: string; label: string; value: string; hint?: string; tone?: 'primary' | 'emerald' | 'red' | 'amber'; onClick?: () => void }) {
   const toneMap: Record<'primary' | 'emerald' | 'red' | 'amber', string> = {
     primary: 'bg-primary-100 text-primary-600 border-primary-200/40',
     emerald: 'bg-emerald-100 text-emerald-600 border-emerald-200/40',
@@ -229,7 +193,7 @@ function StatCard({ icon, label, value, hint, tone = 'primary' }: { icon: string
   };
 
   return (
-    <div className={`bg-background-50 rounded-xl border p-4 flex flex-col gap-2 hover:shadow-sm transition-smooth ${borderMap[tone]}`}>
+    <button type="button" onClick={onClick} className={`bg-background-50 rounded-xl border p-4 flex flex-col gap-2 text-left hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-primary-300/40 transition-smooth cursor-pointer ${borderMap[tone]}`}>
       <div className="flex items-center justify-between">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${toneMap[tone]}`}>
           <i className={`${icon} text-sm`}></i>
@@ -240,13 +204,11 @@ function StatCard({ icon, label, value, hint, tone = 'primary' }: { icon: string
         <p className={`text-2xl font-heading font-bold ${tone === 'primary' ? 'text-foreground-900' : tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : 'text-amber-600'}`}>{value}</p>
         <p className="text-[10px] text-foreground-400">{label}</p>
       </div>
-    </div>
+    </button>
   );
 }
 
 export default function CoachAttendance() {
-  const navigate = useNavigate();
-  const { success, info } = useToast();
 
   const [learners, setLearners] = useState<AttendanceLearner[]>([]);
   const [summary, setSummary] = useState<AttendanceSummary>(EMPTY_SUMMARY);
@@ -259,11 +221,11 @@ export default function CoachAttendance() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
   const [trendView, setTrendView] = useState<TrendView>('week');
   const [trendCount, setTrendCount] = useState(12);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(8);
+  const [selectedKpi, setSelectedKpi] = useState<AttendanceKpi | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,7 +288,6 @@ export default function CoachAttendance() {
 
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
-  const selectedLearner = learners.find(l => l.id === selectedLearnerId) || null;
 
   const trendData = useMemo(() => {
     const base = trends[trendView] || [];
@@ -343,6 +304,24 @@ export default function CoachAttendance() {
   const trendMax = Math.max(30, Math.min(100, Math.ceil((Math.max(...trendData.map(point => point.value), 0) + 5) / 10) * 10));
   const maxCount = trendView === 'week' ? Math.max(1, trends.week.length || 52) : trendView === 'month' ? Math.max(1, trends.month.length || 12) : Math.max(1, trends.year.length || 4);
   const countLabel = trendView === 'week' ? 'Weeks' : trendView === 'month' ? 'Months' : 'Years';
+  const kpiLearners = selectedKpi === 'average'
+    ? learners.filter(learner => learner.hasAttendance)
+    : selectedKpi === 'on-track'
+      ? learners.filter(learner => learner.risk === 'green' && learner.includedInAttendanceMetrics)
+      : selectedKpi === 'at-risk'
+        ? learners.filter(learner => learner.risk === 'red' && learner.includedInAttendanceMetrics)
+        : selectedKpi === 'needs-attention'
+          ? learners.filter(learner => learner.risk === 'amber' && learner.includedInAttendanceMetrics)
+          : selectedKpi === 'catchups'
+            ? learners.filter(learner => (learner.catchup || 0) > 0)
+            : [];
+  const kpiTitle: Record<AttendanceKpi, string> = {
+    average: 'Learner attendance',
+    'on-track': 'On-track learners',
+    'at-risk': 'Learners at risk',
+    'needs-attention': 'Learners needing attention',
+    catchups: 'Learners with catch-ups',
+  };
 
   const resetFilters = () => {
     setCohortFilter('all');
@@ -352,15 +331,6 @@ export default function CoachAttendance() {
     setDateFrom('');
     setDateTo('');
     setCurrentPage(1);
-  };
-
-  const handleViewProfile = (learner: AttendanceLearner) => {
-    navigate(`/coach/learner-case-file?id=${learner.id}`);
-    success('Opening profile', learner.learner);
-  };
-
-  const handleSendMessage = (learner: AttendanceLearner) => {
-    navigate(`/coach/messages?thread=th-attendance-${learner.id}`);
   };
 
   return (
@@ -388,7 +358,7 @@ export default function CoachAttendance() {
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col gap-2 hover:border-primary-300/40 transition-smooth">
+          <button type="button" onClick={() => setSelectedKpi('average')} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col gap-2 text-left hover:border-primary-300/40 hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-primary-300/40 transition-smooth cursor-pointer">
             <div className="flex items-center justify-between">
               <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center">
                 <i className="ri-bar-chart-line text-primary-600 text-sm"></i>
@@ -405,11 +375,11 @@ export default function CoachAttendance() {
                 <span className={`text-[10px] font-medium ${trendUp ? 'text-emerald-600' : 'text-red-500'}`}>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
               </div>
             </div>
-          </div>
-          <StatCard icon="ri-check-double-line" label="On Track (90%+)" value={formatCount(summary.onTrack)} hint={percentOf(summary.onTrack, knownLearnerCount)} tone="emerald" />
-          <StatCard icon="ri-error-warning-line" label="At Risk (<80%)" value={formatCount(summary.atRisk)} hint={percentOf(summary.atRisk, knownLearnerCount)} tone="red" />
-          <StatCard icon="ri-alert-line" label="Needs Attention (80-89%)" value={formatCount(summary.needsAttention)} hint={percentOf(summary.needsAttention, knownLearnerCount)} tone="amber" />
-          <StatCard icon="ri-timer-line" label="Catch-ups Pending" value={formatCount(summary.catchupsPending)} hint={summary.overdueCatchups === null ? MISSING_VALUE : `${summary.overdueCatchups} overdue`} tone="amber" />
+          </button>
+          <StatCard icon="ri-check-double-line" label="On Track (90%+)" value={formatCount(summary.onTrack)} hint={percentOf(summary.onTrack, knownLearnerCount)} tone="emerald" onClick={() => setSelectedKpi('on-track')} />
+          <StatCard icon="ri-error-warning-line" label="At Risk (<80%)" value={formatCount(summary.atRisk)} hint={percentOf(summary.atRisk, knownLearnerCount)} tone="red" onClick={() => setSelectedKpi('at-risk')} />
+          <StatCard icon="ri-alert-line" label="Needs Attention (80-89%)" value={formatCount(summary.needsAttention)} hint={percentOf(summary.needsAttention, knownLearnerCount)} tone="amber" onClick={() => setSelectedKpi('needs-attention')} />
+          <StatCard icon="ri-timer-line" label="Catch-ups Pending" value={formatCount(summary.catchupsPending)} hint={summary.overdueCatchups === null ? MISSING_VALUE : `${summary.overdueCatchups} overdue`} tone="amber" onClick={() => setSelectedKpi('catchups')} />
         </div>
 
         <div className="flex flex-col lg:flex-row gap-4">
@@ -519,22 +489,20 @@ export default function CoachAttendance() {
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Attendance</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Present/Absent</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Catch-up</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Trend</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Risk</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Last Session</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Missed in a Row</th>
-                  <th className="pr-4 py-3"></th>
+                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Consecutive Absences</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
                 {loading && (
                   <tr>
-                    <td colSpan={9} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
                   </tr>
                 )}
                 {!loading && error && (
                   <tr>
-                    <td colSpan={9} className="py-16 text-center">
+                    <td colSpan={7} className="py-16 text-center">
                       <div className="inline-flex flex-col items-center gap-2 text-red-600">
                         <i className="ri-error-warning-line text-2xl"></i>
                         <span className="text-sm font-semibold">Unable to load live attendance data.</span>
@@ -545,13 +513,12 @@ export default function CoachAttendance() {
                 )}
                 {!loading && !error && paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
                   </tr>
                 )}
                 {!loading && !error && paginatedData.map(row => {
-                  const isSel = selectedLearnerId === row.id;
                   return (
-                    <tr key={row.id} onClick={() => setSelectedLearnerId(isSel ? null : row.id)} className={`transition-smooth cursor-pointer ${isSel ? 'bg-primary-50/30' : 'hover:bg-background-100/50'}`}>
+                    <tr key={row.id} className="transition-smooth hover:bg-background-100/50">
                       <td className="pl-4 pr-3 py-2.5">
                         <div className="flex items-center gap-2.5">
                           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ring-1.5 ${getAvatarClasses(row.risk)}`}>
@@ -592,9 +559,6 @@ export default function CoachAttendance() {
                       </td>
                       <td className="px-3 py-2.5 text-center"><span className="text-[11px] text-foreground-300">{formatCount(row.catchup)}</span></td>
                       <td className="px-3 py-2.5 text-center">
-                        <i className={`${row.trend === 'up' ? 'ri-arrow-up-line text-emerald-500' : row.trend === 'down' ? 'ri-arrow-down-line text-red-500' : 'ri-subtract-line text-foreground-400'} text-sm`}></i>
-                      </td>
-                      <td className="px-3 py-2.5 text-center">
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
                       </td>
                       <td className="px-3 py-2.5 text-center"><span className="text-[11px] text-foreground-500">{displayText(row.lastSession)}</span></td>
@@ -605,7 +569,6 @@ export default function CoachAttendance() {
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         )}
                       </td>
-                      <td className="pr-4 py-2.5 text-center"><i className={`text-foreground-300 text-sm transition-transform duration-300 ${isSel ? 'ri-arrow-up-s-line rotate-180' : 'ri-arrow-down-s-line'}`}></i></td>
                     </tr>
                   );
                 })}
@@ -648,91 +611,46 @@ export default function CoachAttendance() {
         </div>
       </div>
 
-      <RightSlidePanel isOpen={selectedLearner !== null} onClose={() => setSelectedLearnerId(null)} title={selectedLearner?.learner || 'Learner Detail'} width="w-[520px]">
-        {selectedLearner && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-4">
-              <div className={`w-14 h-14 rounded-full flex items-center justify-center shrink-0 ring-3 ${getAvatarClasses(selectedLearner.risk)}`}>
-                <span className="text-lg font-bold">{selectedLearner.initials}</span>
-              </div>
+      {selectedKpi && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setSelectedKpi(null)}>
+          <div className="absolute inset-0 bg-foreground-950/45 backdrop-blur-sm"></div>
+          <div className="relative flex max-h-[80vh] w-full max-w-[620px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
               <div>
-                <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getDisplayRiskClasses(selectedLearner)}`}>{getDisplayRiskLabel(selectedLearner)}</span>
-                  {selectedLearner.isOnBreak && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/70">Excluded from attendance metrics</span>}
-                  <span className="text-[10px] text-foreground-400">{displayText(selectedLearner.programme)}</span>
-                </div>
-                <p className="text-[12px] text-foreground-400">{displayText(selectedLearner.employer)} - {displayText(selectedLearner.cohort)}</p>
-                <p className="text-[11px] text-foreground-300 mt-0.5">{displayText(selectedLearner.group)} - Last session: {displayText(selectedLearner.lastSession)}</p>
+                <h3 className="text-sm font-bold text-foreground-900">{kpiTitle[selectedKpi]}</h3>
+                <p className="mt-0.5 text-[11px] text-foreground-400">{kpiLearners.length} learner{kpiLearners.length === 1 ? '' : 's'}</p>
               </div>
-            </div>
-
-            {selectedLearner.risk === 'red' && (
-              <div className="bg-red-50/50 rounded-xl border border-red-200/30 p-4">
-                <h4 className="text-[11px] font-semibold text-red-700 mb-2 flex items-center gap-1.5"><i className="ri-alert-line"></i> Attendance Alert</h4>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="text-[10px] font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-200/50">Attendance {formatPercent(selectedLearner.attendance)}</span>
-                  <span className="text-[10px] font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-200/50">{formatCount(selectedLearner.absent)} sessions missed</span>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
-                <DonutChart percentage={selectedLearner.overallProgress} size={64} color="primary" />
-                <div>
-                  <p className="text-[10px] text-foreground-400">Overall Progress</p>
-                  <p className="text-lg font-bold text-foreground-900">{selectedLearner.overallProgress}%</p>
-                </div>
-              </div>
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
-                {selectedLearner.attendance === null ? (
-                  <div className="w-16 h-16 rounded-full bg-background-100 flex items-center justify-center text-foreground-300 font-bold">{MISSING_VALUE}</div>
-                ) : (
-                  <DonutChart percentage={selectedLearner.attendance} size={64} color={selectedLearner.attendance >= 90 ? 'emerald' : selectedLearner.attendance >= 80 ? 'amber' : 'red'} />
-                )}
-                <div>
-                  <p className="text-[10px] text-foreground-400">Attendance</p>
-                  <p className="text-lg font-bold text-foreground-900">{formatPercent(selectedLearner.attendance)}</p>
-                </div>
-              </div>
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
-                <DonutChart percentage={safePercentage(selectedLearner.otjhCompleted, selectedLearner.otjhTarget)} size={64} color={safePercentage(selectedLearner.otjhCompleted, selectedLearner.otjhTarget) >= 70 ? 'emerald' : safePercentage(selectedLearner.otjhCompleted, selectedLearner.otjhTarget) >= 40 ? 'amber' : 'red'} />
-                <div>
-                  <p className="text-[10px] text-foreground-400">OTJH</p>
-                  <p className="text-lg font-bold text-foreground-900">{selectedLearner.otjhCompleted}<span className="text-sm text-foreground-400">/{selectedLearner.otjhTarget}</span></p>
-                </div>
-              </div>
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex items-center gap-3">
-                <DonutChart percentage={selectedLearner.ksbProgress} size={64} color={selectedLearner.ksbProgress >= 70 ? 'emerald' : selectedLearner.ksbProgress >= 40 ? 'primary' : 'red'} />
-                <div>
-                  <p className="text-[10px] text-foreground-400">KSB Progress</p>
-                  <p className="text-lg font-bold text-foreground-900">{selectedLearner.ksbProgress}%</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-2.5">
-              <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]"><span className="text-foreground-400">Sessions</span><span className="text-foreground-900 font-medium">{selectedLearner.present === null || selectedLearner.sessions === null ? MISSING_VALUE : `${selectedLearner.present}/${selectedLearner.sessions}`}</span></div>
-              <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]"><span className="text-foreground-400">Absent</span><span className="text-red-600 font-medium">{formatCount(selectedLearner.absent)}</span></div>
-              <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]"><span className="text-foreground-400">Catch-ups</span><span className="text-foreground-900 font-medium">{formatCount(selectedLearner.catchup)}</span></div>
-              <div className="flex justify-between py-2 border-b border-foreground-300/50 text-[12px]"><span className="text-foreground-400">Consecutive missed</span><span className="text-foreground-900 font-medium">{formatCount(selectedLearner.consecutiveMissed)}</span></div>
-              <div className="flex justify-between py-2 text-[12px]"><span className="text-foreground-400">Last Session</span><span className="text-foreground-900 font-medium">{displayText(selectedLearner.lastSession)}</span></div>
-            </div>
-
-            <div className="flex flex-col gap-2 pt-2">
-              <button onClick={() => handleSendMessage(selectedLearner)} className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-mail-line"></i> Send Message
+              <button type="button" onClick={() => setSelectedKpi(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close popup">
+                <i className="ri-close-line text-lg"></i>
               </button>
-              <button onClick={() => info(`Catch-up source is not connected yet`, 'No catch-up table is mapped to this page')} className="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg text-[13px] font-semibold hover:bg-amber-700 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-timer-line"></i> Schedule Catch-up
-              </button>
-              <button onClick={() => handleViewProfile(selectedLearner)} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-file-chart-line"></i> View Full Profile
-              </button>
+            </div>
+            <div className="overflow-y-auto p-4">
+              {kpiLearners.length ? (
+                <div className="space-y-2">
+                  {kpiLearners.map(learner => (
+                    <div key={`${learner.id}-${learner.email || learner.learner}`} className="flex items-center justify-between gap-4 rounded-xl border border-foreground-100 bg-background-100/50 p-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ring-1 ${getAvatarClasses(learner.risk)}`}>{learner.initials}</span>
+                        <div className="min-w-0">
+                          <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.learner}</p>
+                          <p className="truncate text-[10px] text-foreground-400">{learner.cohort} · {learner.group}</p>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className={`text-[12px] font-bold ${getAttendanceTone(learner.attendance)}`}>{formatPercent(learner.attendance)}</p>
+                        <p className="text-[9px] text-foreground-400">{selectedKpi === 'catchups' ? `${formatCount(learner.catchup)} catch-up` : `${formatCount(learner.present)}/${formatCount(learner.absent)} present/absent`}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="py-12 text-center text-[12px] text-foreground-400">No learners in this category.</div>
+              )}
             </div>
           </div>
-        )}
-      </RightSlidePanel>
+        </div>
+      )}
+
     </WorkspaceShell>
   );
 }

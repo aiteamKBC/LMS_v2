@@ -1034,9 +1034,6 @@ export default function CoachCatchupQueue() {
 
             {/* Actions */}
             <div className="flex flex-col gap-2 pt-2">
-              <button onClick={() => handleSendMessage(selectedItem)} className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-mail-line"></i> Send Message
-              </button>
 
               {/* Status-aware action button */}
               {selectedItem.status === 'overdue' && (

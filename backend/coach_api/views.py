@@ -17,8 +17,8 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from coach_api.models import CoachCalendarEvent
-from learner_api.models import ActiveUser, CommercialUser, EnrolmentUser
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from learner_api.models import ActiveUser, CommercialUser, EnrolmentUser, LearnerAbsence
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
@@ -121,7 +121,10 @@ def parse_variance(value: str | None) -> int:
 def format_date(value) -> str:
     if not value:
         return "--"
-    return value.strftime("%d %b %Y")
+    parsed = parse_date_value(value)
+    if not parsed:
+        return clean_text(value) or "--"
+    return parsed.strftime("%d %b %Y")
 
 
 def format_iso_date(value) -> str | None:
@@ -596,6 +599,18 @@ def derive_evidence_count(progress_entries: list[dict], activity_entries: list[d
     return len(seen)
 
 
+def derive_completed_evidence_count(progress_entries: list[dict], activity_entries: list[dict]) -> int:
+    completed_statuses = {"accepted", "approved", "complete", "completed", "validated"}
+    seen: set[str] = set()
+    for entry in [*progress_entries, *activity_entries]:
+        if not isinstance(entry, dict) or not is_evidence_entry(entry):
+            continue
+        status = clean_text(entry.get("status") or entry.get("reviewStatus")).lower()
+        if status in completed_statuses:
+            seen.add(activity_completion_key(entry, len(seen)))
+    return len(seen)
+
+
 def derive_ksb_status(completed: int | None, target: int | None) -> str:
     if not target:
         return ""
@@ -732,7 +747,10 @@ def fetch_inactive_user_caseload_rows(owner_email: str) -> list[SimpleNamespace]
             coach_name,
             coach_email,
             coach_rag,
-            planned_hours
+            planned_hours,
+            "Start_date" as start_date,
+            "End_date" as end_date,
+            "Gateway_review_date" as gateway_review_date
         from {relation}
         where lower(trim(coach_email)) = %s
         order by "Username", id
@@ -775,6 +793,9 @@ def fetch_active_user_caseload_rows(owner_email: str) -> list[ActiveUser | Simpl
         "coach_email",
         "coach_rag",
         "planned_hours",
+        "start_date",
+        "end_date",
+        "gateway_review_date",
     )
     active_rows = [
         row
@@ -946,6 +967,7 @@ def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
         "behavioursTarget": ksb_breakdown["behaviours"]["target"],
         "behavioursProgress": ksb_breakdown["behaviours"]["progress"],
         "evidenceCount": derive_evidence_count(progress_entries, activity_entries),
+        "evidenceCompletedCount": derive_completed_evidence_count(progress_entries, activity_entries),
         "evidenceCountAvailable": bool(progress_entries or activity_entries),
         "nextCoaching": "--",
         "nextReview": "--",
@@ -960,9 +982,9 @@ def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
         "employerEmail": None,
         "employerPhone": None,
         "progressVariance": progress_variance or "--",
-        "startDate": "--",
-        "gatewayReviewDate": "--",
-        "plannedEndDate": "--",
+        "startDate": format_date(getattr(row, "start_date", None)),
+        "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
+        "plannedEndDate": format_date(getattr(row, "end_date", None)),
         "coachName": clean_text(row.coach_name) or None,
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
@@ -1138,6 +1160,72 @@ def fetch_attendance_data(email_keys: list[str]) -> dict:
         metrics[email_key]["trend"] = attendance_trend_from_records(email_records)
 
     return {"metrics": metrics, "records": records, "trends": trends}
+
+
+def fetch_learner_absence_data(email_keys: list[str]) -> dict:
+    """Read the coach attendance table from Learner.Absence in the primary DB."""
+    unique_email_keys = sorted({normalize_email(email) for email in email_keys if email})
+    if not unique_email_keys:
+        return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
+
+    rows = list(
+        LearnerAbsence.objects.filter(learner_email__in=unique_email_keys).values(
+            "learner_email",
+            "sessions",
+            "present",
+            "absent",
+            "late",
+            "catchup",
+            "risk",
+            "last_session_date",
+            "consecutive_missed",
+        )
+    )
+    metrics: dict[str, dict] = {}
+    for row in rows:
+        email_key = normalize_email(row["learner_email"])
+        metrics[email_key] = {
+            "sessions": to_int(row["sessions"]),
+            "present": to_int(row["present"]),
+            "absent": to_int(row["absent"]),
+            "late": to_int(row["late"]),
+            "catchup": to_int(row["catchup"]),
+            "risk": clean_text(row["risk"]) or None,
+            "lastSessionDate": format_iso_date(row["last_session_date"]),
+            "lastSession": format_date(row["last_session_date"]),
+            "consecutiveMissed": to_int(row["consecutive_missed"]),
+        }
+
+    trends: dict[str, list[dict]] = {"week": [], "month": [], "year": []}
+    trend_groups: dict[str, dict[tuple, dict]] = {"week": {}, "month": {}, "year": {}}
+    for row in rows:
+        session_date = row["last_session_date"]
+        if not session_date:
+            continue
+        week_start = session_date - timedelta(days=session_date.weekday())
+        group_keys = {
+            "week": ((week_start.year, week_start.isocalendar().week), week_start, f"W{week_start.isocalendar().week:02d}"),
+            "month": ((session_date.year, session_date.month), session_date.replace(day=1), session_date.strftime("%b %Y")),
+            "year": ((session_date.year,), session_date.replace(month=1, day=1), str(session_date.year)),
+        }
+        for view, (key, period, label) in group_keys.items():
+            group = trend_groups[view].setdefault(key, {"period": period, "label": label, "attended": 0, "absent": 0})
+            group["attended"] += to_int(row["present"])
+            group["absent"] += to_int(row["absent"])
+
+    for view, groups in trend_groups.items():
+        for group in sorted(groups.values(), key=lambda item: item["period"]):
+            total = group["attended"] + group["absent"]
+            trends[view].append({
+                "label": group["label"],
+                "value": percentage(group["absent"], total),
+                "sessionDate": format_iso_date(group["period"]),
+                "attended": group["attended"],
+                "absent": group["absent"],
+                "onBreak": 0,
+            })
+
+    return {"metrics": metrics, "records": {}, "trends": trends}
 
 
 def fetch_marking_rows(case_owner: str, case_owner_id: int | None = None) -> list[dict]:
@@ -1587,6 +1675,14 @@ def build_catchup_calendar_event(
     owner_name: str | None = None,
     learner: ActiveUser | None = None,
 ) -> dict:
+    event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
+    event_title = {
+        CATCH_UP_EVENT_TYPE: "Catch-up Session",
+        "live-session": "Live Session",
+        "employer-meeting": "Employer Meeting",
+        "welfare": "Welfare Session",
+        "review": "Review",
+    }.get(event_type, event_type.replace("-", " ").title())
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
     duration_minutes = record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES
@@ -1620,10 +1716,10 @@ def build_catchup_calendar_event(
         "email": learner_email,
         "programme": programme,
         "cohort": cohort,
-        "source": CATCH_UP_EVENT_TYPE,
+        "source": event_type,
         "sequence": int(record.sequence or 1),
-        "title": "Catch-up Session",
-        "type": "coaching",
+        "title": event_title,
+        "type": "live-session" if event_type == "live-session" else "coaching",
         "targetDate": target_date.isoformat(),
         "date": display_date.isoformat(),
         "year": display_date.year,
@@ -1640,7 +1736,7 @@ def build_catchup_calendar_event(
         "sourceStatus": schedule_status_label(record.status),
         "rawPlanned": target_date.isoformat(),
         "rawStatus": schedule_status_label(record.status),
-        "notes": " ".join(build_catchup_note_lines(record, target_date)),
+        "notes": " ".join(build_catchup_note_lines(record, target_date)) if event_type == CATCH_UP_EVENT_TYPE else clean_text(record.notes),
         "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
         "scheduledTime": format_time_value(record.scheduled_time),
         "meetingProvider": meeting_provider,
@@ -1669,6 +1765,14 @@ def fetch_catchup_event_records(owner_email: str) -> list[CoachCalendarEvent]:
             owner_email__iexact=owner_email,
             event_type__iexact=CATCH_UP_EVENT_TYPE,
         ).order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
+    )
+
+
+def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]:
+    return list(
+        CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
+        .exclude(event_type__in=["mcr", "progress-review"])
+        .order_by("scheduled_date", "target_date", "scheduled_time", "learner_name")
     )
 
 
@@ -1954,19 +2058,19 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             )
             source_counts["progressReviewRows"] += 1
 
-    persisted_catchups = [
+    persisted_standalone_events = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
             learner=active_user_map.get(record.learner_id),
         )
-        for record in fetch_catchup_event_records(owner_email)
+        for record in fetch_standalone_event_records(owner_email)
     ]
-    source_counts["catchUpRows"] = len(persisted_catchups)
+    source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
 
     record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in generated_events]
-    events.extend(persisted_catchups)
+    events.extend(persisted_standalone_events)
 
     if start_date or end_date:
         filtered_events = []
@@ -2203,7 +2307,9 @@ def serialize_attendance_learner(
     present = attendance_metrics.get("present", 0) if attendance_metrics else 0
     absent = attendance_metrics.get("absent", 0) if attendance_metrics else 0
     attendance_rate = percentage(present, sessions) if sessions else None
-    risk = attendance_risk_from_rate(attendance_rate)
+    risk = attendance_metrics.get("risk") if attendance_metrics else None
+    if risk not in {"green", "amber", "red"}:
+        risk = attendance_risk_from_rate(attendance_rate)
 
     return {
         "id": learner["id"],
@@ -2221,9 +2327,8 @@ def serialize_attendance_learner(
         "sessions": sessions if sessions else None,
         "present": present if sessions else None,
         "absent": absent if sessions else None,
-        "late": None,
-        "catchup": catchup_count,
-        "trend": attendance_metrics.get("trend", "stable") if attendance_metrics else "stable",
+        "late": attendance_metrics.get("late", 0) if attendance_metrics else None,
+        "catchup": max(catchup_count, attendance_metrics.get("catchup", 0) if attendance_metrics else 0),
         "risk": risk,
         "employer": learner["employer"],
         "overallProgress": learner["overallProgress"],
@@ -2348,8 +2453,8 @@ def coach_attendance(request):
         ]
         email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
         active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
-        attendance_data = fetch_attendance_data(email_keys)
-        active_attendance_data = fetch_attendance_data(active_email_keys)
+        attendance_data = fetch_learner_absence_data(email_keys)
+        active_attendance_data = fetch_learner_absence_data(active_email_keys)
         metrics_by_email = attendance_data["metrics"]
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
@@ -2400,6 +2505,7 @@ def coach_attendance(request):
         for record in pending_catchups
         if (record.scheduled_date or record.target_date) < today
     ]
+    stored_catchups = sum(learner["catchup"] or 0 for learner in metric_learners)
 
     summary = {
         "totalLearners": len(attendance_learners),
@@ -2415,7 +2521,7 @@ def coach_attendance(request):
         "needsAttention": sum(1 for learner in learners_with_attendance if learner["risk"] == "amber"),
         "atRisk": sum(1 for learner in learners_with_attendance if learner["risk"] == "red"),
         "unknown": len(metric_learners) - len(learners_with_attendance),
-        "catchupsPending": len(pending_catchups),
+        "catchupsPending": max(len(pending_catchups), stored_catchups),
         "scheduledCatchups": len(scheduled_catchups),
         "overdueCatchups": len(overdue_catchups),
     }
@@ -2429,6 +2535,92 @@ def coach_attendance(request):
             "trends": active_attendance_data["trends"],
         }
     )
+
+
+def serialize_absence_report(report: CoachAbsenceReport, learner=None) -> dict:
+    learner_snapshot = serialize_active_user_learner(learner) if learner else {}
+    reported_by = clean_text(report.reported_by)
+    if reported_by not in {"Learner", "Employer", "Coach"}:
+        reported_by = "Learner"
+    return {
+        "id": str(report.id),
+        "learnerId": str(report.learner_id),
+        "learner": report.learner_name,
+        "initials": build_initials(report.learner_name),
+        "email": report.learner_email or None,
+        "programme": clean_text(getattr(learner, "programme", None)) or "--",
+        "cohort": learner_snapshot.get("cohortName") or "--",
+        "sessionTitle": report.session_title,
+        "sessionDate": report.session_date.isoformat(),
+        "sessionTime": report.session_time.strftime("%H:%M") if report.session_time else "--",
+        "module": report.session_title,
+        "tutor": report.owner_name or "--",
+        "reasonCategory": report.reason_category,
+        "reason": report.reason,
+        "reportedBy": reported_by,
+        "reportedDate": report.created_at.date().isoformat(),
+        "status": report.status,
+        "evidenceProvided": report.evidence_provided,
+        "evidenceKind": report.evidence_kind,
+        "evidenceType": "Image" if report.evidence_kind == "image" else "Text" if report.evidence_kind == "text" else None,
+        "evidenceText": report.evidence_text or None,
+        "evidenceImageUrl": report.evidence_image_url or None,
+        "previousAbsences": report.previous_absences,
+        "attendanceRate": report.attendance_rate if report.attendance_rate is not None else learner_snapshot.get("attendanceRate") or 0,
+        "coachNote": report.coach_note,
+        "coachNotes": report.coach_note,
+        "decisionDate": report.updated_at.date().isoformat() if report.status != CoachAbsenceReport.STATUS_PENDING else None,
+        "decisionBy": report.owner_name if report.status != CoachAbsenceReport.STATUS_PENDING else None,
+    }
+
+
+@csrf_exempt
+def coach_absence_reports(request):
+    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_ids = {int(row.id) for row in active_rows}
+    active_emails = {normalize_email(row.email) for row in active_rows if normalize_email(row.email)}
+    active_map = build_active_user_map(active_rows)
+
+    if request.method == "PATCH":
+        try:
+            payload = parse_json_body(request)
+            report_id = int(payload.get("id"))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "A valid report id is required."}, status=400)
+        status = clean_text(payload.get("status")).lower()
+        if status not in {CoachAbsenceReport.STATUS_APPROVED, CoachAbsenceReport.STATUS_DECLINED}:
+            return JsonResponse({"detail": "status must be approved or declined."}, status=400)
+        report = CoachAbsenceReport.objects.filter(id=report_id, owner_email__iexact=owner_email).first()
+        if not report or (report.learner_id not in active_ids and normalize_email(report.learner_email) not in active_emails):
+            return JsonResponse({"detail": "Absence report not found."}, status=404)
+        report.status = status
+        report.coach_note = clean_text(payload.get("coachNote"))
+        report.save(update_fields=["status", "coach_note", "updated_at"])
+        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id))})
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    records = CoachAbsenceReport.objects.filter(owner_email__iexact=owner_email).order_by("-session_date", "learner_name")
+    records = [
+        report for report in records
+        if report.learner_id in active_ids or normalize_email(report.learner_email) in active_emails
+    ]
+    items = [
+        serialize_absence_report(report, active_map.get(report.learner_id))
+        for report in records
+    ]
+    return JsonResponse({
+        "owner": {"name": fetch_owner_name(owner_email), "email": owner_email},
+        "summary": {
+            "total": len(items),
+            "pending": sum(1 for item in items if item["status"] == CoachAbsenceReport.STATUS_PENDING),
+            "approved": sum(1 for item in items if item["status"] == CoachAbsenceReport.STATUS_APPROVED),
+            "declined": sum(1 for item in items if item["status"] == CoachAbsenceReport.STATUS_DECLINED),
+        },
+        "items": items,
+    })
 
 
 @require_GET
