@@ -1200,6 +1200,7 @@ class CurriculumMutationTests(SimpleTestCase):
     def test_create_cohort_with_module_populates_canonical_link(self):
         with patch.object(views.transaction, 'atomic', return_value=nullcontext()), \
              patch.object(views, 'unique_cohort_id', return_value='COHORT-1'), \
+             patch.object(views, 'training_plan_can_store_module_rows', return_value=True), \
              patch.object(views, 'get_training_rows', return_value=[]), \
              patch.object(views, 'insert_row', return_value={'id': 7, 'notes': '', 'module_name': 'Module A'}), \
              patch.object(views, 'ensure_canonical_module_for_training_row', return_value='MOD-1') as ensure_module, \
@@ -1220,6 +1221,7 @@ class CurriculumMutationTests(SimpleTestCase):
         cohort = {'id': 'COHORT-1', 'name': 'Cohort 1', 'programme': 'Programme A', 'startDate': '2026-01-01', 'endDate': '2026-12-31'}
         with patch.object(views.transaction, 'atomic', return_value=nullcontext()), \
              patch.object(views, 'unique_group_id', return_value='GROUP-1'), \
+             patch.object(views, 'training_plan_can_store_module_rows', return_value=True), \
              patch.object(views, 'find_training_rows_by_cohort', return_value=(cohort, [{'id': 1, 'group_name': ''}])), \
              patch.object(views, 'insert_row', return_value={'id': 8, 'notes': '', 'module_name': 'Module A'}), \
              patch.object(views, 'ensure_canonical_module_for_training_row', return_value='MOD-1') as ensure_module:
@@ -1254,6 +1256,7 @@ class CurriculumMutationTests(SimpleTestCase):
         rows = [{'id': 1, 'notes': '', 'Cohort_name': 'Old Cohort'}]
 
         with patch.object(views, 'find_training_rows_by_cohort', return_value=(cohort, rows)), \
+             patch.object(views, 'training_plan_can_store_module_rows', return_value=True), \
              patch.object(views, 'update_training_rows', return_value=rows) as update_training_rows, \
              patch.object(views, 'persist_cohort_authoring_detail'), \
              patch.object(views, 'invalidate_curriculum_cache'):
@@ -1287,6 +1290,7 @@ class CurriculumMutationTests(SimpleTestCase):
         rows = [{'id': 1, 'notes': '', 'group_name': 'Old Group'}]
 
         with patch.object(views, 'find_training_rows_by_group', return_value=(group, rows)), \
+             patch.object(views, 'training_plan_can_store_module_rows', return_value=True), \
              patch.object(views, 'update_training_rows', return_value=rows) as update_training_rows, \
              patch.object(views, 'persist_group_authoring_detail'), \
              patch.object(views, 'safe_authoring_module_rows', return_value=[]), \

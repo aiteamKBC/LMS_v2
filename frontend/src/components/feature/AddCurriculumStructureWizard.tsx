@@ -575,6 +575,10 @@ function moduleOptionId(module: CurriculumModule) {
   return moduleBuilderStructureId(module);
 }
 
+function isCanonicalModuleBuilderId(value: unknown) {
+  return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
+}
+
 function moduleOptionMatches(module: CurriculumModule, identifier: string) {
   const requested = String(identifier || '').trim();
   if (!requested) return false;
@@ -586,6 +590,7 @@ function moduleOptionMatches(module: CurriculumModule, identifier: string) {
     module.catalogueId,
     module.sourceId,
     module.id,
+    ...(module.relatedCatalogueIds || []),
   ].some(value => String(value || '') === requested);
 }
 
@@ -646,7 +651,14 @@ function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): Curr
 }
 
 function moduleBuilderStructureId(module: CurriculumModule) {
-  return String(module.moduleCatalogueId || module.catalogueId || module.moduleId || module.structureId || curriculumModuleToCatalogue(module).catalogueId || '');
+  const canonical = [
+    module.moduleCatalogueId,
+    module.catalogueId,
+    module.structureId,
+    module.moduleId,
+    ...(module.relatedCatalogueIds || []),
+  ].map(value => String(value || '').trim()).find(isCanonicalModuleBuilderId);
+  return canonical || String(module.moduleCatalogueId || module.catalogueId || module.structureId || module.moduleId || curriculumModuleToCatalogue(module).catalogueId || '');
 }
 
 function moduleSessionCount(module?: CurriculumModule) {
@@ -658,6 +670,18 @@ function moduleDraftSessionCount(draft: Pick<ModuleDraft, 'mode' | 'sessionsNumb
   const parsed = Number(draft.sessionsNumber);
   if (Number.isFinite(parsed)) return Math.max(0, Math.round(parsed));
   return Math.max(0, draft.weeks.length);
+}
+
+function moduleBuilderStructureSessionCount(structure: ModuleCatalogueItem, fallback = 1) {
+  return Math.max(1, Number(structure.sessionsNumber) || structure.weekStructure.length || fallback);
+}
+
+function moduleBuilderStructureComponentCount(structure: ModuleCatalogueItem) {
+  return structure.weekStructure.reduce((total, week) => total + (week.components || []).length, 0);
+}
+
+function moduleDraftComponentCount(draft: Pick<ModuleDraft, 'weeks'>) {
+  return draft.weeks.reduce((total, week) => total + week.components.length, 0);
 }
 
 function userFacingNotes(value: unknown) {
@@ -1653,12 +1677,8 @@ export function AddCurriculumStructureWizard({
     return Array.from(merged.values());
   }, [catalogueModules, data?.modules, localBuilderModules]);
   const moduleOptions = useMemo(() => {
-    const seen = new Set<string>();
     return modules.filter(module => {
-      const key = normalise(module.name);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
+      return Boolean(moduleOptionId(module) || String(module.name || '').trim());
     });
   }, [modules]);
   const holidays = useMemo(() => data?.holidays ?? [], [data?.holidays]);
@@ -2216,9 +2236,15 @@ export function AddCurriculumStructureWizard({
       const identifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
       if (!identifier) return null;
       const loadKey = `${draft.localId}:${identifier}`;
-      if (loadedBuilderStructureKeysRef.current.has(loadKey) || loadingBuilderStructureKeysRef.current.has(loadKey)) return null;
+      const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
+      const expectedComponentCount = Math.max(0, Number(selectedModule?.lessons || 0));
+      const currentComponentCount = moduleDraftComponentCount(draft);
+      const shouldRefreshLoadedStructure = expectedComponentCount > currentComponentCount;
+      if (
+        (!shouldRefreshLoadedStructure && loadedBuilderStructureKeysRef.current.has(loadKey))
+        || loadingBuilderStructureKeysRef.current.has(loadKey)
+      ) return null;
       loadingBuilderStructureKeysRef.current.add(loadKey);
-      loadedBuilderStructureKeysRef.current.add(loadKey);
 
       try {
         const structure = await loadModuleStructure(identifier);
@@ -2253,9 +2279,14 @@ export function AddCurriculumStructureWizard({
             const currentIdentifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
             if (currentIdentifier !== match.identifier) return draft;
             const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-            const sessionsNumber = String(moduleDraftSessionCount(draft, selectedModule));
+            const sessionsNumber = String(moduleBuilderStructureSessionCount(match.structure, moduleDraftSessionCount(draft, selectedModule)));
+            const loadedComponentCount = moduleBuilderStructureComponentCount(match.structure);
+            if (loadedComponentCount <= moduleDraftComponentCount(draft) && loadedBuilderStructureKeysRef.current.has(`${draft.localId}:${match.identifier}`)) {
+              return draft;
+            }
             groupChanged = true;
             cohortChanged = true;
+            loadedBuilderStructureKeysRef.current.add(`${draft.localId}:${match.identifier}`);
             return applyModuleBuilderContent(
               {
                 ...draft,

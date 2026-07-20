@@ -404,6 +404,34 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   const id = `module-${catalogueId}`;
   const title = cleanUserFacingText(module.name) || `Module ${catalogueId}`;
   const description = cleanUserFacingText(module.notes || '');
+  const weekStructure = (module.weekStructure || []).map((week, index): ModuleWeek => {
+    const weekId = String(week.id || makeAuthoringId('WEEK'));
+    return {
+      id: weekId,
+      moduleId: catalogueId,
+      weekNumber: week.weekNumber || index + 1,
+      title: week.title || `Week ${index + 1}`,
+      summary: '',
+      learningOutcomes: [],
+      components: (week.components || []).map((component, componentIndex): ModuleComponent => ({
+        id: String(component.id || makeAuthoringId('COMP')),
+        sourceId: component.id,
+        moduleId: catalogueId,
+        weekId,
+        type: component.type as ModuleComponentType,
+        title: component.title || `Component ${componentIndex + 1}`,
+        description: '',
+        expectedOtjh: Number(component.expectedOtjh ?? component.duration ?? 0) || 0,
+        points: 0,
+        reflectionRequired: Boolean(component.reflectionRequired),
+        workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
+        tutorValidationRequired: Boolean(component.tutorValidationRequired),
+        ksbMappings: (component.ksbMappings || []) as KsbMapping[],
+        settings: normaliseComponentSettings(component.type as ModuleComponentType, component.settings || {}),
+      })),
+      ksbMappings: [],
+    };
+  });
   return recalculateModule({
     id,
     catalogueId,
@@ -439,7 +467,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     background: '',
     epaRequirements: [],
     qualificationOutcomes: [],
-    weekStructure: [],
+    weekStructure,
     sourceModule: module,
   });
 }

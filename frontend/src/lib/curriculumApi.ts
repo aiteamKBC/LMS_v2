@@ -55,6 +55,7 @@ export interface CurriculumModule {
     weekNumber: number;
     title: string;
     displayOrder?: number;
+    components?: CurriculumComponent[];
   }>;
   sessionsNumber?: number;
   startDate?: string;

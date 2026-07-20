@@ -648,11 +648,17 @@ def existing_training_meta_ids(key):
 
 
 def unique_cohort_id(value=''):
-    return unique_prefixed_id('COHORT', value, existing_training_meta_ids('cohort_id'))
+    existing = existing_training_meta_ids('cohort_id')
+    if not training_plan_can_store_module_rows():
+        existing.extend(detail.get('cohortId') for detail in cohort_authoring_detail_rows() if detail.get('cohortId'))
+    return unique_prefixed_id('COHORT', value, existing)
 
 
 def unique_group_id(value=''):
-    return unique_prefixed_id('GROUP', value, existing_training_meta_ids('group_id'))
+    existing = existing_training_meta_ids('group_id')
+    if not training_plan_can_store_module_rows():
+        existing.extend(detail.get('id') for detail in group_authoring_detail_rows() if detail.get('id'))
+    return unique_prefixed_id('GROUP', value, existing)
 
 
 def normalise(value):
@@ -984,10 +990,10 @@ def authoring_modules_as_training_rows():
         cohort_id = clean_str(module.get('cohort_id'))
         group = group_rows.get(group_id) or {}
         cohort = cohort_rows.get(cohort_id) or {}
-        programme_id = clean_str(module.get('programme_id') or group.get('programme_id') or cohort.get('programme_id'))
-        programme_name = clean_str(module.get('programme_name') or group.get('programme_name') or cohort.get('programme_name') or 'Unassigned programme')
-        cohort_name = clean_str(module.get('cohort_name') or group.get('cohort_name') or cohort.get('cohort_name') or 'Unassigned cohort')
-        group_name = clean_str(module.get('group_name') or group.get('group_name') or 'Unassigned group')
+        programme_id = clean_str(group.get('programme_id') or cohort.get('programme_id') or module.get('programme_id'))
+        programme_name = clean_str(group.get('programme_name') or cohort.get('programme_name') or module.get('programme_name') or 'Unassigned programme')
+        cohort_name = clean_str(group.get('cohort_name') or cohort.get('cohort_name') or module.get('cohort_name') or 'Unassigned cohort')
+        group_name = clean_str(group.get('group_name') or module.get('group_name') or 'Unassigned group')
         meta = {
             'program_id': programme_id,
             'cohort_id': cohort_id,
@@ -3049,6 +3055,8 @@ def sync_group_authoring_details_from_modules():
 
 
 def sync_cohort_authoring_details_from_training():
+    if not training_plan_can_store_module_rows():
+        return
     try:
         training_rows = get_training_rows()
         program_configs = get_program_config_rows()
@@ -5200,12 +5208,34 @@ def authoring_catalogue_summaries():
         summary = summaries.get(catalogue_id)
         if not summary:
             continue
+        component_id = clean_str(row.get('id'))
+        week_id = clean_str(row.get('week_id'))
         component_type = normalise_component_type(row.get('type'))
         summary['lessonCount'] += 1
         if component_type == 'quiz':
             summary['quizCount'] += 1
         if component_type == 'live_session':
             summary['sessionNames'].append(row.get('title') or '')
+        for week in summary['weekStructure']:
+            if clean_str(week.get('id')) != week_id:
+                continue
+            week.setdefault('components', []).append({
+                'id': component_id,
+                'moduleCatalogueId': catalogue_id,
+                'moduleId': catalogue_id,
+                'weekId': week_id,
+                'type': frontend_component_type(row.get('type')),
+                'title': row.get('title') or '',
+                'description': row.get('description') or '',
+                'expectedOtjh': float(row.get('expected_otjh') or 0),
+                'points': parse_int(row.get('points'), 0),
+                'reflectionRequired': bool(row.get('reflection_required')),
+                'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
+                'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+                'ksbMappings': [],
+                'settings': as_json_value(row.get('settings_json'), {}),
+            })
+            break
 
     for row in mapping_rows:
         catalogue_id = str(row.get('module_catalogue_id'))
@@ -7308,7 +7338,8 @@ def curriculum_ksb_sets(request):
 
 @require_GET
 def curriculum_cohorts(request):
-    sync_cohort_authoring_details_from_training()
+    if training_plan_can_store_module_rows():
+        sync_cohort_authoring_details_from_training()
     payload = get_cached_payload(request)
     programme_id = request.GET.get('programme_id') or request.GET.get('programmeId') or request.GET.get('programme')
     results = payload['cohorts']
@@ -7329,6 +7360,98 @@ def curriculum_cohorts(request):
     return curriculum_collection_response(payload, 'cohorts', results)
 
 
+def curriculum_cohort_from_authoring_detail(detail):
+    detail = detail or {}
+    return {
+        'id': detail.get('cohortId') or detail.get('id') or detail.get('cohort_id'),
+        'name': detail.get('cohortName') or detail.get('name') or detail.get('cohort_name') or '',
+        'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',
+        'programme': detail.get('programmeName') or detail.get('programme') or detail.get('programme_name') or '',
+        'startDate': detail.get('startDate') or detail.get('start_date') or '',
+        'endDate': detail.get('endDate') or detail.get('end_date') or '',
+        'durationMonths': detail.get('durationMonths') or detail.get('duration_months') or 0,
+        'color': detail.get('color') or '',
+        'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],
+        'status': detail.get('status') or 'planned',
+    }
+
+
+def curriculum_group_from_authoring_detail(detail):
+    detail = detail or {}
+    return {
+        'id': detail.get('id') or detail.get('groupId') or detail.get('group_id'),
+        'name': detail.get('name') or detail.get('groupName') or detail.get('group_name') or '',
+        'cohortId': detail.get('cohortId') or detail.get('cohort_id') or '',
+        'cohort': detail.get('cohort') or detail.get('cohortName') or detail.get('cohort_name') or '',
+        'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',
+        'programme': detail.get('programme') or detail.get('programmeName') or detail.get('programme_name') or '',
+        'coach': detail.get('coach') or detail.get('coach_name') or '',
+        'tutor': detail.get('tutor') or detail.get('tutor_name') or '',
+        'startDate': detail.get('startDate') or detail.get('start_date') or '',
+        'endDate': detail.get('endDate') or detail.get('end_date') or '',
+        'schedule': detail.get('schedule') or '',
+        'mode': detail.get('mode') or 'Live',
+        'status': detail.get('status') or 'planned',
+        'modules': detail.get('modules') or detail.get('module_names') or [],
+        'moduleIds': detail.get('moduleIds') or detail.get('module_ids') or [],
+    }
+
+
+def find_authoring_cohort(identifier):
+    ident = clean_str(identifier)
+    for detail in cohort_authoring_detail_rows():
+        cohort = curriculum_cohort_from_authoring_detail(detail)
+        if matches_curriculum_identifier(cohort.get('id'), ident) or matches_curriculum_identifier(cohort.get('name'), ident):
+            return cohort
+    return None
+
+
+def find_authoring_group(identifier):
+    ident = clean_str(identifier)
+    for detail in group_authoring_detail_rows():
+        group = curriculum_group_from_authoring_detail(detail)
+        if matches_curriculum_identifier(group.get('id'), ident) or matches_curriculum_identifier(group.get('name'), ident):
+            return group
+    return None
+
+
+def update_authoring_delivery_metadata(cohort=None, group=None):
+    cohort = cohort or {}
+    group = group or {}
+    cohort_id = clean_str(cohort.get('id') or cohort.get('cohortId'))
+    group_id = clean_str(group.get('id') or group.get('groupId'))
+
+    try:
+        if cohort_id:
+            for stored_group in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):
+                authoring_upsert(GROUPS_TABLE, ['group_id'], {
+                    **stored_group,
+                    'cohort_name': cohort.get('name') or stored_group.get('cohort_name') or '',
+                    'programme_id': cohort.get('programmeId') or stored_group.get('programme_id') or '',
+                    'programme_name': cohort.get('programme') or stored_group.get('programme_name') or '',
+                })
+            for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'cohort_id = %s', [cohort_id]):
+                authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+                    **module,
+                    'cohort_name': cohort.get('name') or module.get('cohort_name') or '',
+                    'programme_id': cohort.get('programmeId') or module.get('programme_id') or '',
+                    'programme_name': cohort.get('programme') or module.get('programme_name') or '',
+                })
+
+        if group_id:
+            for module in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id]):
+                authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+                    **module,
+                    'group_name': group.get('name') or module.get('group_name') or '',
+                    'cohort_id': group.get('cohortId') or module.get('cohort_id') or '',
+                    'cohort_name': group.get('cohort') or module.get('cohort_name') or '',
+                    'programme_id': group.get('programmeId') or module.get('programme_id') or '',
+                    'programme_name': group.get('programme') or module.get('programme_name') or '',
+                })
+    except (Exception, AssertionError) as exc:
+        logger.warning('Could not update authoring delivery metadata: %s', exc)
+
+
 def create_curriculum_cohort(payload):
     missing = require_fields(payload, ['name', 'programme'])
     if missing:
@@ -7340,6 +7463,57 @@ def create_curriculum_cohort(payload):
     )
     name = clean_str(payload.get('name'))
     cohort_id = unique_cohort_id(payload.get('id') or payload.get('cohortId') or payload.get('cohort_id'))
+    duration_months = payload.get('durationMonths') or 24
+    end_date = payload.get('endDate') or format_date(calculate_cohort_end_date(payload.get('startDate'), duration_months))
+    holiday_ids = parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids'))
+
+    if not training_plan_can_store_module_rows():
+        duplicate = next((
+            detail for detail in cohort_authoring_detail_rows()
+            if (
+                clean_str(detail.get('cohortId')) == clean_str(cohort_id)
+                or (
+                    normalise(detail.get('programmeId') or detail.get('programmeName')) in {normalise(programme_id), normalise(programme)}
+                    and normalise(detail.get('cohortName')) == normalise(name)
+                )
+            )
+        ), None)
+        if duplicate:
+            return json_error('Cohort already exists for programme.', status=409)
+        cohort = {
+            'id': cohort_id,
+            'name': name,
+            'programme': programme,
+            'programmeId': programme_id or f'program-{slugify(programme)}',
+            'startDate': payload.get('startDate'),
+            'endDate': end_date,
+            'status': title_case_status(False, payload.get('startDate'), end_date),
+            'color': payload.get('color') or '',
+            'holidayIds': holiday_ids,
+            'groups': [],
+            'modules': [],
+        }
+        persist_cohort_authoring_detail(
+            cohort,
+            [],
+            [],
+            payload.get('holidays') or payload.get('holidayDetails') or payload.get('linkedHolidays') or get_holiday_rows(),
+            {'source_type': 'module_authoring', 'source_id': cohort_id},
+        )
+        invalidate_curriculum_cache()
+        return JsonResponse({'created': True, 'cohort': curriculum_cohort_from_authoring_detail({
+            'cohortId': cohort_id,
+            'cohortName': name,
+            'programmeId': programme_id or f'program-{slugify(programme)}',
+            'programmeName': programme,
+            'startDate': payload.get('startDate'),
+            'endDate': end_date,
+            'durationMonths': duration_months,
+            'color': payload.get('color') or '',
+            'holidayIds': holiday_ids,
+            'status': cohort['status'],
+        })}, status=201)
+
     duplicate = next((
         row for row in get_training_rows()
         if (
@@ -7353,15 +7527,13 @@ def create_curriculum_cohort(payload):
     ), None)
     if duplicate:
         return json_error('Cohort already exists for programme.', status=409)
-    duration_months = payload.get('durationMonths') or 24
-    end_date = payload.get('endDate') or format_date(calculate_cohort_end_date(payload.get('startDate'), duration_months))
     notes = append_notes_meta(payload.get('notes') or '', {
         'program_id': programme_id,
         'cohort_id': cohort_id,
         'cohort_color': payload.get('color') or '',
         'duration_months': duration_months or '',
         'cohort_end_auto': 'true' if end_date and not payload.get('endDate') else 'false',
-        'holiday_ids': '|'.join(parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids'))),
+        'holiday_ids': '|'.join(holiday_ids),
     })
     with transaction.atomic():
         row = insert_row('Training_plan', {
@@ -7395,7 +7567,7 @@ def create_curriculum_cohort(payload):
             'endDate': end_date,
             'status': title_case_status(False, payload.get('startDate'), end_date),
             'color': payload.get('color') or '',
-            'holidayIds': parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids')),
+            'holidayIds': holiday_ids,
             'groups': [],
             'modules': [],
         }
@@ -7437,10 +7609,15 @@ def curriculum_cohort_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
     cohort, rows = find_training_rows_by_cohort(identifier)
+    if (not cohort or not rows) and not training_plan_can_store_module_rows():
+        cohort = find_authoring_cohort(identifier)
+        rows = []
     if not cohort or not rows:
-        return json_error('Cohort not found.', status=404)
+        if not cohort or training_plan_can_store_module_rows():
+            return json_error('Cohort not found.', status=404)
     if request.method == 'DELETE':
-        archive_training_rows(rows)
+        if rows:
+            archive_training_rows(rows)
         persist_cohort_authoring_detail(cohort, rows, [], [], {'status': 'archived'})
         invalidate_curriculum_cache()
         return JsonResponse({'archived': True, 'id': identifier})
@@ -7450,7 +7627,7 @@ def curriculum_cohort_detail(request, identifier):
     duration_months = payload.get('durationMonths')
     computed_end = format_date(calculate_cohort_end_date(payload.get('startDate') or cohort.get('startDate'), duration_months)) if duration_months else ''
     end_date = payload.get('endDate') or computed_end or cohort.get('endDate')
-    existing_meta = extract_notes_meta(rows[0].get('notes'))
+    existing_meta = extract_notes_meta(rows[0].get('notes')) if rows else {}
     next_holiday_ids = (
         parse_notes_id_list(payload.get('holidayIds') if 'holidayIds' in payload else payload.get('holiday_ids'))
         if ('holidayIds' in payload or 'holiday_ids' in payload)
@@ -7471,10 +7648,12 @@ def curriculum_cohort_detail(request, identifier):
         }),
     }
     updated_rows = update_training_rows(rows, updates)
-    next_meta = extract_notes_meta(updates.get('notes') or rows[0].get('notes'))
+    next_meta = extract_notes_meta(updates.get('notes') or (rows[0].get('notes') if rows else ''))
     authoring_cohort = {
         **cohort,
         'name': payload.get('name') or cohort.get('name'),
+        'programmeId': clean_str(payload.get('programmeId') or payload.get('programme_id') or existing_meta.get('program_id') or cohort.get('programmeId') or ''),
+        'programme': payload.get('programme') or cohort.get('programme') or '',
         'startDate': payload.get('startDate') or cohort.get('startDate'),
         'endDate': end_date,
         'color': payload.get('color') or cohort.get('color') or next_meta.get('cohort_color') or '',
@@ -7487,6 +7666,8 @@ def curriculum_cohort_detail(request, identifier):
         [],
         payload.get('holidays') or payload.get('holidayDetails') or payload.get('linkedHolidays') or [],
     )
+    if not training_plan_can_store_module_rows():
+        update_authoring_delivery_metadata(cohort=authoring_cohort)
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
 
@@ -7510,10 +7691,68 @@ def create_curriculum_group(payload):
     if missing:
         return json_error('Missing required fields.', fields=missing)
     cohort, cohort_rows = find_training_rows_by_cohort(payload.get('cohortId'))
+    if (not cohort or not cohort_rows) and not training_plan_can_store_module_rows():
+        cohort = find_authoring_cohort(payload.get('cohortId'))
+        cohort_rows = []
     if not cohort or not cohort_rows:
-        return json_error('Parent cohort not found.', status=404)
+        if not cohort or training_plan_can_store_module_rows():
+            return json_error('Parent cohort not found.', status=404)
     group_name = clean_str(payload.get('name'))
     group_id = unique_group_id(payload.get('id') or payload.get('groupId') or payload.get('group_id'))
+    if not training_plan_can_store_module_rows():
+        duplicate = next((
+            detail for detail in group_authoring_detail_rows()
+            if (
+                clean_str(detail.get('id')) == clean_str(group_id)
+                or (
+                    clean_str(detail.get('cohortId')) == clean_str(cohort.get('id'))
+                    and normalise(detail.get('name')) == normalise(group_name)
+                )
+            )
+        ), None)
+        if duplicate:
+            return json_error('Group already exists in cohort.', status=409)
+        group = {
+            'id': group_id,
+            'name': group_name,
+            'cohortId': cohort['id'],
+            'cohort': cohort.get('name') or '',
+            'programmeId': payload.get('programmeId') or cohort.get('programmeId') or '',
+            'programme': cohort.get('programme') or '',
+            'coach': payload.get('coach') or '',
+            'tutor': payload.get('tutor') or '',
+            'startDate': payload.get('startDate') or cohort.get('startDate'),
+            'endDate': payload.get('endDate') or cohort.get('endDate'),
+            'schedule': clean_str(payload.get('weekDays')),
+            'mode': payload.get('mode') or 'Live',
+            'status': 'planned',
+            'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
+        }
+        persist_group_authoring_detail(group, [], safe_authoring_module_rows(), {'source_type': 'module_authoring', 'source_id': group_id})
+        persist_cohort_authoring_detail(cohort, [], [group], get_holiday_rows())
+        sync_group_staff_profile_links(
+            group_id,
+            coach_name=payload.get('coach') or '',
+            tutor_name=payload.get('tutor') or '',
+            module_assignment_ids=[],
+        )
+        invalidate_curriculum_cache()
+        return JsonResponse({'created': True, 'group': curriculum_group_from_authoring_detail({
+            'id': group_id,
+            'name': group_name,
+            'cohortId': cohort['id'],
+            'cohort': cohort.get('name') or '',
+            'programmeId': group['programmeId'],
+            'programme': group['programme'],
+            'coach': group['coach'],
+            'tutor': group['tutor'],
+            'startDate': group['startDate'],
+            'endDate': group['endDate'],
+            'schedule': group['schedule'],
+            'status': group['status'],
+            'modules': group['modules'],
+        })}, status=201)
+
     duplicate = next((
         row for row in cohort_rows
         if (
@@ -7627,10 +7866,15 @@ def curriculum_group_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
     group, rows = find_training_rows_by_group(identifier)
+    if (not group or not rows) and not training_plan_can_store_module_rows():
+        group = find_authoring_group(identifier)
+        rows = []
     if not group or not rows:
-        return json_error('Group not found.', status=404)
+        if not group or training_plan_can_store_module_rows():
+            return json_error('Group not found.', status=404)
     if request.method == 'DELETE':
-        archive_training_rows(rows)
+        if rows:
+            archive_training_rows(rows)
         persist_group_authoring_detail(group, rows, safe_authoring_module_rows(), {'status': 'archived'})
         invalidate_curriculum_cache()
         return JsonResponse({'archived': True, 'id': identifier})
@@ -7647,8 +7891,8 @@ def curriculum_group_detail(request, identifier):
         'session_start_time': payload.get('startTime'),
         'session_end_time': payload.get('endTime'),
     }
-    existing_meta = extract_notes_meta(rows[0].get('notes'))
-    updates['notes'] = append_notes_meta(rows[0].get('notes'), {
+    existing_meta = extract_notes_meta(rows[0].get('notes')) if rows else {}
+    updates['notes'] = append_notes_meta(rows[0].get('notes') if rows else '', {
         'program_id': clean_str(payload.get('programmeId') or payload.get('programme_id') or existing_meta.get('program_id') or group.get('programmeId') or ''),
         'cohort_id': clean_str(payload.get('cohortId') or payload.get('cohort_id') or group.get('cohortId') or existing_meta.get('cohort_id') or ''),
         'group_id': clean_str(group.get('id') or identifier or existing_meta.get('group_id')),
@@ -7657,15 +7901,22 @@ def curriculum_group_detail(request, identifier):
     })
     updated_rows = update_training_rows(rows, updates)
     previous_coach = group.get('coach') or rows[0].get('coach_name') if rows else ''
-    persist_group_authoring_detail({
+    next_group = {
         **group,
         'name': payload.get('name') or group.get('name'),
+        'cohortId': payload.get('cohortId') or payload.get('cohort_id') or group.get('cohortId'),
+        'cohort': payload.get('cohort') or group.get('cohort'),
+        'programmeId': payload.get('programmeId') or payload.get('programme_id') or group.get('programmeId'),
+        'programme': payload.get('programme') or group.get('programme'),
         'coach': payload.get('coach') or group.get('coach'),
         'tutor': payload.get('tutor') or group.get('tutor'),
         'startDate': payload.get('startDate') or group.get('startDate'),
         'endDate': payload.get('endDate') or group.get('endDate'),
         'schedule': clean_str(payload.get('weekDays') or group.get('schedule')),
-    }, updated_rows or rows, safe_authoring_module_rows())
+    }
+    persist_group_authoring_detail(next_group, updated_rows or rows, safe_authoring_module_rows())
+    if not training_plan_can_store_module_rows():
+        update_authoring_delivery_metadata(group=next_group)
     sync_group_staff_profile_links(
         group.get('id') or identifier,
         coach_name=payload.get('coach') if 'coach' in payload else group.get('coach'),
@@ -7673,6 +7924,36 @@ def curriculum_group_detail(request, identifier):
     )
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
+
+
+def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):
+    current_structure = current_structure or {}
+    return {
+        **current_structure,
+        'catalogueId': catalogue_id,
+        'programmeId': clean_str(item.get('programmeId') or item.get('programme_id') or cohort.get('programmeId') or group.get('programmeId') or ''),
+        'programmeName': cohort.get('programme') or group.get('programme') or 'Unassigned programme',
+        'cohortId': cohort['id'],
+        'cohortName': cohort.get('name') or '',
+        'groupId': group['id'],
+        'groupName': group.get('name') or '',
+        'title': module_name,
+        'description': visible_notes(item.get('notes') or current_structure.get('description') or ''),
+        'status': item.get('status') or current_structure.get('status') or 'draft',
+        'sessionsNumber': session_count,
+        'startDate': start_date,
+        'endDate': end_date,
+        'weekStructure': current_structure.get('weekStructure') or [],
+        'moduleKsbMappings': current_structure.get('moduleKsbMappings') or [],
+        'completionCriteria': current_structure.get('completionCriteria') or default_completion_payload(),
+        'advancedDetails': current_structure.get('advancedDetails') or {},
+        'background': current_structure.get('background') or '',
+        'epaRequirements': current_structure.get('epaRequirements') or [],
+        'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [],
+        'sourceType': source_type,
+        'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id),
+        'importedFromTrainingPlanId': clean_str(item.get('importedFromTrainingPlanId') or (source_id if source_type == 'training_plan' else '')),
+    }
 
 
 @csrf_exempt
@@ -7697,6 +7978,10 @@ def curriculum_group_modules(request, identifier):
         return json_error('At least one module is required.', fields=['modules'])
 
     group, cohort, existing_rows = find_group_with_parent(identifier)
+    if (not group or not cohort) and not training_plan_can_store_module_rows():
+        group = find_authoring_group(identifier)
+        cohort = find_authoring_cohort((group or {}).get('cohortId')) if group else None
+        existing_rows = []
     if not group or not cohort:
         return json_error('Group not found.', status=404)
 
@@ -7705,8 +7990,9 @@ def curriculum_group_modules(request, identifier):
     created_rows = []
     skipped = []
 
-    if not table_exists('Training_plan'):
+    if not training_plan_can_store_module_rows():
         created_modules = []
+        updated_modules = []
         for item in modules:
             if not isinstance(item, dict):
                 return json_error('Each module attachment must be an object.', status=400)
@@ -7715,12 +8001,6 @@ def curriculum_group_modules(request, identifier):
                 return json_error('Module name is required for each attachment.', fields=['moduleName'])
             requested_value = clean_str(item.get('moduleCatalogueId') or item.get('catalogueId') or item.get('moduleId'))
             requested_catalogue_id = requested_value if is_canonical_module_catalogue_id(requested_value) else ''
-            if requested_catalogue_id and requested_catalogue_id in existing_catalogue_ids:
-                skipped.append(module_name)
-                continue
-            if not requested_catalogue_id and normalise(module_name) in existing_names:
-                skipped.append(module_name)
-                continue
 
             start_date = item.get('startDate') or group.get('startDate') or cohort.get('startDate')
             module_start = parse_date(start_date)
@@ -7745,29 +8025,21 @@ def curriculum_group_modules(request, identifier):
             end_date = item.get('endDate') or session_plan.get('finalEndDate') or group.get('endDate') or cohort.get('endDate')
             catalogue_id = requested_catalogue_id or unique_module_catalogue_id(item.get('catalogueId') or item.get('moduleId') or module_name)
             current_structure = get_authoring_structure_payload(catalogue_id) if authoring_module_exists(catalogue_id) else None
-            saved = save_module_authoring_structure(catalogue_id, {
-                **(current_structure or {}),
-                'catalogueId': catalogue_id,
-                'programmeId': clean_str(item.get('programmeId') or item.get('programme_id') or cohort.get('programmeId') or group.get('programmeId') or ''),
-                'programmeName': cohort.get('programme') or group.get('programme') or 'Unassigned programme',
-                'cohortId': cohort['id'],
-                'cohortName': cohort.get('name') or '',
-                'groupId': group['id'],
-                'groupName': group.get('name') or '',
-                'title': module_name,
-                'description': visible_notes(item.get('notes') or (current_structure or {}).get('description') or ''),
-                'status': item.get('status') or (current_structure or {}).get('status') or 'draft',
-                'sessionsNumber': session_count,
-                'startDate': start_date,
-                'endDate': end_date,
-                'weekStructure': (current_structure or {}).get('weekStructure') or [],
-                'moduleKsbMappings': (current_structure or {}).get('moduleKsbMappings') or [],
-                'completionCriteria': (current_structure or {}).get('completionCriteria') or default_completion_payload(),
-                'advancedDetails': (current_structure or {}).get('advancedDetails') or {},
-                'sourceType': 'module_authoring',
-                'sourceId': clean_str(item.get('sourceId') or catalogue_id),
-                'importedFromTrainingPlanId': clean_str(item.get('importedFromTrainingPlanId') or ''),
-            })
+            is_duplicate = (
+                bool(requested_catalogue_id and requested_catalogue_id in existing_catalogue_ids)
+                or bool(not requested_catalogue_id and normalise(module_name) in existing_names)
+            )
+            saved = save_module_authoring_structure(catalogue_id, module_attachment_authoring_payload(
+                item,
+                group,
+                cohort,
+                catalogue_id,
+                module_name,
+                session_count,
+                start_date,
+                end_date,
+                current_structure,
+            ))
             sync_group_staff_profile_links(
                 group['id'],
                 coach_name=item.get('coach') or group.get('coach') or '',
@@ -7781,7 +8053,11 @@ def curriculum_group_modules(request, identifier):
                     catalogue_id,
                 ]),
             )
-            created_modules.append(saved)
+            if is_duplicate:
+                skipped.append(module_name)
+                updated_modules.append(saved)
+            else:
+                created_modules.append(saved)
             existing_names.add(normalise(module_name))
             existing_catalogue_ids.add(catalogue_id)
 
@@ -7795,6 +8071,7 @@ def curriculum_group_modules(request, identifier):
             'updated': True,
             'groupId': identifier,
             'created': created_modules,
+            'updatedModules': updated_modules,
             'skippedDuplicates': skipped,
         })
 
@@ -7810,12 +8087,6 @@ def curriculum_group_modules(request, identifier):
         requested_value = clean_str(explicit_catalogue_value or item.get('catalogueId') or item.get('moduleId'))
         requested_catalogue_id = requested_value if is_canonical_module_catalogue_id(requested_value) else ''
         legacy_requested_id = requested_value if requested_value and not requested_catalogue_id else ''
-        if requested_catalogue_id and requested_catalogue_id in existing_catalogue_ids:
-            skipped.append(module_name)
-            continue
-        if not requested_catalogue_id and normalise(module_name) in existing_names:
-            skipped.append(module_name)
-            continue
 
         start_date = item.get('startDate') or group.get('startDate') or cohort.get('startDate')
         module_start = parse_date(start_date)
@@ -7838,6 +8109,36 @@ def curriculum_group_modules(request, identifier):
         session_plan = build_module_session_plan(start_date, session_count, delivery_days, item.get('holidays') or item.get('linkedHolidays') or [])
         end_date = item.get('endDate') or session_plan.get('finalEndDate') or group.get('endDate') or cohort.get('endDate')
         group_id = group['id']
+        is_duplicate = (
+            bool(requested_catalogue_id and requested_catalogue_id in existing_catalogue_ids)
+            or bool(not requested_catalogue_id and normalise(module_name) in existing_names)
+        )
+        if is_duplicate:
+            catalogue_id = requested_catalogue_id or next((
+                clean_str(row.get(TRAINING_MODULE_CATALOGUE_COLUMN) or row.get('module_catalogue_id'))
+                for row in existing_rows
+                if normalise(row.get('module_name')) == normalise(module_name)
+            ), '')
+            if catalogue_id and authoring_module_exists(catalogue_id):
+                current_structure = get_authoring_structure_payload(catalogue_id)
+                save_module_authoring_structure(catalogue_id, module_attachment_authoring_payload(
+                    item,
+                    group,
+                    cohort,
+                    catalogue_id,
+                    module_name,
+                    session_count,
+                    start_date,
+                    end_date,
+                    current_structure,
+                    source_type='module_authoring',
+                    source_id=catalogue_id,
+                ))
+            skipped.append(module_name)
+            existing_names.add(normalise(module_name))
+            if catalogue_id:
+                existing_catalogue_ids.add(catalogue_id)
+            continue
         notes = append_notes_meta(item.get('notes') or '', {
             'program_id': clean_str(item.get('programmeId') or item.get('programme_id') or ''),
             'cohort_id': cohort['id'],
@@ -7897,6 +8198,21 @@ def curriculum_group_modules(request, identifier):
                     **module_payload,
                     'catalogueId': canonical_catalogue_id,
                 })
+            elif canonical_catalogue_id:
+                current_structure = get_authoring_structure_payload(canonical_catalogue_id)
+                save_module_authoring_structure(canonical_catalogue_id, module_attachment_authoring_payload(
+                    item,
+                    group,
+                    cohort,
+                    canonical_catalogue_id,
+                    module_name,
+                    session_count,
+                    start_date,
+                    end_date,
+                    current_structure,
+                    source_type='training_plan',
+                    source_id=clean_str(row.get('id')),
+                ))
             elif not canonical_catalogue_id:
                 canonical_catalogue_id = ensure_canonical_module_for_training_row(row, module_payload)
             if canonical_catalogue_id:
