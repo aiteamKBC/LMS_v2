@@ -49,6 +49,7 @@ export default function ReportAbsencePage() {
   const [otherReason, setOtherReason] = useState('');
   const [explanation, setExplanation] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [selectedFilePreviewUrl, setSelectedFilePreviewUrl] = useState('');
   const [fileError, setFileError] = useState('');
   const [dragging, setDragging] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -89,6 +90,16 @@ export default function ReportAbsencePage() {
       .finally(() => { if (!cancelled) setReportsLoading(false); });
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id]);
+
+  useEffect(() => {
+    if (!file) {
+      setSelectedFilePreviewUrl('');
+      return undefined;
+    }
+    const objectUrl = URL.createObjectURL(file);
+    setSelectedFilePreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
 
   const selectFile = (nextFile?: File) => {
     setFileError('');
@@ -176,6 +187,20 @@ export default function ReportAbsencePage() {
     } finally {
       if (previewRequestRef.current === requestId) setPreviewLoading(false);
     }
+  };
+
+  const openSelectedFilePreview = () => {
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    previewRequestRef.current += 1;
+    if (evidencePreview?.objectUrl) URL.revokeObjectURL(evidencePreview.objectUrl);
+    setPreviewError('');
+    setPreviewLoading(false);
+    setEvidencePreview({
+      title: file.name,
+      objectUrl,
+      isPdf: file.type === 'application/pdf',
+    });
   };
 
   return (
@@ -327,8 +352,16 @@ export default function ReportAbsencePage() {
                   </button>
                 ) : (
                   <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3.5">
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-emerald-600 shadow-sm"><i className={file.type === 'application/pdf' ? 'ri-file-pdf-2-line' : 'ri-image-line'} /></span>
-                    <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-foreground-800">{file.name}</p><p className="text-[11px] text-foreground-400">{(file.size / 1024 / 1024).toFixed(2)} MB - ready to upload</p></div>
+                    {file.type.startsWith('image/') && selectedFilePreviewUrl ? (
+                      <img src={selectedFilePreviewUrl} alt="Selected evidence preview" className="h-14 w-14 shrink-0 rounded-lg border border-white object-cover shadow-sm" />
+                    ) : (
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-white text-xl text-red-500 shadow-sm"><i className="ri-file-pdf-2-line" /></span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-foreground-800">{file.name}</p>
+                      <p className="text-[11px] text-foreground-400">{(file.size / 1024 / 1024).toFixed(2)} MB - ready to upload</p>
+                      <button type="button" onClick={openSelectedFilePreview} className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 hover:underline"><i className="ri-eye-line" />Preview selected file</button>
+                    </div>
                     <button type="button" onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} aria-label="Remove attachment" className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 transition hover:bg-red-50 hover:text-red-600"><i className="ri-delete-bin-line" /></button>
                   </div>
                 )}
