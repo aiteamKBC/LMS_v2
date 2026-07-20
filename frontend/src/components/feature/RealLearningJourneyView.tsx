@@ -12,11 +12,11 @@ const learnerNav = roleNavMap.learner;
    A component is "trackable" when the platform can observe
    completion: quizzes (attempts) and videos (watch records).
    ═══════════════════════════════════════════════════════ */
-type StationStatus = 'completed' | 'current' | 'upcoming';
+export type StationStatus = 'completed' | 'current' | 'upcoming';
 
 interface WeekDot { week: string; total: number; done: number }
 
-interface ModuleStation {
+export interface ModuleStation {
   module: JourneyModule;
   index: number;
   trackableTotal: number;
@@ -46,7 +46,7 @@ function weekDisplayLabel(week: string): string {
   return t.length > 24 ? `${t.slice(0, 23)}…` : t;
 }
 
-function buildStations(journey: JourneyModule[], real: LearnerDetail | null): { stations: ModuleStation[]; overallPct: number; currentIndex: number; currentWeek: string | null } {
+export function buildStations(journey: JourneyModule[], real: LearnerDetail | null): { stations: ModuleStation[]; overallPct: number; currentIndex: number; currentWeek: string | null } {
   const watched = new Set((real?.videoProgress || []).map((v) => v.componentId));
   // Generic (podcast/reading/slides/reflection/…) completions count as done too.
   const completedComponents = new Set((real?.componentProgress || []).map((c) => c.componentId));
@@ -667,6 +667,53 @@ function KsbSection({ real, evidencedCodes }: { real: LearnerDetail; evidencedCo
 /* ═══════════════════════════════════════════════════════
    MAIN VIEW
    ═══════════════════════════════════════════════════════ */
+/** The "Your Trail to Gateway" quest map — reusable as an embedded section (e.g. on the learner overview page). */
+export function TrailToGatewaySection({
+  real, loading, loadError,
+}: {
+  real: LearnerDetail | null;
+  loading: boolean;
+  loadError: string | null;
+}) {
+  const journey = useMemo(() => buildLearnerJourney(real), [real]);
+  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const allDone = currentIndex === -1 && stations.length > 0;
+
+  if (loading) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>;
+  if (loadError) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>;
+  if (journey.length === 0) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="No training plan built for this learner yet." /></div>;
+
+  return (
+    <section className="relative rounded-2xl border border-foreground-200/60 bg-gradient-to-b from-background-50 via-background-100/40 to-background-50 overflow-hidden">
+      {/* faint scenery */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+        <div className="absolute opacity-[0.16]" style={{ width: '46%', height: '30%', left: '-8%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--primary-400) / 0.5) 0%, transparent 70%)', filter: 'blur(48px)' }} />
+        <div className="absolute opacity-[0.14]" style={{ width: '44%', height: '26%', right: '-10%', top: '38%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-400) / 0.5) 0%, transparent 70%)', filter: 'blur(52px)' }} />
+        <div className="absolute opacity-[0.12]" style={{ width: '50%', height: '28%', left: '-6%', bottom: '2%', background: 'radial-gradient(ellipse at center, #10b98166 0%, transparent 70%)', filter: 'blur(50px)' }} />
+      </div>
+
+      <div className="relative px-3 md:px-6 pt-5 md:pt-6 pb-8">
+        <div className="flex items-center justify-between gap-3 mb-6 flex-wrap max-w-[840px] mx-auto">
+          <div className="flex items-center gap-3">
+            <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center"><i className="ri-road-map-line text-primary-600 text-sm"></i></span>
+            <div>
+              <h3 className="text-sm font-heading font-semibold text-foreground-900">Your Trail to Gateway</h3>
+              <p className="text-xs text-foreground-400">The trail fills as you complete activities — every checkpoint is a module.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-checkbox-circle-fill text-emerald-500"></i>Completed</span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-flag-2-fill text-primary-500"></i>In progress</span>
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-lock-2-line text-foreground-400"></i>Upcoming</span>
+          </div>
+        </div>
+
+        <QuestTrail stations={stations} done={allDone} learnerName={real?.name || ''} travelled={allDone ? 1 : overallPct / 100} />
+      </div>
+    </section>
+  );
+}
+
 export function RealLearningJourneyView({
   real, loading, loadError,
 }: {
@@ -775,41 +822,7 @@ export function RealLearningJourneyView({
         </section>
 
         {/* ═══════════ QUEST TRAIL ═══════════ */}
-        {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
-        ) : loadError ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
-        ) : journey.length === 0 ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="No training plan built for this learner yet." /></div>
-        ) : (
-          <section className="relative rounded-2xl border border-foreground-200/60 bg-gradient-to-b from-background-50 via-background-100/40 to-background-50 overflow-hidden">
-            {/* faint scenery */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
-              <div className="absolute opacity-[0.16]" style={{ width: '46%', height: '30%', left: '-8%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--primary-400) / 0.5) 0%, transparent 70%)', filter: 'blur(48px)' }} />
-              <div className="absolute opacity-[0.14]" style={{ width: '44%', height: '26%', right: '-10%', top: '38%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-400) / 0.5) 0%, transparent 70%)', filter: 'blur(52px)' }} />
-              <div className="absolute opacity-[0.12]" style={{ width: '50%', height: '28%', left: '-6%', bottom: '2%', background: 'radial-gradient(ellipse at center, #10b98166 0%, transparent 70%)', filter: 'blur(50px)' }} />
-            </div>
-
-            <div className="relative px-3 md:px-6 pt-5 md:pt-6 pb-8">
-              <div className="flex items-center justify-between gap-3 mb-6 flex-wrap max-w-[840px] mx-auto">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center"><i className="ri-road-map-line text-primary-600 text-sm"></i></span>
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Your Trail to Gateway</h3>
-                    <p className="text-xs text-foreground-400">The trail fills as you complete activities — every checkpoint is a module.</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-checkbox-circle-fill text-emerald-500"></i>Completed</span>
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-flag-2-fill text-primary-500"></i>In progress</span>
-                  <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500"><i className="ri-lock-2-line text-foreground-400"></i>Upcoming</span>
-                </div>
-              </div>
-
-              <QuestTrail stations={stations} done={allDone} learnerName={real?.name || ''} travelled={allDone ? 1 : overallPct / 100} />
-            </div>
-          </section>
-        )}
+        <TrailToGatewaySection real={real} loading={loading} loadError={loadError} />
 
         {/* ═══════════ KSB PROGRESSION ═══════════ */}
         {real && !loading && !loadError && <KsbSection real={real} evidencedCodes={quizStats.ksbCodes} />}

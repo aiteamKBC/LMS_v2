@@ -58,11 +58,11 @@ def programmes(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     return _guard(lambda: [
-        r["Program"]
+        r["name"]
         for r in _rows(
-            'SELECT DISTINCT "Program" FROM curriculum."Training_plan" '
-            'WHERE "Program" IS NOT NULL AND "Program" <> \'\' '
-            'ORDER BY "Program"'
+            "SELECT DISTINCT name FROM curriculum.programmes "
+            "WHERE name IS NOT NULL AND name <> '' "
+            "ORDER BY name"
         )
     ])
 
@@ -74,11 +74,11 @@ def cohorts(request):
     if not programme:
         return _error("programme query param is required.", 400)
     return _guard(lambda: [
-        r["Cohort_name"]
+        r["cohort_name"]
         for r in _rows(
-            'SELECT DISTINCT "Cohort_name" FROM curriculum."Training_plan" '
-            'WHERE "Program" = %s AND "Cohort_name" IS NOT NULL AND "Cohort_name" <> \'\' '
-            'ORDER BY "Cohort_name"',
+            "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
+            "WHERE programme_name = %s AND cohort_name IS NOT NULL AND cohort_name <> '' "
+            "ORDER BY cohort_name",
             [programme],
         )
     ])
@@ -94,10 +94,10 @@ def groups(request):
     return _guard(lambda: [
         r["group_name"]
         for r in _rows(
-            'SELECT DISTINCT "group_name" FROM curriculum."Training_plan" '
-            'WHERE "Program" = %s AND "Cohort_name" = %s '
-            'AND "group_name" IS NOT NULL AND "group_name" <> \'\' '
-            'ORDER BY "group_name"',
+            "SELECT DISTINCT group_name FROM curriculum.groups "
+            "WHERE programme_name = %s AND cohort_name = %s "
+            "AND group_name IS NOT NULL AND group_name <> '' "
+            "ORDER BY group_name",
             [programme, cohort],
         )
     ])
@@ -115,7 +115,7 @@ def modules(request):
     return _guard(lambda: [
         {"id": r["module_catalogue_id"], "title": r["title"] or r["module_catalogue_id"]}
         for r in _rows(
-            "SELECT module_catalogue_id, title FROM curriculum.module_authoring_modules "
+            "SELECT module_catalogue_id, title FROM curriculum.modules "
             "WHERE programme_id = %s OR programme_name = %s OR %s LIKE programme_name || ' %%' "
             "ORDER BY title",
             [programme, programme, programme],
@@ -132,7 +132,7 @@ def weeks(request):
     return _guard(lambda: [
         {"id": r["id"], "title": r["title"] or f"Week {r['week_number']}", "weekNumber": r["week_number"]}
         for r in _rows(
-            "SELECT id, week_number, title FROM curriculum.module_authoring_weeks "
+            "SELECT id, week_number, title FROM curriculum.weeks "
             "WHERE module_catalogue_id = %s "
             "ORDER BY week_number, display_order",
             [module],
@@ -152,7 +152,7 @@ def components(request):
             "expectedOtjh": float(r["expected_otjh"]) if r["expected_otjh"] is not None else None,
         }
         for r in _rows(
-            "SELECT id, type, title, expected_otjh FROM curriculum.module_authoring_components "
+            "SELECT id, type, title, expected_otjh FROM curriculum.components "
             "WHERE week_id = %s "
             "ORDER BY display_order",
             [week],

@@ -7,7 +7,7 @@ used by the /training-plan/:kind/:userId route. Combines the learner's own
 record (CommercialUser / EnrolmentUser) with its "Learner"."Active_users"
 mirror (present only while the learner is Active) into one response shaped by
 mappers.to_learner_detail, then annotates each saved component with its
-authored expected_otjh (curriculum.module_authoring_components) and a
+authored expected_otjh (curriculum.components) and a
 programme-wide total.
 """
 import json
@@ -65,14 +65,14 @@ def _display_component_title(type_, title):
 
 def _otjh_by_component_id(components):
     """Exact expected_otjh lookup for components saved with the structured
-    plan format (they carry the real curriculum.module_authoring_components id)."""
+    plan format (they carry the real curriculum.components id)."""
     ids = sorted({c["componentId"] for c in components if c.get("componentId")})
     if not ids:
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT id, expected_otjh FROM curriculum.module_authoring_components WHERE id = ANY(%s)",
+                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 [ids],
             )
             return {cid: (float(v) if v is not None else None) for cid, v in cur.fetchall()}
@@ -81,9 +81,39 @@ def _otjh_by_component_id(components):
         return {}
 
 
+_WEEK_NUM_RE = re.compile(r"(?:week|wk)\s*-?\s*(\d+)", re.IGNORECASE)
+
+
+def _week_number_from_title(title):
+    """Best-effort week number from a free-text week label ('Week 1' -> 1)."""
+    if not title:
+        return None
+    m = _WEEK_NUM_RE.search(title)
+    return int(m.group(1)) if m else None
+
+
+def _type_prefix_from_component_title(title):
+    """The leading 'Type' label from a saved 'Type · Detail' component title.
+    Falls back to the whole string when there's no separator."""
+    if not title:
+        return ""
+    # Saved titles use the middle dot U+00B7 ('Live session · Live Teams session').
+    head = title.split("·", 1)[0]
+    return head.strip()
+
+
 def _otjh_by_legacy_title(components):
-    """Fallback expected_otjh lookup, by title, for components saved before
-    the structured plan format existed (no componentId to match on)."""
+    """Fallback expected_otjh lookup for components saved before the structured
+    plan format existed (no real componentId to match on).
+
+    Legacy plans carry client-generated week/component ids AND their own saved
+    titles, both of which drift from the live curriculum once authors rename a
+    week or edit a component title. So instead of relying on exact titles, we
+    anchor on the parts that stay stable across those edits:
+        module title  ->  week NUMBER  ->  component TYPE + ordinal position.
+    Exact title still wins when it matches (unchanged plans); otherwise the
+    Nth saved component of a given type maps to the Nth live component of that
+    type in the same week (by display_order)."""
     legacy = [c for c in components if not c.get("componentId") and c.get("module")]
     if not legacy:
         return {}
@@ -91,7 +121,7 @@ def _otjh_by_legacy_title(components):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT module_catalogue_id, title FROM curriculum.module_authoring_modules "
+                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
             )
@@ -100,32 +130,63 @@ def _otjh_by_legacy_title(components):
                 return {}
 
             cur.execute(
-                "SELECT id, module_catalogue_id, title FROM curriculum.module_authoring_weeks "
-                "WHERE module_catalogue_id = ANY(%s)",
+                "SELECT id, module_catalogue_id, title, week_number FROM curriculum.weeks "
+                "WHERE module_catalogue_id = ANY(%s) "
+                "ORDER BY module_catalogue_id, week_number, display_order",
                 [list(module_ids.values())],
             )
-            week_ids = {(cat_id, title): week_id for week_id, cat_id, title in cur.fetchall()}
-            if not week_ids:
+            weeks_by_title = {}   # (cat_id, title)       -> week_id
+            weeks_by_number = {}  # (cat_id, week_number) -> week_id (first wins)
+            for week_id, cat_id, title, week_number in cur.fetchall():
+                weeks_by_title[(cat_id, title)] = week_id
+                if week_number is not None:
+                    weeks_by_number.setdefault((cat_id, int(week_number)), week_id)
+            if not weeks_by_title:
                 return {}
 
             cur.execute(
-                "SELECT week_id, type, title, expected_otjh FROM curriculum.module_authoring_components "
-                "WHERE week_id = ANY(%s)",
-                [list(set(week_ids.values()))],
+                "SELECT week_id, type, title, expected_otjh FROM curriculum.components "
+                "WHERE week_id = ANY(%s) "
+                "ORDER BY week_id, display_order",
+                [list(set(weeks_by_title.values()))],
             )
-            otjh_by_week_component = {
-                (week_id, _display_component_title(ctype, title)): (float(otjh) if otjh is not None else None)
-                for week_id, ctype, title, otjh in cur.fetchall()
-            }
+            # Per week: exact display-title -> otjh, and ordered otjh-lists per humanised type.
+            otjh_by_exact = {}                 # (week_id, display_title) -> otjh
+            otjh_by_type = {}                  # (week_id, type_label)    -> [otjh, ...] in display_order
+            for week_id, ctype, title, otjh in cur.fetchall():
+                val = float(otjh) if otjh is not None else None
+                otjh_by_exact[(week_id, _display_component_title(ctype, title))] = val
+                otjh_by_type.setdefault((week_id, _humanise_type(ctype)), []).append(val)
     except DatabaseError as exc:
         logger.warning("Could not look up legacy expected_otjh: %s", exc)
         return {}
 
     result = {}
+    type_cursor = {}  # (week_id, type_label) -> next ordinal to consume
     for c in legacy:
         mod_id = module_ids.get(c["module"])
-        week_id = week_ids.get((mod_id, c.get("week"))) if mod_id else None
-        otjh = otjh_by_week_component.get((week_id, c.get("component"))) if week_id else None
+        week_title = c.get("week")
+        # Resolve the live week: exact title first, then by parsed week number.
+        week_id = weeks_by_title.get((mod_id, week_title)) if mod_id else None
+        if week_id is None and mod_id:
+            num = _week_number_from_title(week_title)
+            if num is not None:
+                week_id = weeks_by_number.get((mod_id, num))
+
+        otjh = None
+        if week_id is not None:
+            comp_title = c.get("component")
+            otjh = otjh_by_exact.get((week_id, comp_title))
+            if otjh is None:
+                # Title drifted — map by component type + ordinal within the week.
+                type_label = _type_prefix_from_component_title(comp_title)
+                key = (week_id, type_label)
+                idx = type_cursor.get(key, 0)
+                candidates = otjh_by_type.get(key, [])
+                if idx < len(candidates):
+                    otjh = candidates[idx]
+                type_cursor[key] = idx + 1
+
         result[(c.get("module"), c.get("week"), c.get("component"))] = otjh
     return result
 
@@ -138,7 +199,7 @@ def _display_quiz_title(title):
 
 
 def _resolve_week_ids(weeks):
-    """Map each week entry to its real curriculum.module_authoring_weeks id.
+    """Map each week entry to its real curriculum.weeks id.
     Structured-plan weeks already carry weekId; legacy (pre-id) weeks are
     resolved by module+week title, mirroring _otjh_by_legacy_title."""
     resolved = {}  # (module, week) -> week_id
@@ -155,7 +216,7 @@ def _resolve_week_ids(weeks):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT module_catalogue_id, title FROM curriculum.module_authoring_modules "
+                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
             )
@@ -164,7 +225,7 @@ def _resolve_week_ids(weeks):
                 return resolved
 
             cur.execute(
-                "SELECT id, module_catalogue_id, title FROM curriculum.module_authoring_weeks "
+                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
             )
@@ -301,7 +362,7 @@ def _resolve_from_master(modules, weeks, components):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT module_catalogue_id, title FROM curriculum.module_authoring_modules "
+                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE module_catalogue_id = ANY(%s)",
                 [module_ids],
             )
@@ -309,7 +370,7 @@ def _resolve_from_master(modules, weeks, components):
 
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
-                "FROM curriculum.module_authoring_weeks WHERE module_catalogue_id = ANY(%s) "
+                "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -317,7 +378,7 @@ def _resolve_from_master(modules, weeks, components):
 
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, display_order "
-                "FROM curriculum.module_authoring_components WHERE module_catalogue_id = ANY(%s) "
+                "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )

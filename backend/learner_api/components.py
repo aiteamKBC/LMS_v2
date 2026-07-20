@@ -55,12 +55,12 @@ def _format_clock(seconds):
 
 
 def _component_meta(component_id):
-    """Live (type, title) for a component (curriculum.module_authoring_components).
+    """Live (type, title) for a component (curriculum.components).
     Returns (None, None) if not found / on error."""
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.module_authoring_components WHERE id = %s",
+                "SELECT type, title FROM curriculum.components WHERE id = %s",
                 [component_id],
             )
             row = cur.fetchone()

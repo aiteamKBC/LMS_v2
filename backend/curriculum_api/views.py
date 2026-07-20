@@ -2556,13 +2556,13 @@ def module_response(identifier):
     return None
 
 
-AUTHORING_MODULES_TABLE = 'module_authoring_modules'
-AUTHORING_WEEKS_TABLE = 'module_authoring_weeks'
-AUTHORING_COMPONENTS_TABLE = 'module_authoring_components'
-AUTHORING_KSB_MAPPINGS_TABLE = 'module_authoring_ksb_mappings'
-AUTHORING_COMPLETION_TABLE = 'module_authoring_completion_criteria'
-AUTHORING_ADVANCED_TABLE = 'module_authoring_advanced_details'
-COHORT_AUTHORING_DETAILS_TABLE = 'cohort_authoring_details'
+AUTHORING_MODULES_TABLE = 'modules'
+AUTHORING_WEEKS_TABLE = 'weeks'
+AUTHORING_COMPONENTS_TABLE = 'components'
+AUTHORING_KSB_MAPPINGS_TABLE = 'ksb_mappings'
+AUTHORING_COMPLETION_TABLE = 'module_completion_criteria'
+AUTHORING_ADVANCED_TABLE = 'module_details'
+COHORT_AUTHORING_DETAILS_TABLE = 'cohorts'
 FREE_PROGRAMME_MODULES_TABLE = 'free_programme_modules'
 FREE_PROGRAMME_COMPONENTS_TABLE = 'free_programme_components'
 

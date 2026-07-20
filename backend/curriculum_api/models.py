@@ -21,7 +21,7 @@ class ModuleAuthoringModule(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_modules'
+        db_table = 'curriculum"."modules'
         managed = False
 
 
@@ -37,7 +37,7 @@ class ModuleAuthoringWeek(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_weeks'
+        db_table = 'curriculum"."weeks'
         managed = False
 
 
@@ -71,7 +71,7 @@ class ModuleAuthoringComponent(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_components'
+        db_table = 'curriculum"."components'
         managed = False
 
 
@@ -98,7 +98,7 @@ class ModuleAuthoringKsbMapping(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_ksb_mappings'
+        db_table = 'curriculum"."ksb_mappings'
         managed = False
 
 
@@ -115,7 +115,7 @@ class ModuleAuthoringCompletionCriteria(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_completion_criteria'
+        db_table = 'curriculum"."module_completion_criteria'
         managed = False
 
 
@@ -132,7 +132,7 @@ class ModuleAuthoringAdvancedDetails(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."module_authoring_advanced_details'
+        db_table = 'curriculum"."module_details'
         managed = False
 
 
@@ -160,5 +160,5 @@ class CohortAuthoringDetails(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."cohort_authoring_details'
+        db_table = 'curriculum"."cohort'
         managed = False
