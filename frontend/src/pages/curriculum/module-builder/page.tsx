@@ -37,6 +37,7 @@ import {
   type ModuleWeek,
 } from './moduleAuthoringData';
 import {
+  CONTENT_STATUSES,
   MEDIA_SOURCE_TYPES,
   PODCAST_SOURCE_TYPES,
   READING_SOURCE_TYPES,
@@ -193,6 +194,7 @@ export default function ModuleBuilder() {
   const [saveSuccess, setSaveSuccess] = useState<{ title: string; message: string } | null>(null);
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
+  const [templatePickerWeekId, setTemplatePickerWeekId] = useState<string | null>(null);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
@@ -213,10 +215,7 @@ export default function ModuleBuilder() {
   const { modules, loading, error, reload } = useCurriculumModules();
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes();
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
-  const liveCurriculumProgrammes = useMemo(
-    () => curriculumProgrammes.filter(programme => String(programme.status || '').toLowerCase() !== 'archived'),
-    [curriculumProgrammes],
-  );
+  const liveCurriculumProgrammes = curriculumProgrammes;
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
@@ -285,7 +284,7 @@ export default function ModuleBuilder() {
 
   const published = catalogueModules.filter(module => module.status === 'published').length;
   const draftCount = catalogueModules.filter(module => module.status === 'draft').length;
-  const totalLessons = catalogueModules.reduce((total, module) => total + (module.lessonCount || 0), 0);
+  const totalComponents = catalogueModules.reduce((total, module) => total + (module.lessonCount || 0), 0);
   const totalDeliveryUses = catalogueModules.reduce((total, module) => total + (module.deliveryUsages?.length || 0), 0);
 
   const selectedWeek = workingModule?.weekStructure.find(week => week.id === selection?.weekId) || null;
@@ -293,6 +292,17 @@ export default function ModuleBuilder() {
     selection?.kind === 'component'
       ? selectedWeek?.components.find(component => component.id === selection.componentId) || null
       : null;
+  const ksbMapDisplayModule = useMemo(() => {
+    if (!ksbMapModule || !workingModule) return ksbMapModule;
+    const requestedId = moduleStructureIdentifier(ksbMapModule);
+    const workingId = moduleStructureIdentifier(workingModule);
+    if (!requestedId || requestedId !== workingId) return ksbMapModule;
+    return {
+      ...ksbMapModule,
+      ...workingModule,
+      deliveryUsages: ksbMapModule.deliveryUsages,
+    };
+  }, [ksbMapModule, workingModule]);
   const hasUnsavedWorkingModuleChanges = Boolean(
     workingModule && savedModuleSnapshotRef.current && moduleSnapshot(workingModule) !== savedModuleSnapshotRef.current,
   );
@@ -324,6 +334,27 @@ export default function ModuleBuilder() {
       setOpeningModuleComplete(false);
     }
   }, [finishLoadingProgress]);
+
+  const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
+    const requestedId = moduleStructureIdentifier(module);
+    const workingId = workingModule ? moduleStructureIdentifier(workingModule) : '';
+    if (!requestedId) {
+      setKsbMapModule(module);
+      return;
+    }
+    if (workingModule && requestedId && requestedId === workingId) {
+      setKsbMapModule({ ...module, ...workingModule, deliveryUsages: module.deliveryUsages });
+      return;
+    }
+
+    try {
+      const remote = await loadModuleStructure(requestedId);
+      setKsbMapModule(remote ? { ...module, ...remote, deliveryUsages: module.deliveryUsages } : module);
+    } catch (err) {
+      console.warn('Unable to load full module structure for KSB map.', err);
+      setKsbMapModule(module);
+    }
+  }, [workingModule]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -478,6 +509,7 @@ export default function ModuleBuilder() {
         });
         setDragState(null);
         if (lessonPickerWeekId === weekId) setLessonPickerWeekId(null);
+        if (templatePickerWeekId === weekId) setTemplatePickerWeekId(null);
         if (selection?.weekId === weekId) {
           setSelection(nextSelectedWeek ? { kind: 'week', weekId: nextSelectedWeek.id } : null);
         }
@@ -903,17 +935,7 @@ export default function ModuleBuilder() {
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
-              onAddComponent={(weekId, type) => {
-                const week = workingModule.weekStructure.find(item => item.id === weekId);
-                if (!week) return;
-                const component = createNamedComponent(week, type);
-                updateWorkingModule(module => ({
-                  ...module,
-                  weekStructure: module.weekStructure.map(item => (item.id === weekId ? { ...item, components: [...item.components, component] } : item)),
-                }));
-                setExpandedWeeks(current => new Set([...current, weekId]));
-                setSelection({ kind: 'component', weekId, componentId: component.id });
-              }}
+              onOpenAddComponent={weekId => setLessonPickerWeekId(weekId)}
               onDeleteComponent={(weekId, componentId) => {
                 void confirmDeleteComponent(weekId, componentId);
               }}
@@ -927,18 +949,6 @@ export default function ModuleBuilder() {
                   weekStructure: module.weekStructure.map(item => (item.id === weekId ? { ...item, components: [...item.components, duplicate] } : item)),
                 }));
                 setSelection({ kind: 'component', weekId, componentId: duplicate.id });
-              }}
-              onAutoCheckpoints={() => {
-                updateWorkingModule(module => ({
-                  ...module,
-                  weekStructure: module.weekStructure.map((week, index) => {
-                    if ((index + 1) % 4 !== 0) return week;
-                    return {
-                      ...week,
-                      components: [...week.components, { ...createEmptyComponent(week.id, 'checkpoint', week.components.length + 1), title: `Month ${Math.ceil((index + 1) / 4)} checkpoint` }],
-                    };
-                  }),
-                }));
               }}
               onDropReorder={(targetWeekId, targetComponentId) => {
                 if (!dragState) return;
@@ -994,13 +1004,7 @@ export default function ModuleBuilder() {
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
                   }))}
-                  onApplyTemplate={() => {
-                    const template = createWeekTemplateComponents(selectedWeek, { skipExistingTypes: true });
-                    updateWorkingModule(module => ({
-                      ...module,
-                      weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, components: [...week.components, ...template] } : week),
-                    }));
-                  }}
+                  onApplyTemplate={() => setTemplatePickerWeekId(selectedWeek.id)}
                   onOpenSessionKsbMapping={() => setSessionKsbMappingOpen(true)}
                   onAddLesson={() => {
                     setLessonPickerWeekId(selectedWeek.id);
@@ -1068,19 +1072,42 @@ export default function ModuleBuilder() {
           />
         )}
         {lessonPickerWeekId && (
-          <LessonTypeModal
+          <ComponentTypeModal
             onClose={() => setLessonPickerWeekId(null)}
-            onSelect={type => {
+            onAdd={types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
-              const component = createNamedComponent(week, type);
+              const components = createNamedComponents(week, types);
+              if (!components.length) return;
               updateWorkingModule(module => ({
                 ...module,
-                weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, component] } : item),
+                weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
               }));
-              setSelection({ kind: 'component', weekId: week.id, componentId: component.id });
+              setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
               setExpandedWeeks(current => new Set([...current, week.id]));
               setLessonPickerWeekId(null);
+            }}
+          />
+        )}
+        {templatePickerWeekId && (
+          <ComponentTypeModal
+            title="Apply component template"
+            description="Select the component types to add to this week."
+            submitLabel="Apply template"
+            initialSelectedTypes={componentTypes.map(item => item.type)}
+            onClose={() => setTemplatePickerWeekId(null)}
+            onAdd={types => {
+              const week = workingModule.weekStructure.find(item => item.id === templatePickerWeekId);
+              if (!week) return;
+              const template = createWeekTemplateComponents(week, { types });
+              if (!template.length) return;
+              updateWorkingModule(module => ({
+                ...module,
+                weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...template] } : item),
+              }));
+              setSelection({ kind: 'component', weekId: week.id, componentId: template[template.length - 1].id });
+              setExpandedWeeks(current => new Set([...current, week.id]));
+              setTemplatePickerWeekId(null);
             }}
           />
         )}
@@ -1123,7 +1150,7 @@ export default function ModuleBuilder() {
   }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalLessons} sessions`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-6 space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
@@ -1185,7 +1212,7 @@ export default function ModuleBuilder() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatsCard label="Total Modules" value={catalogueModules.length.toString()} icon="ri-stack-line" color="primary" />
             <StatsCard label="Published" value={published.toString()} icon="ri-check-double-line" color="emerald" />
-            <StatsCard label="Sessions" value={totalLessons.toString()} icon="ri-book-open-line" color="accent" />
+            <StatsCard label="Components" value={totalComponents.toString()} icon="ri-layout-grid-line" color="accent" />
             <StatsCard label="Delivery Uses" value={totalDeliveryUses.toString()} icon="ri-route-line" color="secondary" />
           </div>
         )}
@@ -1209,7 +1236,7 @@ export default function ModuleBuilder() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
-                    onKsbMap={() => setKsbMapModule(module)}
+                    onKsbMap={() => { void openKsbMap(module); }}
                     onBuild={() => openModule(module)}
                     onSettings={() => openModule(module, true)}
                     onDuplicate={() => duplicateModule(module)}
@@ -1237,13 +1264,13 @@ export default function ModuleBuilder() {
             }}
           />
         )}
-        {ksbMapModule && (
+        {ksbMapDisplayModule && (
           <ModuleKsbMapModal
-            module={ksbMapModule}
+            module={ksbMapDisplayModule}
             sourceLabels={ksbSourceLabels}
             onClose={() => setKsbMapModule(null)}
             onBuild={() => {
-              const module = ksbMapModule;
+              const module = ksbMapDisplayModule;
               setKsbMapModule(null);
               void openModule(module);
             }}
@@ -1456,7 +1483,7 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
   );
 }
 
-function CourseStructure({ module, selection, expandedWeeks, dragState, onDragState, onToggleWeek, onSelectWeek, onSelectComponent, onAddWeek, onDeleteWeek, onAddComponent, onDeleteComponent, onDuplicateComponent, onAutoCheckpoints, onDropReorder }: {
+function CourseStructure({ module, selection, expandedWeeks, dragState, onDragState, onToggleWeek, onSelectWeek, onSelectComponent, onAddWeek, onDeleteWeek, onOpenAddComponent, onDeleteComponent, onDuplicateComponent, onDropReorder }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   expandedWeeks: Set<string>;
@@ -1467,13 +1494,11 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
   onSelectComponent: (weekId: string, componentId: string) => void;
   onAddWeek: () => void;
   onDeleteWeek: (weekId: string) => void;
-  onAddComponent: (weekId: string, type: ModuleComponentType) => void;
+  onOpenAddComponent: (weekId: string) => void;
   onDeleteComponent: (weekId: string, componentId: string) => void;
   onDuplicateComponent: (weekId: string, componentId: string) => void;
-  onAutoCheckpoints: () => void;
   onDropReorder: (targetWeekId: string, targetComponentId?: string) => void;
 }) {
-  const [openAddWeekId, setOpenAddWeekId] = useState<string | null>(null);
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
 
   return (
@@ -1482,7 +1507,7 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, lessons and order</p>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, components and order</p>
           </div>
           <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
             <i className="ri-add-line"></i>
@@ -1527,7 +1552,7 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
-                    <span>{week.components.length} lessons</span>
+                    <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0).toFixed(1)}h</span>
                   </p>
@@ -1577,30 +1602,17 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                       </div>
                     )}
                     <button
-                      onClick={() => setOpenAddWeekId(current => current === week.id ? null : week.id)}
+                      onClick={() => onOpenAddComponent(week.id)}
                       className="w-full rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-2 text-left text-[12px] font-semibold text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
                     >
                       <i className="ri-add-line mr-1.5"></i>Add component
                     </button>
-                    {openAddWeekId === week.id && (
-                      <ComponentAddMenu
-                        onAdd={type => {
-                          onAddComponent(week.id, type);
-                          setOpenAddWeekId(null);
-                        }}
-                      />
-                    )}
                   </div>
                 </div>
               )}
             </div>
           );
         })}
-      </div>
-      <div className="border-t border-background-200 bg-background-50 p-3">
-        <button onClick={onAutoCheckpoints} className="w-full rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
-          <i className="ri-magic-line mr-1.5"></i>Auto-add monthly checkpoints
-        </button>
       </div>
     </aside>
   );
@@ -1615,71 +1627,126 @@ function MiniStructureMetric({ label, value }: { label: string; value: string })
   );
 }
 
-function ComponentAddMenu({ onAdd }: { onAdd: (type: ModuleComponentType) => void }) {
+function selectedComponentTypes(selectedTypes: Set<ModuleComponentType>) {
+  return componentTypes
+    .map(item => item.type)
+    .filter(type => selectedTypes.has(type));
+}
+
+function toggleComponentType(selectedTypes: Set<ModuleComponentType>, type: ModuleComponentType) {
+  const next = new Set(selectedTypes);
+  if (next.has(type)) {
+    next.delete(type);
+  } else {
+    next.add(type);
+  }
+  return next;
+}
+
+function ComponentTypeChecklist({ selectedTypes, onToggle }: {
+  selectedTypes: Set<ModuleComponentType>;
+  onToggle: (type: ModuleComponentType) => void;
+}) {
   return (
-    <div className="mt-2 max-h-[420px] overflow-y-auto rounded-xl border border-background-200 bg-background-50 p-2 shadow-lg ring-1 ring-black/5">
+    <div className="space-y-4">
       {componentTypeGroups.map(group => (
-        <div key={group} className="border-b border-background-200 last:border-b-0 py-2 first:pt-0 last:pb-0">
-          <p className="px-2 pb-1 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{group}</p>
-          {componentTypes.filter(item => item.group === group).map(item => {
-            const tone = componentToneClasses(item.tone);
-            return (
-              <button key={item.type} onClick={() => onAdd(item.type)} className="group flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] font-semibold text-foreground-700 hover:bg-primary-50 hover:text-primary-800 transition-smooth">
-                <span className="text-foreground-300 group-hover:text-primary-400">
-                  <i className="ri-draggable text-xs"></i>
-                </span>
-                <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${tone.soft} ${tone.text}`}>
-                  <i className={`${item.icon} text-[13px]`}></i>
-                </span>
-                <span className="truncate">{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        <section key={group} className="rounded-lg border border-background-200 bg-background-50 p-3">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{group}</p>
+            <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-400">
+              {componentTypes.filter(item => item.group === group).length}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+            {componentTypes.filter(item => item.group === group).map(item => {
+              const tone = componentToneClasses(item.tone);
+              const checked = selectedTypes.has(item.type);
+              return (
+                <label
+                  key={item.type}
+                  className={`group grid min-h-[68px] cursor-pointer grid-cols-[18px_38px_minmax(0,1fr)_18px] items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-smooth ${checked ? 'border-primary-300 bg-primary-50 text-primary-800 shadow-sm shadow-primary-100/70' : 'border-background-200 bg-background-100/40 text-foreground-700 hover:border-primary-200 hover:bg-primary-50/50'}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggle(item.type)}
+                    className="h-4 w-4 rounded border-foreground-300 accent-primary-500"
+                  />
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
+                    <i className={`${item.icon} text-base`}></i>
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-bold text-foreground-900 group-hover:text-primary-800">{item.label}</span>
+                    <span className="mt-0.5 block truncate text-[11px] font-medium leading-snug text-foreground-500">{componentTypeDescription(item.type)}</span>
+                  </span>
+                  <i className={`${checked ? 'ri-checkbox-circle-fill text-primary-500' : 'ri-add-circle-line text-foreground-300 group-hover:text-primary-400'} text-base`}></i>
+                </label>
+              );
+            })}
+          </div>
+        </section>
       ))}
     </div>
   );
 }
 
-function LessonTypeModal({ onClose, onSelect }: { onClose: () => void; onSelect: (type: ModuleComponentType) => void }) {
+function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [] }: {
+  onClose: () => void;
+  onAdd: (types: ModuleComponentType[]) => void;
+  title?: string;
+  description?: string;
+  submitLabel?: string;
+  initialSelectedTypes?: ModuleComponentType[];
+}) {
+  const [selectedTypes, setSelectedTypes] = useState<Set<ModuleComponentType>>(() => new Set(initialSelectedTypes));
+  const selected = selectedComponentTypes(selectedTypes);
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="w-full max-w-4xl rounded-2xl border border-white/10 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-background-200">
-          <div>
-            <h3 className="text-base font-heading font-bold text-foreground-950">What do you want to add?</h3>
-            <p className="mt-1 text-[12px] text-foreground-500">Pick a lesson type. You can edit the details after.</p>
-          </div>
-          <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100 hover:text-foreground-900" aria-label="Close">
-            <i className="ri-close-line text-lg"></i>
-          </button>
-        </div>
-        <div className="max-h-[72vh] overflow-y-auto p-5 space-y-5">
-          {componentTypeGroups.map(group => (
-            <section key={group} className="space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{group}</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-                {componentTypes.filter(item => item.group === group).map(item => {
-                  const tone = componentToneClasses(item.tone);
-                  return (
-                    <button
-                      key={item.type}
-                      onClick={() => onSelect(item.type)}
-                      className="group flex min-h-[70px] items-center gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-3 text-left shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                    >
-                      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-                        <i className={`${item.icon} text-lg`}></i>
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-[13px] font-bold text-foreground-900 group-hover:text-primary-800">{item.label}</span>
-                        <span className="block text-[11px] font-medium leading-snug text-foreground-500">{lessonTypeDescription(item.type)}</span>
-                      </span>
-                    </button>
-                  );
-                })}
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="border-b border-background-200 bg-background-50 px-5 py-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-600">
+                <i className="ri-layout-grid-line text-lg"></i>
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-base font-heading font-bold text-foreground-950">{title}</h3>
+                <p className="mt-1 text-[12px] font-medium text-foreground-500">{description}</p>
               </div>
-            </section>
-          ))}
+            </div>
+            <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close">
+              <i className="ri-close-line text-lg"></i>
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="rounded-lg border border-primary-100 bg-primary-50 px-2.5 py-1 text-[11px] font-bold text-primary-700">{selected.length} selected</span>
+            <span className="rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-500">{componentTypes.length} available</span>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4">
+          <ComponentTypeChecklist
+            selectedTypes={selectedTypes}
+            onToggle={type => setSelectedTypes(current => toggleComponentType(current, type))}
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-background-200 bg-background-50 px-5 py-3">
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setSelectedTypes(new Set(componentTypes.map(item => item.type)))} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
+              Select all
+            </button>
+            <button type="button" onClick={() => setSelectedTypes(new Set())} disabled={!selected.length} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40">
+              Clear
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={() => onAdd(selected)} disabled={!selected.length} className="inline-flex h-9 min-w-[150px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+              <i className="ri-add-line"></i>
+              {submitLabel} {selected.length || ''} component{selected.length === 1 ? '' : 's'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1872,7 +1939,7 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
-            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} lessons</span>
+            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
           <h3 className="mt-1.5 truncate text-lg font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
@@ -1888,7 +1955,7 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <i className="ri-add-line"></i>
-            Add lesson
+            Add component
           </button>
         </div>
       </div>
@@ -1908,7 +1975,7 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
         <div className="rounded-xl border border-background-200 bg-background-100/35 p-3">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div>
-              <h4 className="text-[11px] font-bold uppercase text-foreground-500">Lessons in this week</h4>
+              <h4 className="text-[11px] font-bold uppercase text-foreground-500">Components in this week</h4>
             </div>
             <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{week.components.length} components</span>
           </div>
@@ -1947,7 +2014,7 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
                   </span>
                   <button onClick={() => onSelectComponent(component.id)} className="min-w-0 text-left" title={readableComponentTitle(component.title)}>
                     <p className="truncate text-[12px] font-semibold leading-snug text-foreground-900">{readableComponentTitle(component.title)}</p>
-                    <p className="mt-0.5 text-[9px] text-foreground-400">Order {index + 1} · {meta?.label || 'Lesson'}</p>
+                    <p className="mt-0.5 text-[9px] text-foreground-400">Order {index + 1} · {meta?.label || 'Component'}</p>
                     <ComponentKsbChips mappings={component.ksbMappings} sourceLabels={ksbSourceLabels} />
                   </button>
                   <div className="hidden items-center gap-2 sm:flex">
@@ -1999,6 +2066,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
   const tone = componentToneClasses(meta?.tone);
   const validationIssues = validateComponentAuthoring(component);
   const fieldError = (path: string) => validationIssues.find(issue => issue.path.endsWith(path))?.message || '';
+  const showApprenticeshipSettings = component.type !== 'quiz' && component.type !== 'monthly-ksb-quiz';
   return (
     <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
       <div className="border-b border-background-200 bg-background-100/60 px-5 py-4">
@@ -2046,6 +2114,25 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             <NumberInput label="Points" value={component.points} min={0} step={1} onChange={value => onChange({ points: value })} error={fieldError('points')} />
           </div>
         </EditorSection>
+
+        {showApprenticeshipSettings && (
+          <EditorSection title="Apprenticeship settings" icon="ri-settings-3-line">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
+              <Checkbox label="Workplace evidence required" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
+              <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
+            </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
+              <TextArea label="Evidence required" value={String(component.settings.evidenceRequired ?? '-')} onChange={value => onSettingChange('evidenceRequired', value)} rows={2} error={fieldError('settings.evidenceInstructions')} />
+            </div>
+            <TextArea label="Reflection prompt" value={String(component.settings.reflectionPrompt ?? '')} onChange={value => onSettingChange('reflectionPrompt', value)} rows={3} error={fieldError('settings.reflectionPrompt')} />
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
+              <TextInput label="Version" value={String(component.settings.version ?? '0.1')} onChange={value => onSettingChange('version', value)} error={fieldError('settings.version')} />
+            </div>
+          </EditorSection>
+        )}
       </div>
     </section>
   );
@@ -2215,7 +2302,7 @@ function TypeSpecificFields({
     };
     return (
       <EditorBlock title="Recording placeholder">
-        <p className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[11px] font-medium text-foreground-500">Recording files are attached later after cohort allocation. This placeholder reserves the lesson space and completion rule.</p>
+        <p className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[11px] font-medium text-foreground-500">Recording files are attached later after cohort allocation. This placeholder reserves the component space and completion rule.</p>
         <div className="rounded-xl border border-background-200 bg-background-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2279,10 +2366,10 @@ function TypeSpecificFields({
     };
 
     return (
-      <EditorBlock title="Video lesson">
+      <EditorBlock title="Video component">
         {(getString('legacySourceType') === 'Shortcode' || getString('sourceType') === 'Shortcode' || getBool('legacyUnsupportedSource')) && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-            This lesson uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.
+            This component uses a legacy Shortcode source. Shortcode playback is not supported in the new Module Builder, so the original value is preserved until you choose a supported source.
           </p>
         )}
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
@@ -2295,11 +2382,11 @@ function TypeSpecificFields({
         </div>
 
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2 md:items-end">
-          <NumberInput label="Lesson duration (minutes)" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
+          <NumberInput label="Component duration (minutes)" value={getNumber('durationMinutes')} min={0} step={1} onChange={value => onSettingChange('durationMinutes', value)} />
           <NumberInput label="Required progress (%)" value={getNumber('requiredProgressPercentage')} min={0} max={100} step={1} onChange={value => onSettingChange('requiredProgressPercentage', value)} error={fieldError('settings.requiredProgressPercentage')} />
         </div>
 
-        <RichTextDraft label="Lesson content" value={getString('lessonContent')} onChange={value => onSettingChange('lessonContent', value)} rows={10} />
+        <RichTextDraft label="Component content" value={getString('lessonContent')} onChange={value => onSettingChange('lessonContent', value)} rows={10} />
       </EditorBlock>
     );
   }
@@ -2335,8 +2422,8 @@ function TypeSpecificFields({
       <EditorBlock title="Reading source and content">
         <SelectInput label="Reading source" value={getString('readingSource')} options={READING_SOURCE_TYPES} onChange={value => onSettingChange('readingSource', value)} />
         {getString('readingSource') === 'URL' && <TextInput label="Reading URL" value={getString('resourceUrl')} onChange={value => onSettingChange('resourceUrl', value)} error={fieldError('settings.resourceUrl')} />}
-        <RichTextDraft label="Short description of the lesson" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
-        <RichTextDraft label="Lesson content" value={getString('readingContent')} onChange={value => onSettingChange('readingContent', value)} rows={14} />
+        <RichTextDraft label="Short description of the component" value={getString('shortDescription')} onChange={value => onSettingChange('shortDescription', value)} rows={5} compact />
+        <RichTextDraft label="Component content" value={getString('readingContent')} onChange={value => onSettingChange('readingContent', value)} rows={14} />
       </EditorBlock>
     );
   }
@@ -2387,15 +2474,6 @@ function TypeSpecificFields({
     );
   }
 
-  if (component.type === 'workplace-evidence') {
-    return (
-      <EditorBlock title="Workplace evidence">
-        <TextArea label="Evidence instructions" value={getString('evidenceInstructions')} onChange={value => onSettingChange('evidenceInstructions', value)} rows={4} />
-        <TextInput label="Accepted evidence types" value={getString('acceptedEvidenceTypes')} onChange={value => onSettingChange('acceptedEvidenceTypes', value)} />
-      </EditorBlock>
-    );
-  }
-
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
@@ -2442,27 +2520,31 @@ function LinkedQuizSelector({
   onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
 }) {
   const settings = component.settings;
-  const liveProgrammeKeys = new Set(liveProgrammes.map(programme => normaliseQuizText(programme.name)));
-  const deliveryUsages = uniqueDeliveryUsages([
+  const allDeliveryUsages = uniqueDeliveryUsages([
     ...((module as ModuleBuilderListItem).deliveryUsages || []),
     ...availableModules.flatMap(item => item.deliveryUsages || []),
     ...availableModules.map(moduleDeliveryUsageFallback),
-  ]).filter(usage => !liveProgrammeKeys.size || liveProgrammeKeys.has(normaliseQuizText(usage.programme)));
+  ]);
+  const programmeAliases = buildProgrammeAliasMap(liveProgrammes, allDeliveryUsages);
+  const liveProgrammeKeys = new Set(Array.from(programmeAliases.keys()));
+  const deliveryUsages = allDeliveryUsages.filter(usage => !liveProgrammeKeys.size || programmeAliases.has(normaliseQuizKey(usage.programme)) || programmeAliases.has(normaliseQuizKey(usage.programmeId)));
   const requestedProgramme = String(settings.quizProgramme || module.programmeName || '');
   const programmeOptions = uniqueTextOptions([
     ...liveProgrammes.map(programme => programme.name),
+    ...deliveryUsages.map(usage => usage.programme),
   ]);
-  const selectedProgramme = optionOrFirst(requestedProgramme, programmeOptions);
+  const selectedProgramme = optionOrFirst(canonicalProgrammeName(requestedProgramme, programmeAliases), programmeOptions);
 
-  const pathsForProgramme = deliveryUsages.filter(usage => matchesQuizText(usage.programme, selectedProgramme));
+  const selectedProgrammeKeys = programmeMatchKeys(selectedProgramme, programmeAliases);
+  const pathsForProgramme = deliveryUsages.filter(usage => matchesProgrammeUsage(usage, selectedProgrammeKeys));
   const cohortOptions = uniqueTextOptions(pathsForProgramme.map(usage => usage.cohort));
   const selectedCohort = optionOrFirst(String(settings.quizCohort || ''), cohortOptions);
 
-  const pathsForCohort = pathsForProgramme.filter(usage => !selectedCohort || matchesQuizText(usage.cohort, selectedCohort));
+  const pathsForCohort = pathsForProgramme.filter(usage => matchesPathValue(usage.cohort, usage.cohortId, selectedCohort));
   const groupOptions = uniqueTextOptions(pathsForCohort.map(usage => usage.group));
   const selectedGroup = optionOrFirst(String(settings.quizGroup || ''), groupOptions);
 
-  const pathsForGroup = pathsForCohort.filter(usage => !selectedGroup || matchesQuizText(usage.group, selectedGroup));
+  const pathsForGroup = pathsForCohort.filter(usage => matchesPathValue(usage.group, usage.groupId, selectedGroup));
   const moduleOptions = uniqueTextOptions(pathsForGroup.map(usage => usage.moduleTitle));
   const selectedModule = optionOrFirst(String(settings.quizModule || module.title || ''), moduleOptions);
   const selectedWeekNumber = String(settings.quizWeekNumber || week.weekNumber || 1);
@@ -2493,13 +2575,22 @@ function LinkedQuizSelector({
     if (quiz.assessmentType && !['quiz', 'monthly-ksb-quiz'].includes(String(quiz.assessmentType).toLowerCase())) return false;
     return true;
   });
-  const programmeQuizzes = eligibleQuizzes.filter(quiz => !selectedProgramme || matchesQuizText(quiz.programme, selectedProgramme));
+  const programmeQuizzes = eligibleQuizzes.filter(quiz => !selectedProgrammeKeys.size || selectedProgrammeKeys.has(normaliseQuizKey(quiz.programme)) || selectedProgrammeKeys.has(normaliseQuizKey(quiz.programmeId)));
   const moduleQuizzes = programmeQuizzes.filter(quiz => !selectedModule || matchesQuizText(quiz.module, selectedModule));
   const weekQuizzes = moduleQuizzes.filter(quiz => weekCandidates.has(String(quiz.weekId || '')));
   const quizOptions = uniqueQuizzes(weekQuizzes.length ? weekQuizzes : moduleQuizzes.length ? moduleQuizzes : programmeQuizzes);
   const selectedQuiz = quizOptions.find(quiz => String(quiz.id) === selectedQuizId)
     || null;
   const selectedQuizValue = selectedQuiz ? selectedQuizId : '';
+  const resolvedQuizWeekId = String(selectedQuiz?.weekId || settings.quizWeekId || Array.from(weekCandidates)[0] || '');
+  const [technicalOpen, setTechnicalOpen] = useState(false);
+  const pathSummary = [
+    { label: 'Programme', value: selectedProgramme || 'Not set' },
+    { label: 'Cohort', value: selectedCohort || 'Not set' },
+    { label: 'Group', value: selectedGroup || 'Not set' },
+    { label: 'Module', value: selectedModule || 'Not set' },
+    { label: 'Week', value: weekOptions.find(option => option.value === selectedWeekNumber)?.label || selectedWeekNumber || 'Not set' },
+  ];
 
   const applyQuiz = (quizId: string) => {
     const quiz = quizOptions.find(item => String(item.id) === quizId);
@@ -2514,35 +2605,75 @@ function LinkedQuizSelector({
 
   return (
     <div className="space-y-4">
-      <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium text-primary-700">
-        This component links to an existing quiz from the LMS quiz table. Select the delivery path, then choose a quiz attached to that week.
-      </p>
+      <div className="rounded-xl border border-primary-100 bg-primary-50/80 px-3 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white">
+              <i className="ri-questionnaire-line text-sm"></i>
+            </span>
+            <div className="min-w-0">
+              <p className="text-[12px] font-bold text-primary-950">Linked LMS quiz</p>
+              <p className="truncate text-[11px] font-semibold text-primary-700">{selectedQuiz ? selectedQuiz.title : `${quizOptions.length} quiz${quizOptions.length === 1 ? '' : 'zes'} available`}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {pathSummary.map(item => (
+              <span key={item.label} className="inline-flex max-w-[12rem] items-center gap-1 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-700 ring-1 ring-primary-100" title={`${item.label}: ${item.value}`}>
+                <span className="text-foreground-400">{item.label}</span>
+                <span className="truncate">{item.value}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <SelectInput label="Programme" value={selectedProgramme} options={programmeOptions} onChange={value => {
           onSettingChange('quizProgramme', value);
           onSettingChange('quizCohort', '');
           onSettingChange('quizGroup', '');
           onSettingChange('quizModule', '');
+          onSettingChange('quizWeekNumber', '');
+          onSettingChange('quizWeekId', '');
           onSettingChange('linkedQuizId', '');
+          onSettingChange('linkedActivity', '');
         }} />
         <SelectInput label="Cohort" value={selectedCohort} options={cohortOptions} onChange={value => {
           onSettingChange('quizCohort', value);
           onSettingChange('quizGroup', '');
           onSettingChange('quizModule', '');
+          onSettingChange('quizWeekNumber', '');
+          onSettingChange('quizWeekId', '');
           onSettingChange('linkedQuizId', '');
-        }} />
+          onSettingChange('linkedActivity', '');
+        }} disabled={!cohortOptions.filter(Boolean).length} helper={!cohortOptions.filter(Boolean).length ? 'No cohorts for this programme.' : undefined} />
         <SelectInput label="Group" value={selectedGroup} options={groupOptions} onChange={value => {
           onSettingChange('quizGroup', value);
           onSettingChange('quizModule', '');
+          onSettingChange('quizWeekNumber', '');
+          onSettingChange('quizWeekId', '');
           onSettingChange('linkedQuizId', '');
-        }} />
-        <SelectInput label="Module" value={selectedModule} options={moduleOptions} onChange={value => { onSettingChange('quizModule', value); onSettingChange('linkedQuizId', ''); }} />
+          onSettingChange('linkedActivity', '');
+        }} disabled={!groupOptions.filter(Boolean).length} helper={!groupOptions.filter(Boolean).length ? 'No groups for this cohort.' : undefined} />
+        <SelectInput label="Module" value={selectedModule} options={moduleOptions} onChange={value => {
+          onSettingChange('quizModule', value);
+          onSettingChange('quizWeekNumber', '');
+          onSettingChange('quizWeekId', '');
+          onSettingChange('linkedQuizId', '');
+          onSettingChange('linkedActivity', '');
+        }} disabled={!moduleOptions.filter(Boolean).length} helper={!moduleOptions.filter(Boolean).length ? 'No modules for this group.' : undefined} />
         <SelectInput
           label="Week"
           value={selectedWeekNumber}
           options={weekOptions.map(option => option.value)}
           labels={Object.fromEntries(weekOptions.map(option => [option.value, option.label]))}
-          onChange={value => { onSettingChange('quizWeekNumber', value); onSettingChange('linkedQuizId', ''); }}
+          onChange={value => {
+            const nextWeek = weekOptions.find(option => option.value === value)?.week;
+            onSettingChange('quizWeekNumber', value);
+            onSettingChange('quizWeekId', nextWeek ? Array.from(quizWeekIdCandidates(selectedModuleItem, nextWeek, selectedProgramme))[0] || '' : '');
+            onSettingChange('linkedQuizId', '');
+            onSettingChange('linkedActivity', '');
+          }}
+          disabled={!weekOptions.length}
         />
         <SelectInput
           label={loading ? 'Loading quizzes...' : 'Quiz'}
@@ -2550,6 +2681,8 @@ function LinkedQuizSelector({
           options={['', ...quizOptions.map(quiz => String(quiz.id))]}
           labels={{ '': quizOptions.length ? 'Choose quiz' : 'No quizzes available', ...Object.fromEntries(quizOptions.map(quiz => [String(quiz.id), quiz.title])) }}
           onChange={applyQuiz}
+          disabled={loading || !quizOptions.length}
+          helper={!loading && !quizOptions.length ? 'No quiz matches this delivery path.' : undefined}
         />
       </div>
       {selectedQuiz ? (
@@ -2564,7 +2697,24 @@ function LinkedQuizSelector({
           {loading ? 'Loading LMS quizzes...' : 'No quiz selected. Choose any available LMS quiz from the list above.'}
         </div>
       )}
-      <ReadOnlyInput label="Resolved quiz week id" value={String(selectedQuiz?.weekId || settings.quizWeekId || Array.from(weekCandidates)[0] || '')} />
+      <div className="rounded-xl border border-background-200 bg-background-50">
+        <button
+          type="button"
+          onClick={() => setTechnicalOpen(open => !open)}
+          className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100/70"
+        >
+          <span className="inline-flex items-center gap-2">
+            <i className="ri-code-s-slash-line text-primary-600"></i>
+            Technical link details
+          </span>
+          <i className={`ri-arrow-down-s-line text-base transition-transform ${technicalOpen ? 'rotate-180' : ''}`}></i>
+        </button>
+        {technicalOpen && (
+          <div className="border-t border-background-200 p-3">
+            <ReadOnlyInput label="Resolved quiz week id" value={resolvedQuizWeekId} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -2615,8 +2765,62 @@ function normaliseQuizText(value: unknown) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function normaliseQuizKey(value: unknown) {
+  return normaliseQuizText(value).replace(/[^a-z0-9]+/g, '');
+}
+
 function matchesQuizText(left: unknown, right: unknown) {
   return normaliseQuizText(left) === normaliseQuizText(right);
+}
+
+function buildProgrammeAliasMap(programmes: CurriculumProgramme[], usages: ModuleDeliveryUsage[] = []) {
+  const aliases = new Map<string, string>();
+  programmes.forEach(programme => {
+    const name = String(programme.name || programme.sourceId || programme.id || '').trim();
+    if (!name) return;
+    [programme.name, programme.id, programme.sourceId].forEach(value => {
+      const key = normaliseQuizKey(value);
+      if (key) aliases.set(key, name);
+    });
+  });
+  usages.forEach(usage => {
+    const name = String(usage.programme || usage.programmeId || '').trim();
+    if (!name) return;
+    [usage.programme, usage.programmeId].forEach(value => {
+      const key = normaliseQuizKey(value);
+      if (key && !aliases.has(key)) aliases.set(key, name);
+    });
+  });
+  return aliases;
+}
+
+function canonicalProgrammeName(value: unknown, aliases: Map<string, string>) {
+  const key = normaliseQuizKey(value);
+  return key && aliases.has(key) ? aliases.get(key) || String(value || '') : String(value || '');
+}
+
+function programmeMatchKeys(programmeName: string, aliases: Map<string, string>) {
+  const canonicalName = canonicalProgrammeName(programmeName, aliases);
+  const keys = new Set<string>();
+  const canonicalKey = normaliseQuizKey(canonicalName);
+  if (canonicalKey) keys.add(canonicalKey);
+  aliases.forEach((name, aliasKey) => {
+    if (matchesQuizText(name, canonicalName)) keys.add(aliasKey);
+  });
+  return keys;
+}
+
+function matchesProgrammeUsage(usage: ModuleDeliveryUsage, programmeKeys: Set<string>) {
+  if (!programmeKeys.size) return true;
+  return programmeKeys.has(normaliseQuizKey(usage.programme)) || programmeKeys.has(normaliseQuizKey(usage.programmeId));
+}
+
+function matchesPathValue(label: unknown, id: unknown, selected: unknown) {
+  const selectedText = String(selected || '').trim();
+  if (!selectedText) return true;
+  return matchesQuizText(label, selectedText)
+    || normaliseQuizKey(label) === normaliseQuizKey(selectedText)
+    || normaliseQuizKey(id) === normaliseQuizKey(selectedText);
 }
 
 function quizWeekIdCandidates(module: ModuleCatalogueItem, week: ModuleWeek, selectedProgramme: string) {
@@ -2926,7 +3130,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
     const mappedKsbs = uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]);
     const weekWeightSummary = ksbWeightSummary(mappedKsbs);
     const readinessItems = [
-      { label: 'Lessons', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
+      { label: 'Components', ready: week.components.length > 0, value: week.components.length ? `${week.components.length} added` : 'Missing' },
       { label: 'OTJH', ready: totalOtjh > 0, value: totalOtjh > 0 ? `${totalOtjh.toFixed(1)} h` : 'Missing' },
       { label: 'KSBs', ready: mappedKsbs.length > 0, value: mappedKsbs.length ? `${mappedKsbs.length} mapped` : 'Needs mapping' },
     ];
@@ -2993,7 +3197,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Component readiness</p>
-            <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected lesson'}</h3>
+            <h3 className="mt-1 truncate text-sm font-heading font-bold text-foreground-950">{readableComponentTitle(component.title) || 'Selected component'}</h3>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${componentReadyPercent === 100 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {componentReadyPercent}%
@@ -3759,7 +3963,7 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
         <div className="px-5 py-4 bg-primary-950 text-white flex items-start justify-between gap-4">
           <div>
             <h3 className="text-base font-heading font-bold text-white">Create new module</h3>
-            <p className="mt-1 text-[12px] text-white/70">Set the module details first, then open the builder to add weeks, lessons and KSBs.</p>
+            <p className="mt-1 text-[12px] text-white/70">Set the module details first, then open the builder to add weeks, components and KSBs.</p>
           </div>
           <button type="button" onClick={onClose} disabled={submitting} className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50" aria-label="Close"><i className="ri-close-line"></i></button>
         </div>
@@ -3926,11 +4130,17 @@ function ksbSetSourceId(set: CurriculumKsbSet) {
 function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumKsbSet[]) {
   const labels: Record<string, string> = {};
   standards.forEach(standard => {
-    labels[ksbStandardSourceId(standard)] = `Skills standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
+    const label = `Skills standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
+    labels[ksbStandardSourceId(standard)] = label;
+    labels[String(standard.id || '').trim()] = label;
   });
   ksbSets.forEach(set => {
     const label = `KSB profile: ${set.programmeName || set.standard || set.profileId || set.frameworkId || 'Profile'}${set.standard ? ` (${set.standard})` : ''}`;
-    labels[ksbSetSourceId(set)] = label;
+    const prefixedSourceId = ksbSetSourceId(set);
+    labels[prefixedSourceId] = label;
+    labels[prefixedSourceId.replace(/^profile:/, '')] = label;
+    if (set.frameworkId) labels[String(set.frameworkId).trim()] = label;
+    if (set.profileId) labels[`ksb-${String(set.profileId).trim()}`] = label;
   });
   return labels;
 }
@@ -3943,7 +4153,15 @@ function ksbSourceLabel(mapping: KsbMapping, sourceLabels: Record<string, string
   if (sourceId && sourceId.startsWith('standard:')) return `Skills standard: ${sourceId.replace(/^standard:/, '')}`;
   if (sourceType === 'framework') return sourceId ? `KSB profile: ${sourceId}` : 'KSB profile';
   if (sourceType === 'standard') return sourceId ? `Skills standard: ${sourceId}` : 'Skills standard';
-  return 'Legacy source';
+  return 'No source';
+}
+
+function conciseKsbSourceLabel(label: string) {
+  const text = String(label || '').trim();
+  if (!text || text === 'No source') return 'No source';
+  return text
+    .replace(/^KSB profile:\s*/i, 'Profile - ')
+    .replace(/^Skills standard:\s*/i, 'Standard - ');
 }
 
 function standardForModule(standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
@@ -4404,14 +4622,38 @@ function ReadOnlyMetricChip({ label, value, suffix, tone }: {
   );
 }
 
-function SelectInput({ label, value, options, labels, onChange, error }: { label: string; value: string; options: readonly string[]; labels?: Record<string, string>; onChange: (value: string) => void; error?: string }) {
+function SelectInput({
+  label,
+  value,
+  options,
+  labels,
+  onChange,
+  error,
+  helper,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  options: readonly string[];
+  labels?: Record<string, string>;
+  onChange: (value: string) => void;
+  error?: string;
+  helper?: string;
+  disabled?: boolean;
+}) {
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <select value={value} onChange={event => onChange(event.target.value)} className={`mt-1 w-full rounded-lg border bg-background-50 px-3 py-2 text-[13px] text-foreground-900 focus:outline-none ${error ? 'border-red-300 focus:border-red-400' : 'border-foreground-200/60 focus:border-primary-300'}`}>
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={event => onChange(event.target.value)}
+        className={`mt-1 w-full rounded-lg border px-3 py-2 text-[13px] text-foreground-900 focus:outline-none disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400 ${error ? 'border-red-300 bg-background-50 focus:border-red-400' : 'border-foreground-200/60 bg-background-50 focus:border-primary-300'}`}
+      >
         {options.map(option => <option key={option || 'empty'} value={option}>{labels?.[option] || option}</option>)}
       </select>
       {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
+      {!error && helper && <span className="mt-1 block text-[11px] font-semibold text-foreground-400">{helper}</span>}
     </label>
   );
 }
@@ -4482,7 +4724,7 @@ function ModuleCatalogueCard({
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button onClick={onKsbMap} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
             <i className="ri-node-tree"></i>
-            KSB Map
+            Review KSBs
           </button>
           <button onClick={onBuild} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
             <i className="ri-hammer-line"></i>
@@ -4525,8 +4767,7 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
     { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
     { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
   ];
-  const totalWeight = rows.reduce((total, row) => total + row.weight, 0);
-  const countByKind = {
+  const entriesByKind = {
     K: rows.filter(row => row.code.toUpperCase().startsWith('K')).length,
     S: rows.filter(row => row.code.toUpperCase().startsWith('S')).length,
     B: rows.filter(row => row.code.toUpperCase().startsWith('B')).length,
@@ -4538,34 +4779,27 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
         <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Module KSB map</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Coverage</p>
               <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
-              <p className="mt-1 text-[11px] font-semibold text-white/70">Mapped from module, week and component KSB assignments.</p>
+              <p className="mt-1 text-[11px] font-semibold text-white/70">Review where each KSB is used across this module.</p>
             </div>
             <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
               <i className="ri-close-line"></i>
             </button>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-5">
-            <ModuleKsbMapMetric label="Unique KSBs" value={rows.length} />
-            <ModuleKsbMapMetric label="Total weight" value={`${totalWeight}%`} />
-            <ModuleKsbMapMetric label="Knowledge" value={countByKind.K} />
-            <ModuleKsbMapMetric label="Skills" value={countByKind.S} />
-            <ModuleKsbMapMetric label="Behaviours" value={countByKind.B} />
           </div>
         </div>
         <div className="border-b border-background-200 bg-background-50 px-5 py-3">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search KSB code, profile, description or location..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, description or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
             </div>
             <div className="flex flex-wrap gap-1 rounded-xl border border-background-200 bg-background-100 p-1">
               {[
                 { key: 'all' as const, label: 'All', count: rows.length },
-                { key: 'K' as const, label: 'Knowledge', count: countByKind.K },
-                { key: 'S' as const, label: 'Skills', count: countByKind.S },
-                { key: 'B' as const, label: 'Behaviours', count: countByKind.B },
+                { key: 'K' as const, label: 'Knowledge', count: entriesByKind.K },
+                { key: 'S' as const, label: 'Skills', count: entriesByKind.S },
+                { key: 'B' as const, label: 'Behaviours', count: entriesByKind.B },
               ].map(item => (
                 <button key={item.key} type="button" onClick={() => setKindFilter(item.key)} className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-bold transition-smooth ${kindFilter === item.key ? 'bg-primary-500 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-50'}`}>
                   {item.label}
@@ -4597,21 +4831,29 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className={`rounded-md border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
-                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.locations.length} location{row.locations.length === 1 ? '' : 's'}</span>
+                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.locations.length} place{row.locations.length === 1 ? '' : 's'}</span>
                             </div>
-                            <p className="mt-1 truncate text-[10px] font-bold text-foreground-500">{row.source}</p>
+                            <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
                           </div>
-                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${ksbCodeChipClass(row.code)}`}>{row.weight}%</span>
+                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${ksbCodeChipClass(row.code)}`}>Weight {row.weight}%</span>
                         </div>
                         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
                           <div className={`h-full rounded-full ${row.code.toUpperCase().startsWith('S') ? 'bg-amber-400' : row.code.toUpperCase().startsWith('B') ? 'bg-emerald-400' : 'bg-primary-500'}`} style={{ width: `${Math.min(Math.max(row.weight, 4), 100)}%` }} />
                         </div>
-                        <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-foreground-600">{row.description || 'No description available.'}</p>
-                        <div className="mt-3 flex flex-wrap gap-1.5">
+                        <div className="mt-3 space-y-2">
+                          <div className="rounded-lg bg-background-100 px-2 py-1.5" title={row.sourceFull}>
+                            <p className="text-[8px] font-black uppercase text-foreground-400">Source</p>
+                            <p className="truncate text-[10px] font-bold text-foreground-700">{row.source}</p>
+                          </div>
+                          <div>
+                            <p className="mb-1 text-[8px] font-black uppercase text-foreground-400">Used in</p>
+                            <div className="flex flex-wrap gap-1.5">
                           {row.locations.slice(0, 2).map(location => (
                             <span key={location} className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-600">{location}</span>
                           ))}
                           {row.locations.length > 2 && <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-black text-foreground-500">+{row.locations.length - 2}</span>}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -4631,7 +4873,7 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
             <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-4 py-12 text-center">
               <i className="ri-node-tree mb-2 block text-3xl text-foreground-300"></i>
               <p className="text-[13px] font-bold text-foreground-700">No KSBs mapped yet</p>
-              <p className="mt-1 text-[12px] text-foreground-500">Open the builder and map KSBs to weeks or components.</p>
+              <p className="mt-1 text-[12px] text-foreground-500">Use Edit mappings to attach KSBs to weeks or components.</p>
             </div>
           )}
         </div>
@@ -4639,19 +4881,10 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
           <button onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">Close</button>
           <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
             <i className="ri-hammer-line"></i>
-            Open builder
+            Edit mappings
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ModuleKsbMapMetric({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-2">
-      <p className="text-[9px] font-bold uppercase text-white/60">{label}</p>
-      <p className="mt-0.5 text-lg font-heading font-black leading-tight text-white">{value}</p>
     </div>
   );
 }
@@ -5251,18 +5484,21 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     code: string;
     description: string;
     source: string;
+    sourceFull: string;
     weight: number;
     locations: string[];
   }>();
   const addMapping = (mapping: KsbMapping, location: string) => {
     const code = String(mapping.code || '').trim().toUpperCase();
     if (!code) return;
-    const source = ksbSourceLabel(mapping, sourceLabels);
-    const key = `${code}::${String(mapping.sourceId || source).trim()}`;
+    const sourceFull = ksbSourceLabel(mapping, sourceLabels);
+    const source = conciseKsbSourceLabel(sourceFull);
+    const key = `${code}::${String(mapping.sourceId || sourceFull).trim()}`;
     const current = rows.get(key) || {
       code,
       description: mapping.description || '',
       source,
+      sourceFull,
       weight: 0,
       locations: [],
     };
@@ -5342,38 +5578,27 @@ function removeWeekFromModule(module: ModuleCatalogueItem, weekId: string): Modu
   };
 }
 
-function createWeekTemplateComponents(week: ModuleWeek, options: { skipExistingTypes?: boolean } = {}) {
+function createWeekTemplateComponents(week: ModuleWeek, options: { skipExistingTypes?: boolean; types?: ModuleComponentType[] } = {}) {
   const existingTypes = new Set(week.components.map(component => component.type));
-  const templates: Array<{ type: ModuleComponentType; title: string; otjh: number; points: number; description: string }> = [
-    { type: 'live-session', title: 'Live Teams session', otjh: 2, points: 20, description: `Tutor-led live session for Week ${week.weekNumber}.` },
-    { type: 'recording-placeholder', title: 'Recorded session placeholder', otjh: 2, points: 10, description: `Auto-published recording placeholder for Week ${week.weekNumber}.` },
-    { type: 'video', title: 'Pre-recorded video', otjh: 0, points: 10, description: 'Short video introducing the weekly topic.' },
-    { type: 'podcast', title: 'Podcast', otjh: 2, points: 10, description: 'Audio learning activity for the weekly topic.' },
-    { type: 'reading', title: 'Reading text', otjh: 2, points: 10, description: 'Core reading material for the weekly topic.' },
-    { type: 'powerpoint', title: 'PowerPoint', otjh: 2, points: 5, description: 'Slide deck for the week.' },
-    { type: 'quiz', title: 'Weekly quiz', otjh: 2, points: 20, description: 'Knowledge check for this week.' },
-    { type: 'reflection', title: 'Reflection activity', otjh: 0.5, points: 15, description: 'Learner reflection activity for the week.' },
-    { type: 'workplace-evidence', title: 'Workplace evidence upload', otjh: 0.5, points: 20, description: 'Workplace evidence upload for the weekly KSBs.' },
-  ];
+  const requestedTypes = options.types?.length ? options.types : componentTypes.map(item => item.type);
 
-  return templates
-    .filter(template => !options.skipExistingTypes || !existingTypes.has(template.type))
-    .map((template, index) => ({
-      ...createEmptyComponent(week.id, template.type, week.components.length + index + 1),
-      title: template.title,
-      description: template.description,
-      expectedOtjh: template.otjh,
-      points: template.points,
-    }));
+  return requestedTypes
+    .filter(type => !options.skipExistingTypes || !existingTypes.has(type))
+    .map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
 }
 
-function createNamedComponent(week: ModuleWeek, type: ModuleComponentType) {
-  const component = createEmptyComponent(week.id, type, week.components.length + 1);
+function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index = week.components.length + 1) {
+  const component = createEmptyComponent(week.id, type, index);
   const label = componentTypes.find(item => item.type === type)?.label || 'Component';
   return {
     ...component,
     title: label,
+    description: componentTypeDescription(type),
   };
+}
+
+function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
+  return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
 }
 
 function cloneComponentForWeek(component: ModuleComponent, weekId: string, title: string): ModuleComponent {
@@ -5395,7 +5620,7 @@ function createLocalComponentId() {
   return makeAuthoringId('COMP');
 }
 
-function lessonTypeDescription(type: ModuleComponentType) {
+function componentTypeDescription(type: ModuleComponentType) {
   const descriptions: Record<ModuleComponentType, string> = {
     'live-session': 'Tutor-led session via Teams',
     'recording-placeholder': 'Auto-published after live session',
@@ -5406,12 +5631,11 @@ function lessonTypeDescription(type: ModuleComponentType) {
     quiz: 'Short weekly check',
     assignment: 'Monthly submission task',
     reflection: 'Learner written reflection',
-    'workplace-evidence': 'Workplace artefact upload',
     checkpoint: 'End-of-month KSB check',
     'monthly-ksb-quiz': 'Tracks KSB progression',
     'coaching-preparation': 'Monthly coaching meeting prep',
   };
-  return descriptions[type] || 'Add a lesson component';
+  return descriptions[type] || 'Add a component';
 }
 
 function nextModuleNumber(modules: ModuleCatalogueItem[]) {

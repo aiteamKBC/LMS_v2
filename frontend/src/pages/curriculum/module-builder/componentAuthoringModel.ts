@@ -10,7 +10,6 @@ export type ModuleComponentType =
   | 'quiz'
   | 'monthly-ksb-quiz'
   | 'reflection'
-  | 'workplace-evidence'
   | 'assignment'
   | 'checkpoint'
   | 'coaching-preparation';
@@ -60,7 +59,6 @@ function advancedDefaults(type: ModuleComponentType): ComponentSettings {
     quiz: 'Submit',
     'monthly-ksb-quiz': 'Submit monthly KSB quiz',
     reflection: 'Submit reflection',
-    'workplace-evidence': 'Upload + describe',
     assignment: 'Submit assignment',
     checkpoint: 'Complete checkpoint',
     'coaching-preparation': 'Complete coaching preparation',
@@ -71,7 +69,6 @@ function advancedDefaults(type: ModuleComponentType): ComponentSettings {
     'monthly-ksb-quiz': 'Quiz result',
     checkpoint: 'Quiz result',
     reflection: 'Reflection + signature',
-    'workplace-evidence': 'File + 100-word description',
     assignment: 'Submission file',
     'coaching-preparation': 'Preparation notes',
   };
@@ -275,22 +272,6 @@ const definitions: ComponentAuthoringDefinition[] = [
     defaultSettings: { ...advancedDefaults('reflection'), minimumWordCount: 250, learnerGuidance: '', tutorReviewGuidance: '' },
   },
   {
-    type: 'workplace-evidence',
-    label: 'Evidence Task',
-    icon: 'ri-upload-cloud-2-line',
-    group: 'Assessment',
-    tone: 'lime',
-    defaultOtjh: 0.5,
-    defaultPoints: 20,
-    reflectionDefault: false,
-    workplaceEvidenceDefault: true,
-    tutorValidationDefault: true,
-    supportedSources: [],
-    requiredSettings: ['evidenceInstructions'],
-    capabilities: ['ksb-mapping', 'reflection', 'evidence', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('workplace-evidence'), evidenceInstructions: '', acceptedEvidenceTypes: 'Document, image, video, witness statement', assessmentChecklist: '', minimumDescriptionWords: 100 },
-  },
-  {
     type: 'checkpoint',
     label: 'Checkpoint Quiz',
     icon: 'ri-checkbox-circle-line',
@@ -341,8 +322,17 @@ const definitions: ComponentAuthoringDefinition[] = [
 ];
 
 export const componentAuthoringDefinitions = Object.freeze(definitions);
-export const componentTypes = componentAuthoringDefinitions.map(({ type, label, icon, group, tone }) => ({ type, label, icon, group, tone }));
-export const componentTypeGroups = ['Live & recorded', 'Learning materials', 'Assessment', 'Monthly cycle'];
+const hiddenComponentTypes = new Set<ModuleComponentType>([
+  'assignment',
+  'reflection',
+  'checkpoint',
+  'monthly-ksb-quiz',
+  'coaching-preparation',
+]);
+export const componentTypes = componentAuthoringDefinitions
+  .filter(({ type }) => !hiddenComponentTypes.has(type))
+  .map(({ type, label, icon, group, tone }) => ({ type, label, icon, group, tone }));
+export const componentTypeGroups = Array.from(new Set(componentTypes.map(item => item.group)));
 
 export function getComponentDefinition(type: ModuleComponentType | string) {
   return componentAuthoringDefinitions.find(item => item.type === type) || componentAuthoringDefinitions.find(item => item.type === 'reading')!;
@@ -408,7 +398,6 @@ export function defaultEvidenceRequired(type: ModuleComponentType) {
 }
 
 export function defaultReflectionPrompt(type: ModuleComponentType) {
-  if (type === 'workplace-evidence') return 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?';
   if (type === 'quiz' || type === 'monthly-ksb-quiz' || type === 'checkpoint') return 'Which questions or topics do you need to revisit after this activity?';
   return 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
 }

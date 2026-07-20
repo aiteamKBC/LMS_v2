@@ -40,12 +40,12 @@ def _format_clock(seconds):
 
 
 def _video_title(component_id):
-    """Live display title for a video component (curriculum.module_authoring_components).
+    """Live display title for a video component (curriculum.components).
     Returns (title, type) or (None, None) if not found / on error."""
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.module_authoring_components WHERE id = %s",
+                "SELECT type, title FROM curriculum.components WHERE id = %s",
                 [component_id],
             )
             row = cur.fetchone()

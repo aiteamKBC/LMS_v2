@@ -95,7 +95,7 @@ class Migration(migrations.Migration):
                         ('created_at', models.DateTimeField(auto_now_add=True)),
                         ('updated_at', models.DateTimeField(auto_now=True)),
                     ],
-                    options={'db_table': 'curriculum"."module_authoring_modules', 'managed': False},
+                    options={'db_table': 'curriculum"."modules', 'managed': False},
                 ),
                 migrations.CreateModel(
                     name='ModuleAuthoringWeek',
@@ -131,7 +131,7 @@ class Migration(migrations.Migration):
                         ('created_at', models.DateTimeField(auto_now_add=True)),
                         ('updated_at', models.DateTimeField(auto_now=True)),
                     ],
-                    options={'db_table': 'curriculum"."module_authoring_components', 'managed': False},
+                    options={'db_table': 'curriculum"."components', 'managed': False},
                 ),
                 migrations.CreateModel(
                     name='ModuleAuthoringKsbMapping',
