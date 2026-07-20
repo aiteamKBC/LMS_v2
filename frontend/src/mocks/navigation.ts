@@ -317,7 +317,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     children: [
       { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
       { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
-      { id: 'curriculum-component-builder', label: 'Component Builder', icon: 'ri-puzzle-line', href: '/curriculum/component-builder' },
       { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
     ],
   },
@@ -343,7 +342,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-coach-profiles', label: 'Coach Profiles', icon: 'ri-user-star-line', href: '/curriculum/staff-profiles?role=coach' },
       { id: 'curriculum-tutor-profiles', label: 'Tutor Profiles', icon: 'ri-presentation-line', href: '/curriculum/staff-profiles?role=tutor' },
       { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
-      { id: 'curriculum-mis-allocation', label: 'MIS Allocation', icon: 'ri-share-line', href: '/curriculum/mis-allocation' },
     ],
   },
   {
@@ -351,13 +349,14 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality & Publishing',
     icon: 'ri-shield-check-line',
     href: '',
+    comingSoon: true,
     children: [
-      { id: 'curriculum-version-control', label: 'Version Control', icon: 'ri-git-branch-line', href: '/curriculum/version-control' },
-      { id: 'curriculum-qa', label: 'Curriculum QA', icon: 'ri-shield-check-line', href: '/curriculum/qa' },
-      { id: 'curriculum-published', label: 'Published Curriculum', icon: 'ri-book-open-line', href: '/curriculum/published' },
+      { id: 'curriculum-version-control', label: 'Version Control', icon: 'ri-git-branch-line', href: '/curriculum/version-control', comingSoon: true },
+      { id: 'curriculum-qa', label: 'Curriculum QA', icon: 'ri-shield-check-line', href: '/curriculum/qa', comingSoon: true },
+      { id: 'curriculum-published', label: 'Published Curriculum', icon: 'ri-book-open-line', href: '/curriculum/published', comingSoon: true },
     ],
   },
-  { id: 'curriculum-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/curriculum/reports' },
+  { id: 'curriculum-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/curriculum/reports', comingSoon: true },
 ];
 
 // ============================================================================
