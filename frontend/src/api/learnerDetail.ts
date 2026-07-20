@@ -22,6 +22,12 @@ export interface LearnerComponentEntry {
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   videoUrl?: string | null;             // present on video components authored with a URL
+  audioUrl?: string | null;             // podcast / reading voice-over
+  contentHtml?: string | null;          // reading rich-text content
+  fileName?: string | null;             // powerpoint / document file name
+  downloadAllowed?: boolean;            // powerpoint download flag
+  reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
+  resourceUrl?: string | null;          // generic external/download URL
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
@@ -79,6 +85,7 @@ export interface LearnerDetail {
   ksbs: LearnerKsbItem[];
   quizAttempts: LearnerQuizAttempt[];
   videoProgress?: LearnerVideoProgress[];
+  componentProgress?: LearnerComponentProgress[];  // non-quiz, non-video completions
   activityFeed?: LearnerActivityEntry[];   // newest first
   totalExpectedOtjh: number;
   plannedHours?: string;      // planned OTJ hours (also stored in Active_users.planned_hours)
@@ -89,8 +96,23 @@ export interface LearnerDetail {
   otjhStatus?: string;        // "On track" | "Need attention" | "At risk" (OTJHoursStatus)
 }
 
+/** A completed non-quiz, non-video component (podcast/reading/slides/reflection/…). */
+export interface LearnerComponentProgress {
+  kind: 'component';
+  componentType: string;      // 'podcast' | 'reading' | 'powerpoint' | 'reflection' | …
+  componentId: string;
+  attempt?: number;
+  ksbs?: string[];
+  feedback?: string;
+  reportedTime?: string;
+  startedAt: string | null;
+  submittedAt: string;
+  timeTaken: string | null;
+}
+
 export interface LearnerActivityEntry {
-  kind: 'quiz' | 'video';
+  kind: 'quiz' | 'video' | 'component';
+  componentType?: string;
   action: string;             // e.g. "Completed quiz", "Watched video"
   title: string;
   detail?: string;            // e.g. "Scored 90% · 18/20"

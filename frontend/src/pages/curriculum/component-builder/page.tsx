@@ -397,6 +397,9 @@ function ComponentEditModal({ component, programmeOptions, moduleOptions, ksbSet
     contentSections: String(component.contentSections),
     quizQuestions: String(component.quizQuestions || ''),
     hasResources: component.hasResources,
+    reflectionRequired: Boolean(component.reflectionRequired),
+    workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
+    tutorValidationRequired: Boolean(component.tutorValidationRequired),
   });
 
   const availableProgrammes = moduleProgrammeOptions.length ? moduleProgrammeOptions : programmeOptions;
@@ -470,6 +473,9 @@ function ComponentEditModal({ component, programmeOptions, moduleOptions, ksbSet
       programme: module?.programme || form.programme,
       week: week?.value || form.week,
       duration: Number(form.duration) || 0,
+      reflectionRequired: form.reflectionRequired,
+      workplaceEvidenceRequired: form.workplaceEvidenceRequired,
+      tutorValidationRequired: form.tutorValidationRequired,
       ksbRefs: form.ksbRefs,
       status: form.status as Component['status'],
       contentSections: Number(form.contentSections) || 0,
@@ -518,6 +524,15 @@ function ComponentEditModal({ component, programmeOptions, moduleOptions, ksbSet
               <span className="block text-[11px] text-foreground-400">Use this when the component already has files, links or learning assets ready.</span>
             </span>
           </label>
+
+          <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-4">
+            <h4 className="mb-3 text-[12px] font-heading font-bold text-foreground-900">Apprenticeship settings</h4>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+              <ToggleField label="Reflection required" checked={form.reflectionRequired} onChange={checked => setForm(prev => ({ ...prev, reflectionRequired: checked }))} />
+              <ToggleField label="Workplace evidence required" checked={form.workplaceEvidenceRequired} onChange={checked => setForm(prev => ({ ...prev, workplaceEvidenceRequired: checked }))} />
+              <ToggleField label="Tutor validation" checked={form.tutorValidationRequired} onChange={checked => setForm(prev => ({ ...prev, tutorValidationRequired: checked }))} />
+            </div>
+          </div>
 
           <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
@@ -597,6 +612,15 @@ function EditableSelect({ label, value, options, onChange, disabled = false }: {
           return <option key={value} value={value}>{label}</option>;
         })}
       </select>
+    </label>
+  );
+}
+
+function ToggleField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-3 rounded-lg border border-background-200 bg-background-100/50 p-3">
+      <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} className="h-4 w-4 rounded border-foreground-300 accent-primary-500" />
+      <span className="text-[12px] font-semibold text-foreground-800">{label}</span>
     </label>
   );
 }
@@ -827,11 +851,16 @@ function createBlankComponent(moduleOptions: ModuleOption[], programmeFilter = '
     programme: module?.programme || '',
     week: week?.value || 'Week 1',
     duration: 60,
+    expectedOtjh: 2,
+    reflectionRequired: false,
+    workplaceEvidenceRequired: false,
+    tutorValidationRequired: false,
     ksbRefs: [],
     status: 'draft',
     lastEdited: '',
     contentSections: 1,
     hasResources: false,
+    settings: {},
   };
 }
 

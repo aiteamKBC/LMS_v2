@@ -3,21 +3,23 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ListSkeleton, TableRowsSkeleton } from '@/components/feature/CurriculumSkeletons';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
+import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { roleNavMap } from '@/mocks/navigation';
 
 const curriculumNav = roleNavMap.curriculum;
 
 export default function CurriculumStudio() {
   const [tab, setTab] = useState<'programmes' | 'cohorts' | 'modules' | 'ksb'>('programmes');
-  const { data, loading, error } = useCurriculumData();
+  const { data, loading: dataLoading, error: dataError } = useCurriculumData({ compact: true });
+  const { programmes: programmeRecords, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
 
-  const programmes = data?.programmes ?? [];
+  const programmes = programmeRecords;
   const modules = data?.modules ?? [];
   const ksbFrameworks = data?.ksbFrameworks ?? [];
   const cohorts = data?.cohorts ?? [];
   const groups = data?.groups ?? [];
-  const activeProgrammes = programmes.filter(p => p.status === 'active').length;
-  const draftProgrammes = programmes.filter(p => p.status === 'draft').length;
+  const loading = dataLoading || programmesLoading;
+  const error = dataError || programmesError;
   const publishedModules = modules.filter(m => m.status === 'published').length;
 
   return (
@@ -25,7 +27,7 @@ export default function CurriculumStudio() {
       <div className="p-6 space-y-6">
         <WorkspaceHeroBanner
           title="Curriculum Studio"
-          description={loading ? 'Loading live curriculum data from LMS...' : `${activeProgrammes} active programmes, ${draftProgrammes} in draft. ${modules.length} modules (${publishedModules} published). ${ksbFrameworks.length} KSB frameworks ready for mapping.`}
+          description={loading ? 'Loading live curriculum data from LMS...' : `${programmes.length} programmes. ${modules.length} modules (${publishedModules} published). ${ksbFrameworks.length} KSB frameworks ready for mapping.`}
           icon="ri-stack-line"
           imageUrl="https://readdy.ai/api/search-image?query=UK%20curriculum%20design%20module%20builder%20programme%20learning%20content%20editorial%20photography%20purple%20gold%20accent%20books%20frameworks%20clean%20modern%20minimalist%20workspace&width=400&height=160&seq=curriculum-hero-01&orientation=landscape"
           imageAlt="Curriculum Studio"
@@ -52,10 +54,9 @@ export default function CurriculumStudio() {
 
         {tab === 'programmes' && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
+            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
               <span>Programme</span>
               <span className="text-center">Standard</span>
-              <span className="text-center">Status</span>
               <span className="text-center">Cohorts</span>
               <span className="text-center">Modules</span>
               <span className="text-center">Sessions</span>
@@ -64,16 +65,13 @@ export default function CurriculumStudio() {
             </div>
             <div className="divide-y divide-background-200/30">
               {loading ? (
-                <TableRowsSkeleton rows={6} columns={8} gridClass="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr]" />
+                <TableRowsSkeleton rows={6} columns={7} gridClass="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr]" />
               ) : programmes.map(p => {
                 const coverage = p.ksbTotal > 0 ? Math.round((p.ksbMapped / p.ksbTotal) * 100) : 0;
                 return (
-                  <div key={p.id} className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
+                  <div key={p.id} className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                     <span className="text-[12px] font-medium text-foreground-900">{p.name}</span>
                     <span className="text-[11px] text-foreground-500 text-center">{p.standard}</span>
-                    <div className="flex justify-center">
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${p.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{p.status}</span>
-                    </div>
                     <span className="text-[11px] text-foreground-500 text-center">{p.cohorts}</span>
                     <span className="text-[11px] text-foreground-500 text-center">{p.modules}</span>
                     <span className="text-[11px] text-foreground-500 text-center">{p.weeks}</span>

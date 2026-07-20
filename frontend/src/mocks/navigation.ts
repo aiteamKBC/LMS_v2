@@ -336,6 +336,8 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-calendar-schedule-line',
     href: '',
     children: [
+      { id: 'curriculum-coach-profiles', label: 'Coach Profiles', icon: 'ri-user-star-line', href: '/curriculum/staff-profiles?role=coach' },
+      { id: 'curriculum-tutor-profiles', label: 'Tutor Profiles', icon: 'ri-presentation-line', href: '/curriculum/staff-profiles?role=tutor' },
       { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
       { id: 'curriculum-mis-allocation', label: 'MIS Allocation', icon: 'ri-share-line', href: '/curriculum/mis-allocation' },
     ],

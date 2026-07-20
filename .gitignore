@@ -95,3 +95,4 @@ desktop.ini
 /backend/engagement_api/sql/
 /backend/run.ps1
 /CLAUDE.md
+/.claude/

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -6,9 +6,11 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import type { LearnerDetail, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { EmptyState } from '@/pages/users/components/ui';
+import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
+import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
 import type React from 'react';
 
 /* ─────────────────────────────────────────────
@@ -107,6 +109,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
     if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
     if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
+    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
     return undefined;
   };
 
@@ -248,6 +251,405 @@ function SectionReveal({ children, className = '', delay = 0 }: { children: Reac
 }
 
 /* ─────────────────────────────────────────────
+   MiniCalendar — a compact, purpose-built month view
+   (current month, session dots) + a short "next
+   sessions" agenda. Pulls the learner's real coaching
+   sessions from the same API the full calendar uses,
+   but is designed natively to fit a dashboard cell.
+   ───────────────────────────────────────────── */
+const MINI_WD = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const MINI_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MINI_TYPE_DOT: Record<string, string> = { coaching: 'bg-teal-500', review: 'bg-red-500', welfare: 'bg-amber-500' };
+
+function miniEventYMD(s?: string | null): { y: number; m: number; d: number } | null {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return { y, m: m - 1, d };
+}
+function miniEventDate(ev: LearnerCalendarEvent) {
+  return miniEventYMD(ev.scheduledDate) || miniEventYMD(ev.date) || miniEventYMD(ev.targetDate);
+}
+function isoOf(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
+  const now = useMemo(() => new Date(), []);
+  const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [vy, setVy] = useState(now.getFullYear());
+  const [vm, setVm] = useState(now.getMonth());
+
+  /* ── Booking flow (real API) ── */
+  const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
+  const [showBook, setShowBook] = useState(false);
+  const [bookType, setBookType] = useState<BookableSessionType>('catch-up');
+  const [bookDate, setBookDate] = useState(() => isoOf(now));
+  const [bookTime, setBookTime] = useState('10:00');
+  const [bookDuration, setBookDuration] = useState('60');
+  const [bookNotes, setBookNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [bookErr, setBookErr] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  const loadEvents = useCallback(() => {
+    if (!kind || !id) { setLoading(false); return () => {}; }
+    let cancelled = false;
+    setLoading(true);
+    fetchLearnerCalendarEvents(kind, id)
+      .then((res) => { if (!cancelled) { setEvents(res.events.filter((e) => e.status !== 'cancelled')); setErr(null); } })
+      .catch((e: Error) => { if (!cancelled) setErr(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [kind, id]);
+
+  useEffect(() => loadEvents(), [loadEvents]);
+
+  // Assigned coach — powers the booking panel copy.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    fetchLearnerCoach(id)
+      .then((res) => { if (!cancelled && res.coachEmail) setCoach({ name: res.coachName || 'your coach', email: res.coachEmail }); })
+      .catch(() => { /* no coach assigned — panel shows a hint */ });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const submitBooking = async () => {
+    if (!kind || !id || submitting) return;
+    setSubmitting(true);
+    setBookErr(null);
+    try {
+      const res = await bookLearnerCalendarSession(kind, id, {
+        sessionType: bookType,
+        scheduledDate: bookDate,
+        scheduledTime: bookTime,
+        durationMinutes: parseInt(bookDuration),
+        notes: bookNotes.trim() || undefined,
+      });
+      setShowBook(false);
+      setBookNotes('');
+      setToast(res.warning ? `Session booked (${res.warning})` : `Session booked with ${coach?.name || 'your coach'}!`);
+      setTimeout(() => setToast(null), 4000);
+      // Jump the view to the booked month and refresh from the server.
+      const dt = miniEventYMD(bookDate);
+      if (dt) { setVy(dt.y); setVm(dt.m); }
+      loadEvents();
+    } catch (e) {
+      setBookErr(e instanceof Error ? e.message : 'Booking failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cells = useMemo(() => {
+    const offset = (new Date(vy, vm, 1).getDay() + 6) % 7; // Monday-first
+    const days = new Date(vy, vm + 1, 0).getDate();
+    const arr: (number | null)[] = [];
+    for (let i = 0; i < offset; i++) arr.push(null);
+    for (let d = 1; d <= days; d++) arr.push(d);
+    return arr;
+  }, [vy, vm]);
+
+  const daysWithEvents = useMemo(() => {
+    const set = new Set<number>();
+    for (const ev of events) { const dt = miniEventDate(ev); if (dt && dt.y === vy && dt.m === vm) set.add(dt.d); }
+    return set;
+  }, [events, vy, vm]);
+
+  const upcoming = useMemo(() => {
+    const floor = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return events
+      .map((ev) => ({ ev, dt: miniEventDate(ev) }))
+      .filter((x): x is { ev: LearnerCalendarEvent; dt: { y: number; m: number; d: number } } =>
+        x.dt !== null && new Date(x.dt.y, x.dt.m, x.dt.d).getTime() >= floor)
+      .sort((a, b) => new Date(a.dt.y, a.dt.m, a.dt.d).getTime() - new Date(b.dt.y, b.dt.m, b.dt.d).getTime())
+      .slice(0, 3);
+  }, [events, now]);
+
+  const isToday = (d: number) => d === now.getDate() && vm === now.getMonth() && vy === now.getFullYear();
+  const prev = () => { if (vm === 0) { setVm(11); setVy(vy - 1); } else { setVm(vm - 1); } };
+  const next = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else { setVm(vm + 1); } };
+  const goToday = () => { setVy(now.getFullYear()); setVm(now.getMonth()); };
+
+  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (err) return <EmptyState text={err} />;
+
+  return (
+    <div>
+      {/* Month nav */}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] font-heading font-semibold text-foreground-900">{MINI_MONTHS[vm]} {vy}</span>
+        <div className="flex items-center gap-1">
+          <button onClick={goToday} className="text-[11px] font-medium px-2 py-1 rounded-md bg-background-100 text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer">Today</button>
+          <button onClick={prev} aria-label="Previous month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
+          <button onClick={next} aria-label="Next month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
+        </div>
+      </div>
+
+      {/* Weekday header */}
+      <div className="grid grid-cols-7 gap-1 mb-1">
+        {MINI_WD.map((w, i) => <div key={i} className="text-center text-[10px] font-semibold text-foreground-400">{w}</div>)}
+      </div>
+
+      {/* Month grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => (
+          <div
+            key={i}
+            className={`h-9 rounded-lg flex flex-col items-center justify-center ${d == null ? '' : 'border border-foreground-100'} ${
+              d != null && isToday(d) ? 'bg-primary-500 border-primary-500 text-white' : 'text-foreground-700'
+            }`}
+          >
+            {d != null && (
+              <>
+                <span className="text-[11px] leading-none">{d}</span>
+                {daysWithEvents.has(d) && <span className={`mt-0.5 w-1.5 h-1.5 rounded-full ${isToday(d) ? 'bg-white' : 'bg-teal-500'}`} />}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Next sessions */}
+      <div className="mt-4 pt-3 border-t border-foreground-100">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Next sessions</p>
+          <button
+            onClick={() => { setShowBook((v) => !v); setBookErr(null); }}
+            className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-smooth cursor-pointer inline-flex items-center gap-1"
+          >
+            <i className={showBook ? 'ri-close-line' : 'ri-add-line'} />{showBook ? 'Cancel' : 'Book session'}
+          </button>
+        </div>
+
+        {upcoming.length === 0 ? (
+          <p className="text-[12px] text-foreground-400">No upcoming sessions.</p>
+        ) : (
+          <div className="space-y-2">
+            {upcoming.map(({ ev, dt }) => (
+              <div key={ev.id} className="flex items-center gap-2.5">
+                <div className="w-9 shrink-0 rounded-lg bg-background-100 py-1 text-center">
+                  <p className="text-[12px] font-bold leading-none text-foreground-800">{dt.d}</p>
+                  <p className="text-[9px] uppercase text-foreground-400 mt-0.5">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12px] font-semibold text-foreground-900 truncate">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
+                  <p className="text-[11px] text-foreground-400 truncate">{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
+                </div>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Inline booking form */}
+        {showBook && (
+          <div className="mt-3 rounded-xl border border-foreground-100 bg-background-50 p-3 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+            <p className="text-[11px] text-foreground-500">
+              {coach
+                ? <>Books a Teams session with <span className="font-semibold text-foreground-700">{coach.name}</span> and adds it to both calendars.</>
+                : 'No coach assigned yet — please contact your programme team.'}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line' },
+                { value: 'student-support' as BookableSessionType, label: 'Support', icon: 'ri-heart-2-line' },
+              ]).map((t) => (
+                <button
+                  key={t.value}
+                  onClick={() => setBookType(t.value)}
+                  className={`px-2.5 py-2 rounded-lg border text-left transition-smooth cursor-pointer flex items-center gap-2 ${
+                    bookType === t.value ? 'border-primary-400 bg-primary-50/50 text-primary-700' : 'border-foreground-200 text-foreground-600 hover:border-foreground-300'
+                  }`}
+                >
+                  <i className={`${t.icon} text-sm`} /><span className="text-[12px] font-semibold">{t.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Date</span>
+                <input type="date" value={bookDate} min={isoOf(now)} onChange={(e) => setBookDate(e.target.value)}
+                  className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
+              </label>
+              <label className="block">
+                <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Time</span>
+                <input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)}
+                  className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
+              </label>
+            </div>
+            <label className="block">
+              <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Duration</span>
+              <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)}
+                className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 cursor-pointer">
+                <option value="30">30 minutes</option>
+                <option value="45">45 minutes</option>
+                <option value="60">1 hour</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Notes (optional)</span>
+              <textarea value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} rows={2} placeholder="What would you like to cover?"
+                className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
+            </label>
+            {bookErr && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{bookErr}</p>}
+            <button
+              onClick={submitBooking}
+              disabled={submitting || !coach}
+              className="w-full py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
+            >
+              {submitting ? <><i className="ri-loader-4-line animate-spin" />Booking…</> : <><i className="ri-calendar-check-line" />Confirm booking</>}
+            </button>
+          </div>
+        )}
+
+        {toast && (
+          <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200/60 px-3 py-2 text-[12px] font-semibold text-emerald-700 inline-flex items-center gap-2">
+            <i className="ri-checkbox-circle-line" />{toast}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   MiniJourney — the learner's journey as a milestone
+   track (Start → modules → Gateway) with a progress
+   ring on each node and a rich "current module" card.
+   Reuses buildStations for the real progress data;
+   the layout is purpose-built for the dashboard cell.
+   ───────────────────────────────────────────── */
+type StationTone = 'done' | 'current' | 'upcoming';
+
+/** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
+function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number }) {
+  const t = tone === 'done'
+    ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
+    : tone === 'current'
+      ? { fill: '#7c5cff', bg: 'bg-primary-500 text-white', label: 'text-primary-700 font-semibold', shadow: 'shadow-primary-500/30' }
+      : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
+  const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
+  const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
+  return (
+    <div className="flex flex-col items-center gap-1.5 w-[76px] shrink-0 text-center">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90 absolute inset-0">
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke={t.fill} strokeLinecap="round"
+            strokeDasharray={circ} strokeDashoffset={circ - (Math.min(100, ringPct) / 100) * circ} className="transition-all duration-700 ease-out" />
+        </svg>
+        <span className={`absolute inset-[6px] rounded-full flex items-center justify-center shadow-sm ${t.bg} ${t.shadow} ${tone === 'current' ? 'animate-pulse-slow' : ''}`}>
+          <i className={`${icon} text-base`} />
+        </span>
+      </div>
+      <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
+      {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
+    </div>
+  );
+}
+function JourneyConnector({ filled }: { filled: boolean }) {
+  return (
+    <div className="flex-1 min-w-[20px] h-1 mt-6 rounded-full bg-background-200 overflow-hidden">
+      <div className={`h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ${filled ? 'w-full' : 'w-0'}`} />
+    </div>
+  );
+}
+function stationTone(s: ModuleStation): StationTone {
+  return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
+}
+
+function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null; loading: boolean; loadError: string | null }) {
+  const journey = useMemo(() => buildLearnerJourney(real), [real]);
+  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+
+  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (loadError) return <EmptyState text={loadError} />;
+  if (journey.length === 0) return <EmptyState text="No training plan built for this learner yet." />;
+
+  const current = currentIndex >= 0 ? stations[currentIndex] : null;
+  const allDone = currentIndex === -1 && stations.length > 0;
+  const modulesDone = stations.filter((s) => s.status === 'completed').length;
+
+  return (
+    <div>
+      {/* Overall progress banner */}
+      <div className="rounded-xl bg-gradient-to-r from-primary-50/80 to-background-50 border border-primary-100/60 p-3 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Overall progress</span>
+          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
+        </div>
+        <div className="h-2 rounded-full bg-background-200 overflow-hidden">
+          <div className="h-full rounded-full bg-gradient-to-r from-primary-400 to-primary-600 transition-all duration-700" style={{ width: `${overallPct}%` }} />
+        </div>
+        <p className="text-[11px] text-foreground-500 mt-1.5">
+          {modulesDone}/{stations.length} {stations.length === 1 ? 'module' : 'modules'} complete
+          {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready 🎉' : ''}
+        </p>
+      </div>
+
+      {/* Milestone track */}
+      <div className="overflow-x-auto pb-1">
+        <div className="flex items-start min-w-max px-1">
+          <JourneyNode icon="ri-flag-fill" label="Start" tone="done" />
+          {stations.map((s) => (
+            <Fragment key={s.index}>
+              <JourneyConnector filled={s.status === 'completed'} />
+              <JourneyNode
+                icon={s.status === 'completed' ? 'ri-check-line' : s.status === 'current' ? 'ri-flag-2-fill' : 'ri-lock-2-line'}
+                label={`Module ${s.index + 1}`}
+                sub={s.pct == null ? '—' : `${s.pct}%`}
+                tone={stationTone(s)}
+                pct={s.pct ?? 0}
+              />
+            </Fragment>
+          ))}
+          <JourneyConnector filled={allDone} />
+          <JourneyNode icon="ri-trophy-fill" label="Gateway" tone={allDone ? 'done' : 'upcoming'} />
+        </div>
+      </div>
+
+      {/* Current-module card */}
+      {current ? (
+        <div className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5">
+          <div className="flex items-center gap-2 mb-2.5">
+            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><i className="ri-flag-2-fill text-sm" /></span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
+              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
+            </div>
+            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
+            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
+            <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
+          </div>
+        </div>
+      ) : allDone ? (
+        <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
+          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><i className="ri-trophy-fill" /></span>
+          <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function JourneyStat({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-background-50 border border-foreground-100 px-2 py-2 text-center">
+      <i className={`${icon} text-primary-500 text-sm`} />
+      <p className="text-[13px] font-heading font-bold text-foreground-900 leading-none mt-1">{value}</p>
+      <p className="text-[9px] uppercase tracking-wider text-foreground-400 mt-0.5">{label}</p>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    Tiny SVG Donut Chart
    ───────────────────────────────────────────── */
 function DonutRing({ progress, color, size = 40, stroke = 4.5 }: { progress: number; color: string; size?: number; stroke?: number }) {
@@ -309,7 +711,11 @@ export default function LearnerOverview() {
   const heroEmployer = isRealMode ? (real?.employer || '') : p.employer;
   const heroCohort = isRealMode ? (real?.cohort || '') : p.cohort;
   const subtitleParts = isRealMode
-    ? [heroProgramme, heroEmployer, heroCohort ? `Cohort ${heroCohort}` : ''].filter(Boolean)
+    ? [
+        heroProgramme ? `Programme: ${heroProgramme}` : '',
+        heroEmployer ? `Employer: ${heroEmployer}` : '',
+        heroCohort ? `Cohort: ${heroCohort}` : '',
+      ].filter(Boolean)
     : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
 
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
@@ -646,141 +1052,161 @@ export default function LearnerOverview() {
         </SectionReveal>
 
         {/* ================================================================
-            SECTION 4 — THIS WEEK'S JOURNEY + UPCOMING (two-column)
+            SECTION 4 — REAL MODE: 2×2 GRID (Training Plan · Calendar ·
+            Activity Feed · Trail).  MOCK MODE: original two-column layout.
             ================================================================ */}
-        <SectionReveal delay={160}>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
-            <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4 md:mb-5">
-                <h2 className="text-base font-heading font-semibold text-foreground-900">
-                  {isRealMode ? 'Training Plan' : "This Week's Learning Journey"}
-                </h2>
-                {isRealMode && real && journey.length > 0 && (
-                <a href={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                  View full plan <i className="ri-arrow-right-line ml-0.5"></i>
-                </a>
-                )}
-                {!isRealMode && (
-                <a href="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                  View full plan <i className="ri-arrow-right-line ml-0.5"></i>
-                </a>
-                )}
-              </div>
+        {isRealMode ? (
+          <SectionReveal delay={160}>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5 items-stretch">
 
-              {isRealMode ? (
-                journey.length === 0 || !currentWeek ? (
-                  <EmptyState text={loading ? 'Loading…' : 'No training plan built for this learner yet.'} />
-                ) : (
-                  <CurrentWeekCard
-                    moduleTitle={currentWeek.module}
-                    weekLabel={currentWeek.week.week}
-                    components={currentWeek.week.components}
-                    videos={real?.videoProgress ?? []}
-                    kind={kind}
-                    learnerId={id}
-                  />
-                )
-              ) : (
-              <div className="relative">
-                <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
-
-                <div className="space-y-0">
-                  {timelineComponents.map((comp, i) => {
-                    const effectiveStatus = userCompletions[i] ? 'completed' : comp.status;
-                    return (
-                      <TimelineCard
-                        key={comp.id}
-                        component={comp}
-                        status={effectiveStatus}
-                        canMarkComplete={comp.status !== 'completed' && !userCompletions[i]}
-                        onMarkComplete={() => handleMarkComplete(i)}
-                      />
-                    );
-                  })}
+              {/* ── Training Plan ── */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Training Plan</h2>
+                  {real && journey.length > 0 && (
+                  <a href={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    View full plan <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                  )}
+                </div>
+                <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
+                  {journey.length === 0 || !currentWeek ? (
+                    <EmptyState text={loading ? 'Loading…' : 'No training plan built for this learner yet.'} />
+                  ) : (
+                    <CurrentWeekCard
+                      moduleTitle={currentWeek.module}
+                      weekLabel={currentWeek.week.week}
+                      components={currentWeek.week.components}
+                      videos={real?.videoProgress ?? []}
+                      kind={kind}
+                      learnerId={id}
+                    />
+                  )}
                 </div>
               </div>
-              )}
+
+              {/* ── My Calendar ── */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">My Calendar</h2>
+                  <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    Open <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <MiniCalendar kind={kind} id={id} />
+              </div>
+
+              {/* ── Activity Feed ── */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
+                  {(real?.activityFeed && real.activityFeed.length > 0) ? (
+                    <div className="space-y-2">
+                      {real.activityFeed.slice(0, 12).map((entry, i) => (
+                        <RealActivityItem key={`${entry.at}-${i}`} entry={entry} />
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState text="No activity yet — finish a component to see it here." />
+                  )}
+                </div>
+              </div>
+
+              {/* ── Learner Journey ── */}
+              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
+                  <a href={`/learner/modules/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    Open <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <MiniJourney real={real} loading={loading} loadError={loadError} />
+              </div>
+
             </div>
-
-            <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
-                {!isRealMode && (
-                <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                  View Calendar <i className="ri-arrow-right-line ml-0.5"></i>
-                </a>
-                )}
-              </div>
-
-              {isRealMode ? (
-                <EmptyState text="Not tracked yet." />
-              ) : (
-              <div className="space-y-3">
-                {upcomingEvents.map((event, i) => (
-                  <UpcomingEventCard key={i} {...event} />
-                ))}
-              </div>
-              )}
-            </div>
-          </div>
-        </SectionReveal>
-
-        {/* ================================================================
-            SECTION 5 — ACTIVITY FEED + ACHIEVEMENTS (two-column)
-            ================================================================ */}
-        <SectionReveal delay={200}>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
-            <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
-                {!isRealMode && (
-                <a href="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                  View All Activity <i className="ri-arrow-right-line ml-0.5"></i>
-                </a>
-                )}
-              </div>
-
-              {isRealMode ? (
-                (real?.activityFeed && real.activityFeed.length > 0) ? (
-                  <div className="space-y-2">
-                    {real.activityFeed.slice(0, 8).map((entry, i) => (
-                      <RealActivityItem key={`${entry.at}-${i}`} entry={entry} />
-                    ))}
+          </SectionReveal>
+        ) : (
+          <>
+          {/* ── MOCK MODE — original two-column sections ── */}
+          <SectionReveal delay={160}>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
+              <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+                <div className="flex items-center justify-between mb-4 md:mb-5">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">This Week's Learning Journey</h2>
+                  <a href="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    View full plan <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <div className="relative">
+                  <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
+                  <div className="space-y-0">
+                    {timelineComponents.map((comp, i) => {
+                      const effectiveStatus = userCompletions[i] ? 'completed' : comp.status;
+                      return (
+                        <TimelineCard
+                          key={comp.id}
+                          component={comp}
+                          status={effectiveStatus}
+                          canMarkComplete={comp.status !== 'completed' && !userCompletions[i]}
+                          onMarkComplete={() => handleMarkComplete(i)}
+                        />
+                      );
+                    })}
                   </div>
-                ) : (
-                  <EmptyState text="No activity yet — finish a component to see it here." />
-                )
-              ) : (
-              <div className="space-y-3">
-                {activityFeed.map((item, i) => (
-                  <ActivityFeedItem key={i} item={item} index={i} />
-                ))}
-              </div>
-              )}
-            </div>
-
-            <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
-                {!isRealMode && (
-                <a href="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                  View Rewards <i className="ri-arrow-right-line ml-0.5"></i>
-                </a>
-                )}
+                </div>
               </div>
 
-              {isRealMode ? (
-                <EmptyState text="Points & achievements aren't tracked yet." />
-              ) : (
-              <div className="space-y-2.5">
-                {achievements.map((ach, i) => (
-                  <AchievementBadge key={i} {...ach} />
-                ))}
+              <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
+                  <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    View Calendar <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <div className="space-y-3">
+                  {upcomingEvents.map((event, i) => (
+                    <UpcomingEventCard key={i} {...event} />
+                  ))}
+                </div>
               </div>
-              )}
             </div>
-          </div>
-        </SectionReveal>
+          </SectionReveal>
+
+          <SectionReveal delay={200}>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
+              <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
+                  <a href="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    View All Activity <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <div className="space-y-3">
+                  {activityFeed.map((item, i) => (
+                    <ActivityFeedItem key={i} item={item} index={i} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
+                  <a href="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                    View Rewards <i className="ri-arrow-right-line ml-0.5"></i>
+                  </a>
+                </div>
+                <div className="space-y-2.5">
+                  {achievements.map((ach, i) => (
+                    <AchievementBadge key={i} {...ach} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </SectionReveal>
+          </>
+        )}
 
         {/* ================================================================
             SECTION 6 — SUPPORT PANEL

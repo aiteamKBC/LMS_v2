@@ -40,12 +40,12 @@ def _format_clock(seconds):
 
 
 def _video_title(component_id):
-    """Live display title for a video component (curriculum.module_authoring_components).
+    """Live display title for a video component (curriculum.components).
     Returns (title, type) or (None, None) if not found / on error."""
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT type, title FROM curriculum.module_authoring_components WHERE id = %s",
+                "SELECT type, title FROM curriculum.components WHERE id = %s",
                 [component_id],
             )
             row = cur.fetchone()
@@ -142,6 +142,15 @@ def submit_video_progress(request, component_id):
             active.save(update_fields=["training_plan_progress", "completed_hours", "activity_feed"])
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
+
+        # Engagement points: award synchronously the instant the watch is saved.
+        # Guarded so a points failure can never break the learner's video save; all
+        # point logic (which rule, first-watch gate, etc.) lives in engagement_api.
+        try:
+            from engagement_api.hooks import record_progress_points
+            record_progress_points(learner_id, active.username, record)
+        except Exception:  # noqa: BLE001 — engagement points must never break the video save
+            pass
 
     # Echo the display title/week/module in the RESPONSE (not stored) so the
     # results screen can render immediately without resolving componentId.

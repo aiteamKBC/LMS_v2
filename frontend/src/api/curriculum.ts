@@ -15,6 +15,7 @@ export interface WeekItem extends CurriculumItem {
 }
 export interface ComponentItem extends CurriculumItem {
   type: string;
+  expectedOtjh: number | null;
 }
 
 async function request<T>(url: string): Promise<T> {
@@ -77,4 +78,41 @@ export async function fetchComponents(weekId: string): Promise<ComponentItem[]> 
     const showTitle = c.title && c.title.trim().toLowerCase() !== typeLabel.toLowerCase();
     return { ...c, title: showTitle ? `${typeLabel} · ${c.title}` : typeLabel || c.title };
   });
+}
+
+export interface LegacyOtjhItem {
+  module: string;
+  week: string;
+  component: string;
+}
+
+/**
+ * expected_otjh lookup for training plans saved BEFORE the structured-plan
+ * format existed — their component/week ids are client-generated, so they
+ * can't be looked up by id via fetchComponents(). Resolves by (module, week,
+ * component) TITLE instead, matching the same fallback the learner-facing
+ * training-plan view uses. Only entries with a match are present in the
+ * result map (unmatched legacy titles — e.g. a renamed/re-authored module —
+ * simply have no recoverable hours).
+ */
+export async function fetchLegacyOtjh(items: LegacyOtjhItem[]): Promise<Record<string, number>> {
+  if (items.length === 0) return {};
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/legacy-otjh/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+    });
+  } catch {
+    return {}; // best-effort — hours simply won't show for legacy items
+  }
+  if (!res.ok) return {};
+  const data = await res.json().catch(() => null);
+  return (data && data.results) || {};
+}
+
+/** Build the lookup key fetchLegacyOtjh's result map uses for one item. */
+export function legacyOtjhKey(module: string, week: string, component: string): string {
+  return `${module}|${week}|${component}`;
 }

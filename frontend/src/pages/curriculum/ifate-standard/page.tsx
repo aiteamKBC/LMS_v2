@@ -68,6 +68,30 @@ function DetailSkeleton() {
   );
 }
 
+function MissingStandardState({ id, message }: { id: string; message: string | null }) {
+  return (
+    <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-amber-700">
+            <i className="ri-link-unlink-m text-xs" />
+            Standard not linked
+          </span>
+          <h2 className="mt-3 font-heading text-lg font-black text-foreground-950">No Skills England standard found for "{id}"</h2>
+          <p className="mt-2 max-w-3xl text-[13px] font-medium leading-6 text-foreground-600">
+            This looks like a programme/profile name rather than a Skills England standard code. Link the programme to a real standard code, or browse the standards library.
+          </p>
+          {message && <p className="mt-2 text-[11px] font-semibold text-amber-700">{message}</p>}
+        </div>
+        <Link to="/curriculum/standards" className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+          <i className="ri-file-list-3-line text-sm" />
+          Browse Standards
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 export default function IfateStandardPage() {
   const { id = '' } = useParams();
   const [standard, setStandard] = useState<CurriculumStandard | null>(null);
@@ -132,14 +156,16 @@ export default function IfateStandardPage() {
           <span className="text-foreground-700">{standard?.code || id}</span>
         </div>
 
-        {error && (
+        {error && standard && (
           <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
             Curriculum API error: {error}. Start the Django backend and refresh.
           </div>
         )}
 
-        {loading || !standard ? (
+        {loading ? (
           <DetailSkeleton />
+        ) : !standard ? (
+          <MissingStandardState id={id} message={error} />
         ) : (
           <>
             <section

@@ -272,6 +272,14 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
     return f"{CATCH_UP_EVENT_TYPE}:{normalize_email(owner_email)}:{learner_id}:template"
 
 
+# Learner-booked session types (booked from the learner calendar page, unlike the
+# generated mcr / progress-review events which only the coach schedules).
+BOOKED_EVENT_TITLES = {
+    "catch-up": "Catch-up Session",
+    "student-support": "Student Support",
+}
+
+
 def get_graph_settings() -> dict[str, str]:
     load_env_file()
     return {
@@ -1785,7 +1793,7 @@ def build_catchup_calendar_event(
 ) -> dict:
     event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
     event_title = {
-        CATCH_UP_EVENT_TYPE: "Catch-up Session",
+        **BOOKED_EVENT_TITLES,
         "live-session": "Live Session",
         "employer-meeting": "Employer Meeting",
         "welfare": "Welfare Session",
@@ -1813,6 +1821,12 @@ def build_catchup_calendar_event(
     learner_email = clean_text(record.learner_email) or clean_text(getattr(learner, "email", None)) or None
     programme = clean_text(getattr(learner, "programme", None)) or "--"
     cohort = clean_text(getattr(learner, "cohort", None)) or "--"
+    event_kind = "welfare" if event_type == "student-support" else ("live-session" if event_type == "live-session" else "coaching")
+    note_text = (
+        " ".join(build_catchup_note_lines(record, target_date))
+        if event_type == CATCH_UP_EVENT_TYPE
+        else clean_text(record.notes) or (f"{event_title} booked by the learner." if event_type in BOOKED_EVENT_TITLES else "")
+    )
 
     return {
         "eventKey": record.event_key,
@@ -1827,7 +1841,7 @@ def build_catchup_calendar_event(
         "source": event_type,
         "sequence": int(record.sequence or 1),
         "title": event_title,
-        "type": "live-session" if event_type == "live-session" else "coaching",
+        "type": event_kind,
         "targetDate": target_date.isoformat(),
         "date": display_date.isoformat(),
         "year": display_date.year,
@@ -1844,7 +1858,7 @@ def build_catchup_calendar_event(
         "sourceStatus": schedule_status_label(record.status),
         "rawPlanned": target_date.isoformat(),
         "rawStatus": schedule_status_label(record.status),
-        "notes": " ".join(build_catchup_note_lines(record, target_date)) if event_type == CATCH_UP_EVENT_TYPE else clean_text(record.notes),
+        "notes": note_text,
         "scheduledDate": record.scheduled_date.isoformat() if record.scheduled_date else None,
         "scheduledTime": format_time_value(record.scheduled_time),
         "meetingProvider": meeting_provider,
@@ -1979,8 +1993,59 @@ def build_generated_calendar_event(
     }
 
 
+def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
+    """Base event dict for a learner-booked session (catch-up / student-support).
+
+    Unlike mcr / progress-review events these have no generated source row — the
+    stored record IS the source, so the base event is rebuilt from it and then
+    passed through overlay_calendar_record like any generated event.
+    """
+    title = BOOKED_EVENT_TITLES.get(record.event_type, "Coaching Session")
+    target_date = record.target_date or date.today()
+    return {
+        "eventKey": record.event_key,
+        "id": record.event_key,
+        "ownerEmail": record.owner_email,
+        "ownerName": record.owner_name,
+        "learnerId": str(record.learner_id),
+        "learner": clean_text(record.learner_name) or "Unknown learner",
+        "email": clean_text(record.learner_email) or None,
+        "programme": "--",
+        "cohort": "--",
+        "source": record.event_type,
+        "sequence": record.sequence,
+        "title": title,
+        "type": "welfare" if record.event_type == "student-support" else "coaching",
+        "targetDate": target_date.isoformat(),
+        "date": target_date.isoformat(),
+        "year": target_date.year,
+        "month": target_date.month - 1,
+        "dayOfMonth": target_date.day,
+        "dayOfWeek": target_date.weekday(),
+        "startHour": 9,
+        "endHour": 10,
+        "durationMinutes": record.duration_minutes or TIMETABLE_DEFAULT_DURATION_MINUTES,
+        "timeLabel": "Time TBC",
+        "isTimeEstimated": True,
+        "priority": "normal",
+        "status": record.status,
+        "sourceStatus": schedule_status_label(record.status),
+        "meetingProvider": "",
+        "meetingLink": "",
+        "graphWebLink": "",
+        "platform": "--",
+        "location": "--",
+        "notes": f"{title} booked by the learner.",
+        "rawPlanned": target_date.isoformat(),
+        "rawStatus": schedule_status_label(record.status),
+    }
+
+
 def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> list[str]:
-    lines = [f"Generated from learner start date. Target date: {format_date(parse_date_value(base_event.get('targetDate')))}."]
+    if base_event.get("source") in BOOKED_EVENT_TITLES:
+        lines = [f"{base_event.get('title') or 'Session'} booked by the learner."]
+    else:
+        lines = [f"Generated from learner start date. Target date: {format_date(parse_date_value(base_event.get('targetDate')))}."]
     if record and record.scheduled_date and record.scheduled_time:
         lines.append(
             f"Scheduled for {format_date(record.scheduled_date)} at {record.scheduled_time.strftime('%H:%M')}."

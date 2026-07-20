@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import curriculum, learner_detail, quizzes, videos, views
+from . import calendar, components, curriculum, learner_detail, quizzes, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -17,9 +17,15 @@ urlpatterns = [
     path("curriculum/modules/", curriculum.modules, name="curriculum-modules"),
     path("curriculum/weeks/", curriculum.weeks, name="curriculum-weeks"),
     path("curriculum/components/", curriculum.components, name="curriculum-components"),
+    path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),
     # video-watching
     path("videos/<str:component_id>/complete/", videos.submit_video_progress, name="video-complete"),
+    # generic component completion (podcast / reading / slides / reflection / …)
+    path("components/<str:component_id>/complete/", components.submit_component_progress, name="component-complete"),
+    # learner calendar (coaching sessions from Coach.coach_calendar_event)
+    path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
+    path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),
 ]

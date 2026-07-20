@@ -375,6 +375,7 @@ import SessionCalendarPage from "../pages/curriculum/session-calendar/page";
 import IfateStandardPage from "../pages/curriculum/ifate-standard/page";
 import CurriculumMisAllocationPage from "../pages/curriculum/mis-allocation/page";
 import CurriculumReportsPage from "../pages/curriculum/reports/page";
+import StaffProfilesPage from "../pages/curriculum/staff-profiles/page";
 import CommunicationPage from "../pages/communication/page";
 import CurriculumQAPage from "../pages/curriculum/curriculum-qa/page";
 import FinanceWorkspace from "../pages/workspace/finance/page";
@@ -648,6 +649,14 @@ const routes: RouteObject[] = [
     path: "/learner/video/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
 
   {
     path: "/learner/modules",
@@ -691,6 +700,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-cycle",
+    element: <MonthlyCyclePage />,
+  },
+  {
+    path: "/learner/monthly-cycle/:kind/:id",
     element: <MonthlyCyclePage />,
   },
   {
@@ -966,6 +979,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/session-calendar",
     element: <SessionCalendarPage />,
+  },
+  {
+    path: "/curriculum/staff-profiles",
+    element: <StaffProfilesPage />,
   },
   {
     path: "/tutor/sessions",

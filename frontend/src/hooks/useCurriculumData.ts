@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumComponents, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
 
-export function useCurriculumData() {
+interface UseCurriculumDataOptions {
+  compact?: boolean;
+  includeComponents?: boolean;
+  refreshModules?: boolean;
+}
+
+export function useCurriculumData({ compact = false, includeComponents = false, refreshModules = false }: UseCurriculumDataOptions = {}) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -13,11 +19,15 @@ export function useCurriculumData() {
     setLoading(true);
     try {
       const [overview, modules, components] = await Promise.all([
-        fetchCurriculumOverview(signal),
-        fetchCurriculumModules(signal).catch(() => []),
-        fetchCurriculumComponents(signal).catch(() => []),
+        fetchCurriculumOverview(signal, { compact }),
+        refreshModules ? fetchCurriculumModules(signal).catch(() => []) : Promise.resolve([]),
+        includeComponents ? fetchCurriculumComponents(signal).catch(() => []) : Promise.resolve([]),
       ]);
-      const result: CurriculumOverview = { ...overview, modules: modules.length ? modules : overview.modules, components };
+      const result: CurriculumOverview = {
+        ...overview,
+        modules: modules.length ? modules : overview.modules,
+        components: includeComponents ? components : overview.components,
+      };
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
       setData(result);
       setError(null);
@@ -29,7 +39,7 @@ export function useCurriculumData() {
     } finally {
       if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [compact, includeComponents, refreshModules]);
 
   useEffect(() => {
     const controller = new AbortController();
