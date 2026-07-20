@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import calendar, components, curriculum, learner_detail, quizzes, videos, views
+from . import absence_reports, calendar, components, curriculum, learner_detail, quizzes, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -28,4 +28,5 @@ urlpatterns = [
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),
+    path("absence-reports/<str:kind>/<int:learner_id>/", absence_reports.learner_absence_reports, name="learner-absence-reports"),
 ]
