@@ -78,6 +78,7 @@ export interface LearnerDetail {
   cohort: string;
   group: string;
   employer: string;
+  lineManager: string;
   isActive: boolean;
   modules: string[];
   week: LearnerWeekEntry[];
