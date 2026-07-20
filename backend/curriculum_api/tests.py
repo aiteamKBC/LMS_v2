@@ -1232,6 +1232,74 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         ensure_module.assert_called_once()
 
+    def test_rename_cohort_preserves_stable_cohort_id_in_notes(self):
+        request = self.factory.patch(
+            '/curriculum_api/curriculum/cohorts/programme-a-old-cohort/',
+            data=json.dumps({
+                'name': 'Renamed Cohort',
+                'programmeId': 'PROG-1',
+                'startDate': '2026-01-01',
+                'endDate': '2026-12-31',
+                'color': '#6941c6',
+            }),
+            content_type='application/json',
+        )
+        cohort = {
+            'id': 'programme-a-old-cohort',
+            'name': 'Old Cohort',
+            'programmeId': 'program-prog-1',
+            'startDate': '2026-01-01',
+            'endDate': '2026-12-31',
+        }
+        rows = [{'id': 1, 'notes': '', 'Cohort_name': 'Old Cohort'}]
+
+        with patch.object(views, 'find_training_rows_by_cohort', return_value=(cohort, rows)), \
+             patch.object(views, 'update_training_rows', return_value=rows) as update_training_rows, \
+             patch.object(views, 'persist_cohort_authoring_detail'), \
+             patch.object(views, 'invalidate_curriculum_cache'):
+            response = views.curriculum_cohort_detail(request, 'programme-a-old-cohort')
+
+        payload = update_training_rows.call_args.args[1]
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('__cohort_id: programme-a-old-cohort', payload['notes'])
+        self.assertIn('__program_id: PROG-1', payload['notes'])
+
+    def test_rename_group_preserves_stable_group_id_in_notes(self):
+        request = self.factory.patch(
+            '/curriculum_api/curriculum/groups/programme-a-old-cohort-old-group/',
+            data=json.dumps({
+                'name': 'Renamed Group',
+                'programmeId': 'PROG-1',
+                'cohortId': 'programme-a-old-cohort',
+                'weekDays': 'Wed',
+                'startTime': '09:30',
+                'endTime': '11:30',
+                'color': '#334155',
+            }),
+            content_type='application/json',
+        )
+        group = {
+            'id': 'programme-a-old-cohort-old-group',
+            'name': 'Old Group',
+            'cohortId': 'programme-a-old-cohort',
+            'programmeId': 'program-prog-1',
+        }
+        rows = [{'id': 1, 'notes': '', 'group_name': 'Old Group'}]
+
+        with patch.object(views, 'find_training_rows_by_group', return_value=(group, rows)), \
+             patch.object(views, 'update_training_rows', return_value=rows) as update_training_rows, \
+             patch.object(views, 'persist_group_authoring_detail'), \
+             patch.object(views, 'safe_authoring_module_rows', return_value=[]), \
+             patch.object(views, 'sync_group_staff_profile_links'), \
+             patch.object(views, 'invalidate_curriculum_cache'):
+            response = views.curriculum_group_detail(request, 'programme-a-old-cohort-old-group')
+
+        payload = update_training_rows.call_args.args[1]
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('__cohort_id: programme-a-old-cohort', payload['notes'])
+        self.assertIn('__group_id: programme-a-old-cohort-old-group', payload['notes'])
+        self.assertIn('__group_name: Renamed Group', payload['notes'])
+
     def backfill_fetch_fixture(self, invalid_column=False):
         training_row = {
             'id': 7,

@@ -7450,25 +7450,26 @@ def curriculum_cohort_detail(request, identifier):
     duration_months = payload.get('durationMonths')
     computed_end = format_date(calculate_cohort_end_date(payload.get('startDate') or cohort.get('startDate'), duration_months)) if duration_months else ''
     end_date = payload.get('endDate') or computed_end or cohort.get('endDate')
+    existing_meta = extract_notes_meta(rows[0].get('notes'))
+    next_holiday_ids = (
+        parse_notes_id_list(payload.get('holidayIds') if 'holidayIds' in payload else payload.get('holiday_ids'))
+        if ('holidayIds' in payload or 'holiday_ids' in payload)
+        else parse_notes_id_list(existing_meta.get('holiday_ids'))
+    )
     updates = {
         'Cohort_name': payload.get('name'),
         'Starting_date_lable': payload.get('startDate'),
         'start_date': payload.get('startDate'),
         'end_date': end_date,
-    }
-    if 'color' in payload or 'durationMonths' in payload or 'holidayIds' in payload or 'holiday_ids' in payload:
-        existing_meta = extract_notes_meta(rows[0].get('notes'))
-        next_holiday_ids = (
-            parse_notes_id_list(payload.get('holidayIds') if 'holidayIds' in payload else payload.get('holiday_ids'))
-            if ('holidayIds' in payload or 'holiday_ids' in payload)
-            else parse_notes_id_list(existing_meta.get('holiday_ids'))
-        )
-        updates['notes'] = append_notes_meta(rows[0].get('notes'), {
-            'cohort_color': payload.get('color') or cohort.get('color') or '',
-            'duration_months': duration_months or '',
-            'cohort_end_auto': 'true' if computed_end and not payload.get('endDate') else 'false',
+        'notes': append_notes_meta(rows[0].get('notes'), {
+            'program_id': clean_str(payload.get('programmeId') or payload.get('programme_id') or existing_meta.get('program_id') or cohort.get('programmeId') or ''),
+            'cohort_id': clean_str(cohort.get('id') or identifier or existing_meta.get('cohort_id')),
+            'cohort_color': payload.get('color') or cohort.get('color') or existing_meta.get('cohort_color') or '',
+            'duration_months': duration_months or existing_meta.get('duration_months') or '',
+            'cohort_end_auto': 'true' if computed_end and not payload.get('endDate') else existing_meta.get('cohort_end_auto') or 'false',
             'holiday_ids': '|'.join(next_holiday_ids),
-        })
+        }),
+    }
     updated_rows = update_training_rows(rows, updates)
     next_meta = extract_notes_meta(updates.get('notes') or rows[0].get('notes'))
     authoring_cohort = {
@@ -7646,10 +7647,14 @@ def curriculum_group_detail(request, identifier):
         'session_start_time': payload.get('startTime'),
         'session_end_time': payload.get('endTime'),
     }
-    if 'color' in payload:
-        updates['notes'] = append_notes_meta(rows[0].get('notes'), {
-            'group_color': payload.get('color') or group.get('color') or '',
-        })
+    existing_meta = extract_notes_meta(rows[0].get('notes'))
+    updates['notes'] = append_notes_meta(rows[0].get('notes'), {
+        'program_id': clean_str(payload.get('programmeId') or payload.get('programme_id') or existing_meta.get('program_id') or group.get('programmeId') or ''),
+        'cohort_id': clean_str(payload.get('cohortId') or payload.get('cohort_id') or group.get('cohortId') or existing_meta.get('cohort_id') or ''),
+        'group_id': clean_str(group.get('id') or identifier or existing_meta.get('group_id')),
+        'group_name': payload.get('name') or group.get('name') or existing_meta.get('group_name') or '',
+        'group_color': payload.get('color') or group.get('color') or existing_meta.get('group_color') or '',
+    })
     updated_rows = update_training_rows(rows, updates)
     previous_coach = group.get('coach') or rows[0].get('coach_name') if rows else ''
     persist_group_authoring_detail({
