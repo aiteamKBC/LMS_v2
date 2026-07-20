@@ -2383,12 +2383,14 @@ export default function ProgrammeDetailPage() {
                             label="Coach"
                             value={assignForms[g.id]?.coach ?? (g.coach === 'Unassigned' ? '' : g.coach)}
                             options={coachOptions}
+                            onOpen={() => { void reload(); }}
                             onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), coach: value } }))}
                           />
                           <StaffAssignmentSelect
                             label="Tutor"
                             value={assignForms[g.id]?.tutor ?? (g.tutor === 'Unassigned' ? '' : g.tutor)}
                             options={tutorOptions}
+                            onOpen={() => { void reload(); }}
                             onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), tutor: value } }))}
                           />
                         </div>
@@ -3029,12 +3031,14 @@ export default function ProgrammeDetailPage() {
                   label="Coach"
                   value={assignForms[assignmentTarget.group.id]?.coach ?? ''}
                   options={coachOptions}
+                  onOpen={() => { void reload(); }}
                   onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), coach: value } }))}
                 />
                 <StaffAssignmentSelect
                   label="Tutor"
                   value={assignForms[assignmentTarget.group.id]?.tutor ?? ''}
                   options={tutorOptions}
+                  onOpen={() => { void reload(); }}
                   onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), tutor: value } }))}
                 />
               </div>
@@ -3096,21 +3100,32 @@ function StaffAssignmentSelect({
   value,
   onChange,
   options,
+  onOpen,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: SelectOption[];
+  onOpen?: () => void;
 }) {
   const currentValue = clean(value);
   const hasCurrentValue = currentValue && currentValue !== 'Unassigned' && !options.some(option => option.value === currentValue);
   const visibleOptions = hasCurrentValue ? [{ value: currentValue, label: currentValue }, ...options] : options;
+  const lastOpenNotify = useRef(0);
+  const notifyOpen = () => {
+    const now = Date.now();
+    if (now - lastOpenNotify.current < 800) return;
+    lastOpenNotify.current = now;
+    onOpen?.();
+  };
 
   return (
     <label className="block">
       <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
       <select
         value={currentValue === 'Unassigned' ? '' : currentValue}
+        onFocus={notifyOpen}
+        onMouseDown={notifyOpen}
         onChange={event => onChange(event.target.value)}
         className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300 cursor-pointer"
       >

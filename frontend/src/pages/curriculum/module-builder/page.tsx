@@ -13,6 +13,7 @@ import {
   componentTypes,
   createEmptyComponent,
   createEmptyWeek,
+  createLocalModuleDraft,
   createNewModule,
   deleteModuleStructure,
   curriculumModuleToCatalogue,
@@ -22,6 +23,7 @@ import {
   getDefaultComponentSettings,
   loadModuleStructure,
   makeAuthoringId,
+  MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
   saveModuleStructure,
   uploadComponentResource,
@@ -202,6 +204,7 @@ export default function ModuleBuilder() {
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
+  const [standardsRequested, setStandardsRequested] = useState(false);
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -377,7 +380,9 @@ export default function ModuleBuilder() {
   }, []);
 
   useEffect(() => {
+    if (!ksbTarget || standards.length || standardsRequested || standardsLoading) return;
     const controller = new AbortController();
+    setStandardsRequested(true);
     setStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
       .then(result => setStandards(result))
@@ -390,7 +395,7 @@ export default function ModuleBuilder() {
         if (!controller.signal.aborted) setStandardsLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [ksbTarget, standards.length, standardsLoading, standardsRequested]);
 
   useEffect(() => {
     if (!saving || !saveStartedAt) {
@@ -411,7 +416,7 @@ export default function ModuleBuilder() {
       wizardDraftLocalIdRef.current = wizardDraftLocalIdFromKey(wizardModuleKey);
     }
     const requestedKey = requestedModule.trim();
-    if (!requestedKey || loading || workingModule || deepLinkedModuleRef.current === requestedKey) return;
+    if (!requestedKey || loading || error || workingModule || deepLinkedModuleRef.current === requestedKey) return;
 
     const requestedNormalised = normaliseDeepLinkValue(requestedKey);
     const target = catalogueModules.find(module => {
@@ -473,7 +478,44 @@ export default function ModuleBuilder() {
 
     deepLinkedModuleRef.current = requestedKey;
     openModule(target);
-  }, [catalogueModules, finishLoadingProgress, loading, openModule, programmeFilter, reload, workingModule]);
+  }, [catalogueModules, error, finishLoadingProgress, loading, openModule, programmeFilter, reload, workingModule]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
+    const requestedKey = requestedModule.trim();
+    if (!requestedKey || loading || workingModule || !error || deepLinkedModuleRef.current === requestedKey) return;
+
+    const wizardPayload = readWizardModuleDraft(params);
+    if (!wizardPayload?.title) return;
+
+    deepLinkedModuleRef.current = requestedKey;
+    const fallback = recalculateModule(createLocalModuleDraft({
+      programmeId: wizardPayload.programmeId || '',
+      programme: wizardPayload.programme || (programmeFilter !== 'All' ? programmeFilter : 'Unassigned programme'),
+      cohortId: wizardPayload.cohortId || '',
+      cohortName: wizardPayload.cohortName || '',
+      groupId: wizardPayload.groupId || '',
+      groupName: wizardPayload.groupName || '',
+      catalogueId: isCanonicalModuleCatalogueId(requestedKey) ? requestedKey : undefined,
+      title: wizardPayload.title,
+      description: wizardPayload.description || '',
+      weeks: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
+      sessionsNumber: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
+      startDate: wizardPayload.startDate || todayDateInput(),
+      endDate: wizardPayload.endDate || '',
+      status: 'draft',
+    }));
+    savedModuleSnapshotRef.current = moduleSnapshot(fallback);
+    setWorkingModule(fallback);
+    setSelection(fallback.weekStructure[0] ? { kind: 'week', weekId: fallback.weekStructure[0].id } : null);
+    setExpandedWeeks(new Set(fallback.weekStructure.map(week => week.id)));
+    setSettingsOpen(false);
+    setNoticeAlert({
+      title: 'Opened from Curriculum Studio',
+      message: 'Live module data is taking longer than expected, so this module was opened from the wizard details. Saving will sync it back to the database.',
+    });
+  }, [error, loading, programmeFilter, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
     setSaveSuccess(null);
@@ -567,6 +609,16 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
+      if (wizardDraftLocalIdRef.current) {
+        try {
+          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
+            savedAt: new Date().toISOString(),
+            module: saved,
+          }));
+        } catch (err) {
+          console.warn('Unable to sync saved module back to Curriculum Studio wizard.', err);
+        }
+      }
       if (closeAfterSave) {
         setSaveSuccess({
           title: 'Module saved',
@@ -1131,7 +1183,7 @@ export default function ModuleBuilder() {
         {ksbTarget && (
           <KsbSelectorModal
             standards={standards}
-            standardsLoading={standardsLoading}
+            standardsLoading={standardsLoading || (!standardsRequested && !standards.length)}
             ksbSets={ksbSets}
             ksbSetsLoading={ksbSetsLoading}
             initialSourceId={initialKsbSourceId}
@@ -2117,15 +2169,11 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
 
         {showApprenticeshipSettings && (
           <EditorSection title="Apprenticeship settings" icon="ri-settings-3-line">
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               <Checkbox label="Reflection required" checked={component.reflectionRequired} onChange={value => onChange({ reflectionRequired: value })} />
-              <Checkbox label="Workplace evidence required" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
               <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
-              <TextArea label="Evidence required" value={String(component.settings.evidenceRequired ?? '-')} onChange={value => onSettingChange('evidenceRequired', value)} rows={2} error={fieldError('settings.evidenceInstructions')} />
-            </div>
+            <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
             <TextArea label="Reflection prompt" value={String(component.settings.reflectionPrompt ?? '')} onChange={value => onSettingChange('reflectionPrompt', value)} rows={3} error={fieldError('settings.reflectionPrompt')} />
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
@@ -2183,7 +2231,7 @@ function TypeSpecificFields({
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
 
-  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint') => {
+  const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'assignment') => {
     setUploadingResource(true);
     setUploadError('');
     try {
@@ -2202,9 +2250,12 @@ function TypeSpecificFields({
       if (componentType === 'podcast') {
         onSettingChange('podcastSource', 'Device upload');
         onSettingChange('podcastUrl', uploaded.url);
-      } else {
+      } else if (componentType === 'powerpoint') {
         onSettingChange('fileName', uploaded.fileName);
         onSettingChange('presentationUrl', uploaded.url);
+      } else {
+        onSettingChange('assignmentFileName', uploaded.fileName);
+        onSettingChange('assignmentFileUrl', uploaded.url);
       }
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Unable to upload file.');
@@ -2478,6 +2529,16 @@ function TypeSpecificFields({
     return (
       <EditorBlock title="Assignment">
         <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
+        <ComponentResourceUpload
+          label="Upload assignment file"
+          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
+          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
+          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
+          uploadedSize={getNumber('uploadedFileSize')}
+          uploading={uploadingResource}
+          error={uploadError}
+          onUpload={file => handleResourceUpload(file, 'assignment')}
+        />
         <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
@@ -4692,6 +4753,8 @@ function ModuleCatalogueCard({
   // fetched from the catalogue it stays empty, so fall back to lessonCount,
   // which the backend sets to the real authored component count.
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0) || module.lessonCount || 0;
+  const weekCount = module.weekStructure.length || module.weeks || module.sessionsNumber || 0;
+  const sessionCount = module.sessionsNumber || module.weeks || weekCount;
   const hasContent = componentCount > 0;
 
   return (

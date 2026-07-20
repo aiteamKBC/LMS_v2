@@ -6,6 +6,7 @@ import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculum
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
+import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
   archiveCurriculumCohort,
@@ -355,6 +356,7 @@ function ChoiceSelect({
   options,
   placeholder = 'Select...',
   required,
+  onOpen,
 }: {
   label: string;
   value: string;
@@ -362,6 +364,7 @@ function ChoiceSelect({
   options: SelectOption[];
   placeholder?: string;
   required?: boolean;
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -444,7 +447,13 @@ function ChoiceSelect({
       <span className="text-[10px] font-bold text-foreground-500 uppercase tracking-wide">{label}{required ? ' *' : ''}</span>
       <button
         type="button"
-        onClick={() => setOpen(current => !current)}
+        onClick={() => {
+          setOpen(current => {
+            const next = !current;
+            if (next) onOpen?.();
+            return next;
+          });
+        }}
         className={`mt-1.5 h-10 w-full rounded-xl border px-3 text-left shadow-sm transition-smooth ${open ? 'border-primary-400 bg-background-50 ring-2 ring-primary-100' : 'border-foreground-200/70 bg-background-50 hover:border-primary-200 hover:bg-background-100/50'}`}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -669,7 +678,8 @@ function ProgrammeStructureEditor({
   onSaved: () => void;
   onOpenAddStructure: () => void;
 }) {
-  const { data, loading, error, reload } = useCurriculumData();
+  const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true });
+  const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, error: staffError, reload: reloadStaffProfiles } = useCurriculumStaffProfiles();
   const [tab, setTab] = useState<'programme' | 'cohorts' | 'groups' | 'modules'>('programme');
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -679,8 +689,8 @@ function ProgrammeStructureEditor({
   const groups = useMemo(() => (data?.groups ?? []).filter(group => cohortIds.has(group.cohortId) || matchesProgramme(liveProgramme, group.programme)), [cohortIds, data?.groups, liveProgramme]);
   const modules = useMemo(() => (data?.modules ?? []).filter(module => matchesProgramme(liveProgramme, module.programme)), [data?.modules, liveProgramme]);
   const sessions = data?.sessions ?? [];
-  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(data?.tutors ?? [])), [data?.tutors]);
-  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(data?.coaches ?? [])), [data?.coaches]);
+  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(staffTutors)), [staffTutors]);
+  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(staffCoaches)), [staffCoaches]);
   const catalogueModuleOptions = useMemo(() => moduleOptions(data?.modules ?? []), [data?.modules]);
 
   const refresh = async (message: string) => {
@@ -689,6 +699,19 @@ function ProgrammeStructureEditor({
     setNotice(message);
     showProgrammeSwalToast('Saved', message);
   };
+
+  useEffect(() => {
+    const refreshStaffProfiles = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      void reloadStaffProfiles({ silent: true });
+    };
+    window.addEventListener('focus', refreshStaffProfiles);
+    document.addEventListener('visibilitychange', refreshStaffProfiles);
+    return () => {
+      window.removeEventListener('focus', refreshStaffProfiles);
+      document.removeEventListener('visibilitychange', refreshStaffProfiles);
+    };
+  }, [reloadStaffProfiles]);
 
   const tabs = [
     { key: 'programme' as const, label: 'Programme', count: 1 },
@@ -731,8 +754,9 @@ function ProgrammeStructureEditor({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {loading && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">Loading live curriculum structure...</div>}
+          {(loading || staffLoading) && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">Loading live curriculum structure...</div>}
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{error}</div>}
+          {staffError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{staffError}</div>}
           {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-medium text-emerald-700">{notice}</div>}
 
           {tab === 'programme' && <ProgrammeEditorForm programme={liveProgramme} onSaved={() => refresh('Programme details saved.')} />}
@@ -746,7 +770,7 @@ function ProgrammeStructureEditor({
 
           {tab === 'groups' && (
             <div className="space-y-3">
-              {groups.map(group => <GroupEditorRow key={group.id} group={group} tutors={tutorOptions} coaches={coachOptions} onSaved={() => refresh('Group saved.')} />)}
+              {groups.map(group => <GroupEditorRow key={group.id} group={group} tutors={tutorOptions} coaches={coachOptions} onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })} onSaved={() => refresh('Group saved.')} />)}
               {!groups.length && <EmptyStructure label="No groups linked to this programme yet." />}
             </div>
           )}
@@ -761,6 +785,7 @@ function ProgrammeStructureEditor({
                   moduleOptions={catalogueModuleOptions}
                   tutors={tutorOptions}
                   coaches={coachOptions}
+                  onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })}
                   onSaved={() => refresh('Module saved.')}
                 />
               ))}
@@ -919,7 +944,7 @@ function CohortEditorRow({ cohort, onSaved }: { cohort: CurriculumCohort; onSave
   );
 }
 
-function GroupEditorRow({ group, tutors, coaches, onSaved }: { group: CurriculumGroup; tutors: SelectOption[]; coaches: SelectOption[]; onSaved: () => Promise<void> | void }) {
+function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSaved }: { group: CurriculumGroup; tutors: SelectOption[]; coaches: SelectOption[]; onRefreshStaffProfiles: () => void; onSaved: () => Promise<void> | void }) {
   const [form, setForm] = useState({
     name: group.name,
     tutor: group.tutor === 'Unassigned' ? '' : group.tutor || '',
@@ -964,8 +989,8 @@ function GroupEditorRow({ group, tutors, coaches, onSaved }: { group: Curriculum
         />
         <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-3">
           <Field label="Group name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
-          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." />
-          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." />
+          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." onOpen={onRefreshStaffProfiles} />
+          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." onOpen={onRefreshStaffProfiles} />
           <WeekdayMultiSelect value={form.weekDays} onChange={value => setForm(prev => ({ ...prev, weekDays: value }))} />
           <Field label="Start time" type="time" value={form.startTime} onChange={value => setForm(prev => ({ ...prev, startTime: value }))} />
           <Field label="End time" type="time" value={form.endTime} onChange={value => setForm(prev => ({ ...prev, endTime: value }))} />
@@ -992,6 +1017,7 @@ function ModuleEditorRow({
   moduleOptions: availableModules,
   tutors,
   coaches,
+  onRefreshStaffProfiles,
   onSaved,
 }: {
   module: CurriculumModule;
@@ -999,6 +1025,7 @@ function ModuleEditorRow({
   moduleOptions: SelectOption[];
   tutors: SelectOption[];
   coaches: SelectOption[];
+  onRefreshStaffProfiles: () => void;
   onSaved: () => Promise<void> | void;
 }) {
   const sortedSessions = [...sessions].sort((left, right) => String(left.date).localeCompare(String(right.date)));
@@ -1069,8 +1096,8 @@ function ModuleEditorRow({
           <div className="md:col-span-2"><ChoiceSelect label="Module" value={form.name} onChange={selectModule} options={availableModules} placeholder="Select module..." required /></div>
           <Field label="Sessions / weeks" type="number" value={form.weeks} onChange={value => setForm(prev => ({ ...prev, weeks: value }))} />
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} compact />
-          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." />
-          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." />
+          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." onOpen={onRefreshStaffProfiles} />
+          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." onOpen={onRefreshStaffProfiles} />
           <Field label="Start date" type="date" value={form.startDate} onChange={value => setForm(prev => ({ ...prev, startDate: value }))} />
           <Field label="End date" type="date" value={form.endDate} onChange={value => setForm(prev => ({ ...prev, endDate: value }))} />
           <WeekdayMultiSelect value={form.weekDays} onChange={value => setForm(prev => ({ ...prev, weekDays: value }))} />

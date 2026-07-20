@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
 
-export function useCurriculumSessions() {
+export function useCurriculumSessions({ autoLoad = true }: { autoLoad?: boolean } = {}) {
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -31,7 +31,13 @@ export function useCurriculumSessions() {
     };
   }, []);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    if (!autoLoad) {
+      setLoading(false);
+      return undefined;
+    }
+    return load();
+  }, [autoLoad, load]);
 
   return { sessions, loading, error, reload: () => load() };
 }
