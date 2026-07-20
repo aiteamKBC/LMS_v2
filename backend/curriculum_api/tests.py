@@ -49,6 +49,30 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(insert_row.call_args.args[1]['sub'], 'Standard Name')
 
+    def test_create_programme_persists_programme_details(self):
+        request = self.factory.post(
+            '/curriculum_api/curriculum/programmes/',
+            data=json.dumps({
+                'name': 'New Programme',
+                'standard': 'Standard Name',
+                'level': 'L4',
+                'description': 'Programme description',
+                'color': '#123456',
+            }),
+            content_type='application/json',
+        )
+
+        with patch.object(views, 'get_program_config_rows', return_value=[]), \
+             patch.object(views, 'insert_row', return_value={'program_id': 'new-programme', 'name': 'New Programme'}) as insert_row, \
+             patch.object(views, 'programme_response', return_value={'sourceId': 'new-programme', 'name': 'New Programme'}):
+            response = views.curriculum_programme_collection(request)
+
+        payload = insert_row.call_args.args[1]
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(payload['standard'], 'Standard Name')
+        self.assertEqual(payload['level'], 'L4')
+        self.assertEqual(payload['description'], 'Programme description')
+
     def test_create_programme_defaults_to_planned_status(self):
         request = self.factory.post(
             '/curriculum_api/curriculum/programmes/',

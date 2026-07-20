@@ -231,6 +231,12 @@ def link_training_row_to_catalogue(training_id, module_catalogue_id):
 def ensure_program_config_archive_columns():
     try:
         ensure_columns('programmes', {
+            'standard': 'varchar(255)',
+            'level': 'varchar(64)',
+            'owner': 'varchar(255)',
+            'created_by': 'varchar(255)',
+            'color': 'varchar(32)',
+            'description': 'text',
             'is_active': 'boolean',
             'is_archived': 'boolean',
             'structure_type': 'varchar(32)',
@@ -6336,6 +6342,10 @@ def curriculum_programme_collection(request):
         'program_id': source_id,
         'name': name,
         'sub': payload.get('standard') or payload.get('sub') or name,
+        'standard': payload.get('standard') or payload.get('sub') or name,
+        'level': payload.get('level') or '',
+        'owner': payload.get('owner') or '',
+        'created_by': payload.get('owner') or '',
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'structure_type': structure_type,

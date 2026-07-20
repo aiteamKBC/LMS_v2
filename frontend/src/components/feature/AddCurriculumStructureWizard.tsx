@@ -52,6 +52,8 @@ type ModuleMode = 'existing' | 'new';
 type SaveIntent = 'draft' | 'final';
 type ProgrammeStructureType = 'scheduled' | 'free';
 
+const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
+
 interface GeneratedSession {
   sessionNumber: number;
   date: string;
@@ -1627,6 +1629,7 @@ export function AddCurriculumStructureWizard({
   const [builderStructureSyncTick, setBuilderStructureSyncTick] = useState(0);
   const hydratedProgrammeRef = useRef('');
   const loadedBuilderStructureKeysRef = useRef<Set<string>>(new Set());
+  const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
@@ -1747,9 +1750,9 @@ export function AddCurriculumStructureWizard({
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
-    loadedBuilderStructureKeysRef.current.clear();
+    syncWizardDraftsFromModuleBuilder();
     setBuilderStructureSyncTick(tick => tick + 1);
-  }, [isFreeProgramme, isOpen, step]);
+  }, [isFreeProgramme, isOpen, step, syncWizardDraftsFromModuleBuilder]);
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme) return;
@@ -1757,37 +1760,31 @@ export function AddCurriculumStructureWizard({
       if (document.visibilityState && document.visibilityState !== 'visible') return;
       if (!['modules', 'weeks', 'review'].includes(step)) return;
       syncWizardDraftsFromModuleBuilder();
-      loadedBuilderStructureKeysRef.current.clear();
-      setBuilderStructureSyncTick(tick => tick + 1);
-      void reloadCatalogueModules({ silent: true });
     };
     const applyBuilderStorageUpdate = (event: StorageEvent) => {
       if (!event.key?.startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)) return;
       syncWizardDraftsFromModuleBuilder();
     };
+    const applyBuilderCustomUpdate = () => {
+      syncWizardDraftsFromModuleBuilder();
+    };
+    let syncChannel: BroadcastChannel | null = null;
+    if ('BroadcastChannel' in window) {
+      syncChannel = new BroadcastChannel(MODULE_BUILDER_SYNC_CHANNEL);
+      syncChannel.onmessage = () => applyBuilderCustomUpdate();
+    }
     window.addEventListener('focus', refreshBuilderStructures);
     window.addEventListener('storage', applyBuilderStorageUpdate);
+    window.addEventListener(MODULE_BUILDER_SYNC_CHANNEL, applyBuilderCustomUpdate);
     document.addEventListener('visibilitychange', refreshBuilderStructures);
     return () => {
       window.removeEventListener('focus', refreshBuilderStructures);
       window.removeEventListener('storage', applyBuilderStorageUpdate);
+      window.removeEventListener(MODULE_BUILDER_SYNC_CHANNEL, applyBuilderCustomUpdate);
       document.removeEventListener('visibilitychange', refreshBuilderStructures);
+      syncChannel?.close();
     };
-  }, [isFreeProgramme, isOpen, reloadCatalogueModules, step, syncWizardDraftsFromModuleBuilder]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const refreshStaffProfiles = () => {
-      if (document.visibilityState && document.visibilityState !== 'visible') return;
-      void reloadStaffProfiles({ silent: true });
-    };
-    window.addEventListener('focus', refreshStaffProfiles);
-    document.addEventListener('visibilitychange', refreshStaffProfiles);
-    return () => {
-      window.removeEventListener('focus', refreshStaffProfiles);
-      document.removeEventListener('visibilitychange', refreshStaffProfiles);
-    };
-  }, [isOpen, reloadStaffProfiles]);
+  }, [isFreeProgramme, isOpen, step, syncWizardDraftsFromModuleBuilder]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -2082,6 +2079,10 @@ export function AddCurriculumStructureWizard({
   const canSave = validation.programme.length === 0 && validation.cohort.length === 0 && validation.group.length === 0 && validation.modules.length === 0;
   const canSaveProgrammeDetails = Boolean(selectedProgramme && step === 'programme' && validation.programme.length === 0);
   const canSaveDraft = canSave || canSaveProgrammeDetails;
+  const reviewGroupsForSave = cohortDrafts.flatMap(cohort => cohort.groups.filter(isConfiguredGroup));
+  const reviewModulesForSave = reviewGroupsForSave.flatMap(group => group.modules.filter(isConfiguredModule));
+  const reviewComponentsForSave = reviewModulesForSave.reduce((total, draft) => total + draft.weeks.reduce((weekTotal, week) => weekTotal + week.components.length, 0), 0);
+  const reviewSaveSummary = `${reviewModulesForSave.length} modules - ${reviewComponentsForSave} components`;
   const currentStepMeta = visibleSteps[stepIndex] || visibleSteps[0];
   const nextStepMeta = visibleSteps[Math.min(stepIndex + 1, visibleSteps.length - 1)] || visibleSteps[visibleSteps.length - 1];
   const currentValidationItems = (
@@ -2123,6 +2124,7 @@ export function AddCurriculumStructureWizard({
     setExpandedModuleId('');
     hydratedProgrammeRef.current = '';
     loadedBuilderStructureKeysRef.current.clear();
+    loadingBuilderStructureKeysRef.current.clear();
     loadedFreeProgrammeRef.current = '';
   }, [initialProgrammeId, isOpen, startStep]);
 
@@ -2214,16 +2216,21 @@ export function AddCurriculumStructureWizard({
       const identifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
       if (!identifier) return null;
       const loadKey = `${draft.localId}:${identifier}`;
-      if (loadedBuilderStructureKeysRef.current.has(loadKey)) return null;
+      if (loadedBuilderStructureKeysRef.current.has(loadKey) || loadingBuilderStructureKeysRef.current.has(loadKey)) return null;
+      loadingBuilderStructureKeysRef.current.add(loadKey);
       loadedBuilderStructureKeysRef.current.add(loadKey);
 
-      const structure = await loadModuleStructure(identifier);
-      if (!structure) return null;
-      return {
-        draftId: draft.localId,
-        identifier,
-        structure,
-      };
+      try {
+        const structure = await loadModuleStructure(identifier);
+        if (!structure) return null;
+        return {
+          draftId: draft.localId,
+          identifier,
+          structure,
+        };
+      } finally {
+        loadingBuilderStructureKeysRef.current.delete(loadKey);
+      }
     })));
 
     if (!loads.length) return;
@@ -3168,6 +3175,11 @@ export function AddCurriculumStructureWizard({
             {stepIndex === 0 ? 'Cancel' : 'Back'}
           </button>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            {step === 'review' && (
+              <div className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] font-bold text-foreground-600 sm:text-right">
+                Ready to save: <span className="text-foreground-950">{reviewSaveSummary}</span>
+              </div>
+            )}
             <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
               <i className="ri-save-3-line"></i>
               {saving === 'draft' ? 'Saving...' : selectedProgramme && step === 'programme' ? 'Save Programme' : 'Save Draft'}
@@ -5734,10 +5746,23 @@ function ReviewSummary({
   const unassignedGroups = configuredGroups.filter(group => !group.coach).length;
   const unassignedModules = configuredModules.filter(module => !module.tutor).length;
   const deliveryDayCount = new Set(configuredGroups.flatMap(group => group.deliveryDays).filter(Boolean)).size;
+  const readinessWarnings = [
+    unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need coach cover` : '',
+    unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need tutor cover` : '',
+    skippedCount ? `${skippedCount} session${skippedCount === 1 ? '' : 's'} shifted by holidays` : '',
+  ].filter(Boolean);
+  const readinessLabel = readinessWarnings.length ? 'Review warnings' : 'Ready to save';
+  const readinessTone = readinessWarnings.length ? 'warning' : 'success';
 
   if (freeMode) {
     return (
       <div className="space-y-5">
+        <ReviewReadinessPanel
+          tone={readinessTone}
+          title={readinessLabel}
+          summary={`${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'} - ${formatHoursValue(totalHours)}`}
+          warnings={readinessWarnings}
+        />
         <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
           <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -5830,6 +5855,12 @@ function ReviewSummary({
 
   return (
     <div className="space-y-5">
+      <ReviewReadinessPanel
+        tone={readinessTone}
+        title={readinessLabel}
+        summary={`${cohortCount} cohort${cohortCount === 1 ? '' : 's'} - ${groupCount} group${groupCount === 1 ? '' : 's'} - ${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'}`}
+        warnings={readinessWarnings}
+      />
       <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
         <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -6043,6 +6074,49 @@ function ReviewSummary({
   );
 }
 
+function ReviewReadinessPanel({
+  tone,
+  title,
+  summary,
+  warnings,
+}: {
+  tone: 'success' | 'warning';
+  title: string;
+  summary: string;
+  warnings: string[];
+}) {
+  const isWarning = tone === 'warning';
+
+  return (
+    <section className={`rounded-2xl border px-4 py-3 shadow-sm ${isWarning ? 'border-amber-200 bg-amber-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isWarning ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+            <i className={`${isWarning ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} text-lg`}></i>
+          </span>
+          <div>
+            <p className="text-sm font-heading font-bold text-foreground-950">{title}</p>
+            <p className="mt-0.5 text-[12px] font-semibold text-foreground-600">{summary}</p>
+          </div>
+        </div>
+        {warnings.length ? (
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            {warnings.map(warning => (
+              <span key={warning} className="rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-amber-800">
+                {warning}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-emerald-700">
+            No warnings
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ReviewInsightGrid({
   items,
 }: {
@@ -6086,9 +6160,9 @@ function ReviewStat({ label, value }: { label: string; value: string }) {
 function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'success' | 'warning' | 'info' | 'muted' }) {
   const classes = {
     default: 'border-background-200 bg-background-50 text-foreground-700',
-    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    success: 'border-emerald-200 bg-white text-emerald-700',
     warning: 'border-amber-200 bg-amber-50 text-amber-700',
-    info: 'border-primary-200 bg-primary-50 text-primary-700',
+    info: 'border-primary-100 bg-white text-primary-700',
     muted: 'border-background-200 bg-background-100 text-foreground-500',
   }[tone];
 
@@ -6098,9 +6172,9 @@ function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone
 function ReviewMiniMetric({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'success' | 'warning' | 'info' }) {
   const toneClass = {
     default: 'bg-background-50 text-foreground-900',
-    success: 'bg-emerald-50 text-emerald-700',
+    success: 'bg-background-50 text-emerald-700',
     warning: 'bg-amber-50 text-amber-700',
-    info: 'bg-primary-50 text-primary-700',
+    info: 'bg-background-50 text-primary-700',
   }[tone];
 
   return (

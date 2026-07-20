@@ -136,6 +136,8 @@ const statusFilters = [
   { key: 'review', label: 'In Review' },
 ];
 
+const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
+
 function wait(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
 }
@@ -611,10 +613,25 @@ export default function ModuleBuilder() {
       setActionMessage(null);
       if (wizardDraftLocalIdRef.current) {
         try {
-          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
+          const syncKey = `${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`;
+          const syncPayload = {
             savedAt: new Date().toISOString(),
             module: saved,
+          };
+          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
+            ...syncPayload,
           }));
+          const syncMessage = {
+            key: syncKey,
+            draftId: wizardDraftLocalIdRef.current,
+            payload: syncPayload,
+          };
+          window.dispatchEvent(new CustomEvent(MODULE_BUILDER_SYNC_CHANNEL, { detail: syncMessage }));
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel(MODULE_BUILDER_SYNC_CHANNEL);
+            channel.postMessage(syncMessage);
+            channel.close();
+          }
         } catch (err) {
           console.warn('Unable to sync saved module back to Curriculum Studio wizard.', err);
         }
