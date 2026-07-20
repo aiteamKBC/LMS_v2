@@ -1,7 +1,11 @@
 import { useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { RealMonthlyCycleView } from '@/components/feature/RealMonthlyCycleView';
 import MonthlyReadinessHero from './components/MonthlyReadinessHero';
 import CurrentFocusCard from './components/CurrentFocusCard';
 import MonthlyJourneyTimeline from './components/MonthlyJourneyTimeline';
@@ -14,6 +18,18 @@ import EndOfMonthOutcome from './components/EndOfMonthOutcome';
 const learnerNav = roleNavMap.learner;
 
 export default function MonthlyCyclePage() {
+  // Self-view (bare route) resolves the learner via useMyLearner; staff drill-down
+  // via :kind/:id. Real learners get the live, data-driven view; otherwise the mock.
+  const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
+  const { kind, id } = useResolvedLearner(urlKind, urlId);
+  const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  if (isRealMode && kind && id) {
+    return <RealMonthlyCycleView real={real} loading={loading} loadError={loadError} learnerKind={kind} learnerId={id} />;
+  }
+  return <MockMonthlyCyclePage />;
+}
+
+function MockMonthlyCyclePage() {
   const p = LEARNER_PROFILE;
   const [activeMonth, setActiveMonth] = useState('jun');
 

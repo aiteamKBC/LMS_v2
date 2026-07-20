@@ -88,7 +88,8 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
     if host.strip()
 ]
 
@@ -225,6 +226,12 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Uploaded media (quiz packages, extracted SCORM runtime, etc.). FileField's
+# upload_to is relative to MEDIA_ROOT; without this it defaults to '' and the
+# SCORM runtime extraction path (MEDIA_ROOT / 'scorm_runtime') breaks.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR
 
 LOGGING = {
     'version': 1,

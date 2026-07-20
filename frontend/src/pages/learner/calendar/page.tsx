@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
-import { CALENDAR_EVENTS, EVENTS, type CalendarEvent } from '@/pages/learner/clubs/data';
+import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
 
 const learnerNav = roleNavMap.learner;
 const p = LEARNER_PROFILE;
@@ -12,6 +14,57 @@ const p = LEARNER_PROFILE;
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+/** Resolve an event's calendar day — prefers the exact isoDate carried by DB-backed
+ * events, falls back to parsing the "13 Jun" display date (year unknown → null). */
+function parseEventDate(ev: CalendarEvent): { day: number; month: number; year: number | null } | null {
+  if (ev.isoDate) {
+    const [y, m, d] = ev.isoDate.split('-').map(Number);
+    if (y && m && d) return { day: d, month: m - 1, year: y };
+  }
+  const parts = ev.date.split(' ');
+  const day = parseInt(parts[0]);
+  const month = MONTH_SHORT_INDEX[parts[1]];
+  if (!day || month === undefined) return null;
+  return { day, month, year: null };
+}
+
+/** Map a Coach.coach_calendar_event row (backend JSON) to the page's display shape. */
+function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarEvent | null {
+  if (ev.status === 'cancelled') return null;
+  const iso = ev.scheduledDate || ev.date || ev.targetDate;
+  if (!iso) return null;
+  const [y, m, d] = iso.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  const dateObj = new Date(y, m - 1, d);
+  const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
+  let time = '09:00–10:00';
+  if (ev.scheduledTime) {
+    const [h, min] = ev.scheduledTime.split(':').map(Number);
+    const end = new Date(y, m - 1, d, h || 0, (min || 0) + (ev.durationMinutes || 60));
+    time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+  }
+  const confirmed = ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed';
+  return {
+    id: ev.id,
+    title: ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
+    dayName,
+    time,
+    club: 'Coaching',
+    clubId: '',
+    type: ev.type === 'review' ? 'Assessment' : ev.type === 'welfare' ? 'Study Group' : 'Coaching',
+    format: '1:1 Teams',
+    location: ev.meetingLink ? 'Microsoft Teams' : ev.scheduledTime ? 'Online' : 'To be confirmed',
+    host: ev.coachName || 'Your coach',
+    points: 0,
+    status: confirmed ? 'confirmed' : 'pending',
+    description: ev.notes || `${ev.title} session with ${ev.coachName || 'your coach'} for ${learnerName}.`,
+    isoDate: iso,
+    meetingLink: ev.meetingLink || undefined,
+  };
+}
 
 const HOURS = Array.from({ length: 15 }, (_, i) => i + 7);
 
@@ -99,13 +152,13 @@ function getEventTimeRange(time: string): { start: number; end: number } {
 
 function hasConflict(events: CalendarEvent[], newEvent: CalendarEvent): CalendarEvent | null {
   const newRange = getEventTimeRange(newEvent.time);
-  const newDay = parseInt(newEvent.date.split(' ')[0]);
-  const newMonth = newEvent.date.includes('Jun') ? 5 : newEvent.date.includes('Jul') ? 6 : newEvent.date.includes('Aug') ? 7 : -1;
+  const newDate = parseEventDate(newEvent);
+  if (!newDate) return null;
   for (const ev of events) {
     if (ev.id === newEvent.id) continue;
-    const evDay = parseInt(ev.date.split(' ')[0]);
-    const evMonth = ev.date.includes('Jun') ? 5 : ev.date.includes('Jul') ? 6 : ev.date.includes('Aug') ? 7 : -1;
-    if (evDay !== newDay || evMonth !== newMonth) continue;
+    const evDate = parseEventDate(ev);
+    if (!evDate || evDate.day !== newDate.day || evDate.month !== newDate.month) continue;
+    if (evDate.year !== null && newDate.year !== null && evDate.year !== newDate.year) continue;
     const evRange = getEventTimeRange(ev.time);
     if (newRange.start < evRange.end && newRange.end > evRange.start) return ev;
   }
@@ -168,6 +221,11 @@ function restoreNotifications() {
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
 
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
   const r = (size - stroke) / 2;
   const circ = 2 * Math.PI * r;
@@ -182,16 +240,19 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-backg
 }
 
 export default function LearnerCalendarPage() {
+  const myLearner = useMyLearner();
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
-  const [viewYear, setViewYear] = useState(2026);
-  const [viewMonth, setViewMonth] = useState(5);
-  const [selectedDay, setSelectedDay] = useState(13);
-  const [myEvents, setMyEvents] = useState<CalendarEvent[]>(CALENDAR_EVENTS);
+  const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
+  const [selectedDay, setSelectedDay] = useState(() => new Date().getDate());
+  const [myEvents, setMyEvents] = useState<CalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
-  const [customDate, setCustomDate] = useState('2026-06-13');
+  const [customDate, setCustomDate] = useState(() => todayISO());
   const [customStartTime, setCustomStartTime] = useState('14:00');
   const [customEndTime, setCustomEndTime] = useState('15:00');
   const [customReminder, setCustomReminder] = useState('15');
@@ -205,6 +266,15 @@ export default function LearnerCalendarPage() {
   const [feedCopied, setFeedCopied] = useState(false);
   const [customRecurrence, setCustomRecurrence] = useState('none');
   const [conflictEvent, setConflictEvent] = useState<CalendarEvent | null>(null);
+  const [showBookModal, setShowBookModal] = useState(false);
+  const [bookType, setBookType] = useState<BookableSessionType>('catch-up');
+  const [bookDate, setBookDate] = useState(() => todayISO());
+  const [bookTime, setBookTime] = useState('10:00');
+  const [bookDuration, setBookDuration] = useState('60');
+  const [bookNotes, setBookNotes] = useState('');
+  const [bookSubmitting, setBookSubmitting] = useState(false);
+  const [bookError, setBookError] = useState<string | null>(null);
+  const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>();
 
   const today = new Date();
@@ -214,11 +284,11 @@ export default function LearnerCalendarPage() {
 
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
     return myEvents.filter((ev) => {
-      const evDay = parseInt(ev.date.split(' ')[0]);
-      const evMonth = ev.date.includes('Jun') ? 5 : ev.date.includes('Jul') ? 6 : ev.date.includes('Aug') ? 7 : -1;
-      return evDay === day && evMonth === month;
+      const evDate = parseEventDate(ev);
+      if (!evDate) return false;
+      return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === viewYear);
     });
-  }, [myEvents]);
+  }, [myEvents, viewYear]);
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
@@ -230,6 +300,56 @@ export default function LearnerCalendarPage() {
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
+
+  // Load the learner's coaching sessions from Coach.coach_calendar_event.
+  useEffect(() => {
+    let cancelled = false;
+    setCalendarLoading(true);
+    fetchLearnerCalendarEvents(myLearner.kind, myLearner.id)
+      .then((res) => {
+        if (cancelled) return;
+        const coachEvents = res.events
+          .map((ev) => mapCoachEvent(ev, p.fullName))
+          .filter((ev): ev is CalendarEvent => ev !== null);
+        // Keep locally-created personal events; replace the DB-backed ones.
+        setMyEvents((prev) => [...coachEvents, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
+        setCalendarError(null);
+      })
+      .catch((err: Error) => { if (!cancelled) setCalendarError(err.message); })
+      .finally(() => { if (!cancelled) setCalendarLoading(false); });
+    // The assigned coach (Active_users mirror) — powers the "Book a session" panel.
+    fetchLearnerCoach(myLearner.id)
+      .then((res) => { if (!cancelled && res.coachEmail) setCoach({ name: res.coachName || 'Your coach', email: res.coachEmail }); })
+      .catch(() => { /* no mirror row / no coach assigned — booking panel shows a hint */ });
+    return () => { cancelled = true; };
+  }, [myLearner.kind, myLearner.id]);
+
+  const handleBookSession = async () => {
+    if (bookSubmitting) return;
+    setBookSubmitting(true);
+    setBookError(null);
+    try {
+      const res = await bookLearnerCalendarSession(myLearner.kind, myLearner.id, {
+        sessionType: bookType,
+        scheduledDate: bookDate,
+        scheduledTime: bookTime,
+        durationMinutes: parseInt(bookDuration),
+        notes: bookNotes.trim() || undefined,
+      });
+      const mapped = mapCoachEvent(res.event, p.fullName);
+      if (mapped) setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
+      setShowBookModal(false);
+      setBookNotes('');
+      setAddToCalendarToast(res.warning
+        ? `Session booked! (${res.warning})`
+        : `"${mapped?.title || 'Session'}" booked with ${coach?.name || 'your coach'}!`);
+      setTimeout(() => setAddToCalendarToast(null), 4000);
+    } catch (err) {
+      setBookError(err instanceof Error ? err.message : 'Booking failed.');
+    } finally {
+      setBookSubmitting(false);
+    }
+  };
 
   const handlePrev = () => {
     if (viewMode === 'daily') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() - 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
@@ -288,7 +408,7 @@ export default function LearnerCalendarPage() {
     const monthName = MONTH_NAMES[dateObj.getMonth()].substring(0, 3);
     const dayName = DAYS_OF_WEEK[dateObj.getDay() === 0 ? 6 : dateObj.getDay() - 1];
     const reminderMinutes = parseInt(customReminder);
-    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes };
+    const newEvent: CalendarEvent = { id: `custom-${Date.now()}`, title: customTitle, date: `${day} ${monthName}`, dayName, time: `${customStartTime}\u2013${customEndTime}`, club: 'Personal', clubId: '', type: 'Personal', format: customLocation || 'Personal', location: customLocation || 'Personal Calendar', host: p.fullName, points: 0, status: 'confirmed', description: customDescription || `Reminder: ${customReminder} minutes before`, color: customColor, reminderMinutes, isoDate: customDate };
     const conflict = hasConflict(myEvents, newEvent);
     if (conflict) { setConflictEvent(conflict); return; }
     setMyEvents((prev) => [newEvent, ...prev]);
@@ -304,14 +424,14 @@ export default function LearnerCalendarPage() {
         const recDay = nextDate.getDate();
         const recMonthName = MONTH_NAMES[nextDate.getMonth()].substring(0, 3);
         const recDayName = DAYS_OF_WEEK[nextDate.getDay() === 0 ? 6 : nextDate.getDay() - 1];
-        const recEvent: CalendarEvent = { ...newEvent, id: `custom-${Date.now()}-${i}`, date: `${recDay} ${recMonthName}`, dayName: recDayName };
+        const recEvent: CalendarEvent = { ...newEvent, id: `custom-${Date.now()}-${i}`, date: `${recDay} ${recMonthName}`, dayName: recDayName, isoDate: `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(recDay).padStart(2, '0')}` };
         const recConflict = hasConflict([newEvent, ...myEvents], recEvent);
         if (recConflict) { setConflictEvent(recConflict); break; }
         setMyEvents((prev) => [...prev, recEvent]);
         if (notificationPermission === 'granted' && reminderMinutes > 0) { const recTimerId = scheduleEventNotification(recEvent.id, recEvent.title, recEvent.date, customStartTime, reminderMinutes); if (recTimerId) timersRef.current[recEvent.id] = recTimerId; }
       }
     }
-    setCustomTitle(''); setCustomDescription(''); setCustomLocation(''); setCustomDate('2026-06-13'); setCustomStartTime('14:00'); setCustomEndTime('15:00'); setCustomReminder('15'); setCustomColor('sky'); setCustomRecurrence('none'); setShowCreateModal(false);
+    setCustomTitle(''); setCustomDescription(''); setCustomLocation(''); setCustomDate(todayISO()); setCustomStartTime('14:00'); setCustomEndTime('15:00'); setCustomReminder('15'); setCustomColor('sky'); setCustomRecurrence('none'); setShowCreateModal(false);
     setAddToCalendarToast(`"${newEvent.title}" created${customRecurrence !== 'none' ? ` and ${customRecurrence === 'monthly' ? '3 monthly' : '4 recurring'} instances added` : ''}!`);
     setTimeout(() => setAddToCalendarToast(null), 3000);
   };
@@ -338,6 +458,70 @@ export default function LearnerCalendarPage() {
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-emerald-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
           <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><i className="ri-calendar-check-line"></i></span>
           <p className="text-sm font-semibold text-foreground-900">{addToCalendarToast}</p>
+        </div>
+      )}
+
+      {/* ═══════════ BOOK COACH SESSION MODAL ═══════════ */}
+      {showBookModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
+          <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><i className="ri-user-star-line text-primary-500"></i>Book a Coach Session</h3>
+              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+            </div>
+            <p className="text-sm text-foreground-500 mb-5">
+              {coach
+                ? <>A Teams meeting will be booked with <strong className="text-foreground-700">{coach.name}</strong> and added to both your calendars.</>
+                : 'No coach has been assigned to you yet — please contact your programme team.'}
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
+                <div className="grid grid-cols-2 gap-3">
+                  {([
+                    { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
+                    { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                  ]).map((t) => (
+                    <button key={t.value} onClick={() => setBookType(t.value)}
+                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
+                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><i className={t.icon}></i></span>
+                      <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
+                      <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={todayISO()} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+                <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
+                <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
+                  <option value="30">30 minutes</option>
+                  <option value="45">45 minutes</option>
+                  <option value="60">1 hour</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">What would you like to cover? (optional)</label>
+                <textarea value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} placeholder="Add anything your coach should know before the session..." maxLength={500} rows={3} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all resize-none" />
+                <span className="text-[10px] text-foreground-400 mt-0.5 block">{bookNotes.length}/500</span>
+              </div>
+              {bookError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 flex items-center gap-2">
+                  <i className="ri-error-warning-line text-red-500"></i>
+                  <p className="text-xs text-red-700">{bookError}</p>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
+              <button onClick={handleBookSession} disabled={bookSubmitting || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+                {bookSubmitting ? <><i className="ri-loader-4-line animate-spin mr-1"></i>Booking...</> : <><i className="ri-calendar-check-line mr-1"></i>Book Session</>}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -380,7 +564,15 @@ export default function LearnerCalendarPage() {
               <div className="flex items-center gap-2 text-sm text-foreground-600"><i className="ri-team-line text-foreground-400"></i><span>{showEventDetails.club}</span></div>
             </div>
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
-            <div className="flex gap-2"><button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i>Export .ics</button><button onClick={() => handleRemoveFromCalendar(showEventDetails)} className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-calendar-close-line mr-1"></i>Remove</button></div>
+            <div className="flex gap-2">
+              {showEventDetails.meetingLink && (
+                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center"><i className="ri-video-chat-line mr-1"></i>Join Meeting</a>
+              )}
+              <button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i>Export .ics</button>
+              {showEventDetails.id.startsWith('custom-') && (
+                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-calendar-close-line mr-1"></i>Remove</button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -420,6 +612,19 @@ export default function LearnerCalendarPage() {
       )}
 
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+
+        {calendarError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
+            <i className="ri-error-warning-line text-red-500"></i>
+            <p className="text-sm text-red-700">Could not load your coaching sessions: {calendarError}</p>
+          </div>
+        )}
+        {calendarLoading && !calendarError && (
+          <div className="rounded-xl border border-background-300 bg-background-50 px-4 py-3 flex items-center gap-3">
+            <i className="ri-loader-4-line animate-spin text-primary-500"></i>
+            <p className="text-sm text-foreground-500">Loading your coaching sessions&hellip;</p>
+          </div>
+        )}
 
         {/* ═══════════ HERO BANNER ═══════════ */}
         <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
@@ -671,6 +876,11 @@ export default function LearnerCalendarPage() {
             <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-flashlight-line text-accent-500"></i>Quick Actions</h3>
               <div className="space-y-2">
+                <button onClick={() => setShowBookModal(true)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-accent-500 text-white hover:bg-accent-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
+                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-user-star-line text-white"></i></span>
+                  <div className="text-left"><p className="text-sm font-semibold">Book Coach Session</p><p className="text-xs text-white/80">{coach ? `Catch-up or support with ${coach.name}` : 'Catch-up or student support'}</p></div>
+                </button>
                 <button onClick={() => setShowCreateModal(true)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-500 text-white hover:bg-primary-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-add-line text-white"></i></span>
@@ -699,9 +909,9 @@ export default function LearnerCalendarPage() {
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-calendar-todo-line text-primary-500"></i>Upcoming</h3>
               <div className="space-y-2">
                 {myEvents.filter((ev) => {
-                  const evDay = parseInt(ev.date.split(' ')[0]);
-                  const evMonth = ev.date.includes('Jun') ? 5 : ev.date.includes('Jul') ? 6 : -1;
-                  const evDate2 = new Date(viewYear, evMonth, evDay);
+                  const evDate = parseEventDate(ev);
+                  if (!evDate) return false;
+                  const evDate2 = new Date(evDate.year ?? viewYear, evDate.month, evDate.day);
                   const todayDate = new Date(viewYear, viewMonth, selectedDay);
                   return evDate2 >= todayDate;
                 }).slice(0, 5).map((ev) => (
@@ -720,9 +930,9 @@ export default function LearnerCalendarPage() {
                   </div>
                 ))}
                 {myEvents.filter((ev) => {
-                  const evDay = parseInt(ev.date.split(' ')[0]);
-                  const evMonth = ev.date.includes('Jun') ? 5 : ev.date.includes('Jul') ? 6 : -1;
-                  const evDate2 = new Date(viewYear, evMonth, evDay);
+                  const evDate = parseEventDate(ev);
+                  if (!evDate) return false;
+                  const evDate2 = new Date(evDate.year ?? viewYear, evDate.month, evDate.day);
                   const todayDate = new Date(viewYear, viewMonth, selectedDay);
                   return evDate2 >= todayDate;
                 }).length === 0 && (

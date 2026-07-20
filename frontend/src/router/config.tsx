@@ -285,6 +285,7 @@ import TrainingPlanBuilderPage from "../pages/delivery/TrainingPlanPage";
 import ThisWeekPage from "../pages/learner/this-week/page";
 import TrainingPlanPage from "../pages/learner/training-plan/page";
 import QuizTakePage from "../pages/learner/quiz-take/page";
+import VideoWatchPage from "../pages/learner/video-watch/page";
 import ModulesPage from "../pages/learner/modules/page";
 import AttendancePage from "../pages/learner/attendance/page";
 import CatchUpPage from "../pages/learner/catchup/page";
@@ -418,7 +419,6 @@ import QaDeliverySetup from "../pages/qa/delivery-setup/page";
 import QaGatewayEpa from "../pages/qa/gateway-epa/page";
 import LearnerEngagementPage from "../pages/engagement/learner-engagement/page";
 import AttendanceRiskPage from "../pages/engagement/attendance-risk/page";
-
 import CallLogsPage from "../pages/engagement/call-logs/page";
 import WhatsAppLogsPage from "../pages/engagement/whatsapp-logs/page";
 import EmailLogsPage from "../pages/engagement/email-logs/page";
@@ -429,6 +429,8 @@ import EventsPage from "../pages/engagement/events/page";
 import EngagementClubsPage from "../pages/engagement/clubs/page";
 import RecognitionPage from "../pages/engagement/recognition/page";
 import EngagementReportsPage from "../pages/engagement/reports/page";
+import FlashCardsPage from "../pages/engagement/flash-cards/page";
+
 import EmployerApprenticeRisk from '@/pages/employer/apprentice-risk/page';
 import EmployerApprenticeProgress from '@/pages/employer/apprentice-progress/page';
 import EmployerReviewActions from '@/pages/employer/review-actions/page';
@@ -643,7 +645,19 @@ const routes: RouteObject[] = [
     path: "/learner/quiz/:kind/:id/:quizId",
     element: <QuizTakePage />,
   },
-  
+  {
+    path: "/learner/video/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+  {
+    path: "/learner/component/:kind/:id/:componentId",
+    element: <VideoWatchPage />,
+  },
+
   {
     path: "/learner/modules",
     element: <ModulesPage />,
@@ -686,6 +700,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-cycle",
+    element: <MonthlyCyclePage />,
+  },
+  {
+    path: "/learner/monthly-cycle/:kind/:id",
     element: <MonthlyCyclePage />,
   },
   {
@@ -1154,6 +1172,10 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
+  },
+  {
+    path: "/engagement/flash-cards",
+    element: <FlashCardsPage />,
   },
   
   {

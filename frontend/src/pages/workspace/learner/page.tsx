@@ -5,8 +5,8 @@ import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { useMyLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { EmptyState } from '@/pages/users/components/ui';
 import type React from 'react';
@@ -107,6 +107,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
     if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
     if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
+    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
     return undefined;
   };
 
@@ -300,9 +301,7 @@ export default function LearnerOverview() {
 
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  const myLearner = useMyLearner();
-  const kind = urlKind ?? myLearner?.kind;
-  const id = urlId ?? myLearner?.id;
+  const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
 
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
@@ -311,7 +310,11 @@ export default function LearnerOverview() {
   const heroEmployer = isRealMode ? (real?.employer || '') : p.employer;
   const heroCohort = isRealMode ? (real?.cohort || '') : p.cohort;
   const subtitleParts = isRealMode
-    ? [heroProgramme, heroEmployer, heroCohort ? `Cohort ${heroCohort}` : ''].filter(Boolean)
+    ? [
+        heroProgramme ? `Programme: ${heroProgramme}` : '',
+        heroEmployer ? `Employer: ${heroEmployer}` : '',
+        heroCohort ? `Cohort: ${heroCohort}` : '',
+      ].filter(Boolean)
     : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
 
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
