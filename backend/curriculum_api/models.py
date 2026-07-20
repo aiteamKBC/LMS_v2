@@ -49,7 +49,6 @@ class ModuleAuthoringComponent(models.Model):
         ('reading', 'Reading'),
         ('quiz', 'Quiz'),
         ('reflection', 'Reflection'),
-        ('workplace_evidence', 'Workplace evidence'),
         ('assignment', 'Assignment'),
         ('checkpoint', 'Checkpoint'),
     ]
@@ -160,5 +159,71 @@ class CohortAuthoringDetails(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'curriculum"."cohort'
+        db_table = 'curriculum"."cohorts'
+        managed = False
+
+
+class CurriculumGroup(models.Model):
+    group_id = models.CharField(max_length=128, primary_key=True)
+    group_name = models.CharField(max_length=500, blank=True, default='')
+    cohort_id = models.CharField(max_length=128, blank=True, default='')
+    cohort_name = models.CharField(max_length=500, blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    module_ids = models.JSONField(default=list, blank=True)
+    module_names = models.JSONField(default=list, blank=True)
+    training_plan_ids = models.JSONField(default=list, blank=True)
+    coach_name = models.CharField(max_length=255, blank=True, default='')
+    tutor_name = models.CharField(max_length=255, blank=True, default='')
+    start_date = models.DateField(blank=True, null=True)
+    end_date = models.DateField(blank=True, null=True)
+    schedule = models.CharField(max_length=255, blank=True, default='')
+    mode = models.CharField(max_length=64, default='Live')
+    status = models.CharField(max_length=32, default='planned')
+    notes = models.TextField(blank=True, default='')
+    source_type = models.CharField(max_length=64, default='training_plan')
+    source_id = models.CharField(max_length=128, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."groups'
+        managed = False
+
+
+class Coach(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    name = models.CharField(max_length=255)
+    email = models.CharField(max_length=255, blank=True, default='')
+    phone = models.CharField(max_length=64, blank=True, default='')
+    job_title = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=32, default='active')
+    specialisms = models.JSONField(default=list, blank=True)
+    assigned_module_ids = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True, default='')
+    is_archived = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."coaches'
+        managed = False
+
+
+class Tutor(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    name = models.CharField(max_length=255)
+    email = models.CharField(max_length=255, blank=True, default='')
+    phone = models.CharField(max_length=64, blank=True, default='')
+    job_title = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=32, default='active')
+    specialisms = models.JSONField(default=list, blank=True)
+    assigned_module_ids = models.JSONField(default=list, blank=True)
+    notes = models.TextField(blank=True, default='')
+    is_archived = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."tutors'
         managed = False

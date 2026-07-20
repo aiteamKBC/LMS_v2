@@ -152,7 +152,7 @@ def _fetch_ksb_items(programme):
     """The KSBs for `programme`, from curriculum.ksb_profiles.ksb_items.
 
     Matched the same tolerant way curriculum.modules() matches Training_plan to
-    module_authoring_modules: an exact programme_name match, or `programme`
+    modules: an exact programme_name match, or `programme`
     prefixed with the profile's programme_name (Training_plan.Program sometimes
     doubles the level suffix, e.g. 'ME L4 L4' for profile programme_name 'ME L4').
     """

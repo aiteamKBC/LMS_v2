@@ -122,8 +122,8 @@ class Command(BaseCommand):
             'mappings': _fetch_all(f'select * from {_authoring_table(views.AUTHORING_KSB_MAPPINGS_TABLE)} order by module_catalogue_id, id'),
             'components': _fetch_all(f'select * from {_authoring_table(views.AUTHORING_COMPONENTS_TABLE)} order by module_catalogue_id, week_id, id'),
             'weeks': _fetch_all(f'select * from {_authoring_table(views.AUTHORING_WEEKS_TABLE)} order by module_catalogue_id, week_number, id'),
-            'program_configs': _fetch_all(f'select * from {views.table_name("training_plan_program_configs")} order by name')
-            if _table_exists('training_plan_program_configs') else [],
+            'program_configs': _fetch_all(f'select * from {views.table_name("programmes")} order by name')
+            if _table_exists('programmes') else [],
         }
 
     def _analyse(self, resolution_file=''):

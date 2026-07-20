@@ -1,10 +1,9 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { useCurriculumData } from '@/hooks/useCurriculumData';
 import type {
   CurriculumComponent,
   CurriculumGroup,
@@ -12,14 +11,18 @@ import type {
   CurriculumModule,
   CurriculumOverview,
   CurriculumProgramme,
+  CurriculumProgrammeDetail,
   CurriculumProgrammeInput,
   CurriculumSession,
   CurriculumStaffProfile,
   CurriculumKsbCoverageResponse,
+  CurriculumKsbCoverageStatus,
   CurriculumStandard,
 } from '@/lib/curriculumApi';
 import {
   deleteStaffingAssignment,
+  fetchCurriculumComponents,
+  fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumStandards,
   updateCurriculumProgramme,
@@ -47,6 +50,8 @@ interface Session {
   venue: string;
   deliveryMode: string;
   ksbRefs: string[];
+  skippedHolidays?: string[];
+  scheduleWarnings?: string[];
   status: 'scheduled' | 'completed' | 'cancelled' | 'pending';
 }
 
@@ -84,6 +89,7 @@ type KsbEvidenceItem = {
 };
 type ModuleKsbMappingSummary = { ksb: string; weight: number; count?: number; evidence?: KsbEvidenceItem[]; source?: 'authoring' | 'fallback' };
 type KsbHeatmapRow = {
+  id?: string;
   ksb: string;
   title: string;
   coverage: Record<string, number | null>;
@@ -91,6 +97,11 @@ type KsbHeatmapRow = {
   evidence?: Record<string, KsbEvidenceItem[]>;
   totalOccurrences?: number;
   totalWeight?: number;
+  status?: CurriculumKsbCoverageStatus | string;
+  sourceType?: string;
+  sourceId?: string;
+  sourceName?: string;
+  sourceLabel?: string;
   missing?: boolean;
 };
 
@@ -145,7 +156,6 @@ interface Programme {
   name: string;
   standard: string;
   level: string;
-  status: string;
   owner: string;
   color: string;
   description: string;
@@ -165,15 +175,8 @@ interface Programme {
   staffing: { coach: string; tutor: string; groups: string; cohorts: string; status: string; role: string }[];
 }
 
-type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description'>>;
+type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description'>>;
 type SelectOption = { value: string; label: string };
-
-const PROGRAMME_STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'draft', label: 'Draft' },
-  { value: 'published', label: 'Published' },
-  { value: 'archived', label: 'Archived' },
-];
 
 const SHOW_LEGACY_PROGRAMME_SUMMARY = false;
 const SHOW_LEGACY_OVERVIEW_TAB = false;
@@ -188,7 +191,6 @@ const PROGRAMME: Programme = {
   name: 'Marketing Executive',
   standard: 'ST0094',
   level: 'Level 4',
-  status: 'published',
   owner: 'Curriculum Team',
   color: '#6941c6',
   description: '16-month L4 apprenticeship preparing learners for the Marketing Executive standard and CIM L4 Diploma.',
@@ -682,7 +684,6 @@ const EMPTY_PROGRAMME: Programme = {
   name: 'Programme',
   standard: 'Standard not set',
   level: '',
-  status: 'draft',
   owner: '',
   color: '#6941c6',
   description: '',
@@ -922,11 +923,6 @@ function fallbackKsbRollup(codes: string[], moduleName: string, weight?: number)
   }));
 }
 
-function programmeStatus(status: string): string {
-  if (status === 'active' || status === 'draft' || status === 'published' || status === 'approved' || status === 'in-review' || status === 'archived') return status;
-  return 'active';
-}
-
 function cohortStatus(status: string): Cohort['status'] {
   if (status === 'planned' || status === 'completed') return status;
   return 'active';
@@ -997,6 +993,77 @@ function findProgramme(data: CurriculumOverview | null, routeId: string) {
     normalise(programme.sourceId) === routeKey ||
     normalise(programme.name) === routeKey
   )) ?? null;
+}
+
+function programmeDetailToOverview(detail: CurriculumProgrammeDetail): CurriculumOverview {
+  const modules = detail.flat.modules ?? [];
+  const cohorts = detail.flat.cohorts ?? [];
+  const groups = detail.flat.groups ?? [];
+  const sessions = detail.flat.sessions ?? [];
+  const components = detail.flat.components ?? [];
+
+  return {
+    schema: detail.schema,
+    stats: {
+      programmes: 1,
+      activeProgrammes: 1,
+      cohorts: cohorts.length,
+      groups: groups.length,
+      modules: modules.length,
+      ksbFrameworks: 0,
+      sessions: sessions.length,
+    },
+    programmes: [detail.programme],
+    modules,
+    ksbFrameworks: [],
+    ksbSets: [],
+    cohorts,
+    groups,
+    sessions,
+    components,
+    holidays: [],
+    cohortAuthoringDetails: [],
+    tutors: [],
+    coaches: [],
+  };
+}
+
+function useProgrammeDetailData(programmeId: string) {
+  const [data, setData] = useState<CurriculumOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (signal?: AbortSignal) => {
+    if (!programmeId) {
+      setData(null);
+      setLoading(false);
+      return null;
+    }
+    setLoading(true);
+    try {
+      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal);
+      if (signal?.aborted) return null;
+      const overview = programmeDetailToOverview(detail);
+      setData(overview);
+      setError(null);
+      return overview;
+    } catch (err) {
+      if (signal?.aborted) return null;
+      setError(err instanceof Error ? err.message : 'Unable to load programme detail');
+      setData(null);
+      return null;
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [programmeId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
+
+  return { data, loading, error, reload: () => load() };
 }
 
 function programmeCoverageIdCandidates(programme: Programme, routeId: string) {
@@ -1097,25 +1164,43 @@ function isComponentForModule(component: CurriculumComponent, liveModule: { id: 
   return moduleKeys.some(key => key && componentModuleKeys.includes(key));
 }
 
-function buildModuleWeeks(moduleId: string, moduleName: string, sessions: CurriculumSession[], components: CurriculumComponent[] = []): Week[] {
+function buildModuleWeeks(
+  moduleId: string,
+  moduleName: string,
+  sessions: CurriculumSession[],
+  components: CurriculumComponent[] = [],
+  authoredWeeks: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }> = [],
+): Week[] {
   const byWeek = new Map<number, CurriculumSession[]>();
   sessions.forEach(session => {
     const weekNumber = Number(session.week || 1);
     byWeek.set(weekNumber, [...(byWeek.get(weekNumber) ?? []), session]);
   });
 
+  const authoredWeekByNumber = new Map<number, { id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>();
+  authoredWeeks.forEach((week, index) => {
+    const weekNumber = Number(week.weekNumber || week.number || index + 1);
+    if (weekNumber > 0) authoredWeekByNumber.set(weekNumber, week);
+  });
+
   const componentsByWeek = new Map<number, CurriculumComponent[]>();
   components.forEach(component => {
-    const weekNumber = componentWeekNumber(component);
+    const authoredWeek = authoredWeeks.find(week => clean(week.id) && clean(week.id) === clean(component.weekId));
+    const weekNumber = Number(authoredWeek?.weekNumber || authoredWeek?.number || componentWeekNumber(component));
     componentsByWeek.set(weekNumber, [...(componentsByWeek.get(weekNumber) ?? []), component]);
   });
 
-  const weekNumbers = [...new Set([...byWeek.keys(), ...componentsByWeek.keys()])].sort((a, b) => a - b);
+  const weekNumbers = [...new Set([...authoredWeekByNumber.keys(), ...byWeek.keys(), ...componentsByWeek.keys()])].sort((a, b) => a - b);
   const hasAuthoredComponents = components.length > 0;
 
   return weekNumbers.map((weekNumber) => {
+    const authoredWeek = authoredWeekByNumber.get(weekNumber);
     const weekSessions = byWeek.get(weekNumber) ?? [];
-    const weekComponents = componentsByWeek.get(weekNumber) ?? [];
+    const weekComponents = [...(componentsByWeek.get(weekNumber) ?? [])].sort((a, b) => {
+      const orderDelta = Number(a.displayOrder ?? 9999) - Number(b.displayOrder ?? 9999);
+      if (orderDelta !== 0) return orderDelta;
+      return clean(a.title).localeCompare(clean(b.title));
+    });
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
@@ -1126,9 +1211,9 @@ function buildModuleWeeks(moduleId: string, moduleName: string, sessions: Curric
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
 
     return {
-      id: `${moduleId}-week-${weekNumber}`,
+      id: clean(authoredWeek?.id) || `${moduleId}-week-${weekNumber}`,
       number: weekNumber,
-      title: weekTitle || first?.title || `Week ${weekNumber}`,
+      title: clean(authoredWeek?.title) || weekTitle || first?.title || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
       otjh: Math.round((hasAuthoredComponents ? componentOtjh : sessionOtjh) * 10) / 10,
@@ -1146,6 +1231,8 @@ function buildModuleWeeks(moduleId: string, moduleName: string, sessions: Curric
         venue: session.venue || 'LMS',
         deliveryMode: session.venue || 'LMS',
         ksbRefs: session.ksbCodes || [],
+        skippedHolidays: session.skippedHolidays || [],
+        scheduleWarnings: session.scheduleWarnings || [],
         status: sessionStatus(session.status),
       })),
     };
@@ -1198,6 +1285,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     notes: string;
     sessionNames: string[];
     ksbCodes: string[];
+    weekStructure?: Array<{ id?: string; weekNumber?: number; number?: number; title?: string; displayOrder?: number }>;
   }> = liveModules.length > 0
     ? liveModules
     : [...moduleNamesFromStructure].map((name, index) => ({
@@ -1231,7 +1319,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       (isComponentForModule(component, liveModule) || relatedAuthoringModules.some(relatedModule => isComponentForModule(component, relatedModule))) &&
       (!component.programme || isProgrammeMatch(source, component.programme))
     ));
-    const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents);
+    const weeksData = buildModuleWeeks(liveModule.id, liveModule.name, moduleSessions, moduleComponents, liveModule.weekStructure || []);
     const fallbackKsbCodes = liveModule.ksbCodes?.length ? liveModule.ksbCodes : [...new Set([
       ...moduleSessions.flatMap(session => session.ksbCodes || []),
       ...moduleComponents.flatMap(component => [
@@ -1394,6 +1482,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const totalOccurrences = Object.values(counts).reduce((total, count) => total + count, 0);
     const totalWeight = Object.values(coverage).reduce((total, value) => total + Number(value || 0), 0);
     return {
+      id: definition.code,
       ksb: definition.code,
       title: definition.title,
       coverage,
@@ -1423,7 +1512,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       name: source.name,
       standard: source.standard,
       level: source.level || 'Level not set',
-      status: programmeStatus(source.status),
       owner: source.owner || '',
       color: source.color || '#6941c6',
       description: source.description || `${source.standard} curriculum plan.`,
@@ -1458,19 +1546,24 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
-  const { data, loading, error, reload } = useCurriculumData({ compact: true, includeComponents: true, refreshModules: true });
-  const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(data, id || ''), [data, id]);
+  const { data, loading, error, reload } = useProgrammeDetailData(id || '');
+  const [detailComponents, setDetailComponents] = useState<CurriculumComponent[]>([]);
+  const hydratedData = useMemo(() => data ? { ...data, components: detailComponents } : data, [data, detailComponents]);
+  const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
+  const coverageRequestKeyRef = useRef('');
+  const componentsRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
-    const heatmapRows = backendCoverageToProgrammeHeatmap(backendCoverage);
+    const sourceLabels = buildKsbSourceLabelMap(data);
+    const heatmapRows = backendCoverageToProgrammeHeatmap(backendCoverage, sourceLabels, liveProgramme.modules);
     return {
       ...liveProgramme,
-      moduleNames: heatmapRows?.moduleNames || liveProgramme.moduleNames || [],
-      ksbHeatmap: heatmapRows?.rows || liveProgramme.ksbHeatmap || [],
+      moduleNames: heatmapRows?.moduleNames || [],
+      ksbHeatmap: heatmapRows?.rows || [],
     };
-  }, [backendCoverage, liveProgramme]);
+  }, [backendCoverage, data, liveProgramme]);
   const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('cohorts');
   const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
@@ -1501,19 +1594,35 @@ export default function ProgrammeDetailPage() {
   const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
-  const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', status: 'active', owner: '', color: '#6941c6', description: '' });
+  const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', owner: '', color: '#6941c6', description: '' });
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
   const [skillsStandardsLoading, setSkillsStandardsLoading] = useState(false);
+  const coverageProgrammeIds = useMemo(() => {
+    const withoutRoutePrefix = clean(id || '').replace(/^program-/i, '');
+    const candidates = [
+      liveProgramme.sourceId,
+      liveProgramme.id,
+      withoutRoutePrefix,
+      id || '',
+      liveProgramme.name,
+    ].map(value => clean(value)).filter(Boolean);
+    const seen = new Set<string>();
+    return candidates.filter(candidate => {
+      const key = normalise(candidate);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [id, liveProgramme.id, liveProgramme.name, liveProgramme.sourceId]);
 
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
-    const programmeIds = programmeCoverageIdCandidates(liveProgramme, id || '');
-    if (!programmeIds.length) return Promise.resolve();
+    if (!coverageProgrammeIds.length) return Promise.resolve();
     setBackendCoverageLoading(true);
     setBackendCoverageError(null);
     return (async () => {
       let lastError: unknown = null;
-      for (const programmeId of programmeIds) {
+      for (const programmeId of coverageProgrammeIds) {
         try {
           return await fetchCurriculumProgrammeKsbCoverage(programmeId, {}, signal);
         } catch (error) {
@@ -1531,18 +1640,59 @@ export default function ProgrammeDetailPage() {
         if (signal?.aborted) return;
         console.warn('Unable to load backend KSB coverage heatmap.', error);
         setBackendCoverage(null);
-        setBackendCoverageError(null);
+        setBackendCoverageError(error instanceof Error ? error.message : 'No actual KSB coverage data was returned by the backend.');
       })
       .finally(() => {
         if (!signal?.aborted) setBackendCoverageLoading(false);
       });
-  }, [id, liveProgramme]);
+  }, [coverageProgrammeIds]);
 
   useEffect(() => {
+    if (tab !== 'ksb' && !ksbTraceOpen) return;
+    const coverageKey = coverageProgrammeIds.join('|');
+    if (!coverageKey || coverageRequestKeyRef.current === coverageKey) return;
+    coverageRequestKeyRef.current = coverageKey;
     const controller = new AbortController();
     void loadBackendCoverage(controller.signal);
-    return () => controller.abort();
-  }, [loadBackendCoverage]);
+    return () => {
+      controller.abort();
+      if (coverageRequestKeyRef.current === coverageKey) coverageRequestKeyRef.current = '';
+    };
+  }, [coverageProgrammeIds, ksbTraceOpen, loadBackendCoverage, tab]);
+
+  useEffect(() => {
+    setDetailComponents([]);
+    componentsRequestKeyRef.current = '';
+    coverageRequestKeyRef.current = '';
+  }, [id]);
+
+  useEffect(() => {
+    if (!data || !['modules', 'weeks', 'ksb'].includes(tab)) return;
+    const moduleCatalogueIds = [...new Set(data.modules.flatMap(module => [
+      module.moduleCatalogueId,
+      module.catalogueId,
+      module.structureId,
+      module.moduleId,
+      ...(module.relatedCatalogueIds || []),
+    ]).map(value => clean(value)).filter(Boolean))];
+    if (!moduleCatalogueIds.length) return;
+    const componentsKey = moduleCatalogueIds.join('|');
+    if (componentsRequestKeyRef.current === componentsKey) return;
+    componentsRequestKeyRef.current = componentsKey;
+    const controller = new AbortController();
+    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds })
+      .then(setDetailComponents)
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          componentsRequestKeyRef.current = '';
+          console.warn('Unable to load programme components.', error);
+        }
+      });
+    return () => {
+      controller.abort();
+      if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
+    };
+  }, [data, tab]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1637,7 +1787,7 @@ export default function ProgrammeDetailPage() {
   const pagedSessions = filteredSessions.slice(sessionStartIndex, sessionStartIndex + sessionPageSize);
   const filteredKsbHeatmap = useMemo(() => {
     const query = normalise(ksbSearch);
-    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title].some(value => normalise(value).includes(query)));
+    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)].some(value => normalise(value).includes(query)));
   }, [PROGRAMME.ksbHeatmap, ksbSearch]);
   const filteredStaffing = useMemo(() => {
     const query = normalise(staffingSearch);
@@ -1657,11 +1807,13 @@ export default function ProgrammeDetailPage() {
   const activeGroups = allGroups.filter(({ group }) => group.status === 'active').length;
   const assignedGroups = allGroups.filter(({ group }) => group.coach !== 'Unassigned' && group.tutor !== 'Unassigned').length;
   const staffingCoverage = totalGroups ? Math.round((assignedGroups / totalGroups) * 100) : 0;
-  const coveredKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'covered').length;
+  const fullyCoveredKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'fully_covered').length;
+  const partialKsbCount = PROGRAMME.ksbHeatmap.filter(row => ['partial', 'over_allocated'].includes(ksbCoverageState(row))).length;
+  const mappedNoWeightKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'mapped').length;
   const ksbCoverage = PROGRAMME.ksbHeatmap.length
-    ? Math.round((coveredKsbCount / PROGRAMME.ksbHeatmap.length) * 100)
+    ? Math.round(((fullyCoveredKsbCount + partialKsbCount + mappedNoWeightKsbCount) / PROGRAMME.ksbHeatmap.length) * 100)
     : 0;
-  const missingKsbCount = PROGRAMME.ksbHeatmap.length - coveredKsbCount;
+  const missingKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'missing').length;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
   const completionRate = totalSessions ? Math.round((completedSessions / totalSessions) * 100) : 0;
   const programmeHealth = Math.round((ksbCoverage + staffingCoverage + completionRate) / 3);
@@ -1742,7 +1894,6 @@ export default function ProgrammeDetailPage() {
       name: PROGRAMME.name,
       standard: PROGRAMME.standard,
       level: PROGRAMME.level,
-      status: PROGRAMME.status,
       owner: PROGRAMME.owner,
       color: PROGRAMME.color,
       description: PROGRAMME.description,
@@ -1879,7 +2030,6 @@ export default function ProgrammeDetailPage() {
                   <i className="ri-database-2-line text-xs"></i>
                   Live programme
                 </span>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase text-emerald-700">{PROGRAMME.status}</span>
                 <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
                 <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.standard || 'Standard not set'}</span>
               </div>
@@ -1902,7 +2052,6 @@ export default function ProgrammeDetailPage() {
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">{PROGRAMME.cohorts.length} cohorts · {PROGRAMME.modules.length} modules · {PROGRAMME.standard} · {PROGRAMME.level}</span>
-                <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-primary-500 text-white">{PROGRAMME.status}</span>
               </div>
               <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name}</h1>
               <p className="text-[13px] text-foreground-500 mt-1">{PROGRAMME.description}</p>
@@ -2542,6 +2691,11 @@ export default function ProgrammeDetailPage() {
                   <div key={s.id} className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
                     <div className="min-w-0">
                       <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
+                      {!!s.skippedHolidays?.length && (
+                        <p className="mt-0.5 text-[10px] font-semibold text-amber-600">
+                          {s.skippedHolidays.length} holiday clash{s.skippedHolidays.length === 1 ? '' : 'es'} skipped
+                        </p>
+                      )}
                       <p className="text-[10px] text-foreground-400">{s.date} · {s.venue}</p>
                     </div>
                     <div className="flex justify-center">
@@ -2607,21 +2761,30 @@ export default function ProgrammeDetailPage() {
             ) : backendCoverageError ? (
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-[12px] font-semibold text-red-700">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span>{backendCoverageError}</span>
+                  <span>Unable to load actual backend KSB coverage. No fallback or sample KSB data is being shown. {backendCoverageError}</span>
                   <button type="button" onClick={() => { void loadBackendCoverage(); }} className="h-9 rounded-lg bg-white px-3 text-[11px] font-bold text-red-700 shadow-sm">Retry</button>
                 </div>
               </div>
             ) : PROGRAMME.ksbHeatmap.length === 0 ? (
               <div className="rounded-xl border border-dashed border-background-300 bg-background-100 px-4 py-10 text-center">
-                <p className="text-[13px] font-semibold text-foreground-700">No backend KSB coverage returned.</p>
-                <p className="mt-1 text-[12px] text-foreground-400">Add component mappings in Module Builder or choose a programme with mapped KSBs.</p>
+                <p className="text-[13px] font-semibold text-foreground-700">No actual KSB coverage data returned.</p>
+                <p className="mt-1 text-[12px] text-foreground-400">The backend did not return any heatmap rows for this programme, so no fallback or sample KSB data is being shown.</p>
+                <button type="button" onClick={() => { void loadBackendCoverage(); }} className="mt-4 h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 shadow-sm hover:bg-background-100">Retry</button>
               </div>
             ) : (
               <>
-            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
               <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-emerald-700">Covered KSBs</p>
-                <p className="mt-1 text-lg font-heading font-bold text-emerald-900">{PROGRAMME.ksbHeatmap.length - missingKsbCount}</p>
+                <p className="text-[10px] font-bold uppercase text-emerald-700">Fully covered</p>
+                <p className="mt-1 text-lg font-heading font-bold text-emerald-900">{fullyCoveredKsbCount}</p>
+              </div>
+              <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
+                <p className="text-[10px] font-bold uppercase text-sky-700">Partial KSBs</p>
+                <p className="mt-1 text-lg font-heading font-bold text-sky-900">{partialKsbCount}</p>
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-[10px] font-bold uppercase text-slate-700">No weight</p>
+                <p className="mt-1 text-lg font-heading font-bold text-slate-900">{mappedNoWeightKsbCount}</p>
               </div>
               <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
                 <p className="text-[10px] font-bold uppercase text-amber-700">Missing KSBs</p>
@@ -2662,7 +2825,7 @@ export default function ProgrammeDetailPage() {
                   {filteredKsbHeatmap.map((row, i) => {
                     const state = ksbCoverageState(row);
                     return (
-                    <tr key={i} className={`transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'hover:bg-background-100/30'}`}>
+                    <tr key={ksbRowId(row) || i} className={`transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'hover:bg-background-100/30'}`}>
                       <td className="py-2.5 px-3 font-semibold text-foreground-700">
                         <KsbBadge code={row.ksb} />
                       </td>
@@ -2684,13 +2847,7 @@ export default function ProgrammeDetailPage() {
                       })}
                       <td className="py-2.5 px-3 text-center text-[11px] font-bold text-foreground-700">{row.totalOccurrences || 0}</td>
                       <td className="py-2.5 px-3 text-center">
-                        {state === 'covered' ? (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">Covered</span>
-                        ) : state === 'mapped' ? (
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">No weight</span>
-                        ) : (
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Missing</span>
-                        )}
+                        <CoverageStateBadge state={state} />
                       </td>
                       <td className="py-2.5 px-3">
                         <KsbEvidenceList evidence={row.evidence || {}} />
@@ -2836,12 +2993,6 @@ export default function ProgrammeDetailPage() {
                     <input value={programmeForm.level} onChange={event => setProgrammeForm(prev => ({ ...prev, level: event.target.value }))} placeholder="Example: L4" className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300" />
                   </label>
                   <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Status</span>
-                    <select value={programmeForm.status} onChange={event => setProgrammeForm(prev => ({ ...prev, status: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300">
-                      {PROGRAMME_STATUS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                  </label>
-                  <label className="block">
                     <span className="text-[10px] font-semibold text-foreground-400 uppercase">Owner</span>
                     <input value={programmeForm.owner} onChange={event => setProgrammeForm(prev => ({ ...prev, owner: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
                   </label>
@@ -2913,15 +3064,17 @@ export default function ProgrammeDetailPage() {
             </div>
           </div>
         )}
-        <AddCurriculumStructureWizard
-          isOpen={wizardOpen}
-          onClose={() => setWizardOpen(false)}
-          onSaved={reload}
-          initialProgrammeId={id || PROGRAMME.id}
-          initialCohortId={wizardContext.cohortId}
-          initialGroupId={wizardContext.groupId}
-          startStep={wizardContext.startStep || 'cohort'}
-        />
+        {wizardOpen && (
+          <AddCurriculumStructureWizard
+            isOpen={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            onSaved={reload}
+            initialProgrammeId={id || PROGRAMME.id}
+            initialCohortId={wizardContext.cohortId}
+            initialGroupId={wizardContext.groupId}
+            startStep={wizardContext.startStep || 'cohort'}
+          />
+        )}
         {ksbTraceOpen && (
           <KsbTraceModal
             programme={PROGRAMME}
@@ -3120,21 +3273,127 @@ function ksbKindLabel(kind: KsbKind) {
   return 'Other';
 }
 
-function backendCoverageToProgrammeHeatmap(coverage: CurriculumKsbCoverageResponse | null): { moduleNames: string[]; rows: KsbHeatmapRow[] } | null {
-  if (!coverage?.heatmap?.modules?.length) return null;
-  const labelCounts = new Map<string, number>();
-  const moduleNames = coverage.heatmap.modules.map((module, index) => {
-    const baseName = clean(module.module_name || module.moduleName, `Module ${index + 1}`);
-    const seen = labelCounts.get(normalise(baseName)) || 0;
-    labelCounts.set(normalise(baseName), seen + 1);
-    return seen ? `${baseName} (${seen + 1})` : baseName;
+function sourceLabelKeys(sourceType: unknown, sourceId: unknown) {
+  const type = clean(sourceType);
+  const id = clean(sourceId);
+  if (!id) return [];
+  return uniqueCleanValues([
+    `${type}:${id}`,
+    id,
+    id.replace(/^ksb[-_]/i, ''),
+    `ksb-${id}`,
+  ]).map(normalise).filter(Boolean);
+}
+
+function frameworkDisplayLabel(framework: CurriculumOverview['ksbFrameworks'][number]) {
+  const name = clean(framework.name);
+  const programmeName = clean(framework.programmeName);
+  const standard = clean(framework.standard || framework.ifateRef);
+  const label = name || programmeName || standard;
+  if (!label) return '';
+  if (standard && normalise(label) !== normalise(standard) && !normalise(label).includes(normalise(standard))) {
+    return `${label} (${standard})`;
+  }
+  return label;
+}
+
+function buildKsbSourceLabelMap(data: CurriculumOverview | null) {
+  const labels = new Map<string, string>();
+  (data?.ksbFrameworks || []).forEach(framework => {
+    const label = frameworkDisplayLabel(framework);
+    if (!label) return;
+    sourceLabelKeys('framework', framework.id).forEach(key => labels.set(key, label));
+    sourceLabelKeys('profile', framework.id).forEach(key => labels.set(key, label));
+    sourceLabelKeys('framework', framework.profileId).forEach(key => labels.set(key, label));
+    sourceLabelKeys('profile', framework.profileId).forEach(key => labels.set(key, label));
   });
+  (data?.ksbSets || []).forEach(set => {
+    const label = clean(set.programmeName || set.standard);
+    if (!label) return;
+    sourceLabelKeys('framework', set.frameworkId || set.profileId).forEach(key => {
+      if (!labels.has(key)) labels.set(key, label);
+    });
+    sourceLabelKeys('profile', set.frameworkId || set.profileId).forEach(key => {
+      if (!labels.has(key)) labels.set(key, label);
+    });
+  });
+  return labels;
+}
+
+type HeatmapModuleBinding = { label: string; backendIndex?: number };
+
+function uniqueModuleLabel(baseLabel: string, labelCounts: Map<string, number>) {
+  const baseName = clean(baseLabel, 'Module');
+  const key = normalise(baseName);
+  const seen = labelCounts.get(key) || 0;
+  labelCounts.set(key, seen + 1);
+  return seen ? `${baseName} (${seen + 1})` : baseName;
+}
+
+function buildHeatmapModuleBindings(
+  coverageModules: CurriculumKsbCoverageResponse['heatmap']['modules'],
+  programmeModules: Array<Pick<Module, 'id' | 'name'>> = [],
+): HeatmapModuleBinding[] {
+  const labelCounts = new Map<string, number>();
+  const backendModules = coverageModules.map((module, index) => ({
+    index,
+    label: clean(module.module_name || module.moduleName, `Module ${index + 1}`),
+    keys: uniqueCleanValues([
+      module.module_id,
+      module.moduleId,
+      module.module_name,
+      module.moduleName,
+    ]).map(normalise).filter(Boolean),
+  }));
+  const usedBackendIndexes = new Set<number>();
+
+  if (!programmeModules.length) {
+    return backendModules.map(module => ({
+      label: uniqueModuleLabel(module.label, labelCounts),
+      backendIndex: module.index,
+    }));
+  }
+
+  const bindings = programmeModules.map((programmeModule, index) => {
+    const programmeKeys = uniqueCleanValues([programmeModule.id, programmeModule.name]).map(normalise).filter(Boolean);
+    const backendModule = backendModules.find(module => (
+      !usedBackendIndexes.has(module.index) &&
+      module.keys.some(key => programmeKeys.includes(key))
+    ));
+    if (backendModule) usedBackendIndexes.add(backendModule.index);
+    return {
+      label: uniqueModuleLabel(programmeModule.name || backendModule?.label || `Module ${index + 1}`, labelCounts),
+      backendIndex: backendModule?.index,
+    };
+  });
+
+  backendModules.forEach(module => {
+    if (usedBackendIndexes.has(module.index)) return;
+    bindings.push({
+      label: uniqueModuleLabel(module.label, labelCounts),
+      backendIndex: module.index,
+    });
+  });
+  return bindings;
+}
+
+function backendCoverageToProgrammeHeatmap(
+  coverage: CurriculumKsbCoverageResponse | null,
+  sourceLabels = new Map<string, string>(),
+  programmeModules: Array<Pick<Module, 'id' | 'name'>> = [],
+): { moduleNames: string[]; rows: KsbHeatmapRow[] } | null {
+  if (!coverage?.heatmap?.modules?.length) return null;
+  const moduleBindings = buildHeatmapModuleBindings(coverage.heatmap.modules, programmeModules);
+  const moduleNames = moduleBindings.map(module => module.label);
   const rows = coverage.heatmap.rows.map(row => {
-    const rowCoverage: Record<string, number | null> = {};
-    const counts: Record<string, number> = {};
-    const evidence: Record<string, KsbEvidenceItem[]> = {};
-    row.modules.forEach((module, index) => {
-      const moduleName = moduleNames[index] || clean(module.module_name || module.moduleName, `Module ${index + 1}`);
+    const rowCoverage: Record<string, number | null> = moduleNames.reduce((coverageByModule, moduleName) => ({ ...coverageByModule, [moduleName]: null }), {});
+    const counts: Record<string, number> = moduleNames.reduce((countsByModule, moduleName) => ({ ...countsByModule, [moduleName]: 0 }), {});
+    const evidence: Record<string, KsbEvidenceItem[]> = moduleNames.reduce((evidenceByModule, moduleName) => ({ ...evidenceByModule, [moduleName]: [] }), {});
+    moduleBindings.forEach(binding => {
+      if (binding.backendIndex === undefined) return;
+      const module = row.modules[binding.backendIndex];
+      if (!module) return;
+      const moduleName = binding.label;
       const weight = Number(module.weight || 0);
       const mappings = Array.isArray(module.mappings) ? module.mappings : [];
       rowCoverage[moduleName] = weight > 0 ? weight : null;
@@ -3157,7 +3416,15 @@ function backendCoverageToProgrammeHeatmap(coverage: CurriculumKsbCoverageRespon
     });
     const totalOccurrences = Object.values(counts).reduce((total, count) => total + count, 0);
     const totalWeight = Number(row.total || 0);
+    const sourceType = clean(row.source_type || row.sourceType);
+    const sourceId = clean(row.source_id || row.sourceId);
+    const sourceName = clean(row.source_name || row.sourceName);
+    const sourceLabel = clean(row.source_label || row.sourceLabel)
+      || sourceLabelKeys(sourceType, sourceId).map(key => sourceLabels.get(key)).find(Boolean)
+      || sourceName;
+    const id = clean(row.coverage_key || row.coverageKey) || [sourceType, sourceId, row.code].map(normalise).join('|');
     return {
+      id,
       ksb: row.code,
       title: row.title || row.code,
       coverage: rowCoverage,
@@ -3165,6 +3432,11 @@ function backendCoverageToProgrammeHeatmap(coverage: CurriculumKsbCoverageRespon
       evidence,
       totalOccurrences,
       totalWeight,
+      status: row.status,
+      sourceType,
+      sourceId,
+      sourceName,
+      sourceLabel,
       missing: totalWeight <= 0,
     };
   });
@@ -3217,30 +3489,26 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
           {rows.map(row => {
             const kind = ksbKind(row.ksb);
             const state = ksbCoverageState(row);
+            const rowId = ksbRowId(row);
             return (
-              <div key={row.ksb} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/60' : 'hover:bg-background-100/60'}`} style={{ gridTemplateColumns }}>
+              <div key={rowId} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/60' : 'hover:bg-background-100/60'}`} style={{ gridTemplateColumns }}>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <KsbBadge code={row.ksb} />
                     <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${ksbTone(kind)}`}>{ksbKindLabel(kind)}</span>
+                    {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
                   </div>
                   <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.title}</p>
                 </div>
                 {moduleNames.map(moduleName => (
                   <KsbHeatCell
-                    key={`${row.ksb}-${moduleName}`}
+                    key={`${rowId}-${moduleName}`}
                     value={row.coverage[moduleName]}
                     count={row.counts?.[moduleName] || 0}
                   />
                 ))}
                 <div className="flex flex-col items-center justify-center gap-1">
-                  {state === 'covered' ? (
-                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold text-emerald-700">Covered</span>
-                  ) : state === 'mapped' ? (
-                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">No weight</span>
-                  ) : (
-                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-700">Missing</span>
-                  )}
+                  <CoverageStateBadge state={state} size="md" />
                   <span className="text-[10px] font-semibold text-foreground-400">{row.totalOccurrences || 0} time{Number(row.totalOccurrences || 0) === 1 ? '' : 's'}</span>
                 </div>
                 <KsbEvidenceList evidence={row.evidence || {}} />
@@ -3304,8 +3572,12 @@ function KsbEvidenceList({ evidence }: { evidence: Record<string, KsbEvidenceIte
 }
 
 type KsbTraceTab = 'map' | 'coverage' | 'trace';
-type KsbCoverageState = 'covered' | 'mapped' | 'missing';
+type KsbCoverageState = 'fully_covered' | 'partial' | 'over_allocated' | 'mapped' | 'missing';
 type KsbTraceEvidence = KsbEvidenceItem & { moduleLabel: string; groups: string[] };
+
+function ksbRowId(row: Pick<KsbHeatmapRow, 'id' | 'ksb' | 'sourceType' | 'sourceId'>) {
+  return clean(row.id) || [row.sourceType, row.sourceId, row.ksb].map(normalise).join('|') || row.ksb;
+}
 
 function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programme; initialTab: KsbTraceTab; onClose: () => void }) {
   const [tab, setTab] = useState<KsbTraceTab>(initialTab);
@@ -3316,11 +3588,11 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
   const [weekFilter, setWeekFilter] = useState('all');
   const [componentFilter, setComponentFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
-  const [selectedCode, setSelectedCode] = useState(programme.ksbHeatmap[0]?.ksb || '');
+  const [selectedCode, setSelectedCode] = useState(programme.ksbHeatmap[0] ? ksbRowId(programme.ksbHeatmap[0]) : '');
 
   const evidenceByCode = useMemo(() => {
     const map = new Map<string, KsbTraceEvidence[]>();
-    programme.ksbHeatmap.forEach(row => map.set(row.ksb, traceEvidenceForRow(row, programme)));
+    programme.ksbHeatmap.forEach(row => map.set(ksbRowId(row), traceEvidenceForRow(row, programme)));
     return map;
   }, [programme]);
   const allEvidence = useMemo(() => [...evidenceByCode.values()].flat(), [evidenceByCode]);
@@ -3330,18 +3602,19 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
   const groupOptions = useMemo(() => uniqueCleanValues(allEvidence.flatMap(item => item.groups)), [allEvidence]);
 
   useEffect(() => {
-    if (!selectedCode && programme.ksbHeatmap[0]?.ksb) setSelectedCode(programme.ksbHeatmap[0].ksb);
+    if (!selectedCode && programme.ksbHeatmap[0]) setSelectedCode(ksbRowId(programme.ksbHeatmap[0]));
   }, [programme.ksbHeatmap, selectedCode]);
 
   const filteredRows = useMemo(() => {
     const query = normalise(search);
     return programme.ksbHeatmap.filter(row => {
-      const evidence = evidenceByCode.get(row.ksb) || [];
+      const evidence = evidenceByCode.get(ksbRowId(row)) || [];
       const state = ksbCoverageState(row);
       const matchesSearch = !query || [
         row.ksb,
         formatKsbCode(row.ksb),
         row.title,
+        ksbSourceLabel(row),
         ...evidence.flatMap(item => [item.module, item.week, item.component, item.componentType, ...item.groups]),
       ].some(value => normalise(value).includes(query));
       const matchesKind = kindFilter === 'all' || ksbKind(row.ksb) === kindFilter;
@@ -3354,7 +3627,7 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
     });
   }, [programme.ksbHeatmap, evidenceByCode, search, kindFilter, statusFilter, moduleFilter, weekFilter, componentFilter, groupFilter]);
 
-  const selectedRow = programme.ksbHeatmap.find(row => row.ksb === selectedCode) || filteredRows[0] || programme.ksbHeatmap[0] || null;
+  const selectedRow = programme.ksbHeatmap.find(row => ksbRowId(row) === selectedCode) || filteredRows[0] || programme.ksbHeatmap[0] || null;
   const summary = ksbTraceSummary(programme.ksbHeatmap);
   const tabs: Array<{ key: KsbTraceTab; label: string; icon: string }> = [
     { key: 'map', label: 'Map', icon: 'ri-node-tree' },
@@ -3388,10 +3661,10 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
             <KsbTraceStat label="Profile KSBs" value={summary.total} tone="primary" />
-            <KsbTraceStat label="Covered" value={summary.covered} tone="emerald" />
+            <KsbTraceStat label="Fully covered" value={summary.fullyCovered} tone="emerald" />
+            <KsbTraceStat label="Partial" value={summary.partial} tone="primary" />
             <KsbTraceStat label="Missing" value={summary.missing} tone="amber" />
             <KsbTraceStat label="No weight" value={summary.mappedNoWeight} tone="slate" />
-            <KsbTraceStat label="Coverage" value={`${summary.coveragePercent}%`} tone="primary" />
           </div>
 
           <div className="mb-4 rounded-2xl border border-background-200 bg-background-100/60 p-4">
@@ -3401,7 +3674,7 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search KSB, module, week, component, group..." className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none focus:border-primary-300" />
               </div>
               <KsbTraceSelect value={kindFilter} onChange={value => setKindFilter(value as 'all' | KsbKind)} options={['all', 'knowledge', 'skill', 'behaviour']} labels={{ all: 'All types', knowledge: 'Knowledge', skill: 'Skills', behaviour: 'Behaviours' }} />
-              <KsbTraceSelect value={statusFilter} onChange={value => setStatusFilter(value as 'all' | KsbCoverageState)} options={['all', 'covered', 'mapped', 'missing']} labels={{ all: 'All status', covered: 'Covered', mapped: 'No weight', missing: 'Missing' }} />
+              <KsbTraceSelect value={statusFilter} onChange={value => setStatusFilter(value as 'all' | KsbCoverageState)} options={['all', 'fully_covered', 'partial', 'over_allocated', 'mapped', 'missing']} labels={{ all: 'All status', fully_covered: 'Fully covered', partial: 'Partial', over_allocated: 'Over allocated', mapped: 'No weight', missing: 'Missing' }} />
               <KsbTraceSelect value={moduleFilter} onChange={setModuleFilter} options={['all', ...moduleOptions]} labels={{ all: 'All modules' }} />
               <KsbTraceSelect value={weekFilter} onChange={setWeekFilter} options={['all', ...weekOptions]} labels={{ all: 'All weeks' }} />
               <KsbTraceSelect value={componentFilter} onChange={setComponentFilter} options={['all', ...componentOptions]} labels={{ all: 'All components' }} />
@@ -3412,7 +3685,7 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
 
           {tab === 'map' && <KsbTraceMapView rows={filteredRows} evidenceByCode={evidenceByCode} onTrace={(code) => { setSelectedCode(code); setTab('trace'); }} />}
           {tab === 'coverage' && <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} onTrace={(code) => { setSelectedCode(code); setTab('trace'); }} />}
-          {tab === 'trace' && <KsbTraceDetailView rows={filteredRows} selectedRow={selectedRow} evidence={selectedRow ? evidenceByCode.get(selectedRow.ksb) || [] : []} onSelectCode={setSelectedCode} />}
+          {tab === 'trace' && <KsbTraceDetailView rows={filteredRows} selectedRow={selectedRow} evidence={selectedRow ? evidenceByCode.get(ksbRowId(selectedRow)) || [] : []} onSelectCode={setSelectedCode} />}
         </div>
       </div>
     </div>
@@ -3453,19 +3726,21 @@ function KsbTraceMapView({ rows, evidenceByCode, onTrace }: { rows: KsbHeatmapRo
       </div>
       <div className="divide-y divide-background-200">
         {rows.map(row => {
-          const evidence = evidenceByCode.get(row.ksb) || [];
+          const rowId = ksbRowId(row);
+          const evidence = evidenceByCode.get(rowId) || [];
           return (
-            <div key={row.ksb} className="grid grid-cols-[220px_1fr_140px] gap-3 px-4 py-3">
+            <div key={rowId} className="grid grid-cols-[220px_1fr_140px] gap-3 px-4 py-3">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <KsbBadge code={row.ksb} />
                   <CoverageStateBadge state={ksbCoverageState(row)} />
+                  {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
                 </div>
                 <p className="mt-1 line-clamp-2 text-[11px] font-medium text-foreground-600">{row.title}</p>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {evidence.length ? evidence.slice(0, 8).map((item, index) => (
-                  <span key={`${row.ksb}-${index}`} className="rounded-md border border-background-200 bg-background-100 px-2 py-1 text-[10px] font-semibold text-foreground-600">
+                  <span key={`${rowId}-${index}`} className="rounded-md border border-background-200 bg-background-100 px-2 py-1 text-[10px] font-semibold text-foreground-600">
                     <span className="font-bold text-foreground-900">{item.module}</span>
                     {item.week && <span> / {item.week}</span>}
                     {item.component && <span> / {item.component}</span>}
@@ -3474,7 +3749,7 @@ function KsbTraceMapView({ rows, evidenceByCode, onTrace }: { rows: KsbHeatmapRo
                 {evidence.length > 8 && <span className="text-[10px] font-bold text-foreground-400">+{evidence.length - 8} more</span>}
               </div>
               <div className="flex justify-end">
-                <button type="button" onClick={() => onTrace(row.ksb)} className="h-8 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">Trace</button>
+                <button type="button" onClick={() => onTrace(rowId)} className="h-8 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">Trace</button>
               </div>
             </div>
           );
@@ -3494,18 +3769,21 @@ function KsbCoverageSummaryView({ rows, evidenceByCode, onTrace }: { rows: KsbHe
           <section key={kind} className="rounded-2xl border border-background-200 bg-background-50 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-[12px] font-heading font-bold text-foreground-900">{ksbKindLabel(kind)} Points</h4>
-              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{kindRows.filter(row => ksbCoverageState(row) !== 'missing').length}/{kindRows.length} covered</span>
+              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{kindRows.filter(row => ksbCoverageState(row) !== 'missing').length}/{kindRows.length} addressed</span>
             </div>
             <div className="space-y-2">
               {kindRows.map(row => {
-                const evidence = evidenceByCode.get(row.ksb) || [];
+                const rowId = ksbRowId(row);
+                const evidence = evidenceByCode.get(rowId) || [];
+                const state = ksbCoverageState(row);
                 return (
-                  <button key={row.ksb} type="button" onClick={() => onTrace(row.ksb)} className={`w-full rounded-xl border p-3 text-left transition-smooth hover:border-primary-200 ${ksbCoverageState(row) === 'missing' ? 'border-red-100 bg-red-50/35' : 'border-emerald-100 bg-emerald-50/35'}`}>
+                  <button key={rowId} type="button" onClick={() => onTrace(rowId)} className={`w-full rounded-xl border p-3 text-left transition-smooth hover:border-primary-200 ${state === 'missing' ? 'border-red-100 bg-red-50/35' : state === 'mapped' ? 'border-slate-200 bg-slate-50/60' : 'border-emerald-100 bg-emerald-50/35'}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <KsbBadge code={row.ksb} />
-                          <CoverageStateBadge state={ksbCoverageState(row)} />
+                          <CoverageStateBadge state={state} />
+                          {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
                         </div>
                         <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-foreground-700">{row.title}</p>
                       </div>
@@ -3535,12 +3813,18 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
       <aside className="rounded-2xl border border-background-200 bg-background-50 p-3">
         <p className="mb-2 text-[10px] font-bold uppercase text-foreground-400">Select KSB</p>
         <div className="max-h-[55vh] space-y-1 overflow-y-auto pr-1">
-          {rows.map(row => (
-            <button key={row.ksb} type="button" onClick={() => onSelectCode(row.ksb)} className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-smooth ${row.ksb === selectedRow.ksb ? 'bg-primary-50 text-primary-800' : 'hover:bg-background-100 text-foreground-700'}`}>
-              <span className="text-[11px] font-bold">{formatKsbCode(row.ksb)}</span>
+          {rows.map(row => {
+            const rowId = ksbRowId(row);
+            return (
+            <button key={rowId} type="button" onClick={() => onSelectCode(rowId)} className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-smooth ${rowId === ksbRowId(selectedRow) ? 'bg-primary-50 text-primary-800' : 'hover:bg-background-100 text-foreground-700'}`}>
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-bold">{formatKsbCode(row.ksb)}</span>
+                {ksbSourceLabel(row) && <span className="block truncate text-[9px] font-semibold text-foreground-400">{ksbSourceLabel(row)}</span>}
+              </span>
               <CoverageStateBadge state={ksbCoverageState(row)} />
             </button>
-          ))}
+            );
+          })}
           {!rows.length && <EmptyPanel title="No KSBs" message="No KSBs match the current filters." compact />}
         </div>
       </aside>
@@ -3550,6 +3834,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
             <KsbBadge code={selectedRow.ksb} />
             <CoverageStateBadge state={ksbCoverageState(selectedRow)} />
             <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{evidence.length} occurrence{evidence.length === 1 ? '' : 's'}</span>
+            {ksbSourceLabel(selectedRow) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{ksbSourceLabel(selectedRow)}</span>}
           </div>
           <h4 className="mt-2 text-sm font-heading font-bold text-foreground-950">{selectedRow.title}</h4>
         </div>
@@ -3605,10 +3890,23 @@ function KsbTraceMiniMeta({ evidence }: { evidence: KsbTraceEvidence[] }) {
   );
 }
 
-function CoverageStateBadge({ state }: { state: KsbCoverageState }) {
-  if (state === 'covered') return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Covered</span>;
-  if (state === 'mapped') return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-600">Mapped no weight</span>;
-  return <span className="rounded-full bg-red-100 px-2 py-0.5 text-[9px] font-bold text-red-700">Missing</span>;
+function CoverageStateBadge({ state, size = 'sm' }: { state: KsbCoverageState; size?: 'sm' | 'md' }) {
+  const sizeClass = size === 'md' ? 'px-2.5 py-1 text-[10px]' : 'px-2 py-0.5 text-[9px]';
+  const labels: Record<KsbCoverageState, string> = {
+    fully_covered: 'Fully covered',
+    partial: 'Partial',
+    over_allocated: 'Over allocated',
+    mapped: 'No weight',
+    missing: 'Missing',
+  };
+  const classes: Record<KsbCoverageState, string> = {
+    fully_covered: 'bg-emerald-100 text-emerald-700',
+    partial: 'bg-sky-100 text-sky-700',
+    over_allocated: 'bg-violet-100 text-violet-700',
+    mapped: 'bg-slate-100 text-slate-600',
+    missing: 'bg-red-100 text-red-700',
+  };
+  return <span className={`rounded-full font-bold ${sizeClass} ${classes[state]}`}>{labels[state]}</span>;
 }
 
 function EmptyPanel({ title, message, compact = false }: { title: string; message: string; compact?: boolean }) {
@@ -3621,24 +3919,46 @@ function EmptyPanel({ title, message, compact = false }: { title: string; messag
 }
 
 function ksbCoverageState(row: KsbHeatmapRow): KsbCoverageState {
-  const hasWeight = Number(row.totalWeight || 0) > 0 || Object.values(row.coverage || {}).some(value => Number(value || 0) > 0);
   const occurrences = Number(row.totalOccurrences || 0) || Object.values(row.evidence || {}).reduce((total, entries) => total + entries.length, 0);
-  if (hasWeight && occurrences > 0) return 'covered';
+  const backendStatus = clean(row.status).toLowerCase();
+  if (backendStatus === 'fully_covered') return 'fully_covered';
+  if (backendStatus === 'partial') return 'partial';
+  if (backendStatus === 'over_allocated') return 'over_allocated';
+  if (backendStatus === 'missing' && occurrences > 0) return 'mapped';
+  if (backendStatus === 'missing') return 'missing';
+  const totalWeight = Number(row.totalWeight || 0) || Object.values(row.coverage || {}).reduce((total, value) => total + Number(value || 0), 0);
+  if (totalWeight > 100 && occurrences > 0) return 'over_allocated';
+  if (totalWeight >= 100 && occurrences > 0) return 'fully_covered';
+  if (totalWeight > 0 && occurrences > 0) return 'partial';
   if (occurrences > 0) return 'mapped';
   return 'missing';
 }
 
 function ksbTraceSummary(rows: KsbHeatmapRow[]) {
-  const covered = rows.filter(row => ksbCoverageState(row) !== 'missing').length;
+  const fullyCovered = rows.filter(row => ksbCoverageState(row) === 'fully_covered').length;
+  const partial = rows.filter(row => ['partial', 'over_allocated'].includes(ksbCoverageState(row))).length;
   const missing = rows.filter(row => ksbCoverageState(row) === 'missing').length;
   const mappedNoWeight = rows.filter(row => ksbCoverageState(row) === 'mapped').length;
+  const addressed = fullyCovered + partial + mappedNoWeight;
   return {
     total: rows.length,
-    covered,
+    fullyCovered,
+    partial,
     missing,
     mappedNoWeight,
-    coveragePercent: rows.length ? Math.round((covered / rows.length) * 100) : 0,
+    coveragePercent: rows.length ? Math.round((addressed / rows.length) * 100) : 0,
   };
+}
+
+function ksbSourceLabel(row: Pick<KsbHeatmapRow, 'sourceType' | 'sourceId' | 'sourceName' | 'sourceLabel'>) {
+  const explicitLabel = clean(row.sourceLabel || row.sourceName);
+  const placeholderLabels = new Set(['ksbsource', 'ksbframework', 'skillsenglandstandard']);
+  if (explicitLabel && !placeholderLabels.has(normalise(explicitLabel))) {
+    const sourceId = clean(row.sourceId);
+    const looksTechnical = explicitLabel.includes(':') && sourceId && normalise(explicitLabel).endsWith(normalise(sourceId));
+    return looksTechnical ? '' : explicitLabel;
+  }
+  return '';
 }
 
 function traceEvidenceForRow(row: KsbHeatmapRow, programme: Programme): KsbTraceEvidence[] {

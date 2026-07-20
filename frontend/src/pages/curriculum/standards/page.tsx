@@ -142,7 +142,7 @@ export default function CurriculumStandards() {
   }, [standards]);
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from skills_england_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from standard_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-5 sm:p-6 space-y-5">
         <section
           className="overflow-hidden rounded-2xl border border-primary-900/20 text-white shadow-lg"
@@ -157,7 +157,7 @@ export default function CurriculumStandards() {
                 <div className="max-w-3xl">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-white/75">Source table</span>
-                    <span className="text-[11px] font-semibold text-cyan-100">curriculum.skills_england_ksbs</span>
+                    <span className="text-[11px] font-semibold text-cyan-100">curriculum.standard_ksbs</span>
                   </div>
                   <h2 className="font-heading text-xl font-bold">Government standard library</h2>
                   <p className="mt-1 text-[13px] font-medium leading-relaxed text-white/90">

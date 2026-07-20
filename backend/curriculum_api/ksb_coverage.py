@@ -199,9 +199,22 @@ def normalise_required_definition(item):
     }
 
 
+def coverage_identity(item):
+    return (
+        clean(item.get('source_type') or item.get('sourceType')).lower(),
+        clean(item.get('source_id') or item.get('sourceId')).lower(),
+        normalise_code(item.get('code')),
+    )
+
+
+def coverage_sort_key(identity):
+    source_type, source_id, code = identity
+    return (ksb_sort_key(code), source_type, source_id)
+
+
 def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows):
     modules_by_id = {clean(row.get('module_catalogue_id')): row for row in module_rows}
-    weeks_by_id = {clean(row.get('id')): row for row in week_rows}
+    module_authoring_weeks_by_id = {clean(row.get('id')): row for row in week_rows}
     components_by_id = {clean(row.get('id')): row for row in component_rows}
 
     serialised_mappings = []
@@ -209,23 +222,24 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         if not clean(row.get('module_catalogue_id')):
             continue
         module = modules_by_id.get(clean(row.get('module_catalogue_id')), {})
-        week = weeks_by_id.get(clean(row.get('week_id')), {})
+        week = module_authoring_weeks_by_id.get(clean(row.get('week_id')), {})
         component = components_by_id.get(clean(row.get('component_id')), {})
         serialised_mappings.append(serialise_mapping(row, module, week, component))
 
-    definitions_by_code = {}
+    definitions_by_identity = {}
     for item in required_ksbs:
         definition = normalise_required_definition(item)
         if definition['code']:
-            definitions_by_code[definition['code']] = definition
+            definitions_by_identity[coverage_identity(definition)] = definition
 
     for mapping in serialised_mappings:
-        if mapping['code'] and mapping['code'] not in definitions_by_code:
-            definitions_by_code[mapping['code']] = required_definition_from_mapping(mapping)
+        identity = coverage_identity(mapping)
+        if mapping['code'] and identity not in definitions_by_identity:
+            definitions_by_identity[identity] = required_definition_from_mapping(mapping)
 
-    by_code = defaultdict(list)
+    by_identity = defaultdict(list)
     for mapping in serialised_mappings:
-        by_code[mapping['code']].append(mapping)
+        by_identity[coverage_identity(mapping)].append(mapping)
 
     items = []
     summary = {
@@ -235,9 +249,9 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         'behaviours': default_summary_bucket(),
     }
 
-    for code in sorted(definitions_by_code, key=ksb_sort_key):
-        definition = definitions_by_code[code]
-        mappings = by_code.get(code, [])
+    for identity in sorted(definitions_by_identity, key=coverage_sort_key):
+        definition = definitions_by_identity[identity]
+        mappings = by_identity.get(identity, [])
         raw_total = sum(decimal_weight(mapping.get('weight')) for mapping in mappings)
         status = coverage_status(raw_total)
         module_ids = {mapping.get('module_id') for mapping in mappings if mapping.get('module_id')}
@@ -247,6 +261,8 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         component_count = len(component_ids)
         item = {
             **definition,
+            'coverage_key': '|'.join(identity),
+            'coverageKey': '|'.join(identity),
             'raw_total_weight': float_weight(raw_total),
             'rawTotalWeight': float_weight(raw_total),
             'coverage_percentage': float_weight(raw_total),
@@ -301,10 +317,16 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         heatmap.append({
             'ksb_id': item['ksb_id'],
             'ksbId': item['ksb_id'],
+            'coverage_key': item['coverage_key'],
+            'coverageKey': item['coverage_key'],
             'code': item['code'],
             'title': item['title'],
             'ksb_type': item['ksb_type'],
             'ksbType': item['ksb_type'],
+            'source_type': item['source_type'],
+            'sourceType': item['source_type'],
+            'source_id': item['source_id'],
+            'sourceId': item['source_id'],
             'status': item['status'],
             'total': item['raw_total_weight'],
             'modules': [

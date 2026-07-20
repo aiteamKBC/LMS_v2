@@ -13,7 +13,6 @@ export interface CurriculumProgramme {
   name: string;
   standard: string;
   level: string;
-  status: CurriculumStatus;
   modules: number;
   freeComponents?: number;
   weeks: number;
@@ -51,6 +50,12 @@ export interface CurriculumModule {
   groupId?: string;
   group?: string;
   weeks: number;
+  weekStructure?: Array<{
+    id: string;
+    weekNumber: number;
+    title: string;
+    displayOrder?: number;
+  }>;
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
@@ -80,12 +85,16 @@ export interface CurriculumComponent {
   weekId?: string;
   title: string;
   type: string;
+  displayOrder?: number;
   module: string;
   programme: string;
   week: string;
   weekTitle?: string;
   duration: number;
   expectedOtjh?: number;
+  reflectionRequired: boolean;
+  workplaceEvidenceRequired: boolean;
+  tutorValidationRequired: boolean;
   ksbRefs: string[];
   ksbMappings?: Array<{
     id: string;
@@ -103,6 +112,7 @@ export interface CurriculumComponent {
   contentSections: number;
   quizQuestions?: number | null;
   hasResources: boolean;
+  settings?: Record<string, unknown>;
 }
 
 export interface CurriculumKsbActivity {
@@ -235,6 +245,10 @@ export interface CurriculumKsbTraceMapping {
   sourceType: string;
   source_id: string;
   sourceId: string;
+  source_name?: string;
+  sourceName?: string;
+  source_label?: string;
+  sourceLabel?: string;
   classification: 'main' | 'secondary' | 'possible' | string;
   mapping_level?: 'module' | 'week' | 'component' | string;
   mappingLevel?: 'module' | 'week' | 'component' | string;
@@ -244,6 +258,8 @@ export interface CurriculumKsbTraceMapping {
 export interface CurriculumKsbCoverageItem {
   ksb_id: string;
   ksbId: string;
+  coverage_key?: string;
+  coverageKey?: string;
   code: string;
   title: string;
   description: string;
@@ -253,6 +269,10 @@ export interface CurriculumKsbCoverageItem {
   sourceType: string;
   source_id: string;
   sourceId: string;
+  source_name?: string;
+  sourceName?: string;
+  source_label?: string;
+  sourceLabel?: string;
   raw_total_weight: number;
   rawTotalWeight: number;
   coverage_percentage: number;
@@ -298,10 +318,20 @@ export interface CurriculumKsbCoverageResponse {
     rows: Array<{
       ksb_id: string;
       ksbId: string;
+      coverage_key?: string;
+      coverageKey?: string;
       code: string;
       title: string;
       ksb_type: string;
       ksbType: string;
+      source_type?: string;
+      sourceType?: string;
+      source_id?: string;
+      sourceId?: string;
+      source_name?: string;
+      sourceName?: string;
+      source_label?: string;
+      sourceLabel?: string;
       status: CurriculumKsbCoverageStatus;
       total: number;
       modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string; weight: number; mappings: CurriculumKsbTraceMapping[] }>;
@@ -431,6 +461,8 @@ export interface CurriculumSession {
   venue: string;
   module: string;
   week: number;
+  skippedHolidays?: string[];
+  scheduleWarnings?: string[];
   status: 'scheduled' | 'completed' | 'cancelled' | 'pending' | string;
   ksbCodes: string[];
 }
@@ -473,8 +505,19 @@ export interface CurriculumCohortAuthoringDetail {
 
 export interface CurriculumStaffProfile {
   id?: string | number;
+  role?: 'coach' | 'tutor' | string;
   name?: string;
   email?: string;
+  phone?: string;
+  jobTitle?: string;
+  status?: string;
+  specialisms?: string[];
+  assignedModuleIds?: string[];
+  assignedModules?: Array<Pick<CurriculumModule, 'id' | 'moduleId' | 'moduleCatalogueId' | 'deliveryRowId' | 'name' | 'programmeId' | 'programme' | 'cohortId' | 'cohort' | 'groupId' | 'group' | 'startDate' | 'endDate' | 'status'>>;
+  inProgressModules?: Array<Pick<CurriculumModule, 'id' | 'moduleId' | 'moduleCatalogueId' | 'deliveryRowId' | 'name' | 'programmeId' | 'programme' | 'cohortId' | 'cohort' | 'groupId' | 'group' | 'startDate' | 'endDate' | 'status'>>;
+  moduleCount?: number;
+  inProgressCount?: number;
+  notes?: string;
   [key: string]: unknown;
 }
 
@@ -542,11 +585,12 @@ export interface CurriculumProgrammeDetail {
     groupIds: string[];
     modules: CurriculumModule[];
     sessions: CurriculumSession[];
+    components?: CurriculumComponent[];
   };
 }
 
 export interface CurriculumSessionPlanPreview {
-  sessions: Array<{ sessionNumber: number; date: string; day: string }>;
+  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
   skippedHolidays: string[];
   finalEndDate: string;
   warnings: string[];
@@ -600,8 +644,12 @@ export function fetchCurriculumModules(signal?: AbortSignal): Promise<Curriculum
   return fetchCollection<CurriculumModule>('/curriculum/modules/', { signal });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal): Promise<CurriculumComponent[]> {
-  return fetchCollection<CurriculumComponent>('/curriculum/components/', { signal });
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[] } = {}): Promise<CurriculumComponent[]> {
+  const query = new URLSearchParams();
+  const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
+  if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal });
 }
 
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
@@ -609,7 +657,7 @@ export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOv
 }
 
 export function fetchCurriculumProgrammes(signal?: AbortSignal): Promise<CurriculumProgramme[]> {
-  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/?include_archived=true', { signal });
+  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal });
 }
 
 export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<CurriculumKsbFramework[]> {
@@ -726,6 +774,17 @@ export function fetchCurriculumCoaches(signal?: AbortSignal): Promise<Curriculum
   return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal });
 }
 
+export type CurriculumStaffProfileInput = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  jobTitle?: string;
+  status?: string;
+  specialisms?: string[];
+  assignedModuleIds?: string[];
+  notes?: string;
+};
+
 export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<CurriculumHoliday[]> {
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal });
 }
@@ -735,7 +794,7 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/`, { signal });
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/?include_archived=true`, { signal });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
@@ -752,7 +811,7 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'status' | 'owner' | 'color' | 'description' | 'structureType'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType'>>;
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   startDate?: string;
   endDate?: string;
@@ -927,6 +986,30 @@ export function updateStaffingAssignment(id: string, input: CurriculumStaffingIn
 
 export function deleteStaffingAssignment(id: string) {
   return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
+}
+
+export function createCurriculumCoach(input: CurriculumStaffProfileInput) {
+  return postJson<{ created: boolean; profile: CurriculumStaffProfile }>('/curriculum/coaches/', input);
+}
+
+export function updateCurriculumCoach(id: string | number, input: CurriculumStaffProfileInput) {
+  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`, input);
+}
+
+export function deleteCurriculumCoach(id: string | number) {
+  return deleteJson<{ archived: boolean; id: string | number }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`);
+}
+
+export function createCurriculumTutor(input: CurriculumStaffProfileInput) {
+  return postJson<{ created: boolean; profile: CurriculumStaffProfile }>('/curriculum/tutors/', input);
+}
+
+export function updateCurriculumTutor(id: string | number, input: CurriculumStaffProfileInput) {
+  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`, input);
+}
+
+export function deleteCurriculumTutor(id: string | number) {
+  return deleteJson<{ archived: boolean; id: string | number }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`);
 }
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {

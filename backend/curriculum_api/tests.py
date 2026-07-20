@@ -64,7 +64,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(insert_row.call_args.args[1]['status'], 'planned')
 
-    def test_create_programme_rejects_duplicate_name(self):
+    def test_create_programme_reuses_duplicate_name(self):
         request = self.factory.post(
             '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'Existing Programme'}),
@@ -72,13 +72,19 @@ class CurriculumMutationTests(SimpleTestCase):
         )
 
         with patch.object(views, 'get_program_config_rows', return_value=[{'program_id': 'existing-programme', 'name': 'Existing Programme'}]), \
-             patch.object(views, 'programme_response', return_value={'sourceId': 'existing-programme', 'name': 'Existing Programme', 'status': 'active'}):
+             patch.object(views, 'programme_response', return_value={'sourceId': 'existing-programme', 'name': 'Existing Programme', 'status': 'active'}), \
+             patch.object(views, 'update_rows', return_value=[]) as update_rows, \
+             patch.object(views, 'insert_row') as insert_row:
             response = views.curriculum_programme_collection(request)
 
-        self.assertEqual(response.status_code, 409)
-        self.assertIn('overview:operational', views._CURRICULUM_CACHE)
+        body = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(body['created'])
+        update_rows.assert_called_once()
+        insert_row.assert_not_called()
+        self.assertEqual(views._CURRICULUM_CACHE, {})
 
-    def test_create_programme_rejects_duplicate_name_even_with_new_explicit_id(self):
+    def test_create_programme_reuses_duplicate_name_even_with_new_explicit_id(self):
         request = self.factory.post(
             '/curriculum_api/curriculum/programmes/',
             data=json.dumps({'name': 'Existing Programme', 'programId': 'new-explicit-id'}),
@@ -87,10 +93,14 @@ class CurriculumMutationTests(SimpleTestCase):
 
         with patch.object(views, 'get_program_config_rows', return_value=[{'program_id': 'existing-programme', 'name': 'Existing Programme'}]), \
              patch.object(views, 'programme_response', return_value={'sourceId': 'existing-programme', 'name': 'Existing Programme', 'status': 'active'}), \
+             patch.object(views, 'update_rows', return_value=[]) as update_rows, \
              patch.object(views, 'insert_row') as insert_row:
             response = views.curriculum_programme_collection(request)
 
-        self.assertEqual(response.status_code, 409)
+        body = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(body['created'])
+        self.assertEqual(update_rows.call_args.args[2], ['existing-programme'])
         insert_row.assert_not_called()
 
     def test_create_programme_is_idempotent_for_existing_explicit_id(self):
@@ -102,6 +112,7 @@ class CurriculumMutationTests(SimpleTestCase):
 
         with patch.object(views, 'get_program_config_rows', return_value=[{'program_id': 'existing-programme', 'name': 'Existing Programme'}]), \
              patch.object(views, 'programme_response', return_value={'sourceId': 'existing-programme', 'name': 'Existing Programme', 'status': 'active'}), \
+             patch.object(views, 'update_rows', return_value=[]), \
              patch.object(views, 'insert_row') as insert_row:
             response = views.curriculum_programme_collection(request)
 
@@ -109,6 +120,40 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(body['created'])
         insert_row.assert_not_called()
+
+    def test_authoring_programme_config_reuses_existing_name_with_new_id(self):
+        with patch.object(views, 'ensure_program_config_archive_columns'), \
+             patch.object(views, 'get_program_config_rows', return_value=[{'program_id': 'PROG-EXISTING', 'name': 'Fouda-Programme'}]), \
+             patch.object(views, 'programme_response', return_value={'sourceId': 'PROG-EXISTING', 'name': 'Fouda-Programme'}), \
+             patch.object(views, 'update_rows', return_value=[]) as update_rows, \
+             patch.object(views, 'insert_row') as insert_row:
+            programme = views.ensure_programme_config_for_authoring('Fouda-Programme', 'PROG-NEW')
+
+        self.assertEqual(programme['sourceId'], 'PROG-EXISTING')
+        self.assertEqual(update_rows.call_args.args[2], ['PROG-EXISTING'])
+        insert_row.assert_not_called()
+
+    def test_duplicate_programme_configs_are_merged_by_name(self):
+        views._PROGRAMME_CONFIG_DEDUP_READY = False
+        configs = [
+            {'id': 107, 'program_id': 'PROG-OLD', 'name': 'Fouda-Programme', 'updated_at': None},
+            {'id': 108, 'program_id': 'PROG-NEW', 'name': 'Fouda-Programme', 'updated_at': None},
+        ]
+
+        with patch.object(views, 'get_program_config_rows_raw', return_value=configs), \
+             patch.object(views, 'table_exists', return_value=True), \
+             patch.object(views, 'has_column', side_effect=lambda _table, column: column in {'program_id', 'programme_id', 'programme_name'}), \
+             patch.object(views, 'update_rows', return_value=[]) as update_rows, \
+             patch.object(views, 'delete_rows', return_value=[]) as delete_rows:
+            views.merge_duplicate_program_configs_by_name()
+
+        updated_reference = [
+            call for call in update_rows.call_args_list
+            if call.args[0] == views.AUTHORING_MODULES_TABLE and call.args[2] == ['PROG-OLD']
+        ]
+        self.assertTrue(updated_reference)
+        self.assertEqual(updated_reference[0].args[3]['programme_id'], 'PROG-NEW')
+        delete_rows.assert_called_once()
 
     def test_create_programme_allows_name_reuse_when_duplicate_is_archived(self):
         request = self.factory.post(
@@ -197,22 +242,46 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(programme_update['status'], 'draft')
         self.assertEqual(programme_update['owner'], 'Curriculum Team')
 
-    def test_delete_programme_archives_config_and_training_rows(self):
+    def test_delete_programme_deletes_config_and_archives_delivery_rows(self):
         request = self.factory.delete('/curriculum_api/curriculum/programmes/apm/')
 
         with patch.object(views, 'rows_for_programme', return_value=({'sourceId': 'apm', 'name': 'APM'}, [{'id': 1}])), \
              patch.object(views, 'programme_config_by_identifier', return_value={'program_id': 'apm', 'name': 'APM'}), \
              patch.object(views, 'archive_training_rows') as archive_training_rows, \
              patch.object(views, 'has_column', return_value=True), \
-             patch.object(views, 'update_rows', return_value=[]) as update_rows:
+             patch.object(views, 'delete_rows', return_value=[]) as delete_rows:
             response = views.curriculum_programme_detail(request, 'apm')
 
         self.assertEqual(response.status_code, 200)
         archive_training_rows.assert_called_once()
-        config_update = update_rows.call_args.args[3]
-        self.assertEqual(config_update['status'], 'archived')
-        self.assertFalse(config_update['is_active'])
-        self.assertTrue(config_update['is_archived'])
+        delete_rows.assert_called_once_with('programmes', '"program_id" = %s', ['apm'])
+
+    def test_archive_training_rows_uses_curriculum_tables_without_training_plan(self):
+        rows = [{
+            'id': '61296',
+            'notes': '__program_id: PROG-1\n__cohort_id: COHORT-1\n__group_id: GROUP-1\n__module_catalogue_id: MOD-1',
+            '_meta': {
+                'program_id': 'PROG-1',
+                'cohort_id': 'COHORT-1',
+                'group_id': 'GROUP-1',
+                'module_catalogue_id': 'MOD-1',
+            },
+        }]
+
+        def table_exists(table):
+            return table != 'Training_plan'
+
+        with patch.object(views, 'table_exists', side_effect=table_exists), \
+             patch.object(views, 'filtered_payload', side_effect=lambda _table, payload: payload), \
+             patch.object(views, 'update_rows', return_value=[]) as update_rows:
+            archived = views.archive_training_rows(rows)
+
+        self.assertEqual(archived, [])
+        updated_tables = [call.args[0] for call in update_rows.call_args_list]
+        self.assertEqual(updated_tables, ['modules', 'groups', 'cohorts'])
+        self.assertEqual(update_rows.call_args_list[0].args[1], '"module_catalogue_id" in (%s)')
+        self.assertEqual(update_rows.call_args_list[0].args[2], ['MOD-1'])
+        self.assertEqual(update_rows.call_args_list[0].args[3]['status'], 'archived')
 
     def test_permanent_delete_programme_requires_archived_record(self):
         request = self.factory.delete('/curriculum_api/curriculum/programmes/apm/?permanent=true')
@@ -241,7 +310,7 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertTrue(payload['permanent'])
         deleted_tables = [call.args[0] for call in delete_rows.call_args_list]
         self.assertIn('Training_plan', deleted_tables)
-        self.assertIn('training_plan_program_configs', deleted_tables)
+        self.assertIn('programmes', deleted_tables)
         self.assertEqual(views._CURRICULUM_CACHE, {})
 
     def test_generated_session_delete_is_rejected_without_archiving_parent(self):
@@ -1167,9 +1236,9 @@ class CurriculumMutationTests(SimpleTestCase):
         def fake_fetch(query, params=None):
             if '"Training_plan"' in query:
                 return [training_row]
-            if 'module_authoring_modules' in query:
+            if 'modules' in query:
                 return [module_row]
-            if 'training_plan_program_configs' in query:
+            if 'programmes' in query:
                 return [{'program_id': 'PROG-1', 'name': 'Programme A'}]
             return []
 
@@ -1199,15 +1268,15 @@ class CurriculumMutationTests(SimpleTestCase):
                 return [{'id': row.get('id')} for row in training_rows if row.get('module_catalogue_id') == selected]
             if '"Training_plan"' in query:
                 return training_rows
-            if 'module_authoring_modules' in query:
+            if 'modules' in query:
                 return module_rows
-            if 'module_authoring_ksb_mappings' in query:
+            if 'ksb_mappings' in query:
                 return mappings or []
-            if 'module_authoring_components' in query:
+            if 'components' in query:
                 return components or []
-            if 'module_authoring_weeks' in query:
+            if 'weeks' in query:
                 return weeks or []
-            if 'training_plan_program_configs' in query:
+            if 'programmes' in query:
                 return program_configs or [{'program_id': 'PROG-1', 'name': 'Programme A'}]
             return []
 
@@ -1662,6 +1731,24 @@ class CurriculumMutationTests(SimpleTestCase):
         self.assertEqual(enriched[0]['status'], 'planned')
         self.assertEqual(enriched[0]['modules'], 1)
         self.assertEqual(enriched[0]['weeks'], 4)
+
+    def test_archived_authoring_modules_do_not_create_active_programmes(self):
+        summaries = {
+            'MOD-ARCHIVED': {
+                'catalogueId': 'MOD-ARCHIVED',
+                'title': 'Archived Module',
+                'programmeId': 'PROG-ARCHIVED',
+                'programmeName': 'Archived Programme',
+                'status': 'archived',
+                'authoringStatus': 'archived',
+                'weeks': 4,
+            },
+        }
+
+        with patch.object(views, 'authoring_catalogue_summaries', return_value=summaries):
+            enriched = views.enrich_programmes_with_module_counts([], [])
+
+        self.assertEqual(enriched, [])
 
     def test_training_module_structure_get_uses_resolved_authoring_catalogue(self):
         request = self.factory.get('/curriculum_api/curriculum/modules/training-module-61287/structure/')

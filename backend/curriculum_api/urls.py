@@ -55,5 +55,7 @@ urlpatterns = [
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
     path('curriculum/tutors/', views.curriculum_tutors, name='curriculum-tutors'),
+    path('curriculum/tutors/<str:identifier>/', views.curriculum_tutor_detail, name='curriculum-tutor-detail'),
     path('curriculum/coaches/', views.curriculum_coaches, name='curriculum-coaches'),
+    path('curriculum/coaches/<str:identifier>/', views.curriculum_coach_detail, name='curriculum-coach-detail'),
 ]
