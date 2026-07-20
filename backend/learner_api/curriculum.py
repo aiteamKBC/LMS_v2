@@ -83,11 +83,11 @@ def programmes(request):
             )
         ])
     return _guard(lambda: [
-        r["Program"]
+        r["name"]
         for r in _rows(
-            'SELECT DISTINCT "Program" FROM curriculum."Training_plan" '
-            'WHERE "Program" IS NOT NULL AND "Program" <> \'\' '
-            'ORDER BY "Program"'
+            "SELECT DISTINCT name FROM curriculum.programmes "
+            "WHERE name IS NOT NULL AND name <> '' "
+            "ORDER BY name"
         )
     ])
 
@@ -110,11 +110,11 @@ def cohorts(request):
             )
         ])
     return _guard(lambda: [
-        r["Cohort_name"]
+        r["cohort_name"]
         for r in _rows(
-            'SELECT DISTINCT "Cohort_name" FROM curriculum."Training_plan" '
-            'WHERE "Program" = %s AND "Cohort_name" IS NOT NULL AND "Cohort_name" <> \'\' '
-            'ORDER BY "Cohort_name"',
+            "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
+            "WHERE programme_name = %s AND cohort_name IS NOT NULL AND cohort_name <> '' "
+            "ORDER BY cohort_name",
             [programme],
         )
     ])
@@ -142,10 +142,10 @@ def groups(request):
     return _guard(lambda: [
         r["group_name"]
         for r in _rows(
-            'SELECT DISTINCT "group_name" FROM curriculum."Training_plan" '
-            'WHERE "Program" = %s AND "Cohort_name" = %s '
-            'AND "group_name" IS NOT NULL AND "group_name" <> \'\' '
-            'ORDER BY "group_name"',
+            "SELECT DISTINCT group_name FROM curriculum.groups "
+            "WHERE programme_name = %s AND cohort_name = %s "
+            "AND group_name IS NOT NULL AND group_name <> '' "
+            "ORDER BY group_name",
             [programme, cohort],
         )
     ])
@@ -200,7 +200,7 @@ def components(request):
             "expectedOtjh": float(r["expected_otjh"]) if r["expected_otjh"] is not None else None,
         }
         for r in _rows(
-            "SELECT id, type, title, expected_otjh FROM curriculum.module_authoring_components "
+            "SELECT id, type, title, expected_otjh FROM curriculum.components "
             "WHERE week_id = %s "
             "ORDER BY display_order",
             [week],

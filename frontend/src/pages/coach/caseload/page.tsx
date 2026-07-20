@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
@@ -153,9 +154,17 @@ function formatCoachRagValue(value?: string | null): string {
   return EMPTY_VALUE;
 }
 
-function getCoachRagSelectValue(value?: string | null): string {
+function getCoachRagOptionValue(value?: string | null): string {
   const normalized = (value || '').trim().toLowerCase();
   return normalized === 'green' || normalized === 'amber' || normalized === 'red' ? normalized : '';
+}
+
+function getCoachRagDotClass(value?: string | null): string {
+  const normalized = displayValue(value).toLowerCase();
+  if (normalized === 'green') return 'bg-emerald-500';
+  if (normalized === 'amber') return 'bg-amber-500';
+  if (normalized === 'red') return 'bg-red-500';
+  return 'bg-foreground-300';
 }
 
 function normalizeLearner(learner: CaseloadApiLearner): Learner {
@@ -405,6 +414,7 @@ export default function CoachCaseload() {
   const [showEmployerDropdown, setShowEmployerDropdown] = useState(false);
   const [isTableDragging, setIsTableDragging] = useState(false);
   const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
+  const [openCoachRagId, setOpenCoachRagId] = useState<string | null>(null);
   const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
@@ -912,25 +922,17 @@ export default function CoachCaseload() {
                             <OverflowRevealText text={learner.group} maxWidthClass="max-w-[175px]" />
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <div data-allow-selection="true" className={`relative inline-flex rounded-full border ${coachRagStyle.bg} ${coachRagStyle.text}`}>
-                              <select
-                                value={getCoachRagSelectValue(learner.coachRag)}
-                                onClick={(event) => event.stopPropagation()}
-                                onMouseDown={(event) => event.stopPropagation()}
-                                onChange={(event) => {
-                                  event.stopPropagation();
-                                  void handleCoachRagChange(learner.id, event.target.value);
-                                }}
-                                disabled={savingCoachRagId === learner.id}
-                                aria-label={`Coach RAG for ${learner.name}`}
-                                className="appearance-none bg-transparent px-2 py-0.5 pr-5 text-[8px] font-semibold rounded-full focus:outline-none cursor-pointer disabled:cursor-wait"
-                              >
-                                {COACH_RAG_OPTIONS.map(option => (
-                                  <option key={option.label} value={option.value}>{option.label}</option>
-                                ))}
-                              </select>
-                              <i className={`pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] ${savingCoachRagId === learner.id ? 'ri-loader-4-line animate-spin' : 'ri-arrow-down-s-line'}`}></i>
-                            </div>
+                            <CoachRagSelector
+                              value={learner.coachRag}
+                              learnerName={learner.name}
+                              isOpen={openCoachRagId === learner.id}
+                              saving={savingCoachRagId === learner.id}
+                              onOpenChange={(open) => setOpenCoachRagId(open ? learner.id : null)}
+                              onChange={(nextValue) => {
+                                setOpenCoachRagId(null);
+                                void handleCoachRagChange(learner.id, nextValue);
+                              }}
+                            />
                           </td>
                           <td className="px-2 py-2 text-center">
                             <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${programStatusStyle.bg} ${programStatusStyle.text} whitespace-nowrap`}>
@@ -1574,6 +1576,149 @@ function MiniStatCard({ label, value, icon, color, active = false, onClick }: { 
       </div>
       <p className="text-lg font-heading font-bold text-foreground-900 mt-1">{value}</p>
     </button>
+  );
+}
+
+function CoachRagSelector({
+  value,
+  learnerName,
+  isOpen,
+  saving,
+  onOpenChange,
+  onChange,
+}: {
+  value?: string;
+  learnerName: string;
+  isOpen: boolean;
+  saving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (value: string) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuRect, setMenuRect] = useState({ top: 0, left: 0, width: 96 });
+  const selectedValue = getCoachRagOptionValue(value);
+  const selectedLabel = formatCoachRagValue(value);
+  const selectedStyle = getCoachRagStyle(selectedLabel);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.max(112, rect.width + 24);
+      setMenuRect({
+        top: rect.bottom + 6,
+        left: Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2)),
+        width,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      onOpenChange(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onOpenChange]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        data-allow-selection="true"
+        disabled={saving}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={`Coach RAG for ${learnerName}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenChange(!isOpen);
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        className={`inline-flex min-w-[76px] items-center justify-between gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold shadow-sm transition-smooth hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:cursor-wait disabled:opacity-70 ${selectedStyle.bg} ${selectedStyle.text}`}
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${getCoachRagDotClass(selectedLabel)}`}></span>
+          {selectedLabel}
+        </span>
+        <i className={`text-[11px] ${saving ? 'ri-loader-4-line animate-spin' : isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
+      </button>
+
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label={`Select Coach RAG for ${learnerName}`}
+          className="fixed z-[1000] rounded-xl border border-foreground-200/70 bg-background-50 p-1 shadow-2xl ring-1 ring-foreground-950/5 animate-in fade-in zoom-in-95 duration-150"
+          style={{ top: menuRect.top, left: menuRect.left, minWidth: menuRect.width }}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          {COACH_RAG_OPTIONS.map(option => {
+            const optionLabel = formatCoachRagValue(option.label);
+            const optionStyle = getCoachRagStyle(optionLabel);
+            const isSelected = option.value === selectedValue;
+
+            return (
+              <button
+                key={option.value || 'empty'}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold transition-smooth ${
+                  isSelected
+                    ? `${optionStyle.bg} ${optionStyle.text}`
+                    : 'text-foreground-700 hover:bg-background-100'
+                }`}
+                onClick={() => {
+                  onChange(option.value);
+                  triggerRef.current?.focus();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${getCoachRagDotClass(optionLabel)}`}></span>
+                  {option.label}
+                </span>
+                {isSelected && <i className="ri-check-line text-[13px]"></i>}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 

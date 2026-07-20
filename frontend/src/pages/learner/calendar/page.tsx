@@ -240,6 +240,19 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-backg
 }
 
 export default function LearnerCalendarPage() {
+  return (
+    <WorkspaceShell
+      role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
+      pageTitle="Calendar" pageSubtitle="Your schedule, coaching sessions, club events — all in one professional view"
+      userName={p.fullName} userRole={`${p.programme} Apprentice`}
+    >
+      <LearnerCalendarContent />
+    </WorkspaceShell>
+  );
+}
+
+/** Calendar body without the page shell — reusable as an embedded section (e.g. on the learner overview page). */
+export function LearnerCalendarContent() {
   const myLearner = useMyLearner();
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
@@ -448,11 +461,7 @@ export default function LearnerCalendarPage() {
   const attPct = ((p.attendanceRate || 86) / 100);
 
   return (
-    <WorkspaceShell
-      role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Calendar" pageSubtitle="Your schedule, coaching sessions, club events — all in one professional view"
-      userName={p.fullName} userRole={`${p.programme} Apprentice`}
-    >
+    <>
       {/* Toast */}
       {addToCalendarToast && (
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-emerald-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
@@ -947,6 +956,6 @@ export default function LearnerCalendarPage() {
 
         </div>
       </div>
-    </WorkspaceShell>
+    </>
   );
 }
