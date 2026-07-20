@@ -9,6 +9,7 @@ export interface SidebarNavItem {
   icon: string;
   href: string;
   badge?: number;
+  comingSoon?: boolean;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
   children?: SidebarNavItem[];
 }
@@ -388,6 +389,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
         {item.badge && (
           <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-accent-500 rounded-full animate-pulse-slow"></span>
         )}
+        {item.comingSoon && <SoonDot />}
         {anyChildActive && !isDropdownOpen && (
           <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>
         )}
@@ -396,7 +398,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
         <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
           style={{ top: tooltipStyle.top, left: tooltipStyle.left }}
         >
-          {item.label}
+          {item.label}{item.comingSoon ? ' - Soon' : ''}
         </div>,
         document.body
       )}
@@ -412,8 +414,8 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
         >
           <div className="p-1 max-h-[calc(100vh-24px)] overflow-y-auto">
             <div className="px-3 py-2 text-sm font-semibold text-white/90 border-b border-white/10 flex items-center justify-between">
-              {item.label}
-              <i className="ri-arrow-right-s-line text-xs text-white/40"></i>
+              <span>{item.label}</span>
+              {item.comingSoon ? <SoonBadge /> : <i className="ri-arrow-right-s-line text-xs text-white/40"></i>}
             </div>
             {needsSearch && (
               <div className="relative px-2 py-2">
@@ -440,7 +442,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
                   >
                     <i className={`${child.icon} text-sm`}></i>
                     <span className="flex-1">{child.label}</span>
-                    <i className="ri-arrow-right-s-line text-xs text-white/40"></i>
+                    {child.comingSoon ? <SoonBadge /> : <i className="ri-arrow-right-s-line text-xs text-white/40"></i>}
                   </Link>
                 );
               })}
@@ -474,13 +476,8 @@ function NavLink({ item, isActive }: {
     }
   }, [hovered]);
 
-  return (
-    <Link
-      to={item.href}
-      className={`relative flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+  const content = (
+    <>
       <span ref={spanRef} className="w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
         <i className={`${item.icon} text-sm`}></i>
       </span>
@@ -488,7 +485,7 @@ function NavLink({ item, isActive }: {
         <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
           style={{ top: tooltipStyle.top, left: tooltipStyle.left }}
         >
-          {item.label}
+          {item.label}{item.comingSoon ? ' - Soon' : ''}
         </div>,
         document.body
       )}
@@ -499,6 +496,18 @@ function NavLink({ item, isActive }: {
       {item.badge && (
         <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-accent-500 rounded-full animate-pulse-slow"></span>
       )}
+      {item.comingSoon && <SoonDot />}
+    </>
+  );
+
+  return (
+    <Link
+      to={item.href}
+      className={`relative flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {content}
     </Link>
   );
 }
@@ -566,6 +575,7 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
         </span>
         <span className="flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
         <span className="flex items-center gap-1 shrink-0">
+          {item.comingSoon && <SoonBadge />}
           {item.badge && <NavBadge count={item.badge} />}
           <i className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs text-white/30`}></i>
         </span>
@@ -584,6 +594,7 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
                 <i className={`${child.icon} text-xs`}></i>
                 <span className="whitespace-nowrap text-sm">{child.label}</span>
                 <span className="flex items-center gap-1 ml-auto">
+                  {child.comingSoon && <SoonBadge />}
                   {child.statusDot && <StatusDot color={child.statusDot} />}
                   {child.badge && <NavBadge count={child.badge} />}
                 </span>
@@ -601,21 +612,42 @@ function MobileNavLink({ item, isActive }: {
   isActive: (href: string) => boolean;
 }) {
   const active = isActive(item.href);
-  return (
-    <Link
-      to={item.href}
-      className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
-    >
+  const content = (
+    <>
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400 shadow-[0_0_6px_rgba(0,0,0,0.3)]"></span>}
       <span className="w-5 h-5 flex items-center justify-center shrink-0">
         <i className={`${item.icon} text-base`}></i>
       </span>
       <span className="flex-1 whitespace-nowrap text-sm font-medium">{item.label}</span>
       <span className="flex items-center gap-1.5 shrink-0">
+        {item.comingSoon && <SoonBadge />}
         {item.statusDot && <StatusDot color={item.statusDot} />}
         {item.badge && <NavBadge count={item.badge} />}
       </span>
+    </>
+  );
+
+  return (
+    <Link
+      to={item.href}
+      className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
+    >
+      {content}
     </Link>
+  );
+}
+
+function SoonBadge() {
+  return (
+    <span className="rounded-full border border-white/10 bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/55">
+      Soon
+    </span>
+  );
+}
+
+function SoonDot() {
+  return (
+    <span className="absolute top-0.5 right-0.5 h-1.5 w-1.5 rounded-full bg-amber-300/80"></span>
   );
 }
 
