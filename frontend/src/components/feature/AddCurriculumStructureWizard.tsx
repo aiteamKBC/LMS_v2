@@ -2405,13 +2405,14 @@ export function AddCurriculumStructureWizard({
       });
       return;
     }
+    const structureId = moduleBuilderStructureId(module);
     const sessionsNumber = String(moduleSessionCount(module));
     const staff = moduleStaffValues(module);
     updateModuleDraft(draft.localId, {
       mode: 'existing',
-      catalogueId,
+      catalogueId: structureId,
       name: module?.name || '',
-      existingCatalogueId: catalogueId,
+      existingCatalogueId: structureId,
       existingName: module?.name || '',
       existingSessionsNumber: sessionsNumber,
       color: module?.color || draft.color,
@@ -2421,19 +2422,19 @@ export function AddCurriculumStructureWizard({
     });
 
     try {
-      const savedStructure = await loadModuleStructure(moduleBuilderStructureId(module));
+      const savedStructure = await loadModuleStructure(structureId);
       const structure = getDefaultStructure(savedStructure || curriculumModuleToCatalogue(module));
       const selectedSessionsNumber = String(moduleSessionCount(module));
       setModuleDrafts(previous => previous.map(item => (
         item.localId === draft.localId
-          ? item.mode === 'existing' && item.catalogueId === catalogueId
+          ? item.mode === 'existing' && item.catalogueId === structureId
             ? applyModuleBuilderContent(
               {
                 ...item,
                 mode: 'existing',
-                catalogueId,
+                catalogueId: structureId,
                 name: structure.title || module.name,
-                existingCatalogueId: catalogueId,
+                existingCatalogueId: structureId,
                 existingName: structure.title || module.name,
                 existingSessionsNumber: selectedSessionsNumber,
                 color: module.color || item.color,
@@ -2454,14 +2455,14 @@ export function AddCurriculumStructureWizard({
       const selectedSessionsNumber = String(moduleSessionCount(module));
       setModuleDrafts(previous => previous.map(item => (
         item.localId === draft.localId
-          ? item.mode === 'existing' && item.catalogueId === catalogueId
+          ? item.mode === 'existing' && item.catalogueId === structureId
             ? applyModuleBuilderContent(
               {
                 ...item,
                 mode: 'existing',
-                catalogueId,
+                catalogueId: structureId,
                 name: fallback.title || module.name,
-                existingCatalogueId: catalogueId,
+                existingCatalogueId: structureId,
                 existingName: fallback.title || module.name,
                 existingSessionsNumber: selectedSessionsNumber,
                 color: module.color || item.color,
@@ -5098,6 +5099,19 @@ function ModuleBuilderContentPreview({
     setOrderUpdated(false);
     knownComponentIdsRef.current = new Set();
   }, [draft.localId]);
+
+  useEffect(() => {
+    if (freeMode || !componentCount) return;
+    const weeksWithComponents = draft.weeks.filter(week => week.components.length).map(week => week.id);
+    if (!weeksWithComponents.length) return;
+    setModuleOpen(true);
+    setExpandedWeekIds(previous => {
+      const next = new Set(previous);
+      weeksWithComponents.forEach(id => next.add(id));
+      if (next.size === previous.size && Array.from(next).every(id => previous.has(id))) return previous;
+      return next;
+    });
+  }, [componentCount, componentIdSignature, draft.weeks, freeMode]);
 
   useEffect(() => {
     if (!freeMode) return;
