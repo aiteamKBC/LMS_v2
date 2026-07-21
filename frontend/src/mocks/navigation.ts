@@ -43,7 +43,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
       { id: 'learner-absence-report', label: 'Absence Report', icon: 'ri-file-warning-line', href: '/learner/report-absence' },
-      { id: 'learner-catchup', label: 'Catch-up', icon: 'ri-timer-line', href: '/learner/catchup' },
     ],
   },
 
