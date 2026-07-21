@@ -59,15 +59,36 @@ function Empty({ children }: { children: ReactNode }) {
 }
 
 function Accordion({ id, title, icon, status, open, onToggle, children }: { id: string; title: string; icon: string; status?: 'Complete' | 'Incomplete'; open: boolean; onToggle: (id: string) => void; children: ReactNode }) {
+  const steps: Record<string, number> = {
+    opening: 1,
+    presentation: 2,
+    'ksb-reflection': 3,
+    'next-month': 4,
+    resources: 5,
+    wellbeing: 6,
+    feedback: 7,
+    'confirm-next': 8,
+  };
+  const step = steps[id];
+  const isOverview = id === 'learning' || id === 'previous-summary';
+  const isSummary = id === 'meeting-summary';
+  const helper = isOverview ? 'Session context' : isSummary ? 'Final record' : step ? `Agenda step ${step} of 8` : 'Session section';
   return (
-    <section className="overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-sm">
-      <button type="button" onClick={() => onToggle(id)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-background-100">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={icon} /></span>
-        <span className="flex-1 text-sm font-bold text-foreground-800">{title}</span>
-        {status && <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${status === 'Complete' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-background-300 bg-background-100 text-foreground-500'}`}>{status}</span>}
-        <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+    <section className={`overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${open ? 'border-primary-200 shadow-[0_10px_30px_rgba(69,26,128,0.08)]' : 'border-foreground-200/70 shadow-[0_3px_12px_rgba(25,12,50,0.035)] hover:border-primary-200 hover:shadow-md'}`}>
+      <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors sm:px-5 sm:py-4 ${open ? 'bg-gradient-to-r from-primary-50/90 to-secondary-50/30' : 'hover:bg-primary-50/35'}`}>
+        <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${open ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20' : isSummary ? 'bg-secondary-50 text-secondary-700' : 'bg-primary-50 text-primary-700'}`}>
+          <i className={`${icon} text-base`} />
+          {step && <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500 text-white' : 'bg-primary-700 text-white'}`}>{step}</span>}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>{helper}</span>
+          <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
+        </span>
+        {status && <span className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold sm:inline-flex ${status === 'Complete' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${status === 'Complete' ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>{status}</span>}
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><i className="ri-arrow-down-s-line text-lg" /></span>
       </button>
-      {open && <div className="border-t border-background-200 p-4 sm:p-5">{children}</div>}
+      {status && <div className="px-4 pb-3 sm:hidden"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${status === 'Complete' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${status === 'Complete' ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>{status}</span></div>}
+      {open && <div className="border-t border-primary-100 bg-white p-4 sm:p-6">{children}</div>}
     </section>
   );
 }
@@ -106,43 +127,69 @@ export function MonthlyCoachingListPage() {
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(sessions.length / pageSize));
   const visibleSessions = sessions.slice((page - 1) * pageSize, page * pageSize);
+  const completedCount = sessions.filter((session) => session.status === 'completed').length;
+  const scheduledCount = sessions.filter((session) => ['scheduled', 'in-progress'].includes(session.status)).length;
+  const cancelledCount = sessions.filter((session) => session.status === 'cancelled').length;
+  const coachName = sessions.find((session) => session.coachName)?.coachName || 'Your coach';
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching" pageSubtitle="30-day coaching sessions with your coach" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
-      <div className="space-y-5 p-4 md:p-6">
+      <main className="w-full space-y-5 p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
-        <section className="overflow-hidden rounded-xl border border-background-300 bg-background-50 shadow-sm">
-          <div className="border-b border-background-200 px-5 py-4"><h1 className="text-base font-bold text-foreground-900">Monthly Coaching</h1><p className="mt-1 text-xs text-foreground-500">A coaching session with your coach every 30 days. Open a session to review its learning summary.</p></div>
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-6 text-white shadow-xl shadow-primary-950/10 md:p-7">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><i className="ri-user-voice-line text-secondary-300" />One-to-one support</span>
+              <h1 className="mt-3 text-2xl font-bold text-white md:text-3xl">Monthly coaching</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Your 30-day coaching sessions with {coachName}. Review progress, learning evidence and agreed next steps.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
+              {[
+                ['Total', sessions.length, 'ri-stack-line', 'text-secondary-300'],
+                ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
+                ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
+                ['Cancelled', cancelledCount, 'ri-close-circle-line', 'text-rose-300'],
+              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur"><i className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold">{value}</p><p className="text-[10px] text-white/50">{label}</p></div>)}
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><i className="ri-calendar-event-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Coaching sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Open a session to review its 30-day learning summary.</p></div></div>
+            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />Open calendar</Link>
+          </div>
           {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading monthly coaching sessions...</div> : sessions.length === 0 ? <div className="p-5"><Empty>No monthly coaching sessions were found.</Empty></div> : (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left">
-                  <thead className="border-b border-background-300 bg-[#f1f4f8] text-[10px] font-semibold text-foreground-500"><tr><th className="px-4 py-3">Session Name / Session Type</th><th className="px-4 py-3">Coach</th><th className="px-4 py-3">Planned / Scheduled Date</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Scheduling Assistant</th><th className="px-4 py-3 text-right">Session Actions</th></tr></thead>
-                  <tbody className="divide-y divide-background-300">
+                  <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60"><tr><th className="px-5 py-3.5">Session Name / Session Type</th><th className="px-5 py-3.5">Coach</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Session Actions</th></tr></thead>
+                  <tbody className="divide-y divide-background-200">
                     {visibleSessions.map((session) => {
                       const booked = Boolean(session.scheduledDate && session.scheduledTime) && !['not-scheduled', 'cancelled'].includes(session.status);
                       return (
-                        <tr key={session.id} className="transition hover:bg-primary-50/30">
-                          <td className="px-4 py-3.5"><p className="text-xs font-bold text-foreground-800">Monthly Coaching #{session.sequence}</p><p className="mt-1 text-[10px] text-foreground-500">30-day coaching session</p></td>
-                          <td className="px-4 py-3.5 text-xs font-medium text-foreground-600">{session.coachName || '-'}</td>
-                          <td className="px-4 py-3.5"><p className="text-xs font-medium text-foreground-600">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</td>
-                          <td className="px-4 py-3.5"><span className={`inline-flex rounded px-2 py-1 text-[10px] font-semibold ${session.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : booked ? 'bg-blue-100 text-blue-700' : 'bg-background-200 text-foreground-600'}`}>{statusLabel(session.status)}</span></td>
-                          <td className="px-4 py-3.5"><Link to="/learner/calendar" className="inline-flex items-center gap-2 text-xs font-medium text-foreground-600 hover:text-primary-700"><i className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link></td>
-                          <td className="px-4 py-3.5"><div className="flex items-center justify-end gap-3"><Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="rounded-full bg-primary-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-primary-700">View</Link><i className="ri-more-2-fill text-lg text-foreground-500" /></div></td>
+                        <tr key={session.id} className="group transition-colors hover:bg-primary-50/35">
+                          <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{session.sequence}</span><div><p className="text-xs font-bold text-foreground-900">Monthly Coaching #{session.sequence}</p><p className="mt-1 text-[10px] text-foreground-400">30-day coaching session</p></div></div></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(session.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{session.coachName || '-'}</span></div></td>
+                          <td className="px-5 py-4"><div className="flex items-center gap-2"><i className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(booked ? session.scheduledDate : session.targetDate)}</p>{booked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(session.scheduledTime)}</p>}</div></div></td>
+                          <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ring-1 ring-inset ${session.status === 'completed' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : session.status === 'cancelled' ? 'bg-rose-50 text-rose-700 ring-rose-200' : booked ? 'bg-blue-50 text-blue-700 ring-blue-200' : 'bg-amber-50 text-amber-700 ring-amber-200'}`}><i className={session.status === 'completed' ? 'ri-checkbox-circle-line' : session.status === 'cancelled' ? 'ri-close-circle-line' : 'ri-time-line'} />{statusLabel(session.status)}</span></td>
+                          <td className="px-5 py-4"><Link to="/learner/calendar" className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><i className="ri-calendar-2-line" />{booked ? 'Reschedule' : 'Schedule'}</Link></td>
+                          <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/monthly-coaching/${encodeURIComponent(session.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <i className="ri-arrow-right-line" /></Link></div></td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-              <div className="flex flex-col gap-3 border-t border-background-300 bg-[#f1f4f8] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-1"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-7 min-w-7 border px-2 text-xs ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button><span className="ml-3 text-[10px] text-foreground-500">10 items per page</span></div>
+              <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-1.5"><button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button><button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>{Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}<button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button><button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button><span className="ml-2 text-[10px] text-foreground-400">10 items per page</span></div>
                 <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, sessions.length)} of {sessions.length} items</p>
               </div>
             </>
           )}
         </section>
-      </div>
+      </main>
     </WorkspaceShell>
   );
 }
@@ -216,7 +263,7 @@ export default function MonthlyCoachingPage() {
             </Accordion>
             <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status="Incomplete" open={openSections.includes('next-month')} onToggle={toggle}><Empty>No targets or actions for next month have been recorded.</Empty></Accordion>
             <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status="Incomplete" open={openSections.includes('resources')} onToggle={toggle}><Empty>No coach learning resources or guidance have been recorded.</Empty></Accordion>
-            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-heart-line" status="Incomplete" open={openSections.includes('wellbeing')} onToggle={toggle}><Empty>No wellbeing or safeguarding response has been recorded.</Empty></Accordion>
+            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status="Incomplete" open={openSections.includes('wellbeing')} onToggle={toggle}><Empty>No wellbeing or safeguarding response has been recorded.</Empty></Accordion>
             <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status="Incomplete" open={openSections.includes('feedback')} onToggle={toggle}><Empty>No learner feedback has been recorded.</Empty></Accordion>
             <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={next ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
               {next ? <div className="flex items-center justify-between rounded-xl bg-background-100 p-4"><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Next monthly coaching session</p><p className="mt-1 text-sm font-bold text-foreground-900">Monthly Coaching #{next.sequence} · {formatDate(dateOf(next))}</p></div><span className="rounded-full bg-background-200 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">{statusLabel(next.status)}</span></div> : <Empty>The next monthly coaching meeting has not been created.</Empty>}

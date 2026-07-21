@@ -3,6 +3,8 @@
 // Talks to the Django backend at /learner_api/quizzes (proxied to :8000 by Vite in dev).
 // ============================================================================
 
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+
 const BASE = '/learner_api/quizzes';
 
 export type QuestionType =
@@ -133,5 +135,8 @@ export function submitQuizAttempt(
   return request<QuizAttemptResult>(`${BASE}/${quizId}/submit/?kind=${kind}&learnerId=${learnerId}`, {
     method: 'POST',
     body: JSON.stringify(submission),
+  }).then((result) => {
+    invalidateLearnerDetailCache(kind, learnerId);
+    return result;
   });
 }

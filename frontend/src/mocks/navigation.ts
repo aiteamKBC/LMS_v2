@@ -47,10 +47,10 @@ export const learnerNavItems: SidebarNavItem[] = [
     ],
   },
 
-  // Monthly Progress
+  // My Progress
   {
     id: 'learner-group-monthly',
-    label: 'Monthly Progress',
+    label: 'My Progress',
     icon: 'ri-loop-left-line',
     href: '',
     children: [
