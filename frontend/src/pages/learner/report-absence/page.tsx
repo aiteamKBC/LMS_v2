@@ -23,10 +23,10 @@ const REASONS = [
 ];
 
 const statusClass: Record<string, string> = {
-  Approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  'Catch-up complete': 'bg-primary-50 text-primary-700 border-primary-200',
-  Pending: 'bg-amber-50 text-amber-700 border-amber-200',
-  Declined: 'bg-red-50 text-red-700 border-red-200',
+  approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'catch-up complete': 'bg-primary-50 text-primary-700 border-primary-200',
+  pending: 'bg-amber-50 text-amber-700 border-amber-200',
+  declined: 'bg-red-50 text-red-700 border-red-200',
 };
 
 function displayDate(value: string) {
@@ -408,7 +408,7 @@ export default function ReportAbsencePage() {
                   {!reportsLoading && reports.length === 0 && <div className="rounded-xl border border-dashed border-background-200 py-7 text-center"><i className="ri-file-list-3-line mb-2 block text-xl text-foreground-300" /><p className="text-xs font-medium text-foreground-500">No absence reports yet</p></div>}
                   {reports.map((report) => (
                     <article key={report.id} className="rounded-xl border border-background-200/60 bg-white p-3.5">
-                      <div className="mb-2 flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground-800">{report.sessionTitle}</p><p className="mt-0.5 text-[10px] text-foreground-400">{displayDate(report.sessionDate)} - {report.reference}</p></div><span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusClass[report.status] || statusClass.Pending}`}>{report.status}</span></div>
+                      <div className="mb-2 flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground-800">{report.sessionTitle}</p><p className="mt-0.5 text-[10px] text-foreground-400">{displayDate(report.sessionDate)} - {report.reference}</p></div><span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusClass[report.status.trim().toLowerCase()] || statusClass.pending}`}>{report.status}</span></div>
                       <div className="flex items-center gap-1.5 border-t border-background-100 pt-2 text-[10px] text-foreground-400">
                         <i className="ri-attachment-2" />
                         {report.evidenceUrl ? (

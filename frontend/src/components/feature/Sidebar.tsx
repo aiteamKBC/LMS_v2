@@ -75,9 +75,26 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
     setActiveDropdown(prev => prev === id ? null : id);
   }, []);
 
+  const navHrefs = useMemo(
+    () => filteredNavItems.flatMap(item => [
+      item.href,
+      ...(item.children?.map(child => child.href) ?? []),
+    ]).filter(Boolean),
+    [filteredNavItems],
+  );
+
   const isActive = (href: string) => {
     if (!href) return false;
-    return location.pathname === href || location.pathname.startsWith(href + '/');
+    const matches = location.pathname === href || location.pathname.startsWith(href + '/');
+    if (!matches) return false;
+
+    // Nested sibling routes can share a prefix (for example /learner/clubs
+    // and /learner/clubs/events). Only the most specific matching item should
+    // receive the active style.
+    return !navHrefs.some(candidate =>
+      candidate.length > href.length
+      && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
+    );
   };
 
   const hasChildren = (item: SidebarNavItem) => item.children && item.children.length > 0;

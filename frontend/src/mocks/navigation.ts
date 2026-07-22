@@ -91,8 +91,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/learner/knowledge-base' },
-      { id: 'learner-messages', label: 'Messages', icon: 'ri-mail-line', href: '/learner/messages', badge: 2 },
-      { id: 'learner-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },
