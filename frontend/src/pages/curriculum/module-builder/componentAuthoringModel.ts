@@ -2,7 +2,6 @@ export type ModuleStatus = 'draft' | 'review' | 'published' | string;
 export type KsbMappingType = 'main' | 'secondary' | 'possible';
 export type ModuleComponentType =
   | 'live-session'
-  | 'recording-placeholder'
   | 'video'
   | 'podcast'
   | 'reading'
@@ -51,7 +50,6 @@ export const CONTENT_STATUSES = ['Draft', 'Ready for QA', 'Needs changes', 'Appr
 function advancedDefaults(type: ModuleComponentType): ComponentSettings {
   const completionRules: Partial<Record<ModuleComponentType, string>> = {
     'live-session': 'Attend or watch recording',
-    'recording-placeholder': 'Mark complete after watching',
     video: 'Watch video and mark complete',
     podcast: 'Listen and mark complete',
     reading: 'Read the material and confirm completion',
@@ -97,22 +95,6 @@ const definitions: ComponentAuthoringDefinition[] = [
     requiredSettings: [],
     capabilities: ['ksb-mapping', 'reflection', 'evidence', 'tutor-validation'],
     defaultSettings: { ...advancedDefaults('live-session'), sessionPurpose: '', selectedGroupKeys: [], selectedGroupNames: [], liveSessionUrl: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true },
-  },
-  {
-    type: 'recording-placeholder',
-    label: 'Recording Placeholder',
-    icon: 'ri-play-circle-line',
-    group: 'Live & recorded',
-    tone: 'slate',
-    defaultOtjh: 2,
-    defaultPoints: 10,
-    reflectionDefault: false,
-    workplaceEvidenceDefault: false,
-    tutorValidationDefault: false,
-    supportedSources: ['MIS allocation', 'External link'],
-    requiredSettings: [],
-    capabilities: ['media', 'preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('recording-placeholder'), source: 'MIS allocation', selectedGroupKeys: [], selectedGroupNames: [], recordingPurpose: '', recordingUrl: '', expectedAvailability: 'After live session', captionsExpected: false },
   },
   {
     type: 'video',
@@ -322,8 +304,12 @@ const definitions: ComponentAuthoringDefinition[] = [
 ];
 
 export const componentAuthoringDefinitions = Object.freeze(definitions);
+// Only the component types the week builder itself offers are addable here —
+// keeps the module builder's "Add component" picker in lockstep with the
+// week builder's palette. The others (reflection/checkpoint/monthly-ksb-quiz/
+// coaching-preparation) stay defined (existing data may still use them) but
+// hidden from the picker.
 const hiddenComponentTypes = new Set<ModuleComponentType>([
-  'assignment',
   'reflection',
   'checkpoint',
   'monthly-ksb-quiz',
@@ -458,12 +444,6 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
     if (url && ['External Link', 'HTML (MP4)'].includes(sourceType) && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Enter a valid URL.' });
     if (sourceType === 'Embed' && status !== 'Draft' && !String(settings.embedCode || '').trim()) issues.push({ path: `${pathPrefix}.settings.embedCode`, message: 'Embed content is required before QA or approval.' });
     if (sourceType !== 'Embed' && status !== 'Draft' && !url) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Video URL is required before QA or approval.' });
-  }
-
-  if (component.type === 'recording-placeholder') {
-    const url = String(settings.recordingUrl || '').trim();
-    if (url && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.recordingUrl`, message: 'Enter a valid recording URL.' });
-    if (status !== 'Draft' && !url) issues.push({ path: `${pathPrefix}.settings.recordingUrl`, message: 'Recording URL is required before QA or approval.' });
   }
 
   if (component.type === 'podcast') {

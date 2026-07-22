@@ -270,6 +270,10 @@ COMPONENT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024
 COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
+    'reading': {'.txt', '.doc', '.docx', '.pdf', '.rtf', '.odt'},
+    # Assignment briefs are authored like reading material — a written brief or
+    # an uploaded document (same document formats as reading).
+    'assignment': {'.txt', '.doc', '.docx', '.pdf', '.rtf', '.odt'},
 }
 
 
@@ -6656,6 +6660,32 @@ def curriculum_component_upload(request, component_id):
     }, status=201)
 
 
+@csrf_exempt
+def curriculum_week_component_upload(request, component_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    component_id = clean_str(component_id)
+    uploaded_file = request.FILES.get('file')
+    if not uploaded_file:
+        return json_error('No file was uploaded.', status=400)
+
+    component_type = frontend_component_type(request.POST.get('componentType') or request.POST.get('type')) or 'reading'
+    if component_type not in COMPONENT_UPLOAD_EXTENSIONS:
+        return json_error('Uploads are only supported for reading components.', status=400)
+
+    # Week template components live in their own table (not the module builder's
+    # `components` table), and are saved wholesale on the next Save rather than
+    # patched row-by-row — so this just stores the file and hands back its
+    # metadata; the frontend writes it into the component's own settings and
+    # persists it the normal way.
+    metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)
+    if error:
+        return json_error(error, status=400)
+
+    return JsonResponse({'uploaded': True, 'componentId': component_id, 'file': metadata}, status=201)
+
+
 @require_GET
 def curriculum_uploaded_file(request, path):
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{path}'
@@ -8211,3 +8241,341 @@ def curriculum_tutor_detail(request, identifier):
 @csrf_exempt
 def curriculum_coach_detail(request, identifier):
     return curriculum_staff_profile_detail(request, 'coach', identifier)
+
+
+# ---------------------------------------------------------------------------
+# Week templates (standalone Week Builder)
+#
+# Reusable weeks authored outside any module. A template's course_type drives
+# the paid/free split: 'paid' templates are scoped to programme + module +
+# group (all required at creation); 'free' templates carry none of those. The
+# component shape mirrors module authoring components (type + settings + KSBs)
+# so a template stays compatible with modules for the future module import.
+# ---------------------------------------------------------------------------
+WEEK_TEMPLATES_TABLE = 'week_templates'
+WEEK_TEMPLATE_COMPONENTS_TABLE = 'week_template_components'
+WEEK_TEMPLATE_COURSE_TYPES = {'paid', 'free'}
+_WEEK_TEMPLATE_TABLES_READY = False
+
+
+def ensure_week_template_tables():
+    # Mirrors sql/001_week_templates.sql so local/sqlite dev and the test runner
+    # have the tables even though Neon is the source of truth in production.
+    global _WEEK_TEMPLATE_TABLES_READY
+    if _WEEK_TEMPLATE_TABLES_READY:
+        return
+    json_type = authoring_json_type()
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name(WEEK_TEMPLATES_TABLE)} (
+                id varchar(128) primary key,
+                title varchar(500) not null default '',
+                summary text,
+                learning_outcomes {json_type},
+                course_type varchar(16) not null default 'paid',
+                programme_id varchar(255),
+                programme_name varchar(255),
+                module_catalogue_id varchar(128),
+                group_id varchar(255),
+                group_name varchar(255),
+                status varchar(32) not null default 'draft',
+                ksb_mappings {json_type},
+                total_otjh numeric(8,2) not null default 0,
+                points integer not null default 0,
+                component_count integer not null default 0,
+                author varchar(255),
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp
+            )
+        ''')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} (
+                id varchar(128) primary key,
+                week_template_id varchar(128) not null,
+                type varchar(64) not null,
+                title varchar(500) not null default '',
+                description text,
+                expected_otjh numeric(8,2) not null default 2,
+                points integer not null default 0,
+                reflection_required boolean not null default false,
+                workplace_evidence_required boolean not null default false,
+                tutor_validation_required boolean not null default false,
+                ksb_mappings {json_type},
+                settings_json {json_type},
+                display_order integer not null default 0,
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp
+            )
+        ''')
+    _WEEK_TEMPLATE_TABLES_READY = True
+
+
+def week_template_number(value, default=0):
+    try:
+        if value in (None, ''):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def week_template_scope_fields(payload, course_type):
+    # Paid templates keep their programme/module/group scope; free templates
+    # clear it. Empty string (not None) so update_rows actually clears columns
+    # when a template switches paid -> free.
+    if course_type == 'free':
+        return {
+            'programme_id': '',
+            'programme_name': '',
+            'module_catalogue_id': '',
+            'group_id': '',
+            'group_name': '',
+        }
+    return {
+        'programme_id': clean_str(payload.get('programmeId')),
+        'programme_name': clean_str(payload.get('programmeName')),
+        'module_catalogue_id': clean_str(payload.get('moduleCatalogueId')),
+        'group_id': clean_str(payload.get('groupId')),
+        'group_name': clean_str(payload.get('groupName')),
+    }
+
+
+def get_week_template_rows(where_sql='', params=None):
+    ensure_week_template_tables()
+    query = f'select * from {table_name(WEEK_TEMPLATES_TABLE)}'
+    if where_sql:
+        query += f' where {where_sql}'
+    query += ' order by updated_at desc'
+    return fetch_all(query, params or [])
+
+
+def get_week_template_row(template_id):
+    rows = get_week_template_rows('id = %s', [template_id])
+    return rows[0] if rows else None
+
+
+def get_week_template_component_rows(template_id):
+    ensure_week_template_tables()
+    return fetch_all(
+        f'select * from {table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+        f'where week_template_id = %s order by display_order asc',
+        [template_id],
+    )
+
+
+def week_template_component_payload(row):
+    return {
+        'id': row.get('id'),
+        'weekTemplateId': row.get('week_template_id'),
+        'type': row.get('type'),
+        'title': row.get('title') or '',
+        'description': row.get('description') or '',
+        'expectedOtjh': week_template_number(row.get('expected_otjh')),
+        'points': parse_int(row.get('points'), 0),
+        'reflectionRequired': bool(row.get('reflection_required')),
+        'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
+        'tutorValidationRequired': bool(row.get('tutor_validation_required')),
+        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
+        'settings': as_json_value(row.get('settings_json'), {}),
+        'displayOrder': parse_int(row.get('display_order'), 0),
+    }
+
+
+def week_template_payload(row, components=None):
+    return {
+        'id': row.get('id'),
+        'title': row.get('title') or '',
+        'summary': row.get('summary') or '',
+        'learningOutcomes': as_json_value(row.get('learning_outcomes'), []),
+        'courseType': row.get('course_type') or 'paid',
+        'programmeId': row.get('programme_id') or '',
+        'programmeName': row.get('programme_name') or '',
+        'moduleCatalogueId': row.get('module_catalogue_id') or '',
+        'groupId': row.get('group_id') or '',
+        'groupName': row.get('group_name') or '',
+        'status': row.get('status') or 'draft',
+        'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
+        'totalOtjh': week_template_number(row.get('total_otjh')),
+        'points': parse_int(row.get('points'), 0),
+        'componentCount': parse_int(row.get('component_count'), 0),
+        'author': row.get('author') or '',
+        'createdAt': row.get('created_at'),
+        'updatedAt': row.get('updated_at'),
+        'components': [week_template_component_payload(component) for component in (components or [])],
+    }
+
+
+def save_week_template_components(template_id, components):
+    # Delete-then-reinsert the whole component list (same approach as the free
+    # programme module save). Returns the saved rows in display order.
+    ensure_week_template_tables()
+    delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [template_id])
+    saved = []
+    for index, component in enumerate(components or []):
+        component_id = clean_str(component.get('id')) or unique_prefixed_id('WTC')
+        row = insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, {
+            'id': component_id,
+            'week_template_id': template_id,
+            'type': clean_str(component.get('type')) or 'reading',
+            'title': clean_str(component.get('title')),
+            'description': clean_str(component.get('description')),
+            'expected_otjh': week_template_number(component.get('expectedOtjh')),
+            'points': parse_int(component.get('points'), 0),
+            'reflection_required': bool(component.get('reflectionRequired')),
+            'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
+            'tutor_validation_required': bool(component.get('tutorValidationRequired')),
+            'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
+            'settings_json': json_db_value(component.get('settings') or {}),
+            'display_order': index,
+            'created_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        })
+        saved.append(row)
+    return saved
+
+
+def week_template_component_metrics(components):
+    total_otjh = sum(week_template_number(component.get('expectedOtjh')) for component in (components or []))
+    points = sum(parse_int(component.get('points'), 0) for component in (components or []))
+    return round(total_otjh, 2), points, len(components or [])
+
+
+def week_template_detail_response(template_id, wrapper_key='weekTemplate', **extra):
+    row = get_week_template_row(template_id)
+    if not row:
+        return json_error('Week template not found.', status=404)
+    components = get_week_template_component_rows(template_id)
+    payload = {'schema': CURRICULUM_SCHEMA, wrapper_key: week_template_payload(row, components)}
+    payload.update(extra)
+    return JsonResponse(payload)
+
+
+@csrf_exempt
+def curriculum_week_template_collection(request):
+    ensure_week_template_tables()
+    if request.method == 'GET':
+        conditions = []
+        params = []
+        course_type = clean_str(request.GET.get('courseType')).lower()
+        if course_type in WEEK_TEMPLATE_COURSE_TYPES:
+            conditions.append('course_type = %s')
+            params.append(course_type)
+        for column, param in (
+            ('programme_id', 'programmeId'),
+            ('module_catalogue_id', 'moduleCatalogueId'),
+            ('group_id', 'groupId'),
+            ('status', 'status'),
+        ):
+            value = clean_str(request.GET.get(param))
+            if value:
+                conditions.append(f'{column} = %s')
+                params.append(value)
+        rows = get_week_template_rows(' and '.join(conditions), params)
+        search = clean_str(request.GET.get('search')).lower()
+        if search:
+            rows = [row for row in rows if search in clean_str(row.get('title')).lower()]
+        results = [week_template_payload(row) for row in rows]
+        return curriculum_results_response(results)
+
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+
+    course_type = clean_str(payload.get('courseType')).lower() or 'paid'
+    if course_type not in WEEK_TEMPLATE_COURSE_TYPES:
+        return json_error('courseType must be "paid" or "free".', fields=['courseType'])
+    if not clean_str(payload.get('title')):
+        return json_error('Missing required fields.', fields=['title'])
+    if course_type == 'paid':
+        missing = [field for field in ('programmeId', 'moduleCatalogueId', 'groupId') if not clean_str(payload.get(field))]
+        if missing:
+            return json_error('A paid week template needs a programme, module and group.', fields=missing)
+
+    components = payload.get('components') if isinstance(payload.get('components'), list) else []
+    total_otjh, points, component_count = week_template_component_metrics(components)
+    existing_ids = [row.get('id') for row in get_week_template_rows()]
+    template_id = unique_prefixed_id('WT', payload.get('id'), existing_ids)
+
+    insert_row(WEEK_TEMPLATES_TABLE, {
+        'id': template_id,
+        'title': clean_str(payload.get('title')),
+        'summary': clean_str(payload.get('summary')),
+        'learning_outcomes': json_db_value(payload.get('learningOutcomes') or []),
+        'course_type': course_type,
+        **week_template_scope_fields(payload, course_type),
+        'status': clean_str(payload.get('status')) or 'draft',
+        'ksb_mappings': json_db_value(payload.get('ksbMappings') or []),
+        'total_otjh': total_otjh,
+        'points': points,
+        'component_count': component_count,
+        'author': clean_str(payload.get('author')),
+        'created_at': datetime.utcnow(),
+        'updated_at': datetime.utcnow(),
+    })
+    if components:
+        save_week_template_components(template_id, components)
+    invalidate_curriculum_cache()
+    return week_template_detail_response(template_id, created=True)
+
+
+@csrf_exempt
+def curriculum_week_template_detail(request, identifier):
+    if request.method not in {'GET', 'PATCH', 'DELETE'}:
+        return json_error('Method not allowed.', status=405)
+    row = get_week_template_row(identifier)
+    if not row:
+        return json_error('Week template not found.', status=404)
+
+    if request.method == 'GET':
+        return week_template_detail_response(identifier)
+
+    if request.method == 'DELETE':
+        delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [identifier])
+        delete_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier])
+        invalidate_curriculum_cache()
+        return JsonResponse({'deleted': True, 'id': identifier})
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    if 'title' in payload and not clean_str(payload.get('title')):
+        return json_error('Title cannot be blank.', fields=['title'])
+
+    course_type = clean_str(payload.get('courseType')).lower() or (row.get('course_type') or 'paid')
+    if course_type not in WEEK_TEMPLATE_COURSE_TYPES:
+        return json_error('courseType must be "paid" or "free".', fields=['courseType'])
+
+    updates = {'updated_at': datetime.utcnow(), 'course_type': course_type}
+    if 'title' in payload:
+        updates['title'] = clean_str(payload.get('title'))
+    if 'summary' in payload:
+        updates['summary'] = clean_str(payload.get('summary'))
+    if 'learningOutcomes' in payload:
+        updates['learning_outcomes'] = json_db_value(payload.get('learningOutcomes') or [])
+    if 'ksbMappings' in payload:
+        updates['ksb_mappings'] = json_db_value(payload.get('ksbMappings') or [])
+    if 'status' in payload:
+        updates['status'] = clean_str(payload.get('status')) or 'draft'
+    if 'author' in payload:
+        updates['author'] = clean_str(payload.get('author'))
+    # Re-apply scope whenever course type is sent (switching to free clears it)
+    # or when any scope field is provided.
+    if 'courseType' in payload or any(key in payload for key in ('programmeId', 'programmeName', 'moduleCatalogueId', 'groupId', 'groupName')):
+        updates.update(week_template_scope_fields(payload, course_type))
+
+    components_provided = isinstance(payload.get('components'), list)
+    if components_provided:
+        components = payload.get('components')
+        total_otjh, points, component_count = week_template_component_metrics(components)
+        updates.update({'total_otjh': total_otjh, 'points': points, 'component_count': component_count})
+
+    update_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier], updates)
+    if components_provided:
+        save_week_template_components(identifier, payload.get('components'))
+    invalidate_curriculum_cache()
+    return week_template_detail_response(identifier, updated=True)

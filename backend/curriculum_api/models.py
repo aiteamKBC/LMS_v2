@@ -227,3 +227,63 @@ class Tutor(models.Model):
     class Meta:
         db_table = 'curriculum"."tutors'
         managed = False
+
+
+class WeekTemplate(models.Model):
+    # A reusable week authored in the standalone Week Builder. Not bound to a
+    # module (unlike ModuleAuthoringWeek); Phase 2 will copy its content into a
+    # module's weeks. course_type drives the paid/free split: paid templates are
+    # scoped to programme + module + group; free templates carry none of them
+    # (the view enforces that — the columns stay nullable at the DB level).
+    COURSE_TYPE_CHOICES = [
+        ('paid', 'Paid / normal course'),
+        ('free', 'Free course'),
+    ]
+
+    id = models.CharField(max_length=128, primary_key=True)
+    title = models.CharField(max_length=500, blank=True, default='')
+    summary = models.TextField(blank=True, null=True)
+    learning_outcomes = models.JSONField(default=list, blank=True)
+    course_type = models.CharField(max_length=16, choices=COURSE_TYPE_CHOICES, default='paid')
+    programme_id = models.CharField(max_length=255, blank=True, null=True)
+    programme_name = models.CharField(max_length=255, blank=True, null=True)
+    module_catalogue_id = models.CharField(max_length=128, blank=True, null=True)
+    group_id = models.CharField(max_length=255, blank=True, null=True)
+    group_name = models.CharField(max_length=255, blank=True, null=True)
+    status = models.CharField(max_length=32, default='draft')
+    ksb_mappings = models.JSONField(default=list, blank=True)
+    total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    points = models.IntegerField(default=0)
+    component_count = models.IntegerField(default=0)
+    author = models.CharField(max_length=255, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."week_templates'
+        managed = False
+
+
+class WeekTemplateComponent(models.Model):
+    # The atomic learning items inside a week template. Same shape as
+    # ModuleAuthoringComponent (type + settings_json + per-component KSBs) so a
+    # template's components stay compatible with modules for the Phase 2 import.
+    id = models.CharField(max_length=128, primary_key=True)
+    week_template_id = models.CharField(max_length=128, db_index=True)
+    type = models.CharField(max_length=64)
+    title = models.CharField(max_length=500, blank=True, default='')
+    description = models.TextField(blank=True, null=True)
+    expected_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=2)
+    points = models.IntegerField(default=0)
+    reflection_required = models.BooleanField(default=False)
+    workplace_evidence_required = models.BooleanField(default=False)
+    tutor_validation_required = models.BooleanField(default=False)
+    ksb_mappings = models.JSONField(default=list, blank=True)
+    settings_json = models.JSONField(default=dict, blank=True, null=True)
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."week_template_components'
+        managed = False

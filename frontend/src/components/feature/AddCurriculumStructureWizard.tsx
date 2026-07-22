@@ -5038,15 +5038,6 @@ function FreeComponentLmsDetails({
           />
         </div>
 
-        {component.type === 'recording-placeholder' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <SelectNative label="Source" value={getString('source', 'Tutor upload')} onChange={value => onSettingChange('source', value)} options={['MIS allocation', 'Tutor upload', 'External link']} />
-            <Field label="Expected availability" value={getString('expectedAvailability', 'After live session')} onChange={value => onSettingChange('expectedAvailability', value)} />
-            <TextArea label="Recording purpose" value={getString('recordingPurpose')} onChange={value => onSettingChange('recordingPurpose', value)} rows={2} />
-            <FreeCheckbox label="Captions expected" checked={getBool('captionsExpected')} onChange={value => onSettingChange('captionsExpected', value)} />
-          </div>
-        )}
-
         {component.type === 'video' && (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             <SelectNative label="Source type" value={videoSourceType} onChange={updateVideoSourceType} options={videoSourceTypes} />
