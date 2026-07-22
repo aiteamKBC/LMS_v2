@@ -1,8 +1,6 @@
 """Read-only curriculum lookups for the training-plan builder.
 
-Data source: the `curriculum` schema on the same Neon database as enrolment.
-These tables are authored elsewhere, so we only ever read them — plain raw SQL
-against the `enrolment` connection (no models, no writes).
+Data source: normalized tables in the `curriculum` schema.
 
 Cascade (mirrors the builder UI):
     programmes                -> distinct Training_plan.Program
@@ -47,22 +45,6 @@ def _rows(sql, params=None):
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def _table_exists(table):
-    try:
-        return bool(_rows(
-            """
-            select 1
-            from information_schema.tables
-            where table_schema = 'curriculum'
-              and table_name = %s
-            limit 1
-            """,
-            [table],
-        ))
-    except DatabaseError:
-        return False
-
-
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
@@ -78,15 +60,6 @@ def _guard(fn):
 def programmes(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
-    if not _table_exists("Training_plan"):
-        return _guard(lambda: [
-            r["programme_name"]
-            for r in _rows(
-                "SELECT DISTINCT programme_name FROM curriculum.modules "
-                "WHERE programme_name IS NOT NULL AND programme_name <> '' "
-                "ORDER BY programme_name"
-            )
-        ])
     return _guard(lambda: [
         r["name"]
         r["name"]
@@ -219,7 +192,9 @@ def components(request):
         return _error("week query param is required.", 400)
     return _guard(lambda: [
         {
-            "id": r["id"], "title": r["title"] or r["type"], "type": r["type"],
+            "id": r["id"],
+            "title": r["title"] or r["type"],
+            "type": r["type"],
             "expectedOtjh": float(r["expected_otjh"]) if r["expected_otjh"] is not None else None,
         }
         for r in _rows(
@@ -234,22 +209,9 @@ def components(request):
 
 @csrf_exempt
 def legacy_otjh(request):
-    """expected_otjh lookup for training-plan-wizard components saved BEFORE
-    the structured plan format existed. Those components carry no real
-    curriculum.module_authoring_components id (their componentId/weekId are
-    client-generated, e.g. "component-mrc76lez-no9vis"), so `components?week=`
-    can't resolve them by id — this endpoint resolves by (module, week,
-    component) TITLE instead, reusing the same fallback the learner-facing
-    training-plan view uses for legacy plans.
-
-        POST /learner_api/curriculum/legacy-otjh/
-        body: {"items": [{"module": "...", "week": "...", "component": "..."}, ...]}
-        -> {"results": {"<module>|<week>|<component>": 2.0, ...}}  (hours, or omitted if unmatched)
-    """
+    """Best-effort OTJH lookup for older saved training-plan components."""
     if request.method != "POST":
         return _error("Method not allowed.", 405)
-    # Imported here (not module level) to avoid learner_detail's heavier import
-    # chain (models, mappers) loading for every curriculum lookup request.
     from .learner_detail import _otjh_by_legacy_title
 
     try:
@@ -261,7 +223,6 @@ def legacy_otjh(request):
     if not isinstance(items, list):
         return _error("items must be a list of {module, week, component}.", 400)
 
-    # _otjh_by_legacy_title expects legacy-shaped component dicts (no componentId).
     components_arg = [
         {"module": it.get("module"), "week": it.get("week"), "component": it.get("component")}
         for it in items if isinstance(it, dict)

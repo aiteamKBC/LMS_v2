@@ -13,11 +13,14 @@ import {
   archiveCurriculumGroup,
   archiveCurriculumModule,
   deleteCurriculumProgramme,
+  fetchCurriculumProgrammeKsbCoverage,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumModule,
   updateCurriculumProgramme,
   type CurriculumCohort,
+  type CurriculumKsbCoverageItem,
+  type CurriculumKsbTraceMapping,
   type CurriculumGroup,
   type CurriculumModule,
   type CurriculumProgramme,
@@ -51,6 +54,10 @@ export default function CurriculumProgrammes() {
   const [wizardProgramme, setWizardProgramme] = useState<CurriculumProgramme | undefined>();
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
+  const [reviewProgramme, setReviewProgramme] = useState<CurriculumProgramme | null>(null);
+  const [reviewItems, setReviewItems] = useState<CurriculumKsbCoverageItem[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const { programmes, loading, error, reload } = useCurriculumProgrammes();
 
   const filtered = programmes.filter(p => {
@@ -89,12 +96,12 @@ export default function CurriculumProgrammes() {
     setActionError(null);
     await showCurriculumConfirm({
       title: 'Delete programme?',
-      text: `Delete "${programme.name}" from the curriculum programme list? Related curriculum records will be kept for audit and reporting.`,
+      text: `Delete "${programme.name}" and its curriculum structure from the programme list? This will remove its cohorts, groups, modules, weeks and component mappings.`,
       icon: 'warning',
       confirmButtonText: 'Delete Programme',
       cancelButtonText: 'Cancel',
       successTitle: 'Programme deleted',
-      successText: `${programme.name} was removed from the active programme list.`,
+      successText: `${programme.name} was deleted from the programme list.`,
       onConfirm: async () => {
         setDeletingProgrammeId(programmeId);
         try {
@@ -108,6 +115,22 @@ export default function CurriculumProgrammes() {
         }
       },
     });
+  };
+
+  const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
+    setReviewProgramme(programme);
+    setReviewItems([]);
+    setReviewError(null);
+    setReviewLoading(true);
+    try {
+      const coverage = await fetchCurriculumProgrammeKsbCoverage(programmeId);
+      setReviewItems((coverage.items || []).filter(isReadableAppliedKsbCoverageItem));
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Unable to load programme KSB coverage.');
+    } finally {
+      setReviewLoading(false);
+    }
   };
 
   return (
@@ -309,8 +332,192 @@ export default function CurriculumProgrammes() {
           initialProgramme={wizardProgramme}
           startStep="programme"
         />
+        {reviewProgramme && (
+          <ProgrammeKsbReviewModal
+            programme={reviewProgramme}
+            items={reviewItems}
+            loading={reviewLoading}
+            error={reviewError}
+            onClose={() => {
+              setReviewProgramme(null);
+              setReviewItems([]);
+              setReviewError(null);
+            }}
+          />
+        )}
       </div>
     </WorkspaceShell>
+  );
+}
+
+function ProgrammeKsbReviewModal({
+  programme,
+  items,
+  loading,
+  error,
+  onClose,
+}: {
+  programme: CurriculumProgramme;
+  items: CurriculumKsbCoverageItem[];
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filteredItems = useMemo(() => {
+    const needle = normalise(query);
+    if (!needle) return items;
+    return items.filter(item => {
+      const searchable = [
+        item.code,
+        item.title,
+        item.description,
+        coverageSourceLabel(item),
+        ...(item.mappings || []).flatMap(mapping => [
+          mapping.moduleName || mapping.module_name,
+          mapping.weekName || mapping.week_name,
+          mapping.componentName || mapping.component_name,
+          mapping.componentType || mapping.component_type,
+        ]),
+      ].join(' ');
+      return normalise(searchable).includes(needle);
+    });
+  }, [items, query]);
+
+  const groupedItems = useMemo(() => ({
+    knowledge: filteredItems.filter(item => ksbFamily(item) === 'knowledge'),
+    skills: filteredItems.filter(item => ksbFamily(item) === 'skills'),
+    behaviours: filteredItems.filter(item => ksbFamily(item) === 'behaviours'),
+  }), [filteredItems]);
+  const totalPlacements = filteredItems.reduce((sum, item) => sum + (item.mappingCount || item.mapping_count || item.mappings?.length || 0), 0);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Programme KSB Coverage</p>
+            <h3 className="mt-2 text-xl font-heading font-bold">{programme.name}</h3>
+            <p className="mt-1 text-[12px] font-semibold text-white/70">
+              {loading ? 'Loading applied KSBs...' : `${filteredItems.length} applied KSB${filteredItems.length === 1 ? '' : 's'} across ${totalPlacements} placement${totalPlacements === 1 ? '' : 's'}.`}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB review">
+            <i className="ri-close-line text-lg"></i>
+          </button>
+        </div>
+
+        <div className="border-b border-background-200 bg-background-50 p-4">
+          <div className="relative">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <input
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="Search code, source, module, week or component..."
+              className="h-11 w-full rounded-xl border border-foreground-200/70 bg-background-100 pl-10 pr-4 text-[13px] font-medium text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {error ? (
+            <ProgrammeKsbEmptyState icon="ri-error-warning-line" title="Could not load programme KSBs" message={error} />
+          ) : loading ? (
+            <ProgrammeKsbEmptyState icon="ri-loader-4-line animate-spin" title="Loading applied KSBs" message="Reading programme coverage from the LMS database." />
+          ) : filteredItems.length ? (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <ProgrammeKsbColumn title="Knowledge" tone="knowledge" items={groupedItems.knowledge} />
+              <ProgrammeKsbColumn title="Skills" tone="skills" items={groupedItems.skills} />
+              <ProgrammeKsbColumn title="Behaviours" tone="behaviours" items={groupedItems.behaviours} />
+            </div>
+          ) : (
+            <ProgrammeKsbEmptyState
+              icon="ri-node-tree"
+              title="No applied KSBs in this programme"
+              message="Only KSBs with a readable source and real module, week, or component placement are shown here."
+            />
+          )}
+        </div>
+
+        <div className="flex justify-end border-t border-background-200 bg-background-50 px-4 py-3">
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ProgrammeKsbColumn({ title, tone, items }: { title: string; tone: 'knowledge' | 'skills' | 'behaviours'; items: CurriculumKsbCoverageItem[] }) {
+  const toneClasses = {
+    knowledge: 'border-primary-300 bg-primary-50/50 text-primary-700',
+    skills: 'border-amber-300 bg-amber-50/60 text-amber-700',
+    behaviours: 'border-emerald-300 bg-emerald-50/60 text-emerald-700',
+  }[tone];
+
+  return (
+    <section className={`rounded-2xl border p-3 ${toneClasses}`}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h4 className="text-[12px] font-heading font-bold uppercase tracking-wide">{title}</h4>
+        <span className="rounded-full bg-white/70 px-2 py-1 text-[11px] font-bold">{items.length}</span>
+      </div>
+      <div className="space-y-3">
+        {items.length ? items.map(item => (
+          <ProgrammeKsbCard key={`${item.coverageKey || item.coverage_key || item.ksbId || item.ksb_id}-${coverageSourceLabel(item)}`} item={item} />
+        )) : (
+          <div className="rounded-xl border border-dashed border-current/20 bg-white/55 p-4 text-center text-[12px] font-semibold text-foreground-500">
+            No applied {title.toLowerCase()} KSBs
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProgrammeKsbCard({ item }: { item: CurriculumKsbCoverageItem }) {
+  const mappings = (item.mappings || []).filter(mappingHasDetailedPlacement);
+  const weight = Math.round(item.coveragePercentage || item.coverage_percentage || item.progressBarPercentage || item.progress_bar_percentage || 0);
+  return (
+    <article className="rounded-xl border border-current/35 bg-background-50 p-3 text-foreground-900 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="rounded-lg border border-current/20 bg-white px-2 py-1 text-[12px] font-bold text-current">{item.code}</span>
+          <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{mappings.length} place{mappings.length === 1 ? '' : 's'}</span>
+        </div>
+        <span className="shrink-0 rounded-full bg-background-100 px-2 py-1 text-[11px] font-bold text-current">{weight}%</span>
+      </div>
+      <p className="mt-3 text-[13px] font-semibold leading-5 text-foreground-900">{item.title || item.description}</p>
+      {item.title && item.description && item.title !== item.description && (
+        <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-foreground-600">{item.description}</p>
+      )}
+      <div className="mt-3 rounded-lg bg-background-100 px-3 py-2">
+        <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
+        <p className="mt-1 text-[11px] font-bold text-foreground-800">{coverageSourceLabel(item)}</p>
+      </div>
+      <div className="mt-3 space-y-2">
+        <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">Used In</p>
+        {mappings.slice(0, 5).map(mapping => (
+          <div key={mapping.mappingId || mapping.mapping_id} className="rounded-lg bg-background-100 px-3 py-2 text-[11px] font-semibold leading-5 text-foreground-800">
+            {programmeKsbPlacementLabel(mapping)}
+          </div>
+        ))}
+        {mappings.length > 5 && (
+          <p className="text-[11px] font-bold text-foreground-500">+ {mappings.length - 5} more placement{mappings.length - 5 === 1 ? '' : 's'}</p>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title: string; message: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100 px-6 py-12 text-center">
+      <i className={`${icon} text-3xl text-foreground-400`}></i>
+      <h4 className="mt-3 text-sm font-heading font-bold text-foreground-950">{title}</h4>
+      <p className="mt-2 text-[13px] text-foreground-500">{message}</p>
+    </div>
   );
 }
 
@@ -649,6 +856,50 @@ function ColorField({ label, value, onChange, compact = false }: { label: string
 
 function normalise(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function ksbFamily(item: CurriculumKsbCoverageItem) {
+  const explicit = normalise(item.ksbType || item.ksb_type);
+  if (explicit.startsWith('skill')) return 'skills';
+  if (explicit.startsWith('behaviour') || explicit.startsWith('behavior')) return 'behaviours';
+  if (explicit.startsWith('knowledge')) return 'knowledge';
+  const code = normalise(item.code);
+  if (code.startsWith('s')) return 'skills';
+  if (code.startsWith('b')) return 'behaviours';
+  return 'knowledge';
+}
+
+function isRawKsbSource(value: unknown) {
+  const text = String(value || '').trim();
+  return !text
+    || /^profile\s*-\s*(ksb-|ksbp-)/i.test(text)
+    || /^(ksb-|ksbp-|profile:|standard:)/i.test(text);
+}
+
+function coverageSourceLabel(item: CurriculumKsbCoverageItem) {
+  return String(item.sourceLabel || item.source_label || item.sourceName || item.source_name || '').trim();
+}
+
+function isReadableAppliedKsbCoverageItem(item: CurriculumKsbCoverageItem) {
+  const source = coverageSourceLabel(item);
+  const mappings = item.mappings || [];
+  return mappings.some(mappingHasDetailedPlacement)
+    && Boolean(source)
+    && !isRawKsbSource(source);
+}
+
+function mappingHasDetailedPlacement(mapping: CurriculumKsbTraceMapping) {
+  const level = normalise(mapping.mappingLevel || mapping.mapping_level);
+  return level !== 'module'
+    && Boolean(mapping.componentName || mapping.component_name || mapping.weekName || mapping.week_name);
+}
+
+function programmeKsbPlacementLabel(mapping: CurriculumKsbTraceMapping) {
+  const moduleName = String(mapping.moduleName || mapping.module_name || 'Module').trim();
+  const weekName = String(mapping.weekName || mapping.week_name || '').trim();
+  const componentName = String(mapping.componentName || mapping.component_name || '').trim();
+  const componentType = String(mapping.componentType || mapping.component_type || '').trim();
+  return [moduleName, weekName, componentName || componentType].filter(Boolean).join(' / ');
 }
 
 function staffName(profile: CurriculumStaffProfile) {

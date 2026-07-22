@@ -313,7 +313,7 @@ export default function QuizEditPage() {
       if (!response.ok) throw new Error('Could not load quiz editor');
       const nextData: QuizEditorData = await response.json();
       const courseLinksResponse = await fetch(`/quiz_api/quizzes/${nextData.quiz.id}/course-links/`);
-      const nextCourseLinks: CourseLinksState | null = courseLinksResponse.ok ? await courseLinksResponse.json() : null;
+      const nextCourseLinks = normaliseCourseLinks(courseLinksResponse.ok ? await courseLinksResponse.json() : null);
       const nextSettings = settingsFromQuiz(nextData.quiz);
       setData(nextData);
       setSettings(nextSettings);
@@ -598,14 +598,16 @@ export default function QuizEditPage() {
   };
 
   const toggleCourseLink = (courseId: string) => {
+  const toggleCourseLink = (courseId: string) => {
     setCourseLinks(prev => {
       if (!prev) return prev;
-      const selected = prev.selectedIds.includes(courseId)
-        ? prev.selectedIds.filter(id => id !== courseId)
-        : [...prev.selectedIds, courseId];
+      const selected = (prev.selectedModuleCatalogueIds ?? prev.selectedIds).includes(courseId)
+        ? (prev.selectedModuleCatalogueIds ?? prev.selectedIds).filter(id => id !== courseId)
+        : [...(prev.selectedModuleCatalogueIds ?? prev.selectedIds), courseId];
       return {
         ...prev,
         selectedIds: selected,
+        selectedModuleCatalogueIds: selected,
         courses: prev.courses.map(course => course.id === courseId ? { ...course, selected: selected.includes(course.id) } : course),
       };
     });
@@ -622,7 +624,8 @@ export default function QuizEditPage() {
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'Could not save linked courses');
-      const nextCourseLinks: CourseLinksState = payload;
+      const nextCourseLinks = normaliseCourseLinks(payload);
+      if (!nextCourseLinks) throw new Error('Could not save linked courses');
       setCourseLinks(nextCourseLinks);
       setCourseLinksBaseline(serializeCourseLinks(nextCourseLinks));
       setData(prev => prev ? { ...prev, quiz: payload.quiz } : prev);

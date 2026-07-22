@@ -142,6 +142,23 @@ export interface LearnerVideoProgress {
 }
 
 async function request<T>(url: string): Promise<T> {
+  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const pendingRequest = requestUncached<T>(url);
+  pendingRequests.set(url, pendingRequest);
+  try {
+    return await pendingRequest;
+  } finally {
+    pendingRequests.delete(url);
+  }
+}
+
+const pendingRequests = new Map<string, Promise<unknown>>();
+
+async function requestUncached<T>(url: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });

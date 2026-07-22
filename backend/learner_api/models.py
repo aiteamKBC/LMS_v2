@@ -276,3 +276,27 @@ class UnactiveUser(models.Model):
 
     def __str__(self):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.status or '?'}]"
+
+
+class LearnerAbsence(models.Model):
+    """Stored attendance/absence summary used by the coach attendance table."""
+
+    learner_email = models.EmailField(primary_key=True, db_column="learner_email")
+    learner_id = models.IntegerField(db_column="learner_id")
+    learner_name = models.TextField(db_column="learner_name")
+    sessions = models.PositiveIntegerField(db_column="sessions", default=0)
+    present = models.PositiveIntegerField(db_column="present", default=0)
+    absent = models.PositiveIntegerField(db_column="absent", default=0)
+    late = models.PositiveIntegerField(db_column="late", default=0)
+    catchup = models.PositiveIntegerField(db_column="catchup", default=0)
+    risk = models.CharField(db_column="risk", max_length=16, blank=True)
+    last_session_date = models.DateField(db_column="last_session_date", null=True, blank=True)
+    consecutive_missed = models.PositiveIntegerField(db_column="consecutive_missed", default=0)
+    updated_at = models.DateTimeField(db_column="updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."Absence'
+
+    def __str__(self):
+        return f"{self.learner_name}: {self.present}/{self.sessions} present"

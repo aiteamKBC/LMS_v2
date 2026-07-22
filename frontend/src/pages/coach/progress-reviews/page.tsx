@@ -14,7 +14,8 @@ import {
   isCancelledEvent,
   isAtRiskProgressReview,
   isDueSoonEvent,
-  isEventThisWeek,
+  isEventThisMonth,
+  isInProgressEvent,
   isScheduledEvent,
   initialsFor,
   isCompletedEvent,
@@ -30,12 +31,12 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type ReviewTab = 'this-week' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
+type ReviewTab = 'this-month' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
 
 const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
-  'this-week': {
-    label: 'This Week',
-    description: 'Progress reviews with a target or scheduled date inside the current week, excluding completed reviews.',
+  'this-month': {
+    label: 'This Month',
+    description: 'Progress reviews with a target or scheduled date inside the current month, excluding completed reviews.',
   },
   overdue: {
     label: 'Overdue',
@@ -47,11 +48,15 @@ const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
   },
   'needs-schedule': {
     label: 'Needs Schedule',
-    description: 'Progress reviews that still need a calendar booking, including cancelled reviews that can be scheduled again.',
+    description: 'Progress reviews that still need a first calendar booking.',
   },
   scheduled: {
     label: 'Scheduled',
-    description: 'Progress reviews that are already booked or currently in progress.',
+    description: 'Progress reviews that are booked and waiting to start.',
+  },
+  'in-progress': {
+    label: 'In Progress',
+    description: 'Progress reviews that have already been started by the coach.',
   },
   completed: {
     label: 'Completed',
@@ -78,7 +83,7 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
 };
 
 export default function CoachProgressReviews() {
-  const [tab, setTab] = useState<ReviewTab>('this-week');
+  const [tab, setTab] = useState<ReviewTab>('this-month');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -113,20 +118,21 @@ export default function CoachProgressReviews() {
     return () => controller.abort();
   }, []);
 
-  const thisWeekEvents = events.filter(event => isEventThisWeek(event));
+  const thisMonthEvents = events.filter(event => isEventThisMonth(event));
   const overdueEvents = events.filter(event => isAtRiskProgressReview(event));
   const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
+  const inProgressEvents = events.filter(event => isInProgressEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
   const cancelledEvents = events.filter(event => isCancelledEvent(event));
   const needsScheduleEvents = events.filter(needsScheduling);
-  const thisWeek = thisWeekEvents.length;
+  const thisMonth = thisMonthEvents.length;
   const overdue = overdueEvents.length;
   const dueSoon = dueSoonEvents.length;
   const pendingSchedule = needsScheduleEvents.length;
   const prepForms = 0;
-  const data = tab === 'this-week'
-    ? thisWeekEvents
+  const data = tab === 'this-month'
+    ? thisMonthEvents
     : tab === 'overdue'
       ? overdueEvents
       : tab === 'due-soon'
@@ -135,6 +141,8 @@ export default function CoachProgressReviews() {
           ? needsScheduleEvents
           : tab === 'scheduled'
             ? scheduledEvents
+            : tab === 'in-progress'
+              ? inProgressEvents
             : tab === 'completed'
               ? completedEvents
               : tab === 'cancelled'
@@ -213,26 +221,28 @@ export default function CoachProgressReviews() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Progress Reviews</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{events.length} generated</strong> reviews. {thisWeek} this week, {overdue} overdue, {dueSoon} due soon, {pendingSchedule} need scheduling.
+                <strong>{events.length} generated</strong> reviews. {thisMonth} this month, {overdue} overdue, {dueSoon} due soon, {pendingSchedule} need scheduling, {inProgressEvents.length} in progress.
               </p>
             </div>
             <div className="flex flex-wrap items-center justify-start sm:justify-end gap-3 shrink-0">
-              <MetricCard value={thisWeek} label="This Week" />
+              <MetricCard value={thisMonth} label="This Month" />
               <MetricCard value={overdue} label="Overdue" tone="text-red-300" />
               <MetricCard value={dueSoon} label="Due Soon" tone="text-amber-300" />
               <MetricCard value={pendingSchedule} label="Needs Schedule" tone="text-amber-300" />
               <MetricCard value={scheduledEvents.length} label="Scheduled" />
+              <MetricCard value={inProgressEvents.length} label="In Progress" tone="text-primary-200" />
               <MetricCard value={completedEvents.length} label="Completed" tone="text-emerald-300" />
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit flex-wrap">
-          <TabButton active={tab === 'this-week'} onClick={() => setTab('this-week')} label={FILTER_COPY['this-week'].label} count={thisWeek} description={FILTER_COPY['this-week'].description} />
+          <TabButton active={tab === 'this-month'} onClick={() => setTab('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonth} description={FILTER_COPY['this-month'].description} />
           <TabButton active={tab === 'overdue'} onClick={() => setTab('overdue')} label={FILTER_COPY.overdue.label} count={overdue} description={FILTER_COPY.overdue.description} />
           <TabButton active={tab === 'due-soon'} onClick={() => setTab('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoon} description={FILTER_COPY['due-soon'].description} />
           <TabButton active={tab === 'needs-schedule'} onClick={() => setTab('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={pendingSchedule} description={FILTER_COPY['needs-schedule'].description} />
           <TabButton active={tab === 'scheduled'} onClick={() => setTab('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
+          <TabButton active={tab === 'in-progress'} onClick={() => setTab('in-progress')} label={FILTER_COPY['in-progress'].label} count={inProgressEvents.length} description={FILTER_COPY['in-progress'].description} />
           <TabButton active={tab === 'completed'} onClick={() => setTab('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
           <TabButton active={tab === 'cancelled'} onClick={() => setTab('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
           <TabButton active={tab === 'prep-forms'} onClick={() => setTab('prep-forms')} label={FILTER_COPY['prep-forms'].label} count={prepForms} description={FILTER_COPY['prep-forms'].description} />

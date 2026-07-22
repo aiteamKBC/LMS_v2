@@ -94,7 +94,15 @@ def _first_existing_curriculum_table(*tables):
     return next((table for table in tables if _curriculum_table_exists(table)), "")
 
 
-def _curriculum_table_exists(table_name):
+def _quote_ident(value):
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _curriculum_table_name(table):
+    return f'curriculum.{_quote_ident(table)}'
+
+
+def _curriculum_table_exists(table):
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -105,7 +113,7 @@ def _curriculum_table_exists(table_name):
                   and table_name = %s
                 limit 1
                 """,
-                [table_name],
+                [table],
             )
             return bool(cursor.fetchone())
     except Exception:
@@ -1131,7 +1139,7 @@ def _quiz_course_link_ids(quiz_id):
     _ensure_quiz_course_links_table()
     with connection.cursor() as cursor:
         cursor.execute(
-            "select training_plan_id from curriculum.quiz_course_links where quiz_id = %s order by training_plan_id",
+            "select module_catalogue_id from curriculum.quiz_course_links where quiz_id = %s order by module_catalogue_id",
             [quiz_id],
         )
         return [row[0] for row in cursor.fetchall()]
@@ -1332,50 +1340,9 @@ def _training_plan_courses_for_programme(programme):
             )
             rows = cursor.fetchall()
 
-        courses = []
-        seen = set()
-        for module_id, program, module_name, cohort_name, starting_date in rows:
-            if _is_placeholder_training_value(program) or _is_placeholder_training_value(module_name):
-                continue
-            key = (module_name, cohort_name or "", starting_date or "")
-            if key in seen:
-                continue
-            seen.add(key)
-            label_parts = [module_name]
-            if cohort_name:
-                label_parts.append(cohort_name)
-            if starting_date:
-                label_parts.append(str(starting_date))
-            courses.append({
-                "id": module_id,
-                "programme": program,
-                "module": module_name,
-                "cohort": cohort_name or "",
-                "startDate": str(starting_date or ""),
-                "label": " - ".join(label_parts),
-            })
-        return courses
-    with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            select
-              id,
-              "Program",
-              module_name,
-              "Cohort_name",
-              "Starting_date_lable"
-            from curriculum."Training_plan"
-            where lower(trim("Program")) = lower(trim(%s))
-              and coalesce(trim(module_name), '') <> ''
-            order by module_name, "Cohort_name", id
-            """,
-            [programme],
-        )
-        rows = cursor.fetchall()
-
     courses = []
     seen = set()
-    for plan_id, program, module_name, cohort_name, starting_date in rows:
+    for module_id, program, module_name, cohort_name, starting_date in rows:
         if _is_placeholder_training_value(program) or _is_placeholder_training_value(module_name):
             continue
         key = (module_name, cohort_name or "", starting_date or "")
@@ -1388,7 +1355,7 @@ def _training_plan_courses_for_programme(programme):
         if starting_date:
             label_parts.append(str(starting_date))
         courses.append({
-            "id": plan_id,
+            "id": module_id,
             "programme": program,
             "module": module_name,
             "cohort": cohort_name or "",
@@ -1501,7 +1468,7 @@ def training_plan_options(request):
     programmes = []
     modules_by_programme = {}
     seen_programmes = set()
-    for programme, module_name, programme_id, training_plan_id, module_catalogue_id in rows:
+    for programme, module_name, programme_id, module_catalogue_id in rows:
         if _is_placeholder_training_value(programme) or _is_placeholder_training_value(module_name):
             continue
         if programme not in seen_programmes:
@@ -1511,8 +1478,8 @@ def training_plan_options(request):
             "value": module_name,
             "label": module_name,
             "programmeId": programme_id,
-            "trainingPlanId": training_plan_id,
             "moduleId": module_catalogue_id or "",
+            "moduleCatalogueId": module_catalogue_id or "",
         })
 
     return JsonResponse({
@@ -2472,10 +2439,7 @@ def quizzes(request):
         programme = request.POST.get("programme") or file_metadata.get("programme", "")
         module = request.POST.get("module") or file_metadata.get("module", "")
         raw_programme_id = request.POST.get("programmeId")
-        training_plan_id = raw_programme_id if _is_int_like(raw_programme_id) else _match_training_plan_id(programme, module, title)
-        programme_id = _match_programme_catalogue_id(programme, module, title, raw_programme_id or training_plan_id)
-        if training_plan_id and not programme:
-            programme = _training_plan_programme_for_id(training_plan_id)
+        programme_id = _match_programme_catalogue_id(programme, module, title, raw_programme_id)
         week_value = request.POST.get("week") or request.POST.get("weekNumber") or title
         week_id = request.POST.get("weekId") or _build_week_id(programme_id, week_value)
         supplied_question_count = int(request.POST.get("questions") or 0)
@@ -2520,10 +2484,7 @@ def quizzes(request):
     manual_programme = payload.get("programme", "")
     manual_module = payload.get("module", "")
     raw_manual_programme_id = payload.get("programmeId")
-    manual_training_plan_id = raw_manual_programme_id if _is_int_like(raw_manual_programme_id) else _match_training_plan_id(manual_programme, manual_module, manual_title)
-    manual_programme_id = _match_programme_catalogue_id(manual_programme, manual_module, manual_title, raw_manual_programme_id or manual_training_plan_id)
-    if manual_training_plan_id and not manual_programme:
-        manual_programme = _training_plan_programme_for_id(manual_training_plan_id)
+    manual_programme_id = _match_programme_catalogue_id(manual_programme, manual_module, manual_title, raw_manual_programme_id)
     manual_week_value = payload.get("week") or payload.get("weekNumber") or manual_title
     manual_week_id = payload.get("weekId") or _build_week_id(manual_programme_id, manual_week_value)
     manual_question_type = _normalise_question_type(payload.get("questionType") or "single_choice")
@@ -2867,6 +2828,7 @@ def quiz_course_links(request, pk):
         "programme": programme or "",
         "linkType": "components",
         "selectedIds": sorted(selected_ids),
+        "selectedModuleCatalogueIds": sorted(selected_ids),
         "courses": [
             {**course, "selected": course["id"] in selected_ids}
             for course in component_options
@@ -3222,6 +3184,7 @@ def question_bank(request):
             "name": programme["name"],
             "questionCount": 0,
             "quizCount": 0,
+            "moduleRows": programme["moduleRows"],
             "trainingPlanRows": programme["trainingPlanRows"],
         }
 
@@ -3229,23 +3192,11 @@ def question_bank(request):
         base_queryset.order_by("quiz__programme_id", "quiz__module", "quiz__title", "sort_order", "id")
     )
     available_quizzes = list(QuizPackage.objects.exclude(status="trash").order_by("programme_id", "title"))
-    plan_map = _training_plan_programme_map({
-        *{question.quiz.programme_id for question in all_questions},
-        *{quiz.programme_id for quiz in available_quizzes},
-    })
-    matched_plan_cache = {}
-
     def resolve_programme(quiz):
-        if quiz.programme_id and plan_map.get(quiz.programme_id):
-            return plan_map[quiz.programme_id], plan_map[quiz.programme_id]
-        cache_key = quiz.id
-        if cache_key not in matched_plan_cache:
-            matched_plan_id = _match_training_plan_id(quiz.programme, quiz.module, quiz.title)
-            if matched_plan_id and matched_plan_id not in plan_map:
-                plan_map.update(_training_plan_programme_map([matched_plan_id]))
-            matched_plan_cache[cache_key] = plan_map.get(matched_plan_id, "") if matched_plan_id else ""
-        if matched_plan_cache[cache_key]:
-            return matched_plan_cache[cache_key], matched_plan_cache[cache_key]
+        if quiz.programme:
+            return quiz.programme, quiz.programme
+        if quiz.programme_id:
+            return quiz.programme_id, quiz.programme_id
         return "__unassigned__", "Unassigned"
 
     quiz_ids_by_programme = {}
@@ -3259,6 +3210,7 @@ def question_bank(request):
                 "name": programme_name,
                 "questionCount": 0,
                 "quizCount": 0,
+                "moduleRows": 0,
                 "trainingPlanRows": 0,
             }
         programme_stats[key]["questionCount"] += 1
