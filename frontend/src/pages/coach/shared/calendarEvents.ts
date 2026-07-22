@@ -29,6 +29,9 @@ export interface CoachCalendarEvent {
   email?: string;
   programme?: string;
   cohort?: string;
+  group?: string;
+  module?: string;
+  tutor?: string;
   priority?: 'normal' | 'urgent' | 'high';
   status: CoachCalendarStatus;
   source?: 'mcr' | 'progress-review' | 'catch-up' | string;

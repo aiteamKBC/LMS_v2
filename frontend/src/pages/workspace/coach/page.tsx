@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumOverview, type CurriculumSession, type CurriculumStaffProfile } from '@/lib/curriculumApi';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   DEFAULT_COACH_EMAIL,
@@ -26,6 +27,7 @@ type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 const EMPTY_VALUE = '--';
 const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const ABSENCE_REPORTS_ENDPOINT = `/coach_api/coach/absence-reports?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
+const EVIDENCE_AWAITING_REVIEW_ENDPOINT = `/coach_api/coach/evidence-awaiting-review?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const CASELOAD_PAGE_SIZE = 5;
 
 interface CoachLearner {
@@ -33,6 +35,7 @@ interface CoachLearner {
   name: string;
   initials: string;
   programme: string;
+  cohortName?: string | null;
   employer: string;
   avatar: string;
   status: PerformanceStatus;
@@ -76,6 +79,12 @@ function displayValue(value?: string | number | null): string {
   return text;
 }
 
+function normalizeIdentity(value?: string | number | null): string {
+  return displayValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 function toNumber(value?: number | string | null): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') {
@@ -117,6 +126,27 @@ interface CoachAbsenceReport {
 
 interface AbsenceReportsResponse {
   items?: CoachAbsenceReport[];
+}
+
+interface EvidenceQueueLearner {
+  id: string;
+  learnerId: string;
+  learner: string;
+  initials: string;
+  email?: string | null;
+  programme: string;
+  group: string;
+  pendingEvidence: number;
+  acceptedEvidence: number;
+  referredEvidence: number;
+  totalEvidence: number;
+  lastSubmission: string;
+  lastSubmissionIso?: string | null;
+  isOverdue: boolean;
+}
+
+interface MarkingQueueResponse {
+  items?: Partial<EvidenceQueueLearner>[];
 }
 
 function isActiveLearner(learner: CoachLearner): boolean {
@@ -188,12 +218,14 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
   const initials = displayValue(learner.initials);
   const id = displayValue(learner.id);
   const programme = displayValue(learner.programme) === EMPTY_VALUE ? displayValue(learner.cohortName) : displayValue(learner.programme);
+  const cohortName = displayValue(learner.cohortName);
 
   return {
     id: id === EMPTY_VALUE ? `learner-${index}` : id,
     name: fallbackName,
     initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
     programme,
+    cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     employer: displayValue(learner.employer),
     avatar: displayValue(learner.avatar),
     status: statusFromApi(learner.status),
@@ -216,6 +248,29 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     recentFlag: displayValue(learner.recentFlag) === EMPTY_VALUE ? null : String(learner.recentFlag),
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
+  };
+}
+
+function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, index: number): EvidenceQueueLearner {
+  const learnerName = displayValue(item.learner);
+  const fallbackName = learnerName === EMPTY_VALUE ? `Learner ${index + 1}` : learnerName;
+  const learnerId = displayValue(item.learnerId || item.id);
+
+  return {
+    id: learnerId === EMPTY_VALUE ? `evidence-${index}` : learnerId,
+    learnerId: learnerId === EMPTY_VALUE ? `evidence-${index}` : learnerId,
+    learner: fallbackName,
+    initials: displayValue(item.initials) === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : displayValue(item.initials),
+    email: item.email || null,
+    programme: displayValue(item.programme),
+    group: displayValue(item.group),
+    pendingEvidence: toNumber(item.pendingEvidence),
+    acceptedEvidence: toNumber(item.acceptedEvidence),
+    referredEvidence: toNumber(item.referredEvidence),
+    totalEvidence: toNumber(item.totalEvidence),
+    lastSubmission: displayValue(item.lastSubmission),
+    lastSubmissionIso: item.lastSubmissionIso || null,
+    isOverdue: Boolean(item.isOverdue),
   };
 }
 
@@ -287,10 +342,63 @@ function isFutureCalendarEvent(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime();
 }
 
+function parseTimeHour(value?: string | null): number | undefined {
+  const [hour] = displayValue(value).split(':').map(Number);
+  return Number.isFinite(hour) ? hour : undefined;
+}
+
+function coachMatchesGroup(group: CurriculumGroup, ownerName: string): boolean {
+  return normalizeIdentity(group.coach) === normalizeIdentity(ownerName);
+}
+
+function curriculumStaffName(profile: CurriculumStaffProfile): string {
+  const legacyCoachName = typeof profile.Coach_name === 'string' ? profile.Coach_name : undefined;
+  return displayValue(profile.name || legacyCoachName || profile.email);
+}
+
+function coachMatchesProfile(profile: CurriculumStaffProfile, ownerName: string, ownerEmail: string): boolean {
+  const profileEmail = normalizeIdentity(profile.email);
+  if (profileEmail && profileEmail === normalizeIdentity(ownerEmail)) return true;
+  return normalizeIdentity(curriculumStaffName(profile)) === normalizeIdentity(ownerName);
+}
+
+function curriculumSessionToCalendarEvent(session: CurriculumSession): CoachCalendarEvent {
+  const title = displayValue(session.title);
+  const moduleName = displayValue(session.module);
+  const groupName = displayValue(session.group);
+
+  return {
+    id: `curriculum-${session.id}`,
+    eventKey: `curriculum-${session.id}`,
+    title: title === EMPTY_VALUE ? moduleName : title,
+    type: 'live-session',
+    date: session.date,
+    scheduledDate: session.date || null,
+    scheduledTime: session.startTime || null,
+    startHour: parseTimeHour(session.startTime),
+    endHour: parseTimeHour(session.endTime),
+    timeLabel: session.startTime && session.endTime ? `${session.startTime} - ${session.endTime}` : session.startTime || 'Time TBC',
+    learner: groupName,
+    programme: session.programme,
+    cohort: session.cohort,
+    status: session.status === 'completed' || session.status === 'cancelled' ? session.status : 'scheduled',
+    source: 'live-session',
+    platform: displayValue(session.venue) === EMPTY_VALUE ? 'LMS' : displayValue(session.venue),
+    location: groupName,
+    notes: moduleName === EMPTY_VALUE ? '' : `Module: ${moduleName}${session.week ? ` · Week ${session.week}` : ''}`,
+  };
+}
+
 function formatCalendarDay(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
+}
+
+function formatCalendarMonth(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { month: 'long' }).format(date).toUpperCase();
 }
 
 function formatCalendarDayNumber(value?: string | null) {
@@ -411,12 +519,14 @@ export default function CoachDashboard() {
   const [viewMode, setViewMode] = useState<OtjhFilter>('all');
   const [caseloadPage, setCaseloadPage] = useState(1);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [selectedLiveLearner, setSelectedLiveLearner] = useState<CoachCalendarEvent | null>(null);
   const [selectedLearner, setSelectedLearner] = useState<CoachLearner | null>(null);
   const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerEmail, setOwnerEmail] = useState(DEFAULT_COACH_EMAIL);
   const [learners, setLearners] = useState<CoachLearner[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
+  const [curriculumOverview, setCurriculumOverview] = useState<CurriculumOverview | null>(null);
   const [absenceReports, setAbsenceReports] = useState<CoachAbsenceReport[]>([]);
+  const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
 
@@ -428,16 +538,19 @@ export default function CoachDashboard() {
       setLoadWarning(null);
       const warnings: string[] = [];
 
-      const [caseloadResult, timetableResult, absenceResult] = await Promise.allSettled([
+      const [caseloadResult, timetableResult, absenceResult, curriculumResult, markingResult] = await Promise.allSettled([
         fetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadApiResponse>(response)),
         fetchCoachCalendarEvents(controller.signal),
         fetch(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }).then(response => readJson<AbsenceReportsResponse>(response)),
+        fetchCurriculumOverview(controller.signal),
+        fetch(EVIDENCE_AWAITING_REVIEW_ENDPOINT, { signal: controller.signal }).then(response => readJson<MarkingQueueResponse>(response)),
       ]);
 
       if (controller.signal.aborted) return;
 
       if (caseloadResult.status === 'fulfilled') {
         setOwnerName(displayValue(caseloadResult.value.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseloadResult.value.owner?.name));
+        setOwnerEmail(displayValue(caseloadResult.value.owner?.email) === EMPTY_VALUE ? DEFAULT_COACH_EMAIL : String(caseloadResult.value.owner?.email));
         setLearners((caseloadResult.value.learners || []).map(normalizeLearner));
       } else {
         setLearners([]);
@@ -461,6 +574,20 @@ export default function CoachDashboard() {
         warnings.push('absence reports');
       }
 
+      if (curriculumResult.status === 'fulfilled') {
+        setCurriculumOverview(curriculumResult.value);
+      } else {
+        setCurriculumOverview(null);
+        warnings.push('curriculum sessions');
+      }
+
+      if (markingResult.status === 'fulfilled') {
+        setEvidenceQueue((markingResult.value.items || []).map(normalizeEvidenceQueueLearner));
+      } else {
+        setEvidenceQueue([]);
+        warnings.push('evidence queue');
+      }
+
       setLoadWarning(warnings.length ? `Unable to load ${warnings.join(', ')} data right now.` : null);
       setLoading(false);
     }
@@ -470,16 +597,15 @@ export default function CoachDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!selectedKpi && !selectedLiveLearner) return;
+    if (!selectedKpi) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setSelectedKpi(null);
-        setSelectedLiveLearner(null);
       }
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [selectedKpi, selectedLiveLearner]);
+  }, [selectedKpi]);
 
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
   const activeLearners = enrichedLearners.filter(isActiveLearner);
@@ -503,23 +629,44 @@ export default function CoachDashboard() {
   const atRiskLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk');
   const needAttentionLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention');
   const onTrackLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track');
-  const evidenceLearners = enrichedLearners.filter(learner => learner.evidenceCountAvailable && learner.evidenceCount > 0);
+  const evidenceLearners = evidenceQueue
+    .filter(learner => learner.pendingEvidence > 0)
+    .sort((a, b) => b.pendingEvidence - a.pendingEvidence || a.learner.localeCompare(b.learner));
   const atRiskCount = atRiskLearners.length;
   const needAttentionCount = needAttentionLearners.length;
   const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
-  const pendingEvidence = evidenceLearners.reduce((total, learner) => total + learner.evidenceCount, 0);
-  const completedEvidence = evidenceLearners.reduce((total, learner) => total + learner.evidenceCompletedCount, 0);
-  const activeCalendarEvents = calendarEvents.filter(event => activeLearners.some(learner => eventMatchesLearner(event, learner)));
-  const reviewsNext14 = activeCalendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)).length;
+  const pendingEvidence = evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0);
+  const completedEvidence = evidenceLearners.reduce((total, learner) => total + learner.acceptedEvidence, 0);
+  const activeCalendarEvents = calendarEvents.filter(event => event.source === 'live-session' || activeLearners.some(learner => eventMatchesLearner(event, learner)));
   const visibleCalendarEvents = sortEvents(activeCalendarEvents.filter(isFutureCalendarEvent));
-  const upcomingLiveSessions = sortEvents(activeCalendarEvents.filter(event => event.source === 'live-session' && !['completed', 'cancelled'].includes(event.status) && isFutureCalendarEvent(event)));
-  const upcomingLiveLearners = Array.from(new Map(
-    upcomingLiveSessions.map(event => [event.learnerId || event.email?.toLowerCase() || displayValue(event.learner).toLowerCase(), event]),
-  ).values());
+  const curriculumCoachGroupIds = useMemo(() => new Set(
+    (curriculumOverview?.coaches || [])
+      .filter(profile => coachMatchesProfile(profile, ownerName, ownerEmail))
+      .flatMap(profile => profile.assignedGroupIds || []),
+  ), [curriculumOverview, ownerEmail, ownerName]);
+  const legacyCoachGroupIds = useMemo(() => new Set(
+    (curriculumOverview?.groups || [])
+      .filter(group => coachMatchesGroup(group, ownerName))
+      .map(group => group.id),
+  ), [curriculumOverview, ownerName]);
+  const assignedCurriculumGroupIds = curriculumCoachGroupIds.size ? curriculumCoachGroupIds : legacyCoachGroupIds;
+  const upcomingLiveSessions = useMemo(() => sortEvents(
+    (curriculumOverview?.sessions || [])
+      .filter(session => assignedCurriculumGroupIds.has(session.groupId || ''))
+      .map(curriculumSessionToCalendarEvent)
+      .filter(event => !['completed', 'cancelled'].includes(event.status) && isFutureCalendarEvent(event)),
+  ), [assignedCurriculumGroupIds, curriculumOverview]);
+  const upcomingLiveSessionCards = Array.from(
+    upcomingLiveSessions.reduce((byGroup, event) => {
+      const groupKey = normalizeIdentity(`${event.programme}-${event.cohort}-${event.location}`);
+      if (!byGroup.has(groupKey)) {
+        byGroup.set(groupKey, event);
+      }
+      return byGroup;
+    }, new Map<string, CoachCalendarEvent>()).values(),
+  );
   const riskSummary = buildRiskSummary(atRiskLearners);
-  const riskNames = atRiskLearners.slice(0, 3).map(learner => learner.name).join(', ') || EMPTY_VALUE;
-  const overdueCalendarEvents = activeCalendarEvents.filter(event => isAtRiskEvent(event)).length;
   const pendingAbsenceReports = absenceReports.filter(report => report.status === 'pending');
 
   const openCaseloadFilter = (filter: OtjhFilter) => {
@@ -575,16 +722,15 @@ export default function CoachDashboard() {
             SECTION 2 — KPI STAT CARDS
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={60}>
-          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-9 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
             <StatCard label="Caseload" value={String(totalCaseload)} sub={`${onTrackCount} on track`} icon="ri-group-line" color="primary" active={selectedKpi === 'caseload'} onClick={() => setSelectedKpi('caseload')} />
             <StatCard label="Active Learners" value={String(activeLearners.length)} sub="Currently active" icon="ri-user-follow-line" color="emerald" active={selectedKpi === 'active'} onClick={() => setSelectedKpi('active')} />
+            <StatCard label="Gateway" value={String(gatewayLearners.length)} sub="At gateway stage" icon="ri-flag-line" color="accent" active={selectedKpi === 'gateway'} onClick={() => setSelectedKpi('gateway')} />
+            <StatCard label="EPA" value={String(epaLearners.length)} sub="At EPA stage" icon="ri-award-line" color="secondary" active={selectedKpi === 'epa'} onClick={() => setSelectedKpi('epa')} />
             <StatCard label="On Break" value={String(onBreakLearners.length)} sub="Programme paused" icon="ri-pause-circle-line" color="amber" active={selectedKpi === 'on-break'} onClick={() => setSelectedKpi('on-break')} />
             <StatCard label="On Track" value={String(onTrackCount)} sub={OTJH_STATUS_META['on-track'].sub} icon="ri-checkbox-circle-line" color={OTJH_STATUS_META['on-track'].color} active={selectedKpi === 'on-track'} onClick={() => setSelectedKpi('on-track')} />
             <StatCard label="At Risk" value={String(atRiskCount)} sub={OTJH_STATUS_META['at-risk'].sub} icon="ri-alert-line" color={OTJH_STATUS_META['at-risk'].color} active={selectedKpi === 'at-risk'} onClick={() => setSelectedKpi('at-risk')} />
             <StatCard label="Need Attention" value={String(needAttentionCount)} sub={OTJH_STATUS_META['need-attention'].sub} icon="ri-error-warning-line" color={OTJH_STATUS_META['need-attention'].color} active={selectedKpi === 'need-attention'} onClick={() => setSelectedKpi('need-attention')} />
-            <StatCard label="Gateway" value={String(gatewayLearners.length)} sub="At gateway stage" icon="ri-flag-line" color="accent" active={selectedKpi === 'gateway'} onClick={() => setSelectedKpi('gateway')} />
-            <StatCard label="EPA" value={String(epaLearners.length)} sub="At EPA stage" icon="ri-award-line" color="secondary" active={selectedKpi === 'epa'} onClick={() => setSelectedKpi('epa')} />
-            <StatCard label="Evidence" value={`${completedEvidence} / ${pendingEvidence}`} sub="Completed / Submitted" icon="ri-file-search-line" color="secondary" active={selectedKpi === 'evidence'} onClick={() => setSelectedKpi('evidence')} />
           </div>
         </SectionReveal>
 
@@ -700,24 +846,24 @@ export default function CoachDashboard() {
                   </Link>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {upcomingLiveLearners.map(event => {
+                  {upcomingLiveSessionCards.map(event => {
                     const sessionDate = eventDisplayDate(event);
                     return (
-                      <button type="button" key={event.eventKey || event.id} onClick={() => setSelectedLiveLearner(event)} className="group w-full rounded-xl border border-sky-100 bg-background-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-sm">
+                      <Link to="/coach/timetable" key={event.eventKey || event.id} className="group w-full rounded-xl border border-sky-100 bg-background-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-sm">
                         <div className="mb-3 flex items-center justify-between gap-2">
                           <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-semibold text-sky-700"><i className="ri-live-line mr-1"></i>Live Session</span>
                           <span className="text-[9px] font-medium text-foreground-400">{formatDateLabel(sessionDate)}</span>
                         </div>
-                        <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.learner)}</p>
-                        <p className="mt-1 truncate text-[10px] text-foreground-400">{displayValue(event.programme)} · {displayValue(event.cohort)}</p>
+                        <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.title)}</p>
+                        <p className="mt-1 truncate text-[10px] text-foreground-400">{displayValue(event.programme)} · {displayValue(event.cohort)}{event.location ? ` · ${event.location}` : ''}</p>
                         <div className="mt-3 flex items-center justify-between border-t border-background-200/60 pt-3 text-[10px]">
                           <span className="text-foreground-500"><i className="ri-time-line mr-1 text-sky-500"></i>{formatTimeLabel(event)}</span>
                           <span className="text-foreground-400"><i className="ri-video-line mr-1 text-sky-500"></i>{displayValue(event.platform)}</span>
                         </div>
-                      </button>
+                      </Link>
                     );
                   })}
-                  {!upcomingLiveLearners.length && (
+                  {!upcomingLiveSessionCards.length && (
                     <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center text-[11px] text-foreground-400 sm:col-span-2 xl:col-span-3">No upcoming live sessions scheduled.</div>
                   )}
                 </div>
@@ -730,27 +876,34 @@ export default function CoachDashboard() {
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Awaiting Review</h2>
-                    <p className="text-sm text-foreground-400 mt-0.5">Submitted evidence across your learner caseload</p>
+                    <p className="text-sm text-foreground-400 mt-0.5">Learners with evidence waiting to be reviewed</p>
                   </div>
                   <Link to="/coach/marking-queue" className="text-xs font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
                     View All <i className="ri-arrow-right-line ml-1"></i>
                   </Link>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {evidenceLearners.slice(0, 6).map(learner => (
+                <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                  {evidenceLearners.map(learner => (
                     <Link
                       key={learner.id}
-                      to={`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}&tab=evidence`}
-                      state={{ learnerId: learner.id, learnerName: learner.name, tab: 'evidence' }}
+                      to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
+                      state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
                       className="flex items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 p-3 transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
                     >
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary-50 text-secondary-600"><i className="ri-file-list-3-line"></i></span>
-                      <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.name}</p><p className="truncate text-[9px] text-foreground-400">{learner.programme}</p></div>
-                      <span className="text-right"><span className="block text-[10px] font-bold text-secondary-700">{learner.evidenceCompletedCount} / {learner.evidenceCount}</span><span className="block text-[7px] text-foreground-400">Completed / Submitted</span></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p>
+                        <p className="truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
+                      </div>
+                      <span className="text-right">
+                        <span className="block text-[10px] font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</span>
+                        <span className="block text-[7px] text-foreground-400">Pending / Total</span>
+                        {learner.lastSubmission !== EMPTY_VALUE && <span className="block text-[7px] text-foreground-400">Last {learner.lastSubmission}</span>}
+                      </span>
                       <i className="ri-arrow-right-s-line text-foreground-300"></i>
                     </Link>
                   ))}
-                  {!evidenceLearners.length && <div className="sm:col-span-2 xl:col-span-3"><ModalEmpty icon="ri-file-search-line" title="No evidence submitted" description="Evidence will appear here as learners submit it." /></div>}
+                  {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
                 </div>
               </section>
             </SectionReveal>
@@ -778,7 +931,7 @@ export default function CoachDashboard() {
                     return (
                       <div key={event.eventKey || event.id} className={`flex items-start gap-3 p-2.5 rounded-lg transition-smooth cursor-pointer ${classes.row}`}>
                         <div className="text-center shrink-0 min-w-[42px]">
-                          <p className={`text-[10px] font-semibold uppercase tracking-wider ${classes.date}`}>{formatCalendarDay(displayDate)}</p>
+                          <p className={`text-[10px] font-semibold uppercase tracking-wider ${classes.date}`}>{formatCalendarMonth(displayDate)}</p>
                           <p className={`text-base font-bold ${isAtRiskEvent(event) ? 'text-red-700' : 'text-foreground-900'}`}>{formatCalendarDayNumber(displayDate)}</p>
                         </div>
                         <div className="flex-1 min-w-0">
@@ -823,34 +976,6 @@ export default function CoachDashboard() {
               </section>
             </SectionReveal>
 
-            {/* AI Insights */}
-            <SectionReveal delay={200}>
-              <section className="bg-gradient-to-br from-background-50 to-background-100 rounded-xl border border-primary-200/40 p-4 md:p-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center">
-                    <i className="ri-robot-line text-primary-600 text-sm"></i>
-                  </span>
-                  <h3 className="text-sm font-heading font-semibold text-primary-900">AI Insights</h3>
-                </div>
-                <div className="space-y-3">
-                  <div className="bg-white/70 rounded-lg p-3">
-                    <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>Risk focus:</strong> {atRiskCount ? `${atRiskCount} learner(s) need attention. Prioritise ${riskNames}.` : EMPTY_VALUE}
-                    </p>
-                  </div>
-                  <div className="bg-white/70 rounded-lg p-3">
-                    <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>Calendar focus:</strong> {activeCalendarEvents.length ? `${overdueCalendarEvents} overdue event(s), ${reviewsNext14} review(s) in the next 14 days.` : EMPTY_VALUE}
-                    </p>
-                  </div>
-                  <div className="bg-white/70 rounded-lg p-3">
-                    <p className="text-[11px] text-foreground-700 leading-relaxed">
-                      <strong>Evidence focus:</strong> {pendingEvidence} submitted item(s) across {evidenceLearners.length} learner(s).
-                    </p>
-                  </div>
-                </div>
-              </section>
-            </SectionReveal>
           </div>
         </div>
 
@@ -860,6 +985,7 @@ export default function CoachDashboard() {
           type={selectedKpi}
           learners={enrichedLearners}
           calendarEvents={activeCalendarEvents}
+          evidenceQueue={evidenceLearners}
           pendingEvidence={pendingEvidence}
           completedEvidence={completedEvidence}
           onClose={() => setSelectedKpi(null)}
@@ -869,79 +995,18 @@ export default function CoachDashboard() {
           }}
         />
       )}
-      {selectedLiveLearner && (
-        <LiveSessionsModal
-          learnerEvent={selectedLiveLearner}
-          sessions={upcomingLiveSessions}
-          onClose={() => setSelectedLiveLearner(null)}
-        />
-      )}
     </WorkspaceShell>
-  );
-}
-
-function LiveSessionsModal({ learnerEvent, sessions, onClose }: {
-  learnerEvent: CoachCalendarEvent;
-  sessions: CoachCalendarEvent[];
-  onClose: () => void;
-}) {
-  const learnerSessions = sessions.filter(session => {
-    if (learnerEvent.learnerId && session.learnerId) return learnerEvent.learnerId === session.learnerId;
-    if (learnerEvent.email && session.email) return learnerEvent.email.toLowerCase() === session.email.toLowerCase();
-    return displayValue(learnerEvent.learner).toLowerCase() === displayValue(session.learner).toLowerCase();
-  });
-
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="live-sessions-modal-title">
-      <button type="button" onClick={onClose} className="absolute inset-0 cursor-default bg-foreground-950/40 backdrop-blur-[2px]" aria-label="Close popup"></button>
-      <div className="relative flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-sky-100 bg-background-50 shadow-2xl">
-        <header className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4 md:px-6">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-600"><i className="ri-live-line text-lg"></i></span>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 id="live-sessions-modal-title" className="font-heading text-base font-bold text-foreground-900">{displayValue(learnerEvent.learner)} · Live Sessions</h2>
-                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">{learnerSessions.length} upcoming</span>
-              </div>
-              <p className="mt-0.5 text-[10px] text-foreground-400">All upcoming tutor-led sessions for this learner</p>
-            </div>
-          </div>
-          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
-        </header>
-        <div className="flex-1 space-y-3 overflow-y-auto p-4 md:p-5">
-          {learnerSessions.map(session => {
-            const date = eventDisplayDate(session);
-            return (
-              <div key={session.eventKey || session.id} className="rounded-xl border border-sky-100 bg-sky-50/30 p-4">
-                <div className="flex items-start gap-3">
-                  <span className="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl bg-sky-100 text-sky-700"><span className="text-[7px] font-bold uppercase">{formatCalendarDay(date)}</span><span className="text-base font-bold leading-none">{formatCalendarDayNumber(date)}</span></span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[12px] font-semibold text-foreground-900">{displayValue(session.title)}</p><span className="text-[9px] font-medium text-foreground-400">{formatDateLabel(date)}</span></div>
-                    <p className="mt-1 text-[10px] text-foreground-500"><i className="ri-time-line mr-1 text-sky-500"></i>{formatTimeLabel(session)}</p>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[9px] text-foreground-400"><span><i className="ri-book-open-line mr-1"></i>{displayValue(session.programme)}</span><span><i className="ri-group-line mr-1"></i>{displayValue(session.cohort)}</span><span><i className="ri-video-line mr-1"></i>{displayValue(session.platform)}</span></div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {!learnerSessions.length && <ModalEmpty icon="ri-live-line" title="No upcoming live sessions" description="No future live sessions are scheduled for this learner." />}
-        </div>
-        <footer className="flex items-center justify-end gap-2 border-t border-foreground-100 bg-background-100/40 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[10px] font-semibold text-foreground-600 hover:bg-background-100">Close</button>
-          <Link to="/coach/timetable" onClick={onClose} className="rounded-lg bg-primary-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-primary-700">Open full calendar</Link>
-        </footer>
-      </div>
-    </div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════
    Hero Stat Pill
    ═══════════════════════════════════════════════════════════ */
-function KpiDetailModal({ type, learners, calendarEvents, pendingEvidence, completedEvidence, onClose, onFilter }: {
+function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pendingEvidence, completedEvidence, onClose, onFilter }: {
   type: DashboardKpi;
   learners: CoachLearner[];
   calendarEvents: CoachCalendarEvent[];
+  evidenceQueue: EvidenceQueueLearner[];
   pendingEvidence: number;
   completedEvidence: number;
   onClose: () => void;
@@ -975,7 +1040,7 @@ function KpiDetailModal({ type, learners, calendarEvents, pendingEvidence, compl
       ? learners.filter(learner => isActiveLearner(learner) && normalizeOtjhStatus(learner.otjhStatus) === type)
       : [];
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
-  const evidenceLearners = learners.filter(learner => learner.evidenceCountAvailable && learner.evidenceCount > 0);
+  const evidenceLearners = evidenceQueue;
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
@@ -987,7 +1052,7 @@ function KpiDetailModal({ type, learners, calendarEvents, pendingEvidence, compl
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 id="kpi-modal-title" className="font-heading text-base font-bold text-foreground-900">{current.title}</h2>
-                <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{type === 'evidence' ? `${completedEvidence} / ${pendingEvidence}` : type === 'reviews' ? reviews.length : modalLearners.length}</span>
+                <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
               </div>
               <p className="mt-0.5 text-[10px] text-foreground-400">{current.subtitle}</p>
             </div>
@@ -1032,21 +1097,21 @@ function KpiDetailModal({ type, learners, calendarEvents, pendingEvidence, compl
 
           {type === 'evidence' && (
             <div className="space-y-2">
-              {evidenceLearners.sort((a, b) => b.evidenceCount - a.evidenceCount).map(learner => (
+              {evidenceLearners.map(learner => (
                 <Link
                   key={learner.id}
-                  to={`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}&tab=evidence`}
-                  state={{ learnerId: learner.id, learnerName: learner.name, tab: 'evidence' }}
+                  to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
+                  state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
                   onClick={onClose}
                   className="flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 p-3 transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
                 >
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary-50 text-[10px] font-bold text-secondary-700">{learner.initials}</span>
-                  <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.name}</p><p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.employer}</p></div>
-                  <div className="text-right"><p className="text-sm font-bold text-secondary-700">{learner.evidenceCompletedCount} / {learner.evidenceCount}</p><p className="text-[8px] text-foreground-400">Completed / Submitted</p></div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p><p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p></div>
+                  <div className="text-right"><p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p><p className="text-[8px] text-foreground-400">Pending / Total</p>{learner.isOverdue && <p className="mt-0.5 text-[8px] font-semibold text-red-600">Overdue</p>}</div>
                   <i className="ri-arrow-right-s-line text-foreground-300"></i>
                 </Link>
               ))}
-              {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence submitted" description="Evidence will appear here as learners submit it." />}
+              {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
             </div>
           )}
 
@@ -1054,7 +1119,7 @@ function KpiDetailModal({ type, learners, calendarEvents, pendingEvidence, compl
             <div className="space-y-2">
               {reviews.map(event => {
                 const date = eventDisplayDate(event);
-                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarDay(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><i className="ri-arrow-right-s-line text-foreground-300"></i></div>;
+                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarMonth(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><i className="ri-arrow-right-s-line text-foreground-300"></i></div>;
               })}
               {!reviews.length && <ModalEmpty icon="ri-calendar-check-line" title="No reviews due" description="There are no progress reviews scheduled in the next 14 days." />}
             </div>

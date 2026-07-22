@@ -1229,6 +1229,7 @@ def ensure_staff_profile_tables():
                     status varchar(32) not null default 'active',
                     specialisms {json_type},
                     assigned_module_ids {json_type},
+                    assigned_group_ids {json_type},
                     notes text not null default '',
                     is_archived boolean not null default false,
                     created_at timestamp not null default {timestamp_default},
@@ -1238,6 +1239,7 @@ def ensure_staff_profile_tables():
             if connection.vendor == 'postgresql':
                 cursor.execute(f'alter table {table_name(table)} add column if not exists specialisms {json_type}')
                 cursor.execute(f'alter table {table_name(table)} add column if not exists assigned_module_ids {json_type}')
+                cursor.execute(f'alter table {table_name(table)} add column if not exists assigned_group_ids {json_type}')
                 cursor.execute(f'create index if not exists curriculum_{table}_name_idx on {table_name(table)} (name)')
                 cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(table)} (status)')
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.coaches', None)
@@ -1370,15 +1372,17 @@ def profile_module_summary(module):
     }
 
 
-def assigned_modules_for_staff(name, role, modules, stored_ids=None):
+def assigned_modules_for_staff(name, role, modules, stored_ids=None, stored_group_ids=None):
     key = staff_assignment_key(name)
     stored_ids = [clean_str(item) for item in (stored_ids or []) if clean_str(item)]
+    stored_group_ids = {clean_str(item) for item in (stored_group_ids or []) if clean_str(item)}
     assigned = []
     for module in modules:
         module_staff = module.get('coach') if role == 'coach' else module.get('tutor')
         matched_by_staff = key and staff_assignment_key(module_staff) == key
         matched_by_stored_id = any(module_matches_staff_assignment(module, item) for item in stored_ids)
-        if matched_by_staff or matched_by_stored_id:
+        matched_by_group_id = clean_str(module.get('groupId')) in stored_group_ids
+        if matched_by_staff or matched_by_stored_id or matched_by_group_id:
             assigned.append(profile_module_summary(module))
     assigned.sort(key=lambda item: (item.get('startDate') or '', item.get('programme') or '', item.get('name') or ''))
     return assigned
@@ -1388,7 +1392,8 @@ def serialize_staff_profile(row, role, modules=None):
     row = row or {}
     name = staff_profile_name(row)
     stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), [])
-    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids)
+    stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), [])
+    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, stored_group_ids)
     active_modules = [module for module in assigned_modules if module.get('status') == 'in_progress']
     return {
         'id': row.get('id') or f'{role}-{slugify(name)}',
@@ -1400,7 +1405,9 @@ def serialize_staff_profile(row, role, modules=None):
         'status': row.get('status') or ('archived' if truthy(row.get('is_archived')) else 'active'),
         'specialisms': as_json_value(row.get('specialisms'), []),
         'assignedModuleIds': [module.get('id') for module in assigned_modules if module.get('id')],
+        'assignedGroupIds': stored_group_ids,
         'storedAssignedModuleIds': stored_ids,
+        'storedAssignedGroupIds': stored_group_ids,
         'assignedModules': assigned_modules,
         'inProgressModules': active_modules,
         'moduleCount': len(assigned_modules),
@@ -7963,6 +7970,9 @@ def staff_profile_payload(role, payload, existing=None):
     assigned_module_ids = payload.get('assignedModuleIds') if 'assignedModuleIds' in payload else payload.get('assigned_module_ids') if 'assigned_module_ids' in payload else existing.get('assigned_module_ids')
     if isinstance(assigned_module_ids, str):
         assigned_module_ids = [item.strip() for item in re.split(r'[,;]+', assigned_module_ids) if item.strip()]
+    assigned_group_ids = payload.get('assignedGroupIds') if 'assignedGroupIds' in payload else payload.get('assigned_group_ids') if 'assigned_group_ids' in payload else existing.get('assigned_group_ids')
+    if isinstance(assigned_group_ids, str):
+        assigned_group_ids = [item.strip() for item in re.split(r'[,;]+', assigned_group_ids) if item.strip()]
     return {
         'id': clean_str(existing.get('id') or payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name')),
         'name': name,
@@ -7976,6 +7986,7 @@ def staff_profile_payload(role, payload, existing=None):
         'status': clean_str(payload.get('status') if 'status' in payload else existing.get('status')) or 'active',
         'specialisms': json_db_value(specialisms if isinstance(specialisms, list) else []),
         'assigned_module_ids': json_db_value(assigned_module_ids if isinstance(assigned_module_ids, list) else []),
+        'assigned_group_ids': json_db_value(assigned_group_ids if isinstance(assigned_group_ids, list) else []),
         'notes': clean_str(payload.get('notes') if 'notes' in payload else existing.get('notes')),
         'is_archived': False,
     }

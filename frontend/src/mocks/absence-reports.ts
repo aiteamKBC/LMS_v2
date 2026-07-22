@@ -14,7 +14,7 @@ export interface AbsenceReport {
   reportedDate: string;
   evidenceProvided: boolean;
   evidenceType?: string;
-  evidenceKind?: 'image' | 'text' | 'none';
+  evidenceKind?: 'image' | 'file' | 'text' | 'none';
   evidenceText?: string;
   evidenceImageUrl?: string;
   previousAbsences: number;

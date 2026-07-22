@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -7,6 +7,7 @@ import { roleNavMap } from '@/mocks/navigation';
 
 type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
 type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
+type LearnerMetric = 'otjh' | 'ksb' | 'components';
 type SummaryFilter =
   | 'all'
   | 'active'
@@ -405,6 +406,7 @@ export default function CoachCaseload() {
   const [coachRagFilter, setCoachRagFilter] = useState('all');
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
+  const [selectedMetricDetail, setSelectedMetricDetail] = useState<{ learner: Learner; metric: LearnerMetric } | null>(null);
   const [sortKey, setSortKey] = useState<'name' | 'progress' | 'attendance' | 'ksb' | 'otjh'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
@@ -505,7 +507,7 @@ export default function CoachCaseload() {
     [learners],
   );
 
-  const applySummaryFilter = (list: Learner[]) => {
+  const applySummaryFilter = useCallback((list: Learner[]) => {
     switch (summaryFilter) {
       case 'active':
       case 'withdrawn':
@@ -519,7 +521,7 @@ export default function CoachCaseload() {
       default:
         return list;
     }
-  };
+  }, [summaryFilter]);
 
   const filtered = useMemo(() => {
     let list = [...learners];
@@ -550,7 +552,7 @@ export default function CoachCaseload() {
       return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number);
     });
     return list;
-  }, [learners, summaryFilter, programStatusFilter, coachRagFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
+  }, [learners, applySummaryFilter, programStatusFilter, coachRagFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -692,6 +694,26 @@ export default function CoachCaseload() {
     setShowProgressReport(true);
   };
 
+  const handleMetricDetailClick = (event: React.MouseEvent, learner: Learner, metric: LearnerMetric) => {
+    event.stopPropagation();
+    setSelectedLearnerId(null);
+    setSelectedMetricDetail({ learner, metric });
+  };
+
+  const handleOpenMetricCaseFile = () => {
+    if (!selectedMetricDetail) {
+      return;
+    }
+    const tab = selectedMetricDetail.metric === 'ksb' ? 'ksbs' : selectedMetricDetail.metric === 'otjh' ? 'otjh' : 'activity';
+    navigate('/coach/learner-case-file', {
+      state: {
+        learnerId: selectedMetricDetail.learner.id,
+        learnerName: selectedMetricDetail.learner.name,
+        tab,
+      },
+    });
+  };
+
   const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
     'on-track': { bg: 'bg-emerald-50 border-emerald-200/50', text: 'text-emerald-700', label: 'On Track' },
     'at-risk': { bg: 'bg-red-50 border-red-200/50', text: 'text-red-700', label: 'At Risk' },
@@ -723,11 +745,10 @@ export default function CoachCaseload() {
         </section>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-2 md:gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
           <MiniStatCard label="Total" value={String(summaryCounts.total)} icon="ri-group-line" color="primary" active={summaryFilter === 'all'} onClick={() => handleSummaryCardClick('all')} />
           <MiniStatCard label="Active" value={String(summaryCounts.active)} icon="ri-check-double-line" color="emerald" active={summaryFilter === 'active'} onClick={() => handleSummaryCardClick('active')} />
           <MiniStatCard label="Break" value={String(summaryCounts.break)} icon="ri-pause-circle-line" color="amber" active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
-          <MiniStatCard label="Ready to Enrol" value={String(summaryCounts.readyToEnrol)} icon="ri-user-add-line" color="primary" active={summaryFilter === 'ready-to-enrol'} onClick={() => handleSummaryCardClick('ready-to-enrol')} />
           <MiniStatCard label="On Track" value={String(summaryCounts.onTrack)} icon="ri-thumb-up-line" color="emerald" active={summaryFilter === 'on-track'} onClick={() => handleSummaryCardClick('on-track')} />
           <MiniStatCard label="Need Attention" value={String(summaryCounts.needAttention)} icon="ri-error-warning-line" color="amber" active={summaryFilter === 'need-attention'} onClick={() => handleSummaryCardClick('need-attention')} />
           <MiniStatCard label="At Risk" value={String(summaryCounts.atRisk)} icon="ri-alarm-warning-line" color="red" active={summaryFilter === 'at-risk'} onClick={() => handleSummaryCardClick('at-risk')} />
@@ -897,53 +918,79 @@ export default function CoachCaseload() {
                             </span>
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <div data-allow-selection="true" className="flex min-w-[96px] flex-col items-center gap-0.5 leading-none text-center">
+                            <button
+                              type="button"
+                              data-allow-selection="true"
+                              onClick={(event) => handleMetricDetailClick(event, learner, 'otjh')}
+                              className="group/metric flex min-w-[96px] flex-col items-center gap-0.5 rounded-lg px-2 py-1 leading-none text-center transition-smooth hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                              title="View OTJH details"
+                            >
                               {learner.overallProgressAvailable ? (
                                 <>
-                                  <span className="cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap text-foreground-800">
+                                  <span className="text-[10px] font-semibold tabular-nums whitespace-nowrap text-foreground-800 group-hover/metric:text-primary-700">
                                     {`${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h`}
                                   </span>
-                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.otjhStatus ? otjhStatusMeta.text : 'text-foreground-500'}`}>
+                                  <span className={`inline-flex items-center gap-1 text-[8px] font-medium whitespace-nowrap ${learner.otjhStatus ? otjhStatusMeta.text : 'text-foreground-500'}`}>
                                     <span className={`h-1.5 w-1.5 rounded-full ${learner.otjhStatus ? otjhStatusMeta.dot : 'bg-foreground-300'}`}></span>
                                     {learner.otjhStatus ? displayValue(learner.otjhStatus) : `${learner.overallProgress}% complete`}
                                   </span>
                                 </>
                               ) : (
                                 <>
-                                  <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
+                                  <span className={`text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
                                     {learner.progressVariance}
                                   </span>
-                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
+                                  <span className={`inline-flex items-center gap-1 text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
                                     <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
                                     {displayValue(learner.otjhStatus)}
                                   </span>
                                 </>
                               )}
-                            </div>
+                            </button>
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <div data-allow-selection="true" className="flex min-w-[72px] flex-col items-center gap-0.5 leading-none text-center">
-                              <span className="cursor-text select-text text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap">
+                            <button
+                              type="button"
+                              data-allow-selection="true"
+                              onClick={(event) => handleMetricDetailClick(event, learner, 'ksb')}
+                              className="group/metric flex min-w-[72px] flex-col items-center gap-0.5 rounded-lg px-2 py-1 leading-none text-center transition-smooth hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                              title="View KSB details"
+                            >
+                              <span className="text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap group-hover/metric:text-primary-700">
                                 {formatRatio(learner.ksbCompleted, learner.ksbTarget)}
                               </span>
-                              <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${ksbStatusMeta.text}`}>
+                              <span className={`inline-flex items-center gap-1 text-[8px] font-medium whitespace-nowrap ${ksbStatusMeta.text}`}>
                                 <span className={`h-1.5 w-1.5 rounded-full ${ksbStatusMeta.dot}`}></span>
                                 {displayValue(learner.ksbStatus)}
                               </span>
-                            </div>
+                            </button>
                           </td>
                           <td className="px-2 py-2 text-center">
                             {learner.attendanceRateAvailable ? (
-                              <div title={getComponentsTooltip(learner)} data-allow-selection="true" className="flex min-w-[72px] flex-col items-center gap-0.5 leading-none text-center cursor-help">
-                                <span className="cursor-text select-text text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap">
+                              <button
+                                type="button"
+                                title={getComponentsTooltip(learner)}
+                                data-allow-selection="true"
+                                onClick={(event) => handleMetricDetailClick(event, learner, 'components')}
+                                className="group/metric flex min-w-[72px] flex-col items-center gap-0.5 rounded-lg px-2 py-1 leading-none text-center transition-smooth hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                              >
+                                <span className="text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap group-hover/metric:text-primary-700">
                                   {`${learner.componentsCompleted ?? 0}/${learner.componentsPlanned ?? 0}`}
                                 </span>
-                                <span className={`cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                                <span className={`text-[8px] font-medium whitespace-nowrap ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
                                   {learner.attendanceRate}%
                                 </span>
-                              </div>
+                              </button>
                             ) : (
-                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-400">{EMPTY_VALUE}</span>
+                              <button
+                                type="button"
+                                data-allow-selection="true"
+                                onClick={(event) => handleMetricDetailClick(event, learner, 'components')}
+                                className="min-w-[72px] rounded-lg px-2 py-1 text-[10px] font-semibold text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                                title="View components details"
+                              >
+                                {EMPTY_VALUE}
+                              </button>
                             )}
                           </td>
                           <td className="px-2 py-2 text-center">
@@ -1198,6 +1245,21 @@ export default function CoachCaseload() {
                 </button>
               </div>
             </div>
+          )}
+        </RightSlidePanel>
+
+        <RightSlidePanel
+          isOpen={selectedMetricDetail !== null}
+          onClose={() => setSelectedMetricDetail(null)}
+          title={selectedMetricDetail ? `${getMetricCopy(selectedMetricDetail.metric).title} Details` : 'Metric Details'}
+          width="w-[420px]"
+        >
+          {selectedMetricDetail && (
+            <MetricDetailPanel
+              learner={selectedMetricDetail.learner}
+              metric={selectedMetricDetail.metric}
+              onOpenFullDetails={handleOpenMetricCaseFile}
+            />
           )}
         </RightSlidePanel>
 
@@ -1459,6 +1521,167 @@ export default function CoachCaseload() {
 }
 
 /* Sub-components */
+
+function getMetricCopy(metric: LearnerMetric) {
+  switch (metric) {
+    case 'otjh':
+      return {
+        title: 'OTJH',
+        icon: 'ri-time-line',
+        tone: 'primary',
+        tabLabel: 'Open OTJH tab',
+        helper: 'Shows recorded off-the-job hours against the learner target.',
+      };
+    case 'ksb':
+      return {
+        title: 'KSB',
+        icon: 'ri-award-line',
+        tone: 'accent',
+        tabLabel: 'Open KSB tab',
+        helper: 'Shows completed Knowledge, Skills and Behaviours against the mapped target.',
+      };
+    case 'components':
+      return {
+        title: 'Components',
+        icon: 'ri-stack-line',
+        tone: 'emerald',
+        tabLabel: 'Open activity details',
+        helper: 'Shows completed learning components against the planned components.',
+      };
+  }
+}
+
+function metricPercent(completed?: number, target?: number) {
+  if (typeof completed !== 'number' || typeof target !== 'number' || target <= 0) {
+    return null;
+  }
+  return Math.round(Math.min(100, Math.max(0, (completed / target) * 100)));
+}
+
+function metricToneClass(percent: number | null) {
+  if (percent === null) return 'bg-foreground-100 text-foreground-500 border-foreground-200';
+  if (percent >= 90) return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (percent >= 60) return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-red-50 text-red-700 border-red-200';
+}
+
+function metricProgressBar(percent: number | null) {
+  if (percent === null) return 'bg-foreground-300';
+  if (percent >= 90) return 'bg-emerald-500';
+  if (percent >= 60) return 'bg-amber-500';
+  return 'bg-red-500';
+}
+
+function MetricDetailPanel({ learner, metric, onOpenFullDetails }: { learner: Learner; metric: LearnerMetric; onOpenFullDetails: () => void }) {
+  const copy = getMetricCopy(metric);
+  const otjhPercent = metricPercent(learner.otjhCompleted, learner.otjhTarget);
+  const ksbPercent = metricPercent(learner.ksbCompleted, learner.ksbTarget);
+  const componentPercent = learner.attendanceRateAvailable ? learner.attendanceRate : metricPercent(learner.componentsCompleted, learner.componentsPlanned);
+  const percent = metric === 'otjh' ? otjhPercent : metric === 'ksb' ? ksbPercent : componentPercent;
+  const primaryValue = metric === 'otjh'
+    ? `${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h`
+    : metric === 'ksb'
+      ? formatRatio(learner.ksbCompleted, learner.ksbTarget)
+      : typeof learner.componentsCompleted === 'number' && typeof learner.componentsPlanned === 'number'
+        ? `${learner.componentsCompleted}/${learner.componentsPlanned}`
+        : EMPTY_VALUE;
+  const status = metric === 'otjh'
+    ? displayValue(learner.otjhStatus)
+    : metric === 'ksb'
+      ? displayValue(learner.ksbStatus)
+      : percent === null
+        ? EMPTY_VALUE
+        : percent >= 90
+          ? 'Strong completion'
+          : percent >= 60
+            ? 'In progress'
+            : 'Needs attention';
+  const secondaryRows = metric === 'otjh'
+    ? [
+        ['Completed hours', formatHoursValue(learner.otjhCompleted)],
+        ['Target hours', formatHoursValue(learner.otjhTarget)],
+        ['Variance', learner.progressVariance || EMPTY_VALUE],
+        ['Status', displayValue(learner.otjhStatus)],
+      ]
+    : metric === 'ksb'
+      ? [
+          ['Completed KSBs', typeof learner.ksbCompleted === 'number' ? String(learner.ksbCompleted) : EMPTY_VALUE],
+          ['Target KSBs', typeof learner.ksbTarget === 'number' ? String(learner.ksbTarget) : EMPTY_VALUE],
+          ['Progress', learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE],
+          ['Status', displayValue(learner.ksbStatus)],
+        ]
+      : [
+          ['Completed components', typeof learner.componentsCompleted === 'number' ? String(learner.componentsCompleted) : EMPTY_VALUE],
+          ['Planned components', typeof learner.componentsPlanned === 'number' ? String(learner.componentsPlanned) : EMPTY_VALUE],
+          ['Completion rate', learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE],
+          ['Status', status],
+        ];
+
+  return (
+    <div className="space-y-5">
+      <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4">
+        <div className="flex items-start gap-3">
+          <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${copy.tone === 'primary' ? 'bg-primary-100 text-primary-700' : copy.tone === 'accent' ? 'bg-accent-50 text-accent-700' : 'bg-emerald-100 text-emerald-700'}`}>
+            <i className={`${copy.icon} text-lg`}></i>
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{copy.title}</p>
+            <h4 className="mt-1 text-base font-heading font-bold text-foreground-900">{learner.name}</h4>
+            <p className="mt-1 text-[12px] text-foreground-500">{learner.cohortName} · {learner.group}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className={`rounded-2xl border p-4 ${metricToneClass(percent)}`}>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] opacity-70">Current value</p>
+            <p className="mt-1 text-2xl font-heading font-bold">{primaryValue}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-2xl font-heading font-bold">{percent === null ? EMPTY_VALUE : `${percent}%`}</p>
+            <p className="text-[11px] font-semibold">{status}</p>
+          </div>
+        </div>
+        <div className="mt-4 h-2 rounded-full bg-white/70">
+          <div className={`h-2 rounded-full ${metricProgressBar(percent)}`} style={{ width: `${percent ?? 0}%` }}></div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Breakdown</p>
+        <div className="mt-3 divide-y divide-foreground-100">
+          {secondaryRows.map(([label, value]) => (
+            <div key={label} className="flex items-center justify-between gap-4 py-2.5 text-[12px]">
+              <span className="text-foreground-500">{label}</span>
+              <span className="font-semibold text-foreground-900">{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-primary-100 bg-primary-50/40 p-4">
+        <p className="text-[12px] font-medium leading-relaxed text-primary-800">{copy.helper}</p>
+        {learner.riskFlags.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {learner.riskFlags.slice(0, 4).map(flag => (
+              <span key={flag} className="rounded-full border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700">{flag}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onOpenFullDetails}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-3 text-[13px] font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-700"
+      >
+        <i className="ri-external-link-line"></i>
+        {copy.tabLabel}
+      </button>
+    </div>
+  );
+}
 
 function MiniStatCard({ label, value, icon, color, active = false, onClick }: { label: string; value: string; icon: string; color: string; active?: boolean; onClick?: () => void }) {
   const colorMap: Record<string, { bg: string; text: string }> = {

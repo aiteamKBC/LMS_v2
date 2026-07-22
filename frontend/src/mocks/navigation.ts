@@ -126,9 +126,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '',
     children: [
-      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue', badge: 12 },
-      { id: 'coach-ai-marking', label: 'AI-assisted Marking', icon: 'ri-robot-line', href: '/coach/ai-marking' },
-      { id: 'coach-evidence-validation', label: 'Evidence Validation', icon: 'ri-shield-check-line', href: '/coach/evidence-validation', badge: 14 },
+      { id: 'coach-marking-coming-soon', label: 'Coming Soon', icon: 'ri-edit-line', href: '/coach/marking-queue' },
     ],
   },
   {

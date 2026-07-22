@@ -7,11 +7,13 @@ import RiskPieChart from './components/RiskPieChart';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
+const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 const MISSING_VALUE = '--';
 
 type RiskTone = 'red' | 'amber' | 'green' | null;
 type TrendView = 'week' | 'month' | 'year';
 type AttendanceKpi = 'average' | 'on-track' | 'at-risk' | 'needs-attention' | 'catchups';
+type AttendanceDetailFilter = 'all' | 'present' | 'absent';
 
 interface AttendanceLearner {
   id: string;
@@ -84,6 +86,31 @@ interface AttendanceApiResponse {
   trends?: Record<TrendView, TrendPoint[]>;
 }
 
+interface AttendanceSessionDetail {
+  learnerId: string;
+  learnerName: string;
+  learnerEmail: string;
+  sessionId: string;
+  sessionTitle: string;
+  sessionType: string;
+  sessionDate: string | null;
+  sessionDateLabel: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  reason: string;
+}
+
+interface AttendanceDetailsResponse {
+  summary?: {
+    total: number;
+    present: number;
+    absent: number;
+    unknown: number;
+  };
+  sessions?: AttendanceSessionDetail[];
+}
+
 const EMPTY_SUMMARY: AttendanceSummary = {
   totalLearners: 0,
   activeLearners: 0,
@@ -114,6 +141,27 @@ function formatCount(value?: number | null): string {
 
 function formatPercent(value?: number | null): string {
   return value === null || value === undefined ? MISSING_VALUE : `${value}%`;
+}
+
+function formatSessionTime(startTime?: string | null, endTime?: string | null): string {
+  const start = displayText(startTime);
+  const end = displayText(endTime);
+  if (start === MISSING_VALUE && end === MISSING_VALUE) return MISSING_VALUE;
+  if (end === MISSING_VALUE) return start;
+  if (start === MISSING_VALUE) return end;
+  return `${start} - ${end}`;
+}
+
+function attendanceStatusLabel(status?: string | null): string {
+  if (status === 'present') return 'Present';
+  if (status === 'absent') return 'Absent';
+  return displayText(status);
+}
+
+function attendanceStatusClasses(status?: string | null): string {
+  if (status === 'present') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (status === 'absent') return 'bg-red-50 text-red-700 border-red-200';
+  return 'bg-foreground-100 text-foreground-600 border-foreground-200';
 }
 
 function percentOf(count: number, total: number): string {
@@ -226,6 +274,11 @@ export default function CoachAttendance() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(8);
   const [selectedKpi, setSelectedKpi] = useState<AttendanceKpi | null>(null);
+  const [selectedAttendanceLearner, setSelectedAttendanceLearner] = useState<AttendanceLearner | null>(null);
+  const [attendanceDetailFilter, setAttendanceDetailFilter] = useState<AttendanceDetailFilter>('all');
+  const [attendanceDetails, setAttendanceDetails] = useState<AttendanceSessionDetail[]>([]);
+  const [attendanceDetailsLoading, setAttendanceDetailsLoading] = useState(false);
+  const [attendanceDetailsError, setAttendanceDetailsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -321,6 +374,53 @@ export default function CoachAttendance() {
     'at-risk': 'Learners at risk',
     'needs-attention': 'Learners needing attention',
     catchups: 'Learners with catch-ups',
+  };
+  const filteredAttendanceDetails = useMemo(() => {
+    if (attendanceDetailFilter === 'all') {
+      return attendanceDetails;
+    }
+    return attendanceDetails.filter((item) => item.status === attendanceDetailFilter);
+  }, [attendanceDetails, attendanceDetailFilter]);
+
+  const attendanceDetailCounts = useMemo(() => ({
+    all: attendanceDetails.length,
+    present: attendanceDetails.filter((item) => item.status === 'present').length,
+    absent: attendanceDetails.filter((item) => item.status === 'absent').length,
+  }), [attendanceDetails]);
+
+  const openAttendanceDetails = async (learner: AttendanceLearner, filter: AttendanceDetailFilter) => {
+    setSelectedAttendanceLearner(learner);
+    setAttendanceDetailFilter(filter);
+    setAttendanceDetails([]);
+    setAttendanceDetailsError(null);
+    setAttendanceDetailsLoading(true);
+
+    try {
+      const params = new URLSearchParams();
+      params.set('learner_id', learner.id);
+      if (learner.email) {
+        params.set('learner_email', learner.email);
+      }
+      const response = await fetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `Request failed with ${response.status}`);
+      }
+      const payload: AttendanceDetailsResponse = await response.json();
+      setAttendanceDetails(payload.sessions || []);
+    } catch (err) {
+      setAttendanceDetailsError(err instanceof Error ? err.message : 'Unable to load attendance details.');
+    } finally {
+      setAttendanceDetailsLoading(false);
+    }
+  };
+
+  const closeAttendanceDetails = () => {
+    setSelectedAttendanceLearner(null);
+    setAttendanceDetails([]);
+    setAttendanceDetailsError(null);
+    setAttendanceDetailsLoading(false);
+    setAttendanceDetailFilter('all');
   };
 
   const resetFilters = () => {
@@ -550,10 +650,31 @@ export default function CoachAttendance() {
                         {row.present === null || row.absent === null ? (
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <span className="text-[11px]">
-                            <span className="text-emerald-600 font-medium">{row.present}</span>
-                            <span className="text-foreground-300">/</span>
-                            <span className="text-red-600 font-medium">{row.absent}</span>
+                          <span className="inline-flex items-center justify-center gap-0.5 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => openAttendanceDetails(row, 'present')}
+                              className="rounded-md px-1.5 py-0.5 font-semibold text-emerald-600 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-200 cursor-pointer"
+                              title="View present sessions"
+                            >
+                              {row.present}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openAttendanceDetails(row, 'all')}
+                              className="rounded-md px-0.5 py-0.5 text-foreground-300 hover:bg-background-100 hover:text-foreground-500 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer"
+                              title="View all attendance sessions"
+                            >
+                              /
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openAttendanceDetails(row, 'absent')}
+                              className="rounded-md px-1.5 py-0.5 font-semibold text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 cursor-pointer"
+                              title="View absent sessions"
+                            >
+                              {row.absent}
+                            </button>
                           </span>
                         )}
                       </td>
@@ -610,6 +731,108 @@ export default function CoachAttendance() {
           </div>
         </div>
       </div>
+
+      {selectedAttendanceLearner && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={closeAttendanceDetails}>
+          <div className="absolute inset-0 bg-foreground-950/45 backdrop-blur-sm"></div>
+          <div className="relative flex max-h-[84vh] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
+              <div className="min-w-0">
+                <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
+                  <i className="ri-calendar-check-line text-xs"></i>
+                  Attendance details
+                </span>
+                <h3 className="truncate text-base font-heading font-bold text-foreground-900">{selectedAttendanceLearner.learner}</h3>
+                <p className="mt-0.5 truncate text-[11px] text-foreground-400">
+                  {displayText(selectedAttendanceLearner.cohort)} · {displayText(selectedAttendanceLearner.group)}
+                </p>
+              </div>
+              <button type="button" onClick={closeAttendanceDetails} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close attendance details">
+                <i className="ri-close-line text-lg"></i>
+              </button>
+            </div>
+
+            <div className="border-b border-foreground-100 px-5 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                {(['all', 'present', 'absent'] as AttendanceDetailFilter[]).map((filter) => {
+                  const count = attendanceDetailCounts[filter];
+                  const label = filter === 'all' ? 'All' : filter === 'present' ? 'Present' : 'Absent';
+                  const active = attendanceDetailFilter === filter;
+                  return (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setAttendanceDetailFilter(filter)}
+                      className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-smooth cursor-pointer ${
+                        active
+                          ? filter === 'absent'
+                            ? 'bg-red-500 text-white shadow-sm'
+                            : filter === 'present'
+                              ? 'bg-emerald-500 text-white shadow-sm'
+                              : 'bg-primary-500 text-white shadow-sm'
+                          : 'bg-background-100 text-foreground-500 hover:bg-background-200'
+                      }`}
+                    >
+                      {label} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-4">
+              {attendanceDetailsLoading ? (
+                <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 text-center">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-50 text-primary-600">
+                    <i className="ri-loader-4-line animate-spin text-lg"></i>
+                  </span>
+                  <p className="text-[12px] text-foreground-500">Loading attendance sessions...</p>
+                </div>
+              ) : attendanceDetailsError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700">
+                  {attendanceDetailsError}
+                </div>
+              ) : filteredAttendanceDetails.length ? (
+                <div className="space-y-2">
+                  {filteredAttendanceDetails.map((session, index) => (
+                    <div key={`${session.sessionId}-${session.sessionDate || index}-${index}`} className="rounded-xl border border-foreground-100 bg-background-100/50 p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${attendanceStatusClasses(session.status)}`}>
+                              {attendanceStatusLabel(session.status)}
+                            </span>
+                            <span className="text-[10px] text-foreground-400">{displayText(session.sessionType)}</span>
+                          </div>
+                          <p className="mt-2 truncate text-[13px] font-semibold text-foreground-900">{displayText(session.sessionTitle)}</p>
+                          <p className="mt-1 text-[11px] text-foreground-400">Session ID: {displayText(session.sessionId)}</p>
+                          {session.reason && session.reason !== MISSING_VALUE && (
+                            <p className="mt-2 rounded-lg bg-background-50 px-3 py-2 text-[11px] text-foreground-600">Reason: {session.reason}</p>
+                          )}
+                        </div>
+                        <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
+                          <p className="text-[12px] font-bold text-foreground-900">{displayText(session.sessionDateLabel)}</p>
+                          <p className="mt-0.5 text-[11px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-foreground-200 bg-background-100/40 p-6 text-center">
+                  <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-background-50 text-foreground-400">
+                    <i className="ri-calendar-close-line text-lg"></i>
+                  </span>
+                  <p className="text-[13px] font-semibold text-foreground-700">No sessions found</p>
+                  <p className="mt-1 max-w-sm text-[11px] text-foreground-400">
+                    No {attendanceDetailFilter === 'all' ? 'attendance' : attendanceDetailFilter} session details were returned for this learner.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedKpi && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setSelectedKpi(null)}>

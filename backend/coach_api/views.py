@@ -13,12 +13,30 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.db import connections, router
+from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
 from learner_api.models import ActiveUser, CommercialUser, EnrolmentUser, LearnerAbsence
+from curriculum_api.views import (
+    actual_cohort_identity,
+    actual_group_identity,
+    AUTHORING_WEEKS_TABLE,
+    authoring_fetch_all,
+    build_module_session_plan,
+    COHORT_AUTHORING_DETAILS_TABLE,
+    get_coach_rows,
+    get_program_config_rows,
+    get_training_rows,
+    is_operational_training_row,
+    parse_date,
+    parse_int,
+    parse_json_value,
+    program_config_by_id,
+    programme_identity,
+)
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
@@ -35,6 +53,14 @@ UNACTIVE_USER_RELATION_CANDIDATES = (
     '"learner"."unactive_users"',
 )
 ACTIVE_USER_RELATION = '"Learner"."Active_users"'
+COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES = (
+    '"Coach"."learner_attendance_details"',
+    '"coach"."learner_attendance_details"',
+)
+LEARNER_EVIDENCE_FILES_RELATION_CANDIDATES = (
+    '"Learner"."evidence_files"',
+    '"learner"."evidence_files"',
+)
 COACH_RAG_LABELS = {
     "green": "Green",
     "amber": "Amber",
@@ -729,6 +755,39 @@ def find_existing_relation(connection, relation_candidates: tuple[str, ...]) -> 
     return None
 
 
+def relation_schema_and_table(relation: str) -> tuple[str, str]:
+    parts = [part.strip('"') for part in relation.split(".")]
+    if len(parts) != 2:
+        raise ValueError(f"Expected a schema-qualified relation, got {relation}")
+    return parts[0], parts[1]
+
+
+def quote_sql_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def relation_columns(connection, relation: str) -> dict[str, str]:
+    schema, table = relation_schema_and_table(relation)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            select column_name
+            from information_schema.columns
+            where table_schema = %s and table_name = %s
+            """,
+            [schema, table],
+        )
+        return {str(row[0]).lower(): str(row[0]) for row in cursor.fetchall()}
+
+
+def first_existing_column(columns: dict[str, str], *candidates: str) -> str | None:
+    for candidate in candidates:
+        match = columns.get(candidate.lower())
+        if match:
+            return match
+    return None
+
+
 def fetch_inactive_user_caseload_rows(owner_email: str) -> list[SimpleNamespace]:
     connection = connections[get_learner_db_alias()]
     relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
@@ -1004,6 +1063,81 @@ def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
     }
 
 
+def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]:
+    active_rows = fetch_active_user_caseload_rows(owner_email)
+    caseload_learners = [serialize_active_user_learner(row) for row in active_rows]
+    caseload_by_id = {
+        str(learner["id"]): learner
+        for learner in caseload_learners
+        if clean_text(learner.get("id"))
+    }
+    if not caseload_by_id:
+        return [], caseload_learners
+
+    connection = connections[get_learner_db_alias()]
+    relation = find_existing_relation(connection, LEARNER_EVIDENCE_FILES_RELATION_CANDIDATES)
+    if not relation:
+        return [], caseload_learners
+
+    columns = relation_columns(connection, relation)
+    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
+    created_at_column = first_existing_column(columns, "created_at", "submitted_at", "uploaded_at", "updated_at")
+    if not learner_id_column:
+        return [], caseload_learners
+
+    learner_ids = sorted(caseload_by_id.keys(), key=lambda value: int(value) if value.isdigit() else value)
+    placeholders = ", ".join(["%s"] * len(learner_ids))
+    last_submission_select = (
+        f"max({quote_sql_identifier(created_at_column)}) as last_submission"
+        if created_at_column
+        else "null as last_submission"
+    )
+    query = f"""
+        select
+            {quote_sql_identifier(learner_id_column)}::text as learner_id,
+            count(*)::int as evidence_count,
+            {last_submission_select}
+        from {relation}
+        where {quote_sql_identifier(learner_id_column)}::text in ({placeholders})
+        group by {quote_sql_identifier(learner_id_column)}::text
+        order by evidence_count desc, learner_id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, learner_ids)
+        rows = cursor.fetchall()
+
+    items = []
+    today = date.today()
+    for learner_id, evidence_count, last_submission in rows:
+        learner = caseload_by_id.get(str(learner_id))
+        if not learner:
+            continue
+
+        last_submission_date = parse_date_value(last_submission)
+        last_submission_day = last_submission_date.date() if isinstance(last_submission_date, datetime) else last_submission_date
+        elapsed_days = (today - last_submission_day).days if isinstance(last_submission_day, date) else 0
+        count = to_int(evidence_count)
+        items.append({
+            "id": str(learner_id),
+            "learnerId": str(learner_id),
+            "learner": learner["name"],
+            "initials": learner["initials"],
+            "email": learner.get("email"),
+            "programme": learner["cohortName"],
+            "group": learner["group"],
+            "pendingEvidence": count,
+            "acceptedEvidence": 0,
+            "referredEvidence": 0,
+            "totalEvidence": count,
+            "lastSubmission": format_date_value(last_submission),
+            "lastSubmissionIso": format_iso_date_value(last_submission),
+            "isOverdue": elapsed_days > MARKING_OVERDUE_DAYS,
+        })
+
+    return items, caseload_learners
+
+
 def update_learner_coach_rag(learner_id: int, coach_rag: str | None) -> bool:
     connection = connections[get_learner_db_alias()]
 
@@ -1180,18 +1314,13 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
     if not unique_email_keys:
         return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
 
+    connection = connections[router.db_for_read(LearnerAbsence) or "default"]
+    columns = relation_columns(connection, '"Learner"."Absence"')
+    required_fields = ["learner_email", "sessions", "present", "absent", "catchup"]
+    optional_fields = ["late", "risk", "last_session_date", "consecutive_missed"]
+    value_fields = required_fields + [field for field in optional_fields if field.lower() in columns]
     rows = list(
-        LearnerAbsence.objects.filter(learner_email__in=unique_email_keys).values(
-            "learner_email",
-            "sessions",
-            "present",
-            "absent",
-            "late",
-            "catchup",
-            "risk",
-            "last_session_date",
-            "consecutive_missed",
-        )
+        LearnerAbsence.objects.filter(learner_email__in=unique_email_keys).values(*value_fields)
     )
     metrics: dict[str, dict] = {}
     for row in rows:
@@ -1200,18 +1329,18 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
             "sessions": to_int(row["sessions"]),
             "present": to_int(row["present"]),
             "absent": to_int(row["absent"]),
-            "late": to_int(row["late"]),
+            "late": to_int(row.get("late")),
             "catchup": to_int(row["catchup"]),
-            "risk": clean_text(row["risk"]) or None,
-            "lastSessionDate": format_iso_date(row["last_session_date"]),
-            "lastSession": format_date(row["last_session_date"]),
-            "consecutiveMissed": to_int(row["consecutive_missed"]),
+            "risk": clean_text(row.get("risk")) or None,
+            "lastSessionDate": format_iso_date(row.get("last_session_date")),
+            "lastSession": format_date(row.get("last_session_date")),
+            "consecutiveMissed": to_int(row.get("consecutive_missed")),
         }
 
     trends: dict[str, list[dict]] = {"week": [], "month": [], "year": []}
     trend_groups: dict[str, dict[tuple, dict]] = {"week": {}, "month": {}, "year": {}}
     for row in rows:
-        session_date = row["last_session_date"]
+        session_date = row.get("last_session_date")
         if not session_date:
             continue
         week_start = session_date - timedelta(days=session_date.weekday())
@@ -1238,6 +1367,260 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
             })
 
     return {"metrics": metrics, "records": {}, "trends": trends}
+
+
+def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys: list[str]) -> None:
+    ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
+    emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
+    if not ids and not emails:
+        return
+
+    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
+    detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
+    if not detail_relation:
+        return
+
+    detail_columns = relation_columns(connection, detail_relation)
+    learner_id_column = first_existing_column(detail_columns, "learner_id", "learnerid", "Learner ID")
+    learner_email_column = first_existing_column(detail_columns, "learner_email", "email", "Email")
+    status_column = first_existing_column(detail_columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
+    if not status_column or not any([learner_id_column, learner_email_column]):
+        return
+
+    filters = []
+    params: list = []
+    if learner_id_column and ids:
+        placeholders = ", ".join(["%s"] * len(ids))
+        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
+        params.extend(ids)
+    if learner_email_column and emails:
+        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
+        params.append(emails)
+    if not filters:
+        return
+
+    learner_id_select = (
+        f"{quote_sql_identifier(learner_id_column)} as learner_id"
+        if learner_id_column
+        else "null as learner_id"
+    )
+    learner_email_select = (
+        f"{quote_sql_identifier(learner_email_column)} as learner_email"
+        if learner_email_column
+        else "null as learner_email"
+    )
+    query = f"""
+        select
+            {learner_id_select},
+            {learner_email_select},
+            {quote_sql_identifier(status_column)} as attendance_status
+        from {detail_relation}
+        where {" or ".join(filters)}
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+    counts_by_id: dict[int, dict[str, int]] = {}
+    counts_by_email: dict[str, dict[str, int]] = {}
+    for learner_id_value, learner_email_value, status_value in rows:
+        status = normalize_attendance_detail_status(status_value)
+        if status not in {"present", "absent"}:
+            continue
+        learner_id = to_int(learner_id_value)
+        email_key = normalize_email(learner_email_value)
+        if learner_id:
+            counts = counts_by_id.setdefault(learner_id, {"present": 0, "absent": 0})
+            counts[status] += 1
+        if email_key:
+            counts = counts_by_email.setdefault(email_key, {"present": 0, "absent": 0})
+            counts[status] += 1
+
+    if not counts_by_id and not counts_by_email:
+        return
+
+    with connection.cursor() as cursor:
+        for learner_id, counts in counts_by_id.items():
+            cursor.execute(
+                """
+                update "Learner"."Absence"
+                set present = %s,
+                    absent = %s
+                where learner_id = %s
+                """,
+                [counts["present"], counts["absent"], learner_id],
+            )
+        for email_key, counts in counts_by_email.items():
+            cursor.execute(
+                """
+                update "Learner"."Absence"
+                set present = %s,
+                    absent = %s
+                where lower(trim(learner_email::text)) = %s
+                  and learner_id is null
+                """,
+                [counts["present"], counts["absent"], email_key],
+            )
+
+
+def is_truthy_value(value) -> bool:
+    text = clean_text(value).lower()
+    return text in {"1", "true", "yes", "y", "completed", "complete", "done"}
+
+
+def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
+    rows = sorted(
+        rows,
+        key=lambda item: (
+            parse_date_value(item.get("session_date")) or datetime.min,
+            clean_text(item.get("session_start_time")),
+        ),
+        reverse=True,
+    )
+    present = sum(1 for row in rows if normalize_attendance_detail_status(row.get("attendance_status")) == "present")
+    absent = sum(1 for row in rows if normalize_attendance_detail_status(row.get("attendance_status")) == "absent")
+    late = sum(1 for row in rows if to_int(row.get("minutes_late")) > 0)
+    catchup = sum(1 for row in rows if is_truthy_value(row.get("catchup_completed")))
+    last_session_date = None
+    for row in rows:
+        parsed_date = parse_date_value(row.get("session_date"))
+        if parsed_date:
+            last_session_date = parsed_date.date() if isinstance(parsed_date, datetime) else parsed_date
+            break
+
+    consecutive_missed = 0
+    for row in rows:
+        status = normalize_attendance_detail_status(row.get("attendance_status"))
+        if status == "absent":
+            consecutive_missed += 1
+        elif status == "present":
+            break
+
+    recorded_sessions = present + absent
+    attendance_rate = percentage(present, recorded_sessions) if recorded_sessions else None
+    return {
+        "sessions": len(rows),
+        "present": present,
+        "absent": absent,
+        "late": late,
+        "catchup": catchup,
+        "risk": attendance_risk_from_rate(attendance_rate),
+        "lastSessionDate": format_iso_date(last_session_date),
+        "lastSession": format_date(last_session_date),
+        "consecutiveMissed": consecutive_missed,
+    }
+
+
+def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: list[str]) -> dict:
+    ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
+    emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
+    empty = {"metrics": {}, "metricsById": {}, "records": {}, "recordsById": {}, "trends": {"week": [], "month": [], "year": []}}
+    if not ids and not emails:
+        return empty
+
+    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
+    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
+    if not relation:
+        return empty
+
+    columns = relation_columns(connection, relation)
+    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
+    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
+    session_date_column = first_existing_column(columns, "session_date", "date")
+    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
+    status_column = first_existing_column(columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
+    minutes_late_column = first_existing_column(columns, "minutes_late", "late", "lateness")
+    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
+
+    if not status_column or not any([learner_id_column, learner_email_column]):
+        return empty
+
+    selected_aliases: dict[str, str | None] = {
+        "learner_id": learner_id_column,
+        "learner_email": learner_email_column,
+        "session_date": session_date_column,
+        "session_start_time": start_time_column,
+        "attendance_status": status_column,
+        "minutes_late": minutes_late_column,
+        "catchup_completed": catchup_column,
+    }
+    select_columns = [
+        f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}" if column else f"null as {quote_sql_identifier(alias)}"
+        for alias, column in selected_aliases.items()
+    ]
+
+    filters = []
+    params: list = []
+    if learner_id_column and ids:
+        placeholders = ", ".join(["%s"] * len(ids))
+        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
+        params.extend(ids)
+    if learner_email_column and emails:
+        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
+        params.append(emails)
+    if not filters:
+        return empty
+
+    query = f"""
+        select {", ".join(select_columns)}
+        from {relation}
+        where {" or ".join(filters)}
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        result_columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
+
+    rows_by_id: dict[int, list[dict]] = {}
+    rows_by_email: dict[str, list[dict]] = {}
+    for row in rows:
+        learner_id = to_int(row.get("learner_id"))
+        email_key = normalize_email(row.get("learner_email"))
+        if learner_id:
+            rows_by_id.setdefault(learner_id, []).append(row)
+        if email_key:
+            rows_by_email.setdefault(email_key, []).append(row)
+
+    metrics_by_id = {learner_id: build_attendance_metrics_from_detail_rows(items) for learner_id, items in rows_by_id.items()}
+    metrics_by_email = {email: build_attendance_metrics_from_detail_rows(items) for email, items in rows_by_email.items()}
+
+    trend_groups: dict[str, dict[tuple, dict]] = {"week": {}, "month": {}, "year": {}}
+    for row in rows:
+        status = normalize_attendance_detail_status(row.get("attendance_status"))
+        if status not in {"present", "absent"}:
+            continue
+        parsed_date = parse_date_value(row.get("session_date"))
+        if not parsed_date:
+            continue
+        session_date = parsed_date.date() if isinstance(parsed_date, datetime) else parsed_date
+        week_start = session_date - timedelta(days=session_date.weekday())
+        group_keys = {
+            "week": ((week_start.year, week_start.isocalendar().week), week_start, f"W{week_start.isocalendar().week:02d}"),
+            "month": ((session_date.year, session_date.month), session_date.replace(day=1), session_date.strftime("%b %Y")),
+            "year": ((session_date.year,), session_date.replace(month=1, day=1), str(session_date.year)),
+        }
+        for view, (key, period, label) in group_keys.items():
+            group = trend_groups[view].setdefault(key, {"period": period, "label": label, "attended": 0, "absent": 0})
+            if status == "present":
+                group["attended"] += 1
+            else:
+                group["absent"] += 1
+
+    trends: dict[str, list[dict]] = {"week": [], "month": [], "year": []}
+    for view, groups in trend_groups.items():
+        for group in sorted(groups.values(), key=lambda item: item["period"]):
+            total = group["attended"] + group["absent"]
+            trends[view].append({
+                "label": group["label"],
+                "value": percentage(group["absent"], total),
+                "sessionDate": format_iso_date(group["period"]),
+                "attended": group["attended"],
+                "absent": group["absent"],
+                "onBreak": 0,
+            })
+
+    return {"metrics": metrics_by_email, "metricsById": metrics_by_id, "records": rows_by_email, "recordsById": rows_by_id, "trends": trends}
 
 
 def fetch_marking_rows(case_owner: str, case_owner_id: int | None = None) -> list[dict]:
@@ -2240,6 +2623,181 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
     return ""
 
 
+def build_live_session_calendar_event(
+    row: dict,
+    session: dict,
+    *,
+    programme: str,
+    cohort: str,
+    group: str,
+    owner_email: str,
+    owner_name: str,
+    week_title: str | None = None,
+) -> dict:
+    session_date = date.fromisoformat(session["date"])
+    module_name = clean_text(row.get("module_name")) or "Live Session"
+    session_title = f"{module_name} — {week_title}" if week_title else f"{module_name} — Week {session['sessionNumber']}"
+
+    start_hour, end_hour, time_label, duration_minutes, is_time_estimated = 9, 10, "Time TBC", TIMETABLE_DEFAULT_DURATION_MINUTES, True
+    start_time = parse_time_value(row.get("session_start_time"))
+    end_time = parse_time_value(row.get("session_end_time"))
+    if start_time:
+        start_hour = start_time.hour + start_time.minute / 60
+        is_time_estimated = False
+        if end_time:
+            end_hour = end_time.hour + end_time.minute / 60
+            duration_minutes = max(15, round((end_hour - start_hour) * 60))
+        else:
+            end_hour = start_hour + duration_minutes / 60
+        time_label = f'{start_time.strftime("%H:%M")} - {end_time.strftime("%H:%M")}' if end_time else start_time.strftime("%H:%M")
+
+    return {
+        "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
+        "id": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
+        "ownerEmail": owner_email,
+        "ownerName": owner_name,
+        "learnerId": "",
+        "learner": f'{cohort} · {group}' if cohort and group else (group or cohort or module_name),
+        "email": None,
+        "programme": programme or "--",
+        "cohort": cohort or "--",
+        "group": group or "--",
+        "module": module_name,
+        "tutor": clean_text(row.get("Tutor_name")) or "Unassigned",
+        "source": "live-session",
+        "sequence": session["sessionNumber"],
+        "title": session_title,
+        "type": "live-session",
+        "targetDate": session["date"],
+        "date": session["date"],
+        "year": session_date.year,
+        "month": session_date.month - 1,
+        "dayOfMonth": session_date.day,
+        "dayOfWeek": session_date.weekday(),
+        "startHour": start_hour,
+        "endHour": end_hour,
+        "durationMinutes": duration_minutes,
+        "timeLabel": time_label,
+        "isTimeEstimated": is_time_estimated,
+        "priority": "normal",
+        "status": "scheduled",
+        "sourceStatus": "Scheduled",
+        "meetingProvider": "",
+        "meetingLink": "",
+        "graphWebLink": "",
+        "platform": "LMS",
+        "location": "--",
+        "notes": f'{session_title}.',
+        "rawPlanned": session["date"],
+        "rawStatus": "Scheduled",
+    }
+
+
+def fetch_coach_assigned_group_ids(owner_email: str) -> set[str]:
+    requested_owner = normalize_email(owner_email)
+    for coach in get_coach_rows():
+        if normalize_email(coach.get("email")) != requested_owner:
+            continue
+        group_ids = parse_json_value(coach.get("assigned_group_ids"), [])
+        return {clean_text(group_id) for group_id in group_ids if clean_text(group_id)}
+    return set()
+
+
+def fetch_cohort_holidays_in_range(cohort_id: str) -> list[dict]:
+    for cohort in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id]):
+        return parse_json_value(cohort.get("holidays_in_range"), [])
+    return []
+
+
+def collect_live_session_events(
+    owner_email: str,
+    owner_name: str,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict]:
+    assigned_group_ids = fetch_coach_assigned_group_ids(owner_email)
+    if not assigned_group_ids:
+        return []
+
+    program_configs_by_id = program_config_by_id(get_program_config_rows())
+    weeks_by_module: dict[str, list[dict]] = {}
+    for week in authoring_fetch_all(AUTHORING_WEEKS_TABLE):
+        module_catalogue_id = clean_text(week.get("module_catalogue_id"))
+        if module_catalogue_id:
+            weeks_by_module.setdefault(module_catalogue_id, []).append(week)
+    holidays_by_cohort_id: dict[str, list[dict]] = {}
+    today = date.today()
+
+    events: list[dict] = []
+    for row in get_training_rows():
+        if not is_operational_training_row(row):
+            continue
+        if not clean_text(row.get("module_name")):
+            continue
+
+        group_id = clean_text(row.get("_meta", {}).get("group_id"))
+        if not group_id or group_id not in assigned_group_ids:
+            continue
+
+        identity = programme_identity(row, program_configs_by_id)
+        programme = identity["name"]
+        cohort = actual_cohort_identity(row, programme)
+        if not cohort:
+            continue
+        group = actual_group_identity(row, cohort["id"])
+        if not group:
+            continue
+
+        module_start = row.get("start_date")
+        if not module_start:
+            continue
+
+        module_catalogue_id = clean_text(row.get("_meta", {}).get("module_catalogue_id"))
+        module_weeks = weeks_by_module.get(module_catalogue_id) or []
+        session_count = len(module_weeks) or parse_int(row.get("sessions_number"), 0)
+        if session_count <= 0:
+            continue
+
+        cohort_id = clean_text(row.get("_meta", {}).get("cohort_id"))
+        if cohort_id not in holidays_by_cohort_id:
+            holidays_by_cohort_id[cohort_id] = fetch_cohort_holidays_in_range(cohort_id)
+        cohort_holidays = holidays_by_cohort_id[cohort_id]
+
+        delivery_day_name = parse_date(module_start).strftime("%A")
+        plan = build_module_session_plan(module_start, session_count, delivery_day_name, cohort_holidays)
+        if plan["warnings"]:
+            continue
+
+        ordered_weeks = sorted(module_weeks, key=lambda week: parse_int(week.get("week_number"), 0))
+        for session in plan["sessions"]:
+            if date.fromisoformat(session["date"]) < today:
+                continue
+            week = ordered_weeks[session["sessionNumber"] - 1] if session["sessionNumber"] - 1 < len(ordered_weeks) else None
+            events.append(
+                build_live_session_calendar_event(
+                    row,
+                    session,
+                    programme=programme,
+                    cohort=cohort["name"],
+                    group=group["name"],
+                    owner_email=owner_email,
+                    owner_name=owner_name,
+                    week_title=clean_text(week.get("title")) if week else None,
+                )
+            )
+
+    if start_date or end_date:
+        events = [
+            event
+            for event in events
+            if (not start_date or date.fromisoformat(event["date"]) >= start_date)
+            and (not end_date or date.fromisoformat(event["date"]) <= end_date)
+        ]
+
+    return events
+
+
 def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
     active_rows = fetch_owner_active_user_rows(owner_email)
     active_user_map = build_active_user_map(active_rows)
@@ -2248,12 +2806,16 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         "Med Maher",
     )
     commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in active_rows])
+    live_session_events = collect_live_session_events(
+        owner_email, owner_name, start_date=start_date, end_date=end_date
+    )
 
     generated_events: list[dict] = []
     source_counts = {
         "progressReviewRows": 0,
         "mcrRows": 0,
         "catchUpRows": 0,
+        "liveSessionRows": len(live_session_events),
         "caseloadLearners": len(active_rows),
         "learnersWithDates": 0,
     }
@@ -2323,6 +2885,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
     record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in generated_events]
     events.extend(persisted_standalone_events)
+    events.extend(live_session_events)
 
     if start_date or end_date:
         filtered_events = []
@@ -2659,7 +3222,8 @@ def serialize_attendance_learner(
     sessions = attendance_metrics.get("sessions", 0) if attendance_metrics else 0
     present = attendance_metrics.get("present", 0) if attendance_metrics else 0
     absent = attendance_metrics.get("absent", 0) if attendance_metrics else 0
-    attendance_rate = percentage(present, sessions) if sessions else None
+    recorded_sessions = present + absent
+    attendance_rate = percentage(present, recorded_sessions) if recorded_sessions else None
     risk = attendance_metrics.get("risk") if attendance_metrics else None
     if risk not in {"green", "amber", "red"}:
         risk = attendance_risk_from_rate(attendance_rate)
@@ -2694,6 +3258,164 @@ def serialize_attendance_learner(
         "consecutiveMissed": attendance_metrics.get("consecutiveMissed", 0) if attendance_metrics else None,
         "hasAttendance": bool(sessions),
     }
+
+
+def normalize_attendance_detail_status(value) -> str:
+    text = clean_text(value).lower()
+    if text in {"1", "true", "yes", "y", "present", "attended", "attend"}:
+        return "present"
+    if text in {"0", "false", "no", "n", "absent", "missed", "did not attend", "non-attendance"}:
+        return "absent"
+    return text or "--"
+
+
+def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
+    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
+    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
+    if not relation:
+        return []
+
+    columns = relation_columns(connection, relation)
+    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
+    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
+    learner_name_column = first_existing_column(columns, "learner_name", "learner", "name")
+    session_id_column = first_existing_column(columns, "session_id", "sessionid")
+    session_title_column = first_existing_column(columns, "session_title", "title", "session")
+    session_type_column = first_existing_column(columns, "session_type", "type")
+    session_date_column = first_existing_column(columns, "session_date", "date")
+    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
+    end_time_column = first_existing_column(columns, "session_end_time", "end_time", "end")
+    status_column = first_existing_column(
+        columns,
+        "attendance_status",
+        "status",
+        "attendance",
+        "is_present",
+        "present",
+        "attended",
+    )
+    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
+
+    if not any([learner_id_column, learner_email_column, learner_name_column]):
+        return []
+
+    select_columns = []
+    selected_aliases: dict[str, str | None] = {
+        "learner_id": learner_id_column,
+        "learner_name": learner_name_column,
+        "learner_email": learner_email_column,
+        "session_id": session_id_column,
+        "session_title": session_title_column,
+        "session_type": session_type_column,
+        "session_date": session_date_column,
+        "session_start_time": start_time_column,
+        "session_end_time": end_time_column,
+        "attendance_status": status_column,
+        "reason": reason_column,
+    }
+    for alias, column in selected_aliases.items():
+        if column:
+            select_columns.append(f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}")
+        else:
+            select_columns.append(f"null as {quote_sql_identifier(alias)}")
+
+    filters = []
+    params = []
+    if learner_id_column:
+        filters.append(f"{quote_sql_identifier(learner_id_column)}::text = %s")
+        params.append(str(learner["id"]))
+    if learner_email_column and normalize_email(learner.get("email")):
+        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = %s")
+        params.append(normalize_email(learner.get("email")))
+    if learner_name_column:
+        filters.append(f"lower(trim({quote_sql_identifier(learner_name_column)}::text)) = %s")
+        params.append(normalize_person_name(learner.get("name")))
+
+    order_parts = []
+    if session_date_column:
+        order_parts.append(f"{quote_sql_identifier(session_date_column)} desc")
+    if start_time_column:
+        order_parts.append(f"{quote_sql_identifier(start_time_column)} desc")
+    order_clause = ", ".join(order_parts) or "1"
+
+    query = f"""
+        select {", ".join(select_columns)}
+        from {relation}
+        where {" or ".join(filters)}
+        order by {order_clause}
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        result_columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
+
+    return [
+        {
+            "learnerId": clean_text(row.get("learner_id")),
+            "learnerName": clean_text(row.get("learner_name")) or learner.get("name", ""),
+            "learnerEmail": clean_text(row.get("learner_email")) or learner.get("email", ""),
+            "sessionId": clean_text(row.get("session_id")) or "--",
+            "sessionTitle": clean_text(row.get("session_title")) or "--",
+            "sessionType": clean_text(row.get("session_type")) or "--",
+            "sessionDate": format_iso_date_value(row.get("session_date")),
+            "sessionDateLabel": format_date_value(row.get("session_date")),
+            "startTime": format_time_value(row.get("session_start_time")) or "--",
+            "endTime": format_time_value(row.get("session_end_time")) or "--",
+            "status": normalize_attendance_detail_status(row.get("attendance_status")),
+            "reason": clean_text(row.get("reason")) or "--",
+        }
+        for row in rows
+    ]
+
+
+@require_GET
+def coach_attendance_details(request):
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    learner_id = clean_text(request.GET.get("learner_id"))
+    learner_email = normalize_email(request.GET.get("learner_email"))
+
+    try:
+        caseload_rows = fetch_active_user_caseload_rows(owner_email)
+        learners = [serialize_active_user_learner(row) for row in caseload_rows]
+        learner = next(
+            (
+                item for item in learners
+                if (learner_id and str(item["id"]) == learner_id)
+                or (learner_email and normalize_email(item.get("email")) == learner_email)
+            ),
+            None,
+        )
+        if not learner:
+            return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+        sessions = fetch_attendance_detail_rows(learner)
+    except Exception as exc:
+        return JsonResponse(
+            {"detail": "Unable to load learner attendance details.", "error": str(exc)},
+            status=500,
+        )
+
+    present = sum(1 for item in sessions if item["status"] == "present")
+    absent = sum(1 for item in sessions if item["status"] == "absent")
+    return JsonResponse(
+        {
+            "learner": {
+                "id": learner["id"],
+                "name": learner["name"],
+                "email": learner.get("email"),
+                "cohort": learner.get("cohortName"),
+                "group": learner.get("group"),
+            },
+            "summary": {
+                "total": len(sessions),
+                "present": present,
+                "absent": absent,
+                "unknown": len(sessions) - present - absent,
+            },
+            "sessions": sessions,
+        }
+    )
 
 
 @require_GET
@@ -2805,11 +3527,18 @@ def coach_attendance(request):
         active_learners = [
             learner for learner in caseload_learners if should_include_in_attendance_metrics(learner)
         ]
+        learner_ids = [int(learner["id"]) for learner in caseload_learners if learner.get("id")]
+        active_learner_ids = [int(learner["id"]) for learner in active_learners if learner.get("id")]
         email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
         active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
-        attendance_data = fetch_learner_absence_data(email_keys)
-        active_attendance_data = fetch_learner_absence_data(active_email_keys)
+        attendance_data = fetch_attendance_detail_summary_data(learner_ids, email_keys)
+        active_attendance_data = fetch_attendance_detail_summary_data(active_learner_ids, active_email_keys)
+        sync_learner_absence_counts_from_details(learner_ids, email_keys)
+        fallback_attendance_data = fetch_learner_absence_data(email_keys)
+        fallback_active_attendance_data = fetch_learner_absence_data(active_email_keys)
+        metrics_by_id = attendance_data["metricsById"]
         metrics_by_email = attendance_data["metrics"]
+        fallback_metrics_by_email = fallback_attendance_data["metrics"]
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
@@ -2823,7 +3552,9 @@ def coach_attendance(request):
         attendance_learners = [
             serialize_attendance_learner(
                 learner,
-                metrics_by_email.get(normalize_email(learner.get("email"))),
+                metrics_by_id.get(int(learner["id"]))
+                or metrics_by_email.get(normalize_email(learner.get("email")))
+                or fallback_metrics_by_email.get(normalize_email(learner.get("email"))),
                 catchups_by_learner_id.get(int(learner["id"]), 0),
             )
             for learner in caseload_learners
@@ -2843,6 +3574,7 @@ def coach_attendance(request):
     total_sessions = sum(learner["sessions"] or 0 for learner in learners_with_attendance)
     total_present = sum(learner["present"] or 0 for learner in learners_with_attendance)
     total_absent = sum(learner["absent"] or 0 for learner in learners_with_attendance)
+    total_recorded_sessions = total_present + total_absent
     pending_catchups = [
         record
         for record in catchup_records
@@ -2867,7 +3599,7 @@ def coach_attendance(request):
         "onBreakLearners": sum(1 for learner in attendance_learners if learner["isOnBreak"]),
         "learnersWithAttendance": len(learners_with_attendance),
         "cohortCount": len({learner["cohort"] for learner in attendance_learners if learner["cohort"]}),
-        "averageAttendance": percentage(total_present, total_sessions) if total_sessions else None,
+        "averageAttendance": percentage(total_present, total_recorded_sessions) if total_recorded_sessions else None,
         "totalSessions": total_sessions,
         "totalPresent": total_present,
         "totalAbsent": total_absent,
@@ -2886,16 +3618,107 @@ def coach_attendance(request):
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
             "learners": attendance_learners,
-            "trends": active_attendance_data["trends"],
+            "trends": active_attendance_data["trends"] if any(active_attendance_data["trends"].values()) else fallback_active_attendance_data["trends"],
         }
     )
 
 
-def serialize_absence_report(report: CoachAbsenceReport, learner=None) -> dict:
+def fetch_absence_report_attendance_rates(learner_ids: list[int], learner_emails: list[str]) -> dict:
+    detail_data = fetch_attendance_detail_summary_data(learner_ids, learner_emails)
+    by_id: dict[int, int | None] = {}
+    by_email: dict[str, int | None] = {}
+
+    for learner_id, metrics in detail_data["metricsById"].items():
+        present = to_int(metrics.get("present"))
+        absent = to_int(metrics.get("absent"))
+        recorded_sessions = present + absent
+        by_id[learner_id] = percentage(present, recorded_sessions) if recorded_sessions else None
+
+    for email_key, metrics in detail_data["metrics"].items():
+        present = to_int(metrics.get("present"))
+        absent = to_int(metrics.get("absent"))
+        recorded_sessions = present + absent
+        if email_key:
+            by_email[email_key] = percentage(present, recorded_sessions) if recorded_sessions else None
+
+    missing_ids = [int(learner_id) for learner_id in learner_ids if learner_id and int(learner_id) not in by_id]
+    missing_emails = [
+        normalize_email(email)
+        for email in learner_emails
+        if normalize_email(email) and normalize_email(email) not in by_email
+    ]
+    if missing_ids or missing_emails:
+        query = Q()
+        if missing_ids:
+            query |= Q(learner_id__in=missing_ids)
+        if missing_emails:
+            query |= Q(learner_email__in=missing_emails)
+        rows = LearnerAbsence.objects.filter(query).values("learner_id", "learner_email", "present", "absent")
+        for row in rows:
+            present = to_int(row["present"])
+            absent = to_int(row["absent"])
+            recorded_sessions = present + absent
+            attendance_rate = percentage(present, recorded_sessions) if recorded_sessions else None
+            learner_id = to_int(row["learner_id"])
+            email_key = normalize_email(row["learner_email"])
+            if learner_id and learner_id not in by_id:
+                by_id[learner_id] = attendance_rate
+            if email_key and email_key not in by_email:
+                by_email[email_key] = attendance_rate
+
+    return {"by_id": by_id, "by_email": by_email}
+
+
+def count_previous_absences_from_detail_rows(rows: list[dict], before_date: date | None) -> int:
+    seen = set()
+    previous_absences = 0
+    for row in rows:
+        parsed_date = parse_date_value(row.get("session_date"))
+        session_date = parsed_date.date() if isinstance(parsed_date, datetime) else parsed_date
+        row_key = (
+            clean_text(row.get("learner_id")),
+            normalize_email(row.get("learner_email")),
+            format_iso_date(session_date),
+            clean_text(row.get("session_start_time")),
+        )
+        if row_key in seen:
+            continue
+        seen.add(row_key)
+        if (
+            before_date
+            and session_date
+            and session_date < before_date
+            and normalize_attendance_detail_status(row.get("attendance_status")) == "absent"
+        ):
+            previous_absences += 1
+    return previous_absences
+
+
+def normalize_absence_report_status(value: str | None) -> str:
+    status = clean_text(value).lower()
+    if status in {
+        CoachAbsenceReport.STATUS_PENDING,
+        CoachAbsenceReport.STATUS_APPROVED,
+        CoachAbsenceReport.STATUS_DECLINED,
+    }:
+        return status
+    return CoachAbsenceReport.STATUS_PENDING
+
+
+def serialize_absence_report(
+    report: CoachAbsenceReport,
+    learner=None,
+    attendance_rate_override=None,
+    previous_absences_override=None,
+) -> dict:
     learner_snapshot = serialize_active_user_learner(learner) if learner else {}
     reported_by = clean_text(report.reported_by)
     if reported_by not in {"Learner", "Employer", "Coach"}:
         reported_by = "Learner"
+    attendance_rate = attendance_rate_override
+    if attendance_rate is None:
+        attendance_rate = report.attendance_rate if report.attendance_rate is not None else learner_snapshot.get("attendanceRate") or 0
+    status = normalize_absence_report_status(report.status)
     return {
         "id": str(report.id),
         "learnerId": str(report.learner_id),
@@ -2913,18 +3736,18 @@ def serialize_absence_report(report: CoachAbsenceReport, learner=None) -> dict:
         "reason": report.reason,
         "reportedBy": reported_by,
         "reportedDate": report.created_at.date().isoformat(),
-        "status": report.status,
+        "status": status,
         "evidenceProvided": report.evidence_provided,
         "evidenceKind": report.evidence_kind,
         "evidenceType": "Image" if report.evidence_kind == "image" else "Text" if report.evidence_kind == "text" else None,
         "evidenceText": report.evidence_text or None,
         "evidenceImageUrl": report.evidence_image_url or None,
-        "previousAbsences": report.previous_absences,
-        "attendanceRate": report.attendance_rate if report.attendance_rate is not None else learner_snapshot.get("attendanceRate") or 0,
+        "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
+        "attendanceRate": attendance_rate,
         "coachNote": report.coach_note,
         "coachNotes": report.coach_note,
-        "decisionDate": report.updated_at.date().isoformat() if report.status != CoachAbsenceReport.STATUS_PENDING else None,
-        "decisionBy": report.owner_name if report.status != CoachAbsenceReport.STATUS_PENDING else None,
+        "decisionDate": report.updated_at.date().isoformat() if status != CoachAbsenceReport.STATUS_PENDING else None,
+        "decisionBy": report.owner_name if status != CoachAbsenceReport.STATUS_PENDING else None,
     }
 
 
@@ -2951,7 +3774,14 @@ def coach_absence_reports(request):
         report.status = status
         report.coach_note = clean_text(payload.get("coachNote"))
         report.save(update_fields=["status", "coach_note", "updated_at"])
-        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id))})
+        attendance_rates = fetch_absence_report_attendance_rates([report.learner_id], [report.learner_email])
+        attendance_rate = attendance_rates["by_id"].get(report.learner_id)
+        if attendance_rate is None:
+            attendance_rate = attendance_rates["by_email"].get(normalize_email(report.learner_email))
+        detail_data = fetch_attendance_detail_summary_data([report.learner_id], [report.learner_email])
+        detail_rows = detail_data["recordsById"].get(report.learner_id) or detail_data["records"].get(normalize_email(report.learner_email), [])
+        previous_absences = count_previous_absences_from_detail_rows(detail_rows, report.session_date)
+        return JsonResponse({"item": serialize_absence_report(report, active_map.get(report.learner_id), attendance_rate, previous_absences)})
 
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -2961,8 +3791,27 @@ def coach_absence_reports(request):
         report for report in records
         if report.learner_id in active_ids or normalize_email(report.learner_email) in active_emails
     ]
+    attendance_rates = fetch_absence_report_attendance_rates(
+        [report.learner_id for report in records],
+        [report.learner_email for report in records],
+    )
+    attendance_detail_data = fetch_attendance_detail_summary_data(
+        [report.learner_id for report in records],
+        [report.learner_email for report in records],
+    )
     items = [
-        serialize_absence_report(report, active_map.get(report.learner_id))
+        serialize_absence_report(
+            report,
+            active_map.get(report.learner_id),
+            attendance_rates["by_id"].get(report.learner_id)
+            if attendance_rates["by_id"].get(report.learner_id) is not None
+            else attendance_rates["by_email"].get(normalize_email(report.learner_email)),
+            count_previous_absences_from_detail_rows(
+                attendance_detail_data["recordsById"].get(report.learner_id)
+                or attendance_detail_data["records"].get(normalize_email(report.learner_email), []),
+                report.session_date,
+            ),
+        )
         for report in records
     ]
     return JsonResponse({
@@ -3061,6 +3910,32 @@ def coach_marking_queue(request):
         {
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
+            "items": items,
+        }
+    )
+
+
+@require_GET
+def coach_evidence_awaiting_review(request):
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+
+    try:
+        items, caseload_learners = fetch_evidence_file_queue(owner_email)
+    except Exception as exc:
+        return JsonResponse(
+            {"detail": "Unable to load coach evidence awaiting review data.", "error": str(exc)},
+            status=500,
+        )
+
+    return JsonResponse(
+        {
+            "owner": {"email": owner_email},
+            "summary": {
+                "caseloadLearners": len(caseload_learners),
+                "queueLearners": len(items),
+                "pendingItems": sum(item["pendingEvidence"] for item in items),
+                "totalEvidence": sum(item["totalEvidence"] for item in items),
+            },
             "items": items,
         }
     )
