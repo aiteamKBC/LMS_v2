@@ -2,7 +2,6 @@ import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef
 import { createPortal } from 'react-dom';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
-import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 import {
@@ -32,7 +31,6 @@ import {
   type CurriculumModule,
   type CurriculumModuleAttachmentInput,
   type CurriculumProgramme,
-  type CurriculumSession,
   type CurriculumStaffProfile,
   type FreeProgrammeModule,
   type FreeProgrammeModuleInput,
@@ -109,8 +107,6 @@ interface ModuleDraft {
 
 interface TutorSessionSummary {
   id: string;
-  source: 'draft' | 'saved';
-  sourceKeys: Set<string>;
   tutor: string;
   date: string;
   startTime: string;
@@ -1185,59 +1181,6 @@ function moduleDraftChipSessionCount(draft: ModuleDraft, moduleOptions: Curricul
   return moduleDraftSessionCount(draft, selectedModule);
 }
 
-function scheduleSourceKey(value: unknown) {
-  const key = normalise(value);
-  return key && key !== 'unassigned' ? key : '';
-}
-
-function scheduleSourceKeys(values: unknown[]) {
-  const keys = new Set<string>();
-  values.forEach(value => {
-    const key = scheduleSourceKey(value);
-    if (key) keys.add(key);
-  });
-  return keys;
-}
-
-function draftDeliverySourceKeys(draft: ModuleDraft, selectedModule?: CurriculumModule) {
-  const selectedSourceType = normalise(selectedModule?.sourceType);
-  const deliveryRowId = selectedModule?.deliveryRowId || (selectedSourceType === 'trainingplan' ? selectedModule?.sourceId : '');
-  return scheduleSourceKeys([
-    draft.sourceId,
-    draft.catalogueId,
-    draft.existingCatalogueId,
-    deliveryRowId,
-    deliveryRowId ? `training-module-${deliveryRowId}` : '',
-    selectedModule?.id,
-    selectedModule?.sourceId,
-    selectedModule?.moduleId,
-    selectedModule?.moduleCatalogueId,
-    selectedModule?.catalogueId,
-    selectedModule?.structureId,
-    selectedModule?.deliveryModuleId,
-    selectedModule?.deliveryRowId,
-  ]);
-}
-
-function savedSessionSourceKeys(session: CurriculumSession) {
-  return scheduleSourceKeys([
-    session.moduleId,
-    session.moduleCatalogueId,
-    session.deliveryModuleId,
-    session.deliveryRowId,
-    session.trainingPlanId,
-    session.id?.match(/^training-(.+)-session-\d+$/)?.[1],
-  ]);
-}
-
-function sourceKeysOverlap(left: Set<string>, right: Set<string>) {
-  if (!left.size || !right.size) return false;
-  for (const key of left) {
-    if (right.has(key)) return true;
-  }
-  return false;
-}
-
 function timeToMinutes(value: string) {
   const normalised = toTimeInput(value);
   const [hour, minute] = normalised.split(':').map(Number);
@@ -1294,12 +1237,9 @@ function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: Curricul
     if (!tutor || !isConfiguredModule(draft)) return [];
     const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
     const moduleName = moduleDraftDisplayName(draft, moduleIndex, moduleOptions);
-    const sourceKeys = draftDeliverySourceKeys(draft, selectedModule);
     const endTime = group.endTime || addHoursToTime(group.startTime, 2);
     return draft.weeks.map(session => ({
       id: `draft-${cohort.localId}-${group.localId}-${draft.localId}-${session.sessionNumber}`,
-      source: 'draft' as const,
-      sourceKeys,
       tutor,
       date: session.date,
       startTime: session.startTime || group.startTime,
@@ -1317,35 +1257,12 @@ function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: Curricul
   })));
 }
 
-function savedTutorSession(session: CurriculumSession): TutorSessionSummary | null {
-  const tutor = staffAssignment(session.tutor);
-  if (!tutor || normalise(session.status) === 'cancelled') return null;
-  if (!session.date || !session.startTime) return null;
-  return {
-    id: `saved-${session.id}`,
-    source: 'saved',
-    sourceKeys: savedSessionSourceKeys(session),
-    tutor,
-    date: session.date,
-    startTime: session.startTime,
-    endTime: session.endTime || addHoursToTime(session.startTime, 2),
-    programme: session.programme || 'Unassigned programme',
-    cohort: session.cohort || 'Unassigned cohort',
-    group: session.group || 'Unassigned group',
-    module: session.module || session.title || 'Session',
-    sessionNumber: session.week || 1,
-    title: session.title || `${session.module || 'Session'} ${session.week || ''}`.trim(),
-  };
-}
-
 function findTutorScheduleConflicts(
   cohortDrafts: CohortDraft[],
   moduleOptions: CurriculumModule[],
-  savedSessions: CurriculumSession[],
   programmeName: string,
 ) {
   const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, programmeName);
-  const savedSummaries = savedSessions.map(savedTutorSession).filter((session): session is TutorSessionSummary => Boolean(session));
   const conflicts: TutorScheduleConflict[] = [];
   const seen = new Set<string>();
 
@@ -1357,15 +1274,6 @@ function findTutorScheduleConflicts(
       if (seen.has(key)) return;
       seen.add(key);
       conflicts.push(buildTutorConflict(proposed, other));
-    });
-
-    savedSummaries.forEach(saved => {
-      if (sourceKeysOverlap(proposed.sourceKeys, saved.sourceKeys)) return;
-      if (!tutorSessionsOverlap(proposed, saved)) return;
-      const key = `${proposed.id}|${saved.id}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      conflicts.push(buildTutorConflict(proposed, saved));
     });
   });
 
@@ -1849,7 +1757,6 @@ export function AddCurriculumStructureWizard({
 }: AddCurriculumStructureWizardProps) {
   const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true, refreshModules: true });
   const { modules: catalogueModules, reload: reloadCatalogueModules } = useCurriculumModules({ autoLoad: false });
-  const { sessions: curriculumSessions, loading: sessionsLoading, error: sessionsError, reload: reloadCurriculumSessions } = useCurriculumSessions({ autoLoad: false });
   const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, reload: reloadStaffProfiles } = useCurriculumStaffProfiles({ autoLoad: false });
   const [step, setStep] = useState<WizardStep>(startStep);
   const [programmeForm, setProgrammeForm] = useState({
@@ -1883,7 +1790,6 @@ export function AddCurriculumStructureWizard({
   const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
   const requestedStaffProfilesRef = useRef(false);
-  const requestedSessionsRef = useRef(false);
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
   const selectedProgramme = useMemo(
@@ -2078,14 +1984,6 @@ export function AddCurriculumStructureWizard({
   }, [isFreeProgramme, isOpen, reloadStaffProfiles, step]);
 
   useEffect(() => {
-    if (!isOpen || isFreeProgramme || requestedSessionsRef.current) return;
-    if (!['modules', 'weeks', 'review'].includes(step)) return;
-    requestedSessionsRef.current = true;
-    void reloadCurriculumSessions();
-    return undefined;
-  }, [isFreeProgramme, isOpen, reloadCurriculumSessions, step]);
-
-  useEffect(() => {
     if (!isOpen || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
     syncWizardDraftsFromModuleBuilder();
     setBuilderStructureSyncTick(tick => tick + 1);
@@ -2208,14 +2106,13 @@ export function AddCurriculumStructureWizard({
     });
   }, [cohortDrafts.length, isOpen, staffTutors]);
   const tutorScheduleConflicts = useMemo(
-    () => isFreeProgramme ? [] : findTutorScheduleConflicts(cohortDrafts, moduleOptions, curriculumSessions, selectedProgramme?.name || programmeForm.name),
-    [cohortDrafts, curriculumSessions, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
+    () => isFreeProgramme ? [] : findTutorScheduleConflicts(cohortDrafts, moduleOptions, selectedProgramme?.name || programmeForm.name),
+    [cohortDrafts, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
   );
   const tutorScheduleIssues = useMemo(() => {
     if (isFreeProgramme) return [];
-    if (sessionsLoading || sessionsError) return [];
     return tutorScheduleConflicts.map(conflict => conflict.message);
-  }, [isFreeProgramme, sessionsError, sessionsLoading, tutorScheduleConflicts]);
+  }, [isFreeProgramme, tutorScheduleConflicts]);
 
   const setCohortForm = (updater: Partial<CohortDraft> | ((previous: CohortDraft) => CohortDraft)) => {
     setCohortDrafts(previous => previous.map(cohort => {
@@ -2504,7 +2401,6 @@ export function AddCurriculumStructureWizard({
     loadingBuilderStructureKeysRef.current.clear();
     loadedFreeProgrammeRef.current = '';
     requestedStaffProfilesRef.current = false;
-    requestedSessionsRef.current = false;
   }, [initialProgrammeId, isOpen, startStep]);
 
   useEffect(() => {

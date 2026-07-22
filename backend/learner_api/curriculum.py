@@ -10,18 +10,13 @@ Cascade (mirrors the builder UI):
                                  by cohort/group — modules belong to the programme)
     weeks?module=             -> weeks for a module
     components?week=          -> components for a week
-    weeks?module=             -> weeks for a module
-    components?week=          -> components for a week
 
 How the authoring tables link together:
     Training_plan(id, Program, Cohort_name, group_name, module_name)
         the master grid — one row per module scheduled for a group.
     modules(module_catalogue_id, title, imported_from_training_plan_id)
-    modules(module_catalogue_id, title, imported_from_training_plan_id)
         authored module content; ties back to a Training_plan row (and, by
         title, to that group's module_name).
-    weeks(id, module_catalogue_id)                       -> belongs to a module
-    components(id, week_id)                              -> belongs to a week
     weeks(id, module_catalogue_id)      -> belongs to a module
     components(id, week_id)             -> belongs to a week
 So a group's modules come from Training_plan.module_name; each module's weeks
@@ -62,15 +57,11 @@ def programmes(request):
         return _error("Method not allowed.", 405)
     return _guard(lambda: [
         r["name"]
-        r["name"]
         for r in _rows(
-            "SELECT DISTINCT COALESCE(NULLIF(name, ''), NULLIF(program_id, '')) AS name "
+            "SELECT DISTINCT COALESCE(NULLIF(name, ''), NULLIF(programme_id, '')) AS name "
             "FROM curriculum.programmes "
-            "WHERE COALESCE(NULLIF(name, ''), NULLIF(program_id, '')) IS NOT NULL "
+            "WHERE COALESCE(NULLIF(name, ''), NULLIF(programme_id, '')) IS NOT NULL "
             "  AND COALESCE(is_archived, false) = false "
-            "ORDER BY name"
-            "SELECT DISTINCT name FROM curriculum.programmes "
-            "WHERE name IS NOT NULL AND name <> '' "
             "ORDER BY name"
         )
     ])
@@ -82,19 +73,7 @@ def cohorts(request):
     programme = (request.GET.get("programme") or "").strip()
     if not programme:
         return _error("programme query param is required.", 400)
-    if not _table_exists("Training_plan"):
-        return _guard(lambda: [
-            r["cohort_name"]
-            for r in _rows(
-                "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
-                "WHERE (programme_name = %s OR programme_id = %s) "
-                "AND cohort_name IS NOT NULL AND cohort_name <> '' "
-                "ORDER BY cohort_name",
-                [programme, programme],
-            )
-        ])
     return _guard(lambda: [
-        r["cohort_name"]
         r["cohort_name"]
         for r in _rows(
             "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
@@ -102,10 +81,6 @@ def cohorts(request):
             "  AND (programme_name = %s OR programme_id = %s) "
             "ORDER BY cohort_name",
             [programme, programme],
-            "SELECT DISTINCT cohort_name FROM curriculum.cohorts "
-            "WHERE programme_name = %s AND cohort_name IS NOT NULL AND cohort_name <> '' "
-            "ORDER BY cohort_name",
-            [programme],
         )
     ])
 
@@ -117,18 +92,6 @@ def groups(request):
     cohort = (request.GET.get("cohort") or "").strip()
     if not programme or not cohort:
         return _error("programme and cohort query params are required.", 400)
-    if not _table_exists("Training_plan"):
-        return _guard(lambda: [
-            r["group_name"]
-            for r in _rows(
-                "SELECT DISTINCT group_name FROM curriculum.groups "
-                "WHERE (programme_name = %s OR programme_id = %s) "
-                "AND (cohort_name = %s OR cohort_id = %s) "
-                "AND group_name IS NOT NULL AND group_name <> '' "
-                "ORDER BY group_name",
-                [programme, programme, cohort, cohort],
-            )
-        ])
     return _guard(lambda: [
         r["group_name"]
         for r in _rows(
@@ -138,11 +101,6 @@ def groups(request):
             "  AND (cohort_name = %s OR cohort_id = %s) "
             "ORDER BY group_name",
             [programme, programme, cohort, cohort],
-            "SELECT DISTINCT group_name FROM curriculum.groups "
-            "WHERE programme_name = %s AND cohort_name = %s "
-            "AND group_name IS NOT NULL AND group_name <> '' "
-            "ORDER BY group_name",
-            [programme, cohort],
         )
     ])
 
@@ -157,7 +115,6 @@ def modules(request):
     return _guard(lambda: [
         {"id": r["module_catalogue_id"], "title": r["title"] or r["module_catalogue_id"]}
         for r in _rows(
-            "SELECT module_catalogue_id, title FROM curriculum.modules "
             "SELECT module_catalogue_id, title FROM curriculum.modules "
             "WHERE programme_id = %s OR programme_name = %s OR %s LIKE programme_name || ' %%' "
             "ORDER BY title",
@@ -175,7 +132,6 @@ def weeks(request):
     return _guard(lambda: [
         {"id": r["id"], "title": r["title"] or f"Week {r['week_number']}", "weekNumber": r["week_number"]}
         for r in _rows(
-            "SELECT id, week_number, title FROM curriculum.weeks "
             "SELECT id, week_number, title FROM curriculum.weeks "
             "WHERE module_catalogue_id = %s "
             "ORDER BY week_number, display_order",
@@ -198,7 +154,6 @@ def components(request):
             "expectedOtjh": float(r["expected_otjh"]) if r["expected_otjh"] is not None else None,
         }
         for r in _rows(
-            "SELECT id, type, title FROM curriculum.components "
             "SELECT id, type, title, expected_otjh FROM curriculum.components "
             "WHERE week_id = %s "
             "ORDER BY display_order",

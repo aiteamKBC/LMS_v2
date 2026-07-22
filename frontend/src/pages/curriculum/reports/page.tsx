@@ -39,7 +39,6 @@ const REPORT_SECTIONS: ReportSection[] = [
     items: [
       { id: 'r-quiz-results', name: 'Quiz Results Summary', description: 'Aggregate quiz pass rates by module, cohort, and programme.', icon: 'ri-questionnaire-line', lastGenerated: '11 Jun 2026', status: 'ready', format: ['PDF', 'Excel'] },
       { id: 'r-assignment-grades', name: 'Assignment Grade Distribution', description: 'Distribution of assignment grades across all cohorts.', icon: 'ri-edit-line', lastGenerated: '10 Jun 2026', status: 'ready', format: ['PDF', 'Excel'] },
-      { id: 'r-test-bank-usage', name: 'Test Bank Usage Report', description: 'Which questions are used most, least, and where questions need review.', icon: 'ri-database-2-line', lastGenerated: '07 Jun 2026', status: 'ready', format: ['PDF'] },
       { id: 'r-checkpoint', name: 'Checkpoint Assessment Results', description: 'Checkpoint completion rates and pass/fail analysis per module.', icon: 'ri-check-double-line', lastGenerated: '06 Jun 2026', status: 'ready', format: ['PDF', 'Excel'] },
     ],
   },
