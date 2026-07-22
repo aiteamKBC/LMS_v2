@@ -119,7 +119,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
                           {statusLabel(row.status, row.isSelected)}
                         </span>
                       </div>
-                      <p className="text-[11px] text-foreground-400 mt-1">{row.employer || 'Employer not set'}</p>
+                      <p className="text-[11px] text-foreground-400 mt-1">{row.employer || '--'}</p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-foreground-500">
                         <span>Group {row.group || '--'}</span>
                         <span>Progress {formatPercent(row.progress)}</span>
@@ -169,7 +169,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
                           <p className={`text-[12px] font-medium ${row.isSelected ? 'text-primary-700' : 'text-foreground-900'}`}>
                             {row.name}{row.isSelected ? ' (Selected learner)' : ''}
                           </p>
-                          <p className="text-[10px] text-foreground-400">{row.employer || 'Employer not set'}</p>
+                          <p className="text-[10px] text-foreground-400">{row.employer || '--'}</p>
                         </div>
                       </div>
                     </td>

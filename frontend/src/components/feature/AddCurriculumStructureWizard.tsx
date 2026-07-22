@@ -2,10 +2,15 @@ import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef
 import { createPortal } from 'react-dom';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
+import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
+import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 import {
   attachCurriculumModulesToGroup,
+  archiveCurriculumCohort,
+  archiveCurriculumGroup,
   archiveCurriculumHoliday,
+  createCohortGroup,
   createCurriculumCohort,
   createCurriculumGroup,
   createCurriculumHoliday,
@@ -13,6 +18,7 @@ import {
   createCurriculumProgramme,
   fetchFreeProgrammeModules,
   saveFreeProgrammeModules,
+  saveCurriculumProgrammeTree,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumHoliday,
@@ -26,6 +32,7 @@ import {
   type CurriculumModule,
   type CurriculumModuleAttachmentInput,
   type CurriculumProgramme,
+  type CurriculumSession,
   type CurriculumStaffProfile,
   type FreeProgrammeModule,
   type FreeProgrammeModuleInput,
@@ -37,6 +44,8 @@ import {
   getDefaultStructure,
   loadModuleStructure,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
+  recalculateModule,
+  saveModuleStructure,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
@@ -47,6 +56,8 @@ type WizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'revi
 type ModuleMode = 'existing' | 'new';
 type SaveIntent = 'draft' | 'final';
 type ProgrammeStructureType = 'scheduled' | 'free';
+
+const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
 
 interface GeneratedSession {
   sessionNumber: number;
@@ -94,6 +105,33 @@ interface ModuleDraft {
   skippedHolidaySessions: SkippedHolidaySession[];
   originalEndDate: string;
   extensionDays: number;
+}
+
+interface TutorSessionSummary {
+  id: string;
+  source: 'draft' | 'saved';
+  sourceKeys: Set<string>;
+  tutor: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  programme: string;
+  cohort: string;
+  group: string;
+  module: string;
+  sessionNumber: number;
+  title: string;
+  moduleLocalId?: string;
+  groupLocalId?: string;
+  cohortLocalId?: string;
+}
+
+interface TutorScheduleConflict {
+  id: string;
+  tutor: string;
+  proposed: TutorSessionSummary;
+  conflicting: TutorSessionSummary;
+  message: string;
 }
 
 interface GroupDraft {
@@ -177,6 +215,14 @@ function generatedCurriculumId(prefix: 'COHORT' | 'GROUP') {
   const timestamp = new Date().toISOString().replace(/\D/g, '');
   const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${timestamp}${suffix}`;
+}
+
+// A draft represents an existing entity when it carries a stored canonical id
+// (PROG-/COHORT-/GROUP-/MOD-...). This is decided from the id itself, never by
+// comparing a name-derived value against a list, so an existing entity is
+// always PATCHed and a rename can never fork into a POST/duplicate.
+function isCanonicalCurriculumId(value: unknown, prefix: 'COHORT' | 'GROUP') {
+  return typeof value === 'string' && new RegExp(`^${prefix}-[A-Z0-9]`, 'i').test(value.trim());
 }
 
 function parseDateParts(dateValue: string) {
@@ -542,6 +588,10 @@ function moduleOptionId(module: CurriculumModule) {
   return moduleBuilderStructureId(module);
 }
 
+function isCanonicalModuleBuilderId(value: unknown) {
+  return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
+}
+
 function moduleOptionMatches(module: CurriculumModule, identifier: string) {
   const requested = String(identifier || '').trim();
   if (!requested) return false;
@@ -553,11 +603,79 @@ function moduleOptionMatches(module: CurriculumModule, identifier: string) {
     module.catalogueId,
     module.sourceId,
     module.id,
+    ...(module.relatedCatalogueIds || []),
   ].some(value => String(value || '') === requested);
+}
+
+function moduleAssignmentKeyVariants(values: unknown[]) {
+  const keys = new Set<string>();
+  values.forEach(value => {
+    const text = String(value || '').trim();
+    if (!text) return;
+    keys.add(normalise(text));
+    const canonical = text.match(/(MOD-[A-Z0-9][A-Z0-9_-]*)/i)?.[1];
+    if (canonical) keys.add(normalise(canonical));
+  });
+  return keys;
+}
+
+function moduleDraftMatchesStaffAssignment(draft: ModuleDraft, assignment: Partial<CurriculumModule> | string | number) {
+  const draftKeys = moduleAssignmentKeyVariants([
+    draft.sourceId,
+    draft.catalogueId,
+    draft.existingCatalogueId,
+  ]);
+  const assignmentKeys = typeof assignment === 'object'
+    ? moduleAssignmentKeyVariants([
+        assignment.id,
+        assignment.moduleId,
+        assignment.moduleCatalogueId,
+        assignment.deliveryRowId,
+        assignment.deliveryModuleId,
+        assignment.catalogueId,
+        assignment.sourceId,
+      ])
+    : moduleAssignmentKeyVariants([assignment]);
+  return Array.from(draftKeys).some(key => assignmentKeys.has(key));
+}
+
+function assignedTutorForDraft(draft: ModuleDraft, tutorProfiles: CurriculumStaffProfile[]) {
+  for (const profile of tutorProfiles) {
+    const name = staffName(profile);
+    if (!name) continue;
+    const assignedModules = Array.isArray(profile.assignedModules) ? profile.assignedModules : [];
+    if (assignedModules.some(module => moduleDraftMatchesStaffAssignment(draft, module))) return name;
+    const assignedModuleIds = Array.isArray(profile.assignedModuleIds) ? profile.assignedModuleIds : [];
+    if (assignedModuleIds.some(id => moduleDraftMatchesStaffAssignment(draft, id))) return name;
+  }
+  return '';
 }
 
 function findModuleOption(moduleOptions: CurriculumModule[], identifier: string) {
   return moduleOptions.find(module => moduleOptionMatches(module, identifier));
+}
+
+function contextValuesOverlap(leftValues: unknown[], rightValues: unknown[]) {
+  const left = leftValues.map(normalise).filter(Boolean);
+  const right = rightValues.map(normalise).filter(Boolean);
+  if (right.length && !left.length) return false;
+  if (!left.length || !right.length) return true;
+  return left.some(value => right.includes(value));
+}
+
+function moduleMatchesDeliveryContext(module: CurriculumModule, context: {
+  programmeId?: string;
+  programmeName?: string;
+  cohortId?: string;
+  cohortName?: string;
+  groupId?: string;
+  groupName?: string;
+}) {
+  return (
+    contextValuesOverlap([module.programmeId, module.programme], [context.programmeId, context.programmeName]) &&
+    contextValuesOverlap([module.cohortId, module.cohort], [context.cohortId, context.cohortName]) &&
+    contextValuesOverlap([module.groupId, module.group], [context.groupId, context.groupName])
+  );
 }
 
 function mergeCurriculumModule(existing: CurriculumModule | undefined, next: CurriculumModule): CurriculumModule {
@@ -582,12 +700,15 @@ function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): Curr
     moduleId: module.catalogueId,
     moduleCatalogueId: module.catalogueId,
     structureId: module.catalogueId,
-    sourceId: module.sourceId || module.catalogueId,
+    sourceId: module.catalogueId || module.sourceId,
     catalogueId: module.catalogueId,
     name: module.title,
+    programmeId: module.programmeId,
     programme: module.programmeName,
-    cohort: module.sourceModule?.cohort,
-    group: module.sourceModule?.group,
+    cohortId: module.cohortId || module.deliveryMetadata?.cohortId || module.sourceModule?.cohortId || '',
+    cohort: module.cohort || module.deliveryMetadata?.cohort || module.sourceModule?.cohort || '',
+    groupId: module.groupId || module.deliveryMetadata?.groupId || module.sourceModule?.groupId || '',
+    group: module.group || module.deliveryMetadata?.group || module.sourceModule?.group || '',
     weeks: module.weeks || module.weekStructure.length || 1,
     sessionsNumber: module.sessionsNumber || module.weeks || module.weekStructure.length || 1,
     startDate: module.startDate,
@@ -598,12 +719,10 @@ function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): Curr
     assignments: module.weekStructure.flatMap(week => week.components).filter(component => component.type === 'assignment').length,
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
-    sourceType: module.sourceType || 'authoring',
-    importedFromTrainingPlanId: module.importedFromTrainingPlanId,
     deliveryStatus: module.deliveryStatus,
     author: module.sourceModule?.author || 'Module Builder',
-    tutor: staffAssignment(module.deliveryMetadata?.tutor, module.sourceModule?.tutor),
-    coach: staffAssignment(module.deliveryMetadata?.coach, module.sourceModule?.coach),
+    tutor: staffAssignment(module.tutor, module.deliveryMetadata?.tutor, module.sourceModule?.tutor),
+    coach: staffAssignment(module.coach, module.deliveryMetadata?.coach, module.sourceModule?.coach),
     lastUpdated: module.sourceModule?.lastUpdated || '',
     color: module.sourceModule?.color || '#2563eb',
     notes: userFacingNotes(module.description),
@@ -613,7 +732,14 @@ function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): Curr
 }
 
 function moduleBuilderStructureId(module: CurriculumModule) {
-  return String(module.moduleCatalogueId || module.catalogueId || module.moduleId || module.structureId || curriculumModuleToCatalogue(module).catalogueId || '');
+  const canonical = [
+    module.moduleCatalogueId,
+    module.catalogueId,
+    module.structureId,
+    module.moduleId,
+    ...(module.relatedCatalogueIds || []),
+  ].map(value => String(value || '').trim()).find(isCanonicalModuleBuilderId);
+  return canonical || String(module.moduleCatalogueId || module.catalogueId || module.structureId || module.moduleId || curriculumModuleToCatalogue(module).catalogueId || '');
 }
 
 function moduleSessionCount(module?: CurriculumModule) {
@@ -627,10 +753,31 @@ function moduleDraftSessionCount(draft: Pick<ModuleDraft, 'mode' | 'sessionsNumb
   return Math.max(0, draft.weeks.length);
 }
 
+function moduleBuilderStructureSessionCount(structure: ModuleCatalogueItem, fallback = 1) {
+  if (Array.isArray(structure.weekStructure)) return structure.weekStructure.length;
+  return Math.max(0, Math.round(Number(structure.sessionsNumber) || Number(structure.weeks) || fallback));
+}
+
+function moduleBuilderStructureComponentCount(structure: ModuleCatalogueItem) {
+  return structure.weekStructure.reduce((total, week) => total + (week.components || []).length, 0);
+}
+
+function moduleDraftComponentCount(draft: Pick<ModuleDraft, 'weeks'>) {
+  return draft.weeks.reduce((total, week) => total + week.components.length, 0);
+}
+
+function curriculumModuleComponentCount(module: CurriculumModule) {
+  return Math.max(
+    Number(module.lessons) || 0,
+    module.weekStructure?.reduce((total, week) => total + (week.components || []).length, 0) || 0,
+  );
+}
+
 function userFacingNotes(value: unknown) {
   return String(value || '')
     .split(/\r?\n/)
     .map(line => line.replace(/(^|\s)__[a-zA-Z0-9_]+:[\s\S]*?(?=\s__[a-zA-Z0-9_]+:|$)/g, ' ').trim())
+    .filter(line => !/^\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours)$/i.test(line))
     .filter(Boolean)
     .join('\n')
     .trim();
@@ -710,15 +857,27 @@ function groupBelongsToCohort(group: CurriculumGroup, cohort: CurriculumCohort) 
 }
 
 function moduleBelongsToGroup(module: CurriculumModule, group: CurriculumGroup, cohort: CurriculumCohort, programme: CurriculumProgramme) {
-  const groupMatch = valueMatchesCandidate(module.groupId, candidateKeys([group.id]));
-  const cohortMatch = valueMatchesCandidate(module.cohortId, candidateKeys([cohort.id]));
-  const programmeMatch = valueMatchesCandidate(module.programmeId, programmeKeys(programme));
-  return groupMatch && cohortMatch && programmeMatch;
+  const deliveryMetadata = (module as CurriculumModule & { deliveryMetadata?: Record<string, unknown> }).deliveryMetadata || {};
+  const moduleGroupValues = [module.groupId, module.group, deliveryMetadata.groupId, deliveryMetadata.group];
+  const groupMatch = moduleGroupValues.some(value => valueMatchesCandidate(value, candidateKeys([group.id, group.name])));
+  const cohortMatch = [module.cohortId, module.cohort, deliveryMetadata.cohortId, deliveryMetadata.cohort]
+    .some(value => valueMatchesCandidate(value, candidateKeys([cohort.id, cohort.name])));
+  const programmeMatch = [module.programmeId, module.programme]
+    .some(value => valueMatchesCandidate(value, programmeKeys(programme)));
+  if (!cohortMatch || !programmeMatch) return false;
+  if (groupMatch) return true;
+
+  const hasGroupContext = moduleGroupValues.some(value => String(value || '').trim());
+  if (hasGroupContext) return false;
+
+  const groupModuleKeys = candidateKeys(group.modules || []);
+  return valueMatchesCandidate(module.name, groupModuleKeys) || (cohort.groups || []).length <= 1;
 }
 
 function uniqueModulesByName(modules: CurriculumModule[]) {
+  const preferred = [...modules].sort((left, right) => curriculumModuleComponentCount(right) - curriculumModuleComponentCount(left));
   const seen = new Set<string>();
-  return modules.filter(module => {
+  return preferred.filter(module => {
     const key = normalise(module.name || moduleOptionId(module));
     if (!key || seen.has(key)) return false;
     seen.add(key);
@@ -786,8 +945,11 @@ function buildExistingProgrammeDrafts(
       sourceId: cohort.id,
       name: cohort.name || '',
       startDate: cohort.startDate || todayIso(),
-      durationMonths: inclusiveMonthSpan(cohort.startDate, cohort.endDate),
-      endDate: cohort.endDate || calculateCohortEndDate(cohort.startDate || todayIso(), inclusiveMonthSpan(cohort.startDate, cohort.endDate)),
+      durationMonths: String(Number(cohort.durationMonths) || Number(inclusiveMonthSpan(cohort.startDate, cohort.endDate)) || 12),
+      endDate: cohort.endDate || calculateCohortEndDate(
+        cohort.startDate || todayIso(),
+        Number(cohort.durationMonths) || Number(inclusiveMonthSpan(cohort.startDate, cohort.endDate)) || 12,
+      ),
       color: cohort.color || '#0f766e',
       holidayIds,
       groups: [],
@@ -808,7 +970,6 @@ function buildExistingProgrammeDrafts(
         modules: [],
       };
       const groupModules = uniqueModulesByName(modules.filter(module => moduleBelongsToGroup(module, group, cohort, programme)));
-      if (!groupModules.length) return [];
       groupDraft.modules = groupModules.map(module => existingModuleDraft(module, groupDraft, activeHolidays, group));
       return [groupDraft];
     });
@@ -818,7 +979,6 @@ function buildExistingProgrammeDrafts(
     }
     return cohortDraft;
   })
-    .filter(cohort => cohort.groups.length > 0)
     .sort((left, right) => Number(right.sourceId === initialCohortId) - Number(left.sourceId === initialCohortId));
 }
 
@@ -961,6 +1121,60 @@ function formatSessionCount(count: number) {
   return `${count} session${count === 1 ? '' : 's'}`;
 }
 
+function formatHoursValue(hours: number) {
+  const totalMinutes = Math.round(Math.max(0, Number(hours) || 0) * 60);
+  const wholeHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (!wholeHours && !minutes) return '0h';
+  if (!wholeHours) return `${minutes}m`;
+  if (!minutes) return `${wholeHours}h`;
+  return `${wholeHours}h ${minutes}m`;
+}
+
+function componentTotalHours(components: ModuleComponent[]) {
+  return components.reduce((total, component) => total + Math.max(0, Number(component.expectedOtjh) || 0), 0);
+}
+
+function moduleDraftAuthoredHours(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
+  const authoredTotal = draft.weeks.reduce((total, week) => total + componentTotalHours(week.components), 0);
+  if (authoredTotal > 0) return authoredTotal;
+  const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
+  const moduleTotals = selectedModule as (CurriculumModule & { declaredTotalOtjh?: number; totalOtjh?: number }) | undefined;
+  return Math.max(0, Number(moduleTotals?.declaredTotalOtjh || moduleTotals?.totalOtjh || 0) || 0);
+}
+
+function groupSessionDurationHours(group: Pick<GroupDraft, 'startTime' | 'endTime'>) {
+  const [startHour, startMinute] = String(group.startTime || '').split(':').map(Number);
+  const [endHour, endMinute] = String(group.endTime || addHoursToTime(group.startTime, 2)).split(':').map(Number);
+  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return 0;
+  const startTotal = startHour * 60 + startMinute;
+  const endTotal = endHour * 60 + endMinute;
+  const durationMinutes = endTotal >= startTotal ? endTotal - startTotal : endTotal + 1440 - startTotal;
+  return Math.max(0, durationMinutes / 60);
+}
+
+function moduleDraftScheduledHours(draft: ModuleDraft, group: Pick<GroupDraft, 'startTime' | 'endTime'>, moduleOptions: CurriculumModule[]) {
+  const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
+  return moduleDraftSessionCount(draft, selectedModule) * groupSessionDurationHours(group);
+}
+
+function moduleDraftTotalHours(draft: ModuleDraft, group: Pick<GroupDraft, 'startTime' | 'endTime'>, moduleOptions: CurriculumModule[]) {
+  const authoredHours = moduleDraftAuthoredHours(draft, moduleOptions);
+  return authoredHours > 0 ? authoredHours : moduleDraftScheduledHours(draft, group, moduleOptions);
+}
+
+function groupTotalHours(group: GroupDraft, moduleOptions: CurriculumModule[]) {
+  return group.modules.filter(isConfiguredModule).reduce((total, draft) => total + moduleDraftTotalHours(draft, group, moduleOptions), 0);
+}
+
+function cohortTotalHours(cohort: CohortDraft, moduleOptions: CurriculumModule[]) {
+  return cohort.groups.filter(isConfiguredGroup).reduce((total, group) => total + groupTotalHours(group, moduleOptions), 0);
+}
+
+function programmeTotalHours(cohorts: CohortDraft[], moduleOptions: CurriculumModule[]) {
+  return cohorts.reduce((total, cohort) => total + cohortTotalHours(cohort, moduleOptions), 0);
+}
+
 function moduleDraftDisplayName(draft: ModuleDraft, index: number, moduleOptions: CurriculumModule[]) {
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   return draft.name.trim() || selectedModule?.name || `Module ${index + 1}`;
@@ -969,6 +1183,198 @@ function moduleDraftDisplayName(draft: ModuleDraft, index: number, moduleOptions
 function moduleDraftChipSessionCount(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   return moduleDraftSessionCount(draft, selectedModule);
+}
+
+function scheduleSourceKey(value: unknown) {
+  const key = normalise(value);
+  return key && key !== 'unassigned' ? key : '';
+}
+
+function scheduleSourceKeys(values: unknown[]) {
+  const keys = new Set<string>();
+  values.forEach(value => {
+    const key = scheduleSourceKey(value);
+    if (key) keys.add(key);
+  });
+  return keys;
+}
+
+function draftDeliverySourceKeys(draft: ModuleDraft, selectedModule?: CurriculumModule) {
+  const selectedSourceType = normalise(selectedModule?.sourceType);
+  const deliveryRowId = selectedModule?.deliveryRowId || (selectedSourceType === 'trainingplan' ? selectedModule?.sourceId : '');
+  return scheduleSourceKeys([
+    draft.sourceId,
+    draft.catalogueId,
+    draft.existingCatalogueId,
+    deliveryRowId,
+    deliveryRowId ? `training-module-${deliveryRowId}` : '',
+    selectedModule?.id,
+    selectedModule?.sourceId,
+    selectedModule?.moduleId,
+    selectedModule?.moduleCatalogueId,
+    selectedModule?.catalogueId,
+    selectedModule?.structureId,
+    selectedModule?.deliveryModuleId,
+    selectedModule?.deliveryRowId,
+  ]);
+}
+
+function savedSessionSourceKeys(session: CurriculumSession) {
+  return scheduleSourceKeys([
+    session.moduleId,
+    session.moduleCatalogueId,
+    session.deliveryModuleId,
+    session.deliveryRowId,
+    session.trainingPlanId,
+    session.id?.match(/^training-(.+)-session-\d+$/)?.[1],
+  ]);
+}
+
+function sourceKeysOverlap(left: Set<string>, right: Set<string>) {
+  if (!left.size || !right.size) return false;
+  for (const key of left) {
+    if (right.has(key)) return true;
+  }
+  return false;
+}
+
+function timeToMinutes(value: string) {
+  const normalised = toTimeInput(value);
+  const [hour, minute] = normalised.split(':').map(Number);
+  if (!normalised || !Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function normalisedTimeRange(startValue: string, endValue: string) {
+  const start = timeToMinutes(startValue);
+  const fallbackEnd = startValue ? addHoursToTime(startValue, 2) : '';
+  const end = timeToMinutes(endValue || fallbackEnd);
+  if (start === null || end === null) return null;
+  return { start, end: end > start ? end : end + 1440 };
+}
+
+function timeRangesOverlap(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string) {
+  const left = normalisedTimeRange(leftStart, leftEnd);
+  const right = normalisedTimeRange(rightStart, rightEnd);
+  if (!left || !right) return false;
+  return left.start < right.end && right.start < left.end;
+}
+
+function formatTimeRange(startTime: string, endTime: string) {
+  return `${startTime || '--:--'}-${endTime || addHoursToTime(startTime, 2) || '--:--'}`;
+}
+
+function tutorSessionsOverlap(left: TutorSessionSummary, right: TutorSessionSummary) {
+  if (!left.tutor || normalise(left.tutor) !== normalise(right.tutor)) return false;
+  if (!left.date || left.date !== right.date) return false;
+  return timeRangesOverlap(left.startTime, left.endTime, right.startTime, right.endTime);
+}
+
+function conflictSessionLabel(session: TutorSessionSummary) {
+  const path = [session.programme, session.cohort, session.group].filter(Boolean).join(' / ');
+  const title = session.title || `${session.module || 'Session'} ${session.sessionNumber}`;
+  return `${title}${path ? ` (${path})` : ''}`;
+}
+
+function buildTutorConflict(proposed: TutorSessionSummary, conflicting: TutorSessionSummary): TutorScheduleConflict {
+  const proposedRange = formatTimeRange(proposed.startTime, proposed.endTime);
+  const conflictingRange = formatTimeRange(conflicting.startTime, conflicting.endTime);
+  return {
+    id: `${proposed.id}__${conflicting.id}`,
+    tutor: proposed.tutor,
+    proposed,
+    conflicting,
+    message: `${proposed.tutor} is already assigned to ${conflictSessionLabel(conflicting)} on ${formatSessionDate(proposed.date)} from ${conflictingRange}. The selected session is ${conflictSessionLabel(proposed)} from ${proposedRange}.`,
+  };
+}
+
+function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: CurriculumModule[], programmeName: string) {
+  return cohortDrafts.flatMap(cohort => cohort.groups.flatMap(group => group.modules.flatMap((draft, moduleIndex) => {
+    const tutor = staffAssignment(draft.tutor);
+    if (!tutor || !isConfiguredModule(draft)) return [];
+    const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
+    const moduleName = moduleDraftDisplayName(draft, moduleIndex, moduleOptions);
+    const sourceKeys = draftDeliverySourceKeys(draft, selectedModule);
+    const endTime = group.endTime || addHoursToTime(group.startTime, 2);
+    return draft.weeks.map(session => ({
+      id: `draft-${cohort.localId}-${group.localId}-${draft.localId}-${session.sessionNumber}`,
+      source: 'draft' as const,
+      sourceKeys,
+      tutor,
+      date: session.date,
+      startTime: session.startTime || group.startTime,
+      endTime,
+      programme: programmeName,
+      cohort: cohortDisplayName(cohort),
+      group: group.name || 'Unnamed group',
+      module: moduleName,
+      sessionNumber: session.sessionNumber,
+      title: session.title || `${moduleName} session ${session.sessionNumber}`,
+      moduleLocalId: draft.localId,
+      groupLocalId: group.localId,
+      cohortLocalId: cohort.localId,
+    }));
+  })));
+}
+
+function savedTutorSession(session: CurriculumSession): TutorSessionSummary | null {
+  const tutor = staffAssignment(session.tutor);
+  if (!tutor || normalise(session.status) === 'cancelled') return null;
+  if (!session.date || !session.startTime) return null;
+  return {
+    id: `saved-${session.id}`,
+    source: 'saved',
+    sourceKeys: savedSessionSourceKeys(session),
+    tutor,
+    date: session.date,
+    startTime: session.startTime,
+    endTime: session.endTime || addHoursToTime(session.startTime, 2),
+    programme: session.programme || 'Unassigned programme',
+    cohort: session.cohort || 'Unassigned cohort',
+    group: session.group || 'Unassigned group',
+    module: session.module || session.title || 'Session',
+    sessionNumber: session.week || 1,
+    title: session.title || `${session.module || 'Session'} ${session.week || ''}`.trim(),
+  };
+}
+
+function findTutorScheduleConflicts(
+  cohortDrafts: CohortDraft[],
+  moduleOptions: CurriculumModule[],
+  savedSessions: CurriculumSession[],
+  programmeName: string,
+) {
+  const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, programmeName);
+  const savedSummaries = savedSessions.map(savedTutorSession).filter((session): session is TutorSessionSummary => Boolean(session));
+  const conflicts: TutorScheduleConflict[] = [];
+  const seen = new Set<string>();
+
+  proposedSessions.forEach((proposed, index) => {
+    proposedSessions.slice(index + 1).forEach(other => {
+      if (proposed.moduleLocalId === other.moduleLocalId) return;
+      if (!tutorSessionsOverlap(proposed, other)) return;
+      const key = [proposed.id, other.id].sort().join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      conflicts.push(buildTutorConflict(proposed, other));
+    });
+
+    savedSummaries.forEach(saved => {
+      if (sourceKeysOverlap(proposed.sourceKeys, saved.sourceKeys)) return;
+      if (!tutorSessionsOverlap(proposed, saved)) return;
+      const key = `${proposed.id}|${saved.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      conflicts.push(buildTutorConflict(proposed, saved));
+    });
+  });
+
+  return conflicts;
+}
+
+function firstTutorConflictForModule(conflicts: TutorScheduleConflict[], moduleLocalId?: string) {
+  if (!moduleLocalId) return undefined;
+  return conflicts.find(conflict => conflict.proposed.moduleLocalId === moduleLocalId || conflict.conflicting.moduleLocalId === moduleLocalId);
 }
 
 function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partial<ModuleDraft> {
@@ -1025,9 +1431,11 @@ function moduleBuilderUrlForDraft(draft: ModuleDraft, moduleOptions: CurriculumM
 }
 
 function moduleBuilderStructureIdentifierForDraft(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
-  if (draft.mode !== 'existing') return '';
-  const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-  return selectedModule ? moduleBuilderStructureId(selectedModule) : (draft.catalogueId || draft.sourceId || '');
+  if (isCanonicalModuleBuilderId(draft.catalogueId)) return draft.catalogueId;
+  if (isCanonicalModuleBuilderId(draft.existingCatalogueId)) return draft.existingCatalogueId;
+  const selectedModule = draft.catalogueId ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
+  if (selectedModule) return moduleBuilderStructureId(selectedModule);
+  return draft.catalogueId || draft.sourceId || '';
 }
 
 function configuredGroupCount(cohort: CohortDraft) {
@@ -1056,22 +1464,42 @@ function isCurriculumNotFoundError(err: unknown) {
   return err instanceof Error && /\b404\b/.test(err.message);
 }
 
+// Existing vs new is decided solely by the presence of a stored canonical
+// sourceId (PROG-/COHORT-/GROUP-/MOD-...). An existing entity is PATCHed and
+// never silently recreated as a POST: if the canonical id cannot be found the
+// save fails loudly so a rename can never fork into a duplicate row.
 async function saveCurriculumCohort(sourceId: string | undefined, payload: CurriculumCohortInput) {
   if (!sourceId) return createCurriculumCohort(payload);
   try {
     return await updateCurriculumCohort(sourceId, payload);
   } catch (err) {
-    if (isCurriculumNotFoundError(err)) return createCurriculumCohort(payload);
+    if (isCurriculumNotFoundError(err)) {
+      throw new Error(
+        `Cohort "${payload.name || sourceId}" could not be found (${sourceId}). ` +
+        'It may have been deleted in another session. Reload the curriculum and try again — ' +
+        'the rename was not saved and no duplicate was created.',
+      );
+    }
     throw err;
   }
 }
 
 async function saveCurriculumGroup(sourceId: string | undefined, payload: CurriculumGroupInput) {
+  if (!sourceId && payload.cohortId) {
+    const { cohortId, ...groupInput } = payload;
+    return createCohortGroup(cohortId, groupInput);
+  }
   if (!sourceId) return createCurriculumGroup(payload);
   try {
     return await updateCurriculumGroup(sourceId, payload);
   } catch (err) {
-    if (isCurriculumNotFoundError(err)) return createCurriculumGroup(payload);
+    if (isCurriculumNotFoundError(err)) {
+      throw new Error(
+        `Group "${payload.name || sourceId}" could not be found (${sourceId}). ` +
+        'It may have been deleted in another session. Reload the curriculum and try again — ' +
+        'the rename was not saved and no duplicate was created.',
+      );
+    }
     throw err;
   }
 }
@@ -1151,9 +1579,15 @@ function reconcileModuleDraft(draft: ModuleDraft, groupDay: string, groupTime: s
 }
 
 function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogueItem, groupDay: string, groupTime: string, activeHolidays: CurriculumHoliday[]) {
-  const next = reconcileModuleDraft(draft, groupDay, groupTime, activeHolidays);
+  const structureTutor = staffAssignment(structure.tutor, structure.deliveryMetadata?.tutor, structure.sourceModule?.tutor);
+  const structureCoach = staffAssignment(structure.coach, structure.deliveryMetadata?.coach, structure.sourceModule?.coach);
+  const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+  const next = reconcileModuleDraft({ ...draft, sessionsNumber }, groupDay, groupTime, activeHolidays);
   return {
     ...next,
+    sessionsNumber,
+    tutor: staffAssignment(next.tutor, structureTutor),
+    coach: staffAssignment(next.coach, structureCoach),
     notes: userFacingNotes(next.notes),
     weeks: next.weeks.map((week, index) => {
       const sourceWeek = structure.weekStructure[index];
@@ -1245,11 +1679,100 @@ function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleNa
       expectedOtjh: component.expectedOtjh,
       points: component.points,
       reflectionRequired: component.reflectionRequired,
-      workplaceEvidenceRequired: component.workplaceEvidenceRequired,
+      workplaceEvidenceRequired: false,
       tutorValidationRequired: component.tutorValidationRequired,
       settings: component.settings,
     })),
   };
+}
+
+function moduleDraftAuthoringPayload(
+  draft: ModuleDraft,
+  catalogueId: string,
+  moduleName: string,
+  context: {
+    programmeId: string;
+    programmeName: string;
+    cohortId: string;
+    cohortName: string;
+    groupId: string;
+    groupName: string;
+    tutor: string;
+    coach: string;
+    weekDays?: string;
+    startTime?: string;
+    endTime?: string;
+  },
+  current?: ModuleCatalogueItem | null,
+): ModuleCatalogueItem {
+  const moduleId = current?.id || catalogueId;
+  const weekStructure = draft.weeks.map((week, weekIndex) => ({
+    id: week.id,
+    moduleId,
+    weekNumber: week.sessionNumber || weekIndex + 1,
+    title: week.title || `Week ${weekIndex + 1}`,
+    summary: current?.weekStructure?.[weekIndex]?.summary || '',
+    learningOutcomes: current?.weekStructure?.[weekIndex]?.learningOutcomes || [],
+    ksbMappings: current?.weekStructure?.[weekIndex]?.ksbMappings || [],
+    components: week.components.map((component, componentIndex) => ({
+      ...component,
+      id: component.sourceId || component.id,
+      moduleId,
+      weekId: week.id,
+      title: component.title || `${component.type} ${componentIndex + 1}`,
+      expectedOtjh: Number(component.expectedOtjh) || 0,
+      points: Number(component.points) || 0,
+      ksbMappings: component.ksbMappings || [],
+      settings: component.settings || {},
+    })),
+  }));
+
+  return recalculateModule({
+    ...(current || getDefaultStructure({
+      id: moduleId,
+      catalogueId,
+      programmeId: context.programmeId,
+      programmeName: context.programmeName,
+      title: moduleName,
+      description: userFacingNotes(draft.notes),
+      status: 'draft',
+      sessionsNumber: Number(draft.sessionsNumber) || draft.weeks.length || 1,
+      weekStructure: [],
+    } as Partial<ModuleCatalogueItem> as ModuleCatalogueItem)),
+    id: moduleId,
+    catalogueId,
+    programmeId: context.programmeId,
+    programmeName: context.programmeName,
+    cohortId: context.cohortId,
+    cohort: context.cohortName,
+    groupId: context.groupId,
+    group: context.groupName,
+    tutor: context.tutor,
+    coach: context.coach,
+    color: draft.color,
+    title: moduleName,
+    description: userFacingNotes(draft.notes),
+    status: current?.status || 'draft',
+    sessionsNumber: Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1),
+    startDate: draft.startDate,
+    endDate: draft.endDate,
+    weekStructure,
+    deliveryMetadata: {
+      ...(current?.deliveryMetadata || {}),
+      programmeId: context.programmeId,
+      programme: context.programmeName,
+      cohortId: context.cohortId,
+      cohort: context.cohortName,
+      groupId: context.groupId,
+      group: context.groupName,
+      tutor: context.tutor,
+      coach: context.coach,
+      weekDays: context.weekDays || '',
+      startTime: context.startTime || '',
+      endTime: context.endTime || '',
+      color: draft.color,
+    },
+  });
 }
 
 function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeName: string, color: string): CohortDraft[] {
@@ -1292,7 +1815,7 @@ function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeN
             expectedOtjh: Number(component.expectedOtjh) || 0,
             points: Number(component.points) || 0,
             reflectionRequired: Boolean(component.reflectionRequired),
-            workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
+            workplaceEvidenceRequired: false,
             tutorValidationRequired: Boolean(component.tutorValidationRequired),
             ksbMappings: [],
             settings: (component.settings || {}) as ModuleComponent['settings'],
@@ -1324,8 +1847,10 @@ export function AddCurriculumStructureWizard({
   initialGroupId,
   startStep = 'programme',
 }: AddCurriculumStructureWizardProps) {
-  const { data, loading, error, reload } = useCurriculumData();
+  const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true, refreshModules: true });
   const { modules: catalogueModules, reload: reloadCatalogueModules } = useCurriculumModules({ autoLoad: false });
+  const { sessions: curriculumSessions, loading: sessionsLoading, error: sessionsError, reload: reloadCurriculumSessions } = useCurriculumSessions({ autoLoad: false });
+  const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, reload: reloadStaffProfiles } = useCurriculumStaffProfiles({ autoLoad: false });
   const [step, setStep] = useState<WizardStep>(startStep);
   const [programmeForm, setProgrammeForm] = useState({
     name: '',
@@ -1349,10 +1874,16 @@ export function AddCurriculumStructureWizard({
   const [holidayManagerOpen, setHolidayManagerOpen] = useState(false);
   const [removingDraftId, setRemovingDraftId] = useState('');
   const [localBuilderModules, setLocalBuilderModules] = useState<ModuleCatalogueItem[]>([]);
+  const [embeddedModuleBuilderUrl, setEmbeddedModuleBuilderUrl] = useState('');
   const [builderStructureSyncTick, setBuilderStructureSyncTick] = useState(0);
   const hydratedProgrammeRef = useRef('');
+  const hydratedCohortIdsRef = useRef<Set<string>>(new Set());
+  const hydratedGroupIdsRef = useRef<Set<string>>(new Set());
   const loadedBuilderStructureKeysRef = useRef<Set<string>>(new Set());
+  const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
+  const requestedStaffProfilesRef = useRef(false);
+  const requestedSessionsRef = useRef(false);
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
   const selectedProgramme = useMemo(
@@ -1375,17 +1906,13 @@ export function AddCurriculumStructureWizard({
     return Array.from(merged.values());
   }, [catalogueModules, data?.modules, localBuilderModules]);
   const moduleOptions = useMemo(() => {
-    const seen = new Set<string>();
     return modules.filter(module => {
-      const key = normalise(module.name);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
+      return Boolean(moduleOptionId(module) || String(module.name || '').trim());
     });
   }, [modules]);
   const holidays = useMemo(() => data?.holidays ?? [], [data?.holidays]);
-  const isFreeProgramme = false;
-  const visibleSteps = steps;
+  const isFreeProgramme = programmeForm.structureType === 'free' || selectedProgramme?.structureType === 'free';
+  const visibleSteps = isFreeProgramme ? steps.filter(item => item.key !== 'cohort' && item.key !== 'group') : steps;
   const shouldLoadCatalogueModules = isOpen && (step === 'modules' || step === 'weeks' || step === 'review');
   const activeCohort = useMemo(() => cohortDrafts.find(cohort => cohort.localId === activeCohortId) || cohortDrafts[0] || emptyCohortDraft(), [activeCohortId, cohortDrafts]);
   const activeGroup = useMemo(() => activeCohort.groups.find(group => group.localId === activeGroupId) || activeCohort.groups[0] || emptyGroupDraft(), [activeCohort, activeGroupId]);
@@ -1401,33 +1928,219 @@ export function AddCurriculumStructureWizard({
     () => holidays.filter(holiday => cohortForm.holidayIds.includes(holidayId(holiday))),
     [cohortForm.holidayIds, holidays],
   );
+
+  const syncWizardDraftsFromModuleBuilder = useCallback(() => {
+    if (isFreeProgramme) return;
+    setCohortDrafts(previous => {
+      let changed = false;
+      const cohorts = previous.map(cohort => {
+        const cohortHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
+        let cohortChanged = false;
+        const groups = cohort.groups.map(group => {
+          let groupChanged = false;
+          const modules = group.modules.map(draft => {
+            const storageKey = `${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${draft.localId}`;
+            let stored = '';
+            try {
+              stored = window.localStorage.getItem(storageKey) || '';
+            } catch {
+              stored = '';
+            }
+            if (!stored) return draft;
+
+            try {
+              const payload = JSON.parse(stored) as { module?: ModuleCatalogueItem } | ModuleCatalogueItem;
+              const structure = recalculateModule(('module' in payload && payload.module ? payload.module : payload) as ModuleCatalogueItem);
+              if (!structure.catalogueId) return draft;
+              const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+              groupChanged = true;
+              cohortChanged = true;
+              changed = true;
+              try {
+                window.localStorage.removeItem(storageKey);
+              } catch {
+                // The structure has still been applied; a stale localStorage cleanup failure is non-blocking.
+              }
+              return applyModuleBuilderContent(
+                {
+                  ...draft,
+                  mode: 'existing',
+                  catalogueId: structure.catalogueId,
+                  name: structure.title || draft.name,
+                  existingCatalogueId: structure.catalogueId,
+                  existingName: structure.title || draft.name,
+                  existingSessionsNumber: sessionsNumber,
+                  sessionsNumber,
+                  color: structure.sourceModule?.color || draft.color,
+                  notes: userFacingNotes(structure.description || draft.notes),
+                },
+                structure,
+                group.deliveryDays.join(', '),
+                group.startTime,
+                cohortHolidays,
+              );
+            } catch (err) {
+              console.warn('Unable to apply Module Builder changes to wizard draft.', err);
+              return draft;
+            }
+          });
+          return groupChanged ? { ...group, modules } : group;
+        });
+        return cohortChanged ? { ...cohort, groups } : cohort;
+      });
+      return changed ? cohorts : previous;
+    });
+  }, [holidays, isFreeProgramme]);
+
+  const refreshRemoteBuilderStructures = useCallback(() => {
+    loadedBuilderStructureKeysRef.current.clear();
+    setBuilderStructureSyncTick(tick => tick + 1);
+  }, []);
+
+  const closeEmbeddedModuleBuilder = useCallback(async (syncMessage?: unknown) => {
+    const builderUrl = embeddedModuleBuilderUrl;
+    setEmbeddedModuleBuilderUrl('');
+    syncWizardDraftsFromModuleBuilder();
+    let draftId = '';
+    let structureId = '';
+    let savedStructure: ModuleCatalogueItem | null = null;
+    if (syncMessage && typeof syncMessage === 'object') {
+      const message = syncMessage as { draftId?: unknown; structureId?: unknown; payload?: { module?: ModuleCatalogueItem } };
+      draftId = String(message.draftId || '');
+      structureId = String(message.structureId || message.payload?.module?.catalogueId || '');
+      savedStructure = message.payload?.module ? recalculateModule(message.payload.module) : null;
+    }
+    try {
+      const params = new URL(builderUrl, window.location.origin).searchParams;
+      draftId = draftId || params.get('wizardModule') || '';
+      structureId = structureId || params.get('module') || '';
+    } catch {
+      draftId = draftId || '';
+      structureId = structureId || '';
+    }
+    if (draftId && structureId) {
+      try {
+        const structure = (await loadModuleStructure(structureId)) || savedStructure;
+        if (structure) {
+          setCohortDrafts(previous => previous.map(cohort => {
+            const cohortHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
+            let cohortChanged = false;
+            const groups = cohort.groups.map(group => {
+              let groupChanged = false;
+              const modules = group.modules.map(draft => {
+                if (draft.localId !== draftId) return draft;
+                const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+                groupChanged = true;
+                cohortChanged = true;
+                loadedBuilderStructureKeysRef.current.add(`${draft.localId}:${structure.catalogueId || structureId}`);
+                return applyModuleBuilderContent(
+                  {
+                    ...draft,
+                    mode: 'existing',
+                    catalogueId: structure.catalogueId || draft.catalogueId,
+                    name: structure.title || draft.name,
+                    existingCatalogueId: structure.catalogueId || draft.catalogueId,
+                    existingName: structure.title || draft.name,
+                    existingSessionsNumber: sessionsNumber,
+                    sessionsNumber,
+                    color: structure.sourceModule?.color || draft.color,
+                    notes: userFacingNotes(structure.description || draft.notes),
+                  },
+                  structure,
+                  group.deliveryDays.join(', '),
+                  group.startTime,
+                  cohortHolidays,
+                );
+              });
+              return groupChanged ? { ...group, modules } : group;
+            });
+            return cohortChanged ? { ...cohort, groups } : cohort;
+          }));
+        }
+      } catch (err) {
+        setMessage(err instanceof Error ? err.message : 'Unable to refresh module content from Module Builder.');
+      }
+    }
+    refreshRemoteBuilderStructures();
+  }, [embeddedModuleBuilderUrl, holidays, refreshRemoteBuilderStructures, syncWizardDraftsFromModuleBuilder]);
+
   useEffect(() => {
     if (!shouldLoadCatalogueModules) return;
     return reloadCatalogueModules({ silent: true });
   }, [reloadCatalogueModules, shouldLoadCatalogueModules]);
 
   useEffect(() => {
+    if (!isOpen || isFreeProgramme || requestedStaffProfilesRef.current) return;
+    if (!['group', 'modules', 'weeks', 'review'].includes(step)) return;
+    requestedStaffProfilesRef.current = true;
+    void reloadStaffProfiles({ silent: true });
+    return undefined;
+  }, [isFreeProgramme, isOpen, reloadStaffProfiles, step]);
+
+  useEffect(() => {
+    if (!isOpen || isFreeProgramme || requestedSessionsRef.current) return;
+    if (!['modules', 'weeks', 'review'].includes(step)) return;
+    requestedSessionsRef.current = true;
+    void reloadCurriculumSessions();
+    return undefined;
+  }, [isFreeProgramme, isOpen, reloadCurriculumSessions, step]);
+
+  useEffect(() => {
     if (!isOpen || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
-    loadedBuilderStructureKeysRef.current.clear();
+    syncWizardDraftsFromModuleBuilder();
     setBuilderStructureSyncTick(tick => tick + 1);
-  }, [isFreeProgramme, isOpen, step]);
+  }, [isFreeProgramme, isOpen, step, syncWizardDraftsFromModuleBuilder]);
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme) return;
+    const shouldCloseEmbeddedBuilder = (message: unknown) => {
+      if (!embeddedModuleBuilderUrl || !message || typeof message !== 'object') return false;
+      const syncMessage = message as { action?: unknown; closeEmbedded?: unknown };
+      return syncMessage.action === 'module-builder:saved' && syncMessage.closeEmbedded === true;
+    };
+    const applyBuilderSyncMessage = (message?: unknown) => {
+      if (shouldCloseEmbeddedBuilder(message)) {
+        void closeEmbeddedModuleBuilder(message);
+        return;
+      }
+      syncWizardDraftsFromModuleBuilder();
+      refreshRemoteBuilderStructures();
+    };
     const refreshBuilderStructures = () => {
       if (document.visibilityState && document.visibilityState !== 'visible') return;
       if (!['modules', 'weeks', 'review'].includes(step)) return;
-      loadedBuilderStructureKeysRef.current.clear();
-      setBuilderStructureSyncTick(tick => tick + 1);
-      void reloadCatalogueModules({ silent: true });
+      applyBuilderSyncMessage();
     };
+    const applyBuilderStorageUpdate = (event: StorageEvent) => {
+      if (!event.key?.startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)) return;
+      applyBuilderSyncMessage();
+    };
+    const applyBuilderCustomUpdate = (event: Event) => {
+      applyBuilderSyncMessage(event instanceof CustomEvent ? event.detail : undefined);
+    };
+    const applyBuilderWindowMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      applyBuilderSyncMessage(event.data);
+    };
+    let syncChannel: BroadcastChannel | null = null;
+    if ('BroadcastChannel' in window) {
+      syncChannel = new BroadcastChannel(MODULE_BUILDER_SYNC_CHANNEL);
+      syncChannel.onmessage = event => applyBuilderSyncMessage(event.data);
+    }
     window.addEventListener('focus', refreshBuilderStructures);
+    window.addEventListener('message', applyBuilderWindowMessage);
+    window.addEventListener('storage', applyBuilderStorageUpdate);
+    window.addEventListener(MODULE_BUILDER_SYNC_CHANNEL, applyBuilderCustomUpdate);
     document.addEventListener('visibilitychange', refreshBuilderStructures);
     return () => {
       window.removeEventListener('focus', refreshBuilderStructures);
+      window.removeEventListener('message', applyBuilderWindowMessage);
+      window.removeEventListener('storage', applyBuilderStorageUpdate);
+      window.removeEventListener(MODULE_BUILDER_SYNC_CHANNEL, applyBuilderCustomUpdate);
       document.removeEventListener('visibilitychange', refreshBuilderStructures);
+      syncChannel?.close();
     };
-  }, [isFreeProgramme, isOpen, reloadCatalogueModules, step]);
+  }, [closeEmbeddedModuleBuilder, embeddedModuleBuilderUrl, isFreeProgramme, isOpen, refreshRemoteBuilderStructures, step, syncWizardDraftsFromModuleBuilder]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -1435,16 +2148,16 @@ export function AddCurriculumStructureWizard({
       return;
     }
 
-    if (loading) {
+    if (loading && !selectedProgramme) {
       showCurriculumLoading({
-        title: 'Loading curriculum options',
-        text: 'Live programmes, cohorts, groups, modules and holidays are being prepared.',
+        title: 'Loading programme',
+        text: 'Programme details and saved structure are being prepared.',
       });
       return;
     }
 
     closeCurriculumLoading();
-  }, [isOpen, loading]);
+  }, [isOpen, loading, selectedProgramme]);
 
   useEffect(() => {
     if (!isOpen || !discardConfirmOpen) return;
@@ -1472,8 +2185,37 @@ export function AddCurriculumStructureWizard({
     () => buildHolidayAdjustedCohortPlan(cohortForm.startDate, cohortForm.durationMonths, activeHolidays),
     [activeHolidays, cohortForm.durationMonths, cohortForm.startDate],
   );
-  const tutors = uniqueStaffNames((data?.tutors ?? []).map(staffName));
-  const coaches = uniqueStaffNames((data?.coaches ?? []).map(staffName));
+  const tutors = uniqueStaffNames(staffTutors.map(staffName));
+  const coaches = uniqueStaffNames(staffCoaches.map(staffName));
+  useEffect(() => {
+    if (!isOpen || !cohortDrafts.length || !staffTutors.length) return;
+    setCohortDrafts(previous => {
+      let changed = false;
+      const next = previous.map(cohort => ({
+        ...cohort,
+        groups: cohort.groups.map(group => ({
+          ...group,
+          modules: group.modules.map(draft => {
+            if (staffAssignment(draft.tutor)) return draft;
+            const assignedTutor = assignedTutorForDraft(draft, staffTutors);
+            if (!assignedTutor) return draft;
+            changed = true;
+            return { ...draft, tutor: assignedTutor };
+          }),
+        })),
+      }));
+      return changed ? next : previous;
+    });
+  }, [cohortDrafts.length, isOpen, staffTutors]);
+  const tutorScheduleConflicts = useMemo(
+    () => isFreeProgramme ? [] : findTutorScheduleConflicts(cohortDrafts, moduleOptions, curriculumSessions, selectedProgramme?.name || programmeForm.name),
+    [cohortDrafts, curriculumSessions, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
+  );
+  const tutorScheduleIssues = useMemo(() => {
+    if (isFreeProgramme) return [];
+    if (sessionsLoading || sessionsError) return [];
+    return tutorScheduleConflicts.map(conflict => conflict.message);
+  }, [isFreeProgramme, sessionsError, sessionsLoading, tutorScheduleConflicts]);
 
   const setCohortForm = (updater: Partial<CohortDraft> | ((previous: CohortDraft) => CohortDraft)) => {
     setCohortDrafts(previous => previous.map(cohort => {
@@ -1648,7 +2390,8 @@ export function AddCurriculumStructureWizard({
 
   const stepIndex = Math.max(0, visibleSteps.findIndex(item => item.key === step));
   const hasAnyModuleDraft = cohortDrafts.some(cohort => cohort.groups.some(group => group.modules.length > 0));
-  const moduleIssues = isFreeProgramme && !hasAnyModuleDraft ? ['Add at least one module.'] : cohortDrafts.flatMap((cohort, cohortIndex) => cohort.groups.flatMap((group, groupIndex) => {
+  const moduleIssues = [
+    ...(isFreeProgramme && !hasAnyModuleDraft ? ['Add at least one module.'] : cohortDrafts.flatMap((cohort, cohortIndex) => cohort.groups.flatMap((group, groupIndex) => {
     const cohortLabel = validationCohortLabel(cohort, cohortIndex);
     const groupLabel = validationGroupLabel(group, groupIndex);
     if (!group.modules.length) return [isFreeProgramme ? 'Add at least one module.' : `${cohortLabel}, ${groupLabel}: add at least one module.`];
@@ -1671,7 +2414,9 @@ export function AddCurriculumStructureWizard({
       }
       return issues;
     });
-  }));
+    }))),
+    ...tutorScheduleIssues,
+  ];
 
   const validation = {
     programme: !programmeForm.name.trim() ? ['Programme name is required.'] : [],
@@ -1709,6 +2454,10 @@ export function AddCurriculumStructureWizard({
   const canSave = validation.programme.length === 0 && validation.cohort.length === 0 && validation.group.length === 0 && validation.modules.length === 0;
   const canSaveProgrammeDetails = Boolean(selectedProgramme && step === 'programme' && validation.programme.length === 0);
   const canSaveDraft = canSave || canSaveProgrammeDetails;
+  const reviewGroupsForSave = cohortDrafts.flatMap(cohort => cohort.groups.filter(isConfiguredGroup));
+  const reviewModulesForSave = reviewGroupsForSave.flatMap(group => group.modules.filter(isConfiguredModule));
+  const reviewComponentsForSave = reviewModulesForSave.reduce((total, draft) => total + draft.weeks.reduce((weekTotal, week) => weekTotal + week.components.length, 0), 0);
+  const reviewSaveSummary = `${reviewModulesForSave.length} modules - ${reviewComponentsForSave} components`;
   const currentStepMeta = visibleSteps[stepIndex] || visibleSteps[0];
   const nextStepMeta = visibleSteps[Math.min(stepIndex + 1, visibleSteps.length - 1)] || visibleSteps[visibleSteps.length - 1];
   const currentValidationItems = (
@@ -1749,8 +2498,13 @@ export function AddCurriculumStructureWizard({
     setActiveModuleId('');
     setExpandedModuleId('');
     hydratedProgrammeRef.current = '';
+    hydratedCohortIdsRef.current.clear();
+    hydratedGroupIdsRef.current.clear();
     loadedBuilderStructureKeysRef.current.clear();
+    loadingBuilderStructureKeysRef.current.clear();
     loadedFreeProgrammeRef.current = '';
+    requestedStaffProfilesRef.current = false;
+    requestedSessionsRef.current = false;
   }, [initialProgrammeId, isOpen, startStep]);
 
   useEffect(() => {
@@ -1761,7 +2515,7 @@ export function AddCurriculumStructureWizard({
       level: selectedProgramme.level || '',
       color: selectedProgramme.color || '#2563eb',
       description: selectedProgramme.description || '',
-      structureType: 'scheduled',
+      structureType: selectedProgramme.structureType === 'free' ? 'free' : 'scheduled',
     });
   }, [isOpen, selectedProgramme]);
 
@@ -1799,9 +2553,9 @@ export function AddCurriculumStructureWizard({
   }, [isFreeProgramme, isOpen, programmeForm.color, programmeForm.name, selectedProgramme]);
 
   useEffect(() => {
-    const availableSteps = steps;
+    const availableSteps = visibleSteps;
     if (!availableSteps.some(item => item.key === step)) setStep(availableSteps[0].key);
-  }, [step]);
+  }, [step, visibleSteps]);
 
   useEffect(() => {
     if (!isOpen || !data || !selectedProgramme || loading || cohortDrafts.length || hydratedProgrammeRef.current) return;
@@ -1816,6 +2570,12 @@ export function AddCurriculumStructureWizard({
     );
 
     hydratedProgrammeRef.current = selectedProgramme.id || selectedProgramme.sourceId || selectedProgramme.name;
+    hydratedCohortIdsRef.current = new Set(existingDrafts
+      .map(cohort => cohort.sourceId)
+      .filter((id): id is string => isCanonicalCurriculumId(id, 'COHORT')));
+    hydratedGroupIdsRef.current = new Set(existingDrafts
+      .flatMap(cohort => cohort.groups.map(group => group.sourceId))
+      .filter((id): id is string => isCanonicalCurriculumId(id, 'GROUP')));
     if (!existingDrafts.length) return;
 
     if (existingDrafts.length === 1 && isFreeCourseContainer(existingDrafts[0])) {
@@ -1834,23 +2594,38 @@ export function AddCurriculumStructureWizard({
   }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, isOpen, loading, modules, selectedProgramme]);
 
   useEffect(() => {
-    if (!isOpen || !cohortDrafts.length || isFreeProgramme) return;
+    if (!isOpen || !cohortDrafts.length || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
 
     let active = true;
-    const loads = cohortDrafts.flatMap(cohort => cohort.groups.flatMap(group => group.modules.map(async draft => {
+    const cohortsToHydrate = step === 'review'
+      ? cohortDrafts
+      : cohortDrafts
+        .map(cohort => ({
+          ...cohort,
+          groups: cohort.groups.filter(group => group.localId === activeGroupId),
+        }))
+        .filter(cohort => cohort.groups.length);
+    const loads = cohortsToHydrate.flatMap(cohort => cohort.groups.flatMap(group => group.modules.map(async draft => {
       const identifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
       if (!identifier) return null;
       const loadKey = `${draft.localId}:${identifier}`;
-      if (loadedBuilderStructureKeysRef.current.has(loadKey)) return null;
-      loadedBuilderStructureKeysRef.current.add(loadKey);
+      if (
+        loadedBuilderStructureKeysRef.current.has(loadKey)
+        || loadingBuilderStructureKeysRef.current.has(loadKey)
+      ) return null;
+      loadingBuilderStructureKeysRef.current.add(loadKey);
 
-      const structure = await loadModuleStructure(identifier);
-      if (!structure) return null;
-      return {
-        draftId: draft.localId,
-        identifier,
-        structure,
-      };
+      try {
+        const structure = await loadModuleStructure(identifier);
+        if (!structure) return null;
+        return {
+          draftId: draft.localId,
+          identifier,
+          structure,
+        };
+      } finally {
+        loadingBuilderStructureKeysRef.current.delete(loadKey);
+      }
     })));
 
     if (!loads.length) return;
@@ -1871,11 +2646,16 @@ export function AddCurriculumStructureWizard({
             const match = loaded.get(draft.localId);
             if (!match) return draft;
             const currentIdentifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
-            if (draft.mode !== 'existing' || currentIdentifier !== match.identifier) return draft;
+            if (currentIdentifier !== match.identifier) return draft;
             const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-            const sessionsNumber = String(moduleDraftSessionCount(draft, selectedModule));
+            const sessionsNumber = String(moduleBuilderStructureSessionCount(match.structure, moduleDraftSessionCount(draft, selectedModule)));
+            const loadedComponentCount = moduleBuilderStructureComponentCount(match.structure);
+            if (loadedComponentCount <= moduleDraftComponentCount(draft) && loadedBuilderStructureKeysRef.current.has(`${draft.localId}:${match.identifier}`)) {
+              return draft;
+            }
             groupChanged = true;
             cohortChanged = true;
+            loadedBuilderStructureKeysRef.current.add(`${draft.localId}:${match.identifier}`);
             return applyModuleBuilderContent(
               {
                 ...draft,
@@ -1905,7 +2685,7 @@ export function AddCurriculumStructureWizard({
     return () => {
       active = false;
     };
-  }, [builderStructureSyncTick, cohortDrafts, holidays, isFreeProgramme, isOpen, moduleOptions]);
+  }, [activeGroupId, builderStructureSyncTick, cohortDrafts, holidays, isFreeProgramme, isOpen, moduleOptions, step]);
 
   useEffect(() => {
     if (!cohortDrafts.length) {
@@ -1990,6 +2770,17 @@ export function AddCurriculumStructureWizard({
     onClose();
   };
 
+  const resolveTutorConflict = (conflict: TutorScheduleConflict) => {
+    const target = conflict.proposed.moduleLocalId ? conflict.proposed : conflict.conflicting;
+    setStep('modules');
+    if (target.cohortLocalId) setActiveCohortId(target.cohortLocalId);
+    if (target.groupLocalId) setActiveGroupId(target.groupLocalId);
+    if (target.moduleLocalId) setActiveModuleId(target.moduleLocalId);
+    setExpandedCohortId('');
+    setExpandedGroupId('');
+    setExpandedModuleId('');
+  };
+
   const updateModuleDraft = (localId: string, patch: Partial<ModuleDraft>) => {
     setModuleDrafts(prev => prev.map(draft => {
       if (draft.localId !== localId) return draft;
@@ -2014,13 +2805,14 @@ export function AddCurriculumStructureWizard({
       });
       return;
     }
+    const structureId = moduleBuilderStructureId(module);
     const sessionsNumber = String(moduleSessionCount(module));
     const staff = moduleStaffValues(module);
     updateModuleDraft(draft.localId, {
       mode: 'existing',
-      catalogueId,
+      catalogueId: structureId,
       name: module?.name || '',
-      existingCatalogueId: catalogueId,
+      existingCatalogueId: structureId,
       existingName: module?.name || '',
       existingSessionsNumber: sessionsNumber,
       color: module?.color || draft.color,
@@ -2030,19 +2822,19 @@ export function AddCurriculumStructureWizard({
     });
 
     try {
-      const savedStructure = await loadModuleStructure(moduleBuilderStructureId(module));
+      const savedStructure = await loadModuleStructure(structureId);
       const structure = getDefaultStructure(savedStructure || curriculumModuleToCatalogue(module));
       const selectedSessionsNumber = String(moduleSessionCount(module));
       setModuleDrafts(previous => previous.map(item => (
         item.localId === draft.localId
-          ? item.mode === 'existing' && item.catalogueId === catalogueId
+          ? item.mode === 'existing' && item.catalogueId === structureId
             ? applyModuleBuilderContent(
               {
                 ...item,
                 mode: 'existing',
-                catalogueId,
+                catalogueId: structureId,
                 name: structure.title || module.name,
-                existingCatalogueId: catalogueId,
+                existingCatalogueId: structureId,
                 existingName: structure.title || module.name,
                 existingSessionsNumber: selectedSessionsNumber,
                 color: module.color || item.color,
@@ -2063,14 +2855,14 @@ export function AddCurriculumStructureWizard({
       const selectedSessionsNumber = String(moduleSessionCount(module));
       setModuleDrafts(previous => previous.map(item => (
         item.localId === draft.localId
-          ? item.mode === 'existing' && item.catalogueId === catalogueId
+          ? item.mode === 'existing' && item.catalogueId === structureId
             ? applyModuleBuilderContent(
               {
                 ...item,
                 mode: 'existing',
-                catalogueId,
+                catalogueId: structureId,
                 name: fallback.title || module.name,
-                existingCatalogueId: catalogueId,
+                existingCatalogueId: structureId,
                 existingName: fallback.title || module.name,
                 existingSessionsNumber: selectedSessionsNumber,
                 color: module.color || item.color,
@@ -2145,32 +2937,88 @@ export function AddCurriculumStructureWizard({
         return;
       }
 
-      const existingCohortIds = new Set((data?.cohorts ?? []).map(cohort => String(cohort.id)).filter(Boolean));
-      const existingGroupIds = new Set((data?.groups ?? []).map(group => String(group.id)).filter(Boolean));
-
+      const hydrationComplete = !selectedProgramme || Boolean(hydratedProgrammeRef.current && !loading && data);
+      const treeCohorts = [];
       for (const cohort of cohortDrafts) {
         const cohortActiveHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
-        const cohortSourceId = cohort.sourceId && existingCohortIds.has(String(cohort.sourceId)) ? cohort.sourceId : undefined;
+        const cohortSourceId = isCanonicalCurriculumId(cohort.sourceId, 'COHORT') ? String(cohort.sourceId) : undefined;
         const cohortId = cohortSourceId || generatedCurriculumId('COHORT');
-        const cohortPayload = {
-          id: cohortId,
-          name: cohort.name,
-          programme: programmeName,
-          programmeId: programmeSourceId,
-          startDate: cohort.startDate,
-          endDate: cohort.endDate,
-          durationMonths: Number(cohort.durationMonths),
-          color: cohort.color,
-          holidayIds: cohort.holidayIds,
-        };
-        await saveCurriculumCohort(cohortSourceId, cohortPayload);
-        existingCohortIds.add(cohortId);
+        const groupsForSave = [];
 
         for (const group of cohort.groups) {
           const deliveryDayValue = group.deliveryDays.join(', ');
-          const groupSourceId = group.sourceId && existingGroupIds.has(String(group.sourceId)) ? group.sourceId : undefined;
+          const groupSourceId = isCanonicalCurriculumId(group.sourceId, 'GROUP') ? String(group.sourceId) : undefined;
           const groupId = groupSourceId || generatedCurriculumId('GROUP');
-          const groupPayload = {
+          const modulesForSave: CurriculumModuleAttachmentInput[] = [];
+
+          for (const originalDraft of group.modules) {
+            const draft = reconcileModuleDraft(originalDraft, deliveryDayValue, group.startTime, cohortActiveHolidays);
+            let sourceModule: CurriculumModule | undefined;
+            let catalogueId = draft.catalogueId;
+            let moduleName = draft.name;
+
+            if (draft.mode === 'existing') {
+              sourceModule = findModuleOption(moduleOptions, draft.catalogueId) || findModuleOption(modules, draft.catalogueId);
+              catalogueId = sourceModule ? moduleOptionId(sourceModule) : (draft.catalogueId || `existing-${slugify(draft.name)}`);
+              moduleName = sourceModule?.name || draft.name || draft.catalogueId || 'Module';
+            } else {
+              const duplicate = [...modules]
+                .filter(module => (
+                  normalise(module.name) === normalise(draft.name) &&
+                  moduleMatchesDeliveryContext(module, {
+                    programmeId: programmeSourceId,
+                    programmeName,
+                    cohortId,
+                    cohortName: cohort.name,
+                    groupId,
+                    groupName: group.name,
+                  })
+                ))
+                .sort((left, right) => curriculumModuleComponentCount(right) - curriculumModuleComponentCount(left))[0];
+              sourceModule = duplicate;
+              catalogueId = sourceModule ? moduleOptionId(sourceModule) : draft.catalogueId;
+              moduleName = sourceModule?.name || draft.name;
+            }
+            const deliverySessionCount = draft.mode === 'existing' && sourceModule
+              ? moduleSessionCount(sourceModule)
+              : Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1);
+            const canonicalCatalogueId = isCanonicalModuleBuilderId(catalogueId) ? catalogueId : '';
+            const authored = moduleDraftAuthoringPayload(draft, canonicalCatalogueId, moduleName, {
+              programmeId: programmeSourceId,
+              programmeName,
+              cohortId,
+              cohortName: cohort.name,
+              groupId,
+              groupName: group.name,
+              tutor: draft.tutor,
+              coach: group.coach,
+              weekDays: deliveryDayValue,
+              startTime: group.startTime,
+              endTime: group.endTime || addHoursToTime(group.startTime, 2),
+            });
+
+            modulesForSave.push({
+              moduleName,
+              catalogueId: canonicalCatalogueId,
+              programmeId: programmeSourceId,
+              cohortId,
+              groupId,
+              color: draft.color || sourceModule?.color,
+              startDate: draft.startDate,
+              endDate: draft.endDate,
+              sessionsNumber: deliverySessionCount,
+              weeks: deliverySessionCount,
+              coach: group.coach,
+              tutor: draft.tutor,
+              weekDays: deliveryDayValue,
+              startTime: group.startTime,
+              endTime: group.endTime || addHoursToTime(group.startTime, 2),
+              notes: userFacingNotes(draft.notes),
+              holidays: cohortActiveHolidays,
+              ...authored,
+            } as CurriculumModuleAttachmentInput);
+          }
+          groupsForSave.push({
             id: groupId,
             name: group.name,
             cohortId,
@@ -2182,68 +3030,34 @@ export function AddCurriculumStructureWizard({
             color: group.color,
             startDate: cohort.startDate,
             endDate: cohort.endDate,
-          };
-          await saveCurriculumGroup(groupSourceId, groupPayload);
-          existingGroupIds.add(groupId);
-          const attachments: CurriculumModuleAttachmentInput[] = [];
-
-          for (const originalDraft of group.modules) {
-            const draft = isFreeProgramme
-              ? { ...originalDraft, tutor: '', coach: '', sessionsNumber: '0' }
-              : reconcileModuleDraft(originalDraft, deliveryDayValue, group.startTime, cohortActiveHolidays);
-            let sourceModule: CurriculumModule | undefined;
-            let catalogueId = draft.catalogueId;
-            let moduleName = draft.name;
-
-            if (draft.mode === 'existing') {
-              sourceModule = findModuleOption(moduleOptions, draft.catalogueId) || findModuleOption(modules, draft.catalogueId);
-              catalogueId = sourceModule ? moduleOptionId(sourceModule) : (draft.catalogueId || `existing-${slugify(draft.name)}`);
-              moduleName = sourceModule?.name || draft.name || draft.catalogueId || 'Module';
-            } else {
-              const duplicate = modules.find(module => normalise(module.name) === normalise(draft.name));
-              sourceModule = duplicate;
-              if (!duplicate) {
-                const created = await createCurriculumModule({
-                  name: draft.name,
-                  weeks: isFreeProgramme ? 0 : (Number(draft.sessionsNumber) || 1),
-                  color: draft.color,
-                  notes: userFacingNotes(draft.notes),
-                  startDate: isFreeProgramme ? undefined : draft.startDate,
-                  endDate: isFreeProgramme ? undefined : draft.endDate,
-                  tutor: isFreeProgramme ? '' : draft.tutor,
-                });
-                sourceModule = created.module;
-              }
-              catalogueId = sourceModule ? moduleOptionId(sourceModule) : `MOD-${Date.now().toString(36).toUpperCase()}`;
-              moduleName = sourceModule?.name || draft.name;
-            }
-            const deliverySessionCount = draft.mode === 'existing' && sourceModule
-              ? moduleSessionCount(sourceModule)
-              : Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1);
-
-            attachments.push({
-              moduleName,
-              catalogueId,
-              programmeId: programmeSourceId,
-              cohortId,
-              groupId,
-              color: draft.color || sourceModule?.color,
-              startDate: isFreeProgramme ? undefined : draft.startDate,
-              endDate: isFreeProgramme ? undefined : draft.endDate,
-              sessionsNumber: isFreeProgramme ? 0 : deliverySessionCount,
-              weeks: isFreeProgramme ? 0 : deliverySessionCount,
-              coach: isFreeProgramme ? '' : group.coach,
-              tutor: isFreeProgramme ? '' : draft.tutor,
-              weekDays: isFreeProgramme ? undefined : deliveryDayValue,
-              startTime: isFreeProgramme ? undefined : group.startTime,
-              endTime: isFreeProgramme ? undefined : (group.endTime || addHoursToTime(group.startTime, 2)),
-              notes: userFacingNotes(draft.notes),
-              holidays: isFreeProgramme ? [] : cohortActiveHolidays,
-            });
-          }
-          await attachCurriculumModulesToGroup(groupId, attachments);
+            modules: modulesForSave,
+          });
         }
+        treeCohorts.push({
+          id: cohortId,
+          name: cohort.name,
+          programme: programmeName,
+          programmeId: programmeSourceId,
+          startDate: cohort.startDate,
+          endDate: cohort.endDate,
+          durationMonths: Number(cohort.durationMonths),
+          color: cohort.color,
+          holidayIds: cohort.holidayIds,
+          groups: groupsForSave,
+        });
       }
+
+      await saveCurriculumProgrammeTree({
+        programme: {
+          id: programmeSourceId,
+          sourceId: programmeSourceId,
+          ...programmeForm,
+          standard: programmeForm.standard || programmeForm.name,
+        },
+        cohorts: treeCohorts,
+        archiveMissing: Boolean(selectedProgramme),
+        hydrationComplete,
+      });
 
       await reload();
       setSubmitted(true);
@@ -2267,7 +3081,7 @@ export function AddCurriculumStructureWizard({
   if (!isOpen) return null;
 
   return createPortal((
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-2 backdrop-blur-md sm:p-5" onClick={requestClose}>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-2 backdrop-blur-md sm:p-5">
       <NestedPopupBackdrop
         stepIndex={stepIndex}
         programme={activeProgramme}
@@ -2421,7 +3235,7 @@ export function AddCurriculumStructureWizard({
                     <aside className="space-y-3 xl:sticky xl:top-3 xl:self-start">
                       <DraftSwitcher
                         label="Cohorts"
-                        items={cohortDrafts.map(cohort => ({ id: cohort.localId, label: cohortDisplayName(cohort), meta: formatGroupCount(configuredGroupCount(cohort)), color: cohort.color }))}
+                        items={cohortDrafts.map(cohort => ({ id: cohort.localId, label: cohortDisplayName(cohort), meta: `${formatGroupCount(configuredGroupCount(cohort))} - ${formatHoursValue(cohortTotalHours(cohort, moduleOptions))}`, color: cohort.color }))}
                         activeId={activeCohort.localId}
                         onSelect={id => {
                           const nextCohort = cohortDrafts.find(cohort => cohort.localId === id);
@@ -2451,13 +3265,16 @@ export function AddCurriculumStructureWizard({
                               <p className="text-[10px] font-bold uppercase text-foreground-400">Groups in selected cohort</p>
                               <h4 className="truncate text-base font-heading font-bold text-foreground-950">{cohortForm.name || 'Unnamed cohort'}</h4>
                               <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">
-                                {formatGroupCount(configuredGroupCount(activeCohort))} - {formatModuleCount(configuredModuleCount(activeGroup))} in selected group
+                                {formatGroupCount(configuredGroupCount(activeCohort))} - {formatModuleCount(configuredModuleCount(activeGroup))} in selected group - {formatHoursValue(groupTotalHours(activeGroup, moduleOptions))}
                               </p>
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center gap-2">
                             <span className="rounded-full bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 shadow-sm">
                               {groupForm.name || 'No group selected'}
+                            </span>
+                            <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 shadow-sm">
+                              {formatHoursValue(groupTotalHours(activeGroup, moduleOptions))} total
                             </span>
                             <button
                               type="button"
@@ -2478,6 +3295,7 @@ export function AddCurriculumStructureWizard({
                               const active = group.localId === activeGroup.localId;
                               const removing = removingDraftId === group.localId;
                               const schedule = `${group.deliveryDays.join(', ') || 'No days'} ${group.startTime || ''}-${group.endTime || addHoursToTime(group.startTime, 2)}`.trim();
+                              const hours = groupTotalHours(group, moduleOptions);
                               return (
                                 <div
                                   key={group.localId}
@@ -2495,7 +3313,7 @@ export function AddCurriculumStructureWizard({
                                   >
                                     <span className="block truncate text-[12px] font-bold text-foreground-950">{group.name || `Group ${index + 1}`}</span>
                                     <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                                      {formatModuleCount(configuredModuleCount(group))} - {schedule}
+                                      {formatModuleCount(configuredModuleCount(group))} - {formatHoursValue(hours)} - {schedule}
                                     </span>
                                   </button>
                                   <button
@@ -2545,7 +3363,7 @@ export function AddCurriculumStructureWizard({
                                   <p className="text-[11px] font-semibold text-foreground-500">Assigned at group level</p>
                                 </div>
                               </div>
-                              <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coaches} />
+                              <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coaches} onOpen={() => reloadStaffProfiles({ silent: true })} />
                             </div>
                           </div>
                         </div>
@@ -2574,6 +3392,8 @@ export function AddCurriculumStructureWizard({
                     groupForm={groupForm}
                     removingDraftId={removingDraftId}
                     validationModules={validation.modules}
+                    tutorConflicts={tutorScheduleConflicts}
+                    onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })}
                     onSelectCohort={id => {
                       const nextCohort = cohortDrafts.find(cohort => cohort.localId === id);
                       const nextGroup = nextCohort?.groups[0];
@@ -2600,6 +3420,7 @@ export function AddCurriculumStructureWizard({
                     onRemoveModule={removeModuleDraft}
                     onChangeModule={updateModuleDraft}
                     onSelectExistingModule={selectExistingModule}
+                    onResolveTutorConflict={resolveTutorConflict}
                   />
                 </StepPanel>
               )}
@@ -2645,6 +3466,7 @@ export function AddCurriculumStructureWizard({
                             onUpdateFreeComponent={updateFreeComponent}
                             onRemoveFreeComponent={removeFreeComponent}
                             onReorderFreeComponent={reorderFreeComponent}
+                            onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
                           />
                         )) : (
                           <EmptyState text="No custom modules yet. Add a module first, then add its components manually." />
@@ -2705,7 +3527,7 @@ export function AddCurriculumStructureWizard({
                         meta={`${groupForm.deliveryDay || 'No delivery days'} - ${groupForm.startTime}-${groupForm.endTime}`}
                         color={groupForm.color}
                         badge={`${formatModuleCount(configuredModuleCount(activeGroup))} inside this group`}
-                        defaultOpen={false}
+                        defaultOpen
                       >
                         <div className="mb-4 flex flex-col gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[12px] font-semibold text-sky-800 sm:flex-row sm:items-center sm:justify-between">
                           <span className="flex items-start gap-2">
@@ -2732,6 +3554,7 @@ export function AddCurriculumStructureWizard({
                               programmeName={activeProgramme.name || programmeForm.name}
                               cohort={activeCohort}
                               group={activeGroup}
+                              onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
                             />
                           ))}
                         </div>
@@ -2745,12 +3568,15 @@ export function AddCurriculumStructureWizard({
 
               {step === 'review' && (
                 <StepPanel title="Review and save" description="Check the programme, cohorts, groups and modules before saving.">
+                  <TutorConflictWarning conflicts={tutorScheduleConflicts} onResolve={resolveTutorConflict} />
                   <ReviewSummary
+                    isEditing={Boolean(selectedProgramme)}
                     freeMode={isFreeProgramme}
                     programme={activeProgramme}
                     cohortForm={cohortForm}
                     groupForm={groupForm}
                     moduleDrafts={moduleDrafts}
+                    moduleOptions={moduleOptions}
                     selectedHolidays={activeHolidays}
                     cohortHolidayExtensionDays={cohortHolidayPlan.extensionDays}
                     cohortDrafts={cohortDrafts}
@@ -2775,14 +3601,19 @@ export function AddCurriculumStructureWizard({
             {stepIndex === 0 ? 'Cancel' : 'Back'}
           </button>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            {step === 'review' && (
+              <div className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] font-bold text-foreground-600 sm:text-right">
+                {selectedProgramme ? 'Ready to update' : 'Ready to save'}: <span className="text-foreground-950">{reviewSaveSummary}</span>
+              </div>
+            )}
             <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
               <i className="ri-save-3-line"></i>
-              {saving === 'draft' ? 'Saving...' : selectedProgramme && step === 'programme' ? 'Save Programme' : 'Save Draft'}
+              {saving === 'draft' ? 'Saving...' : selectedProgramme && step === 'programme' ? 'Update Programme' : 'Save Draft'}
             </button>
             {step === 'review' ? (
               <button type="button" onClick={() => persistStructure('final')} disabled={Boolean(saving) || !canSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
                 <i className="ri-checkbox-circle-line"></i>
-                {saving === 'final' ? 'Saving...' : selectedProgramme ? 'Save Programme Changes' : 'Create Programme'}
+                {saving === 'final' ? 'Saving...' : selectedProgramme ? 'Update Programme' : 'Create Programme'}
               </button>
             ) : (
               <button type="button" onClick={() => setStep(nextStepMeta.key)} disabled={!canContinue || Boolean(saving)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
@@ -2803,6 +3634,30 @@ export function AddCurriculumStructureWizard({
               setMessage('Global holidays updated. Select the holidays that should apply to this cohort.');
             }}
           />
+        )}
+
+        {embeddedModuleBuilderUrl && (
+          <div className="fixed inset-0 z-[10080] flex flex-col bg-background-50">
+            <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-background-200 bg-background-50 px-4 shadow-sm">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-600">Module Builder</p>
+                <p className="truncate text-sm font-heading font-bold text-foreground-950">Editing module content</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { void closeEmbeddedModuleBuilder(); }}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+              >
+                <i className="ri-arrow-left-line"></i>
+                Back to Wizard
+              </button>
+            </div>
+            <iframe
+              title="Module Builder"
+              src={embeddedModuleBuilderUrl}
+              className="min-h-0 flex-1 border-0 bg-background-50"
+            />
+          </div>
         )}
       </div>
     </div>
@@ -3249,18 +4104,25 @@ function HolidaySelector({
   onManage: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showAllSelected, setShowAllSelected] = useState(false);
   const selectableIds = useMemo(
     () => selectHolidayIdsInAdjustedCohortRange(cohortStartDate, cohortDurationMonths, holidays, []),
     [cohortDurationMonths, cohortStartDate, holidays],
   );
   const selectableSet = useMemo(() => new Set(selectableIds), [selectableIds]);
-  const selectedInRangeIds = selectedIds.filter(id => selectableSet.has(id));
+  const selectedInRangeIds = useMemo(() => selectedIds.filter(id => selectableSet.has(id)), [selectableSet, selectedIds]);
   const selectedSet = new Set(selectedInRangeIds);
+  const selectedHolidays = holidays.filter(holiday => selectedSet.has(holidayId(holiday)));
+  const visibleSelectedHolidays = showAllSelected ? selectedHolidays : selectedHolidays.slice(0, 5);
 
   useEffect(() => {
     if (selectedInRangeIds.length === selectedIds.length) return;
     onChange(selectedInRangeIds);
   }, [onChange, selectedIds.length, selectedInRangeIds]);
+
+  useEffect(() => {
+    if (selectedInRangeIds.length <= 5) setShowAllSelected(false);
+  }, [selectedInRangeIds.length]);
 
   const toggle = (id: string) => {
     if (!selectableSet.has(id)) return;
@@ -3318,12 +4180,21 @@ function HolidaySelector({
       {selectedInRangeIds.length > 0 && !expanded && (
         <div className="border-b border-background-200/70 bg-background-100/40 px-4 py-3">
           <div className="flex flex-wrap gap-2">
-            {holidays.filter(holiday => selectedSet.has(holidayId(holiday))).slice(0, 5).map(holiday => (
+            {visibleSelectedHolidays.map(holiday => (
               <span key={holidayId(holiday)} className="rounded-full bg-background-50 px-3 py-1 text-[11px] font-bold text-foreground-700 shadow-sm">
                 {holiday.label}
               </span>
             ))}
-            {selectedInRangeIds.length > 5 && <span className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">+{selectedInRangeIds.length - 5} more</span>}
+            {selectedInRangeIds.length > 5 && !showAllSelected && (
+              <button type="button" onClick={() => setShowAllSelected(true)} className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+                +{selectedInRangeIds.length - 5} more
+              </button>
+            )}
+            {selectedInRangeIds.length > 5 && showAllSelected && (
+              <button type="button" onClick={() => setShowAllSelected(false)} className="rounded-full bg-background-50 px-3 py-1 text-[11px] font-bold text-foreground-600 shadow-sm transition-smooth hover:bg-background-200">
+                Show less
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -3983,6 +4854,8 @@ function ModulesStepWorkspace({
   groupForm,
   removingDraftId,
   validationModules,
+  tutorConflicts,
+  onRefreshStaffProfiles,
   onSelectCohort,
   onAddCohort,
   onRemoveCohort,
@@ -3994,6 +4867,7 @@ function ModulesStepWorkspace({
   onRemoveModule,
   onChangeModule,
   onSelectExistingModule,
+  onResolveTutorConflict,
 }: {
   freeMode?: boolean;
   programmeName: string;
@@ -4007,6 +4881,8 @@ function ModulesStepWorkspace({
   groupForm: GroupDraft & { deliveryDay: string };
   removingDraftId: string;
   validationModules: string[];
+  tutorConflicts: TutorScheduleConflict[];
+  onRefreshStaffProfiles: () => void;
   onSelectCohort: (id: string) => void;
   onAddCohort: () => void;
   onRemoveCohort: (id: string) => void | Promise<void>;
@@ -4018,11 +4894,13 @@ function ModulesStepWorkspace({
   onRemoveModule: (id: string) => void | Promise<void>;
   onChangeModule: (localId: string, patch: Partial<ModuleDraft>) => void;
   onSelectExistingModule: (draft: ModuleDraft, catalogueId: string) => void;
+  onResolveTutorConflict: (conflict: TutorScheduleConflict) => void;
 }) {
   const activeModuleIndex = activeModule ? Math.max(0, moduleDrafts.findIndex(draft => draft.localId === activeModule.localId)) : -1;
   const groupSchedule = `${groupForm.deliveryDay || 'No delivery days'} ${groupForm.startTime || ''}-${groupForm.endTime || addHoursToTime(groupForm.startTime, 2)}`.trim();
   const workspaceTitle = freeMode ? 'Custom modules' : (groupForm.name || 'Select a group');
   const workspaceMeta = freeMode ? (programmeName || 'Module course') : groupSchedule;
+  const activeGroupHours = groupTotalHours(activeGroup, moduleOptions);
 
   return (
     <div className={`grid grid-cols-1 gap-4 ${freeMode ? '' : 'xl:grid-cols-[300px_minmax(0,1fr)]'}`}>
@@ -4047,7 +4925,7 @@ function ModulesStepWorkspace({
           items={cohortDrafts.map(cohort => ({
             id: cohort.localId,
             label: cohortDisplayName(cohort),
-            meta: formatGroupCount(configuredGroupCount(cohort)),
+            meta: `${formatGroupCount(configuredGroupCount(cohort))} - ${formatHoursValue(cohortTotalHours(cohort, moduleOptions))}`,
             color: cohort.color,
           }))}
           activeId={activeCohort.localId}
@@ -4065,7 +4943,7 @@ function ModulesStepWorkspace({
           items={activeCohort.groups.map((group, index) => ({
             id: group.localId,
             label: group.name || `Group ${index + 1}`,
-            meta: `${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${group.coach ? ` - Coach: ${group.coach}` : ''}`,
+            meta: `${formatHoursValue(groupTotalHours(group, moduleOptions))} - ${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${group.coach ? ` - Coach: ${group.coach}` : ''}`,
             color: group.color,
           }))}
           activeId={activeGroup.localId}
@@ -4086,12 +4964,15 @@ function ModulesStepWorkspace({
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase text-foreground-400">Selected group modules</p>
                 <h4 className="truncate text-base font-heading font-bold text-foreground-950">{workspaceTitle}</h4>
-                <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">{workspaceMeta}</p>
+                <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">{workspaceMeta} - {formatHoursValue(activeGroupHours)} total</p>
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <span className="rounded-full bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 shadow-sm">
                 {formatModuleCount(configuredModuleCount(activeGroup))}
+              </span>
+              <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 shadow-sm">
+                {formatHoursValue(activeGroupHours)}
               </span>
               <button
                 type="button"
@@ -4122,6 +5003,7 @@ function ModulesStepWorkspace({
                 const active = activeModule?.localId === draft.localId;
                 const title = moduleDraftDisplayName(draft, index, moduleOptions);
                 const removing = removingDraftId === draft.localId;
+                const hours = moduleDraftTotalHours(draft, activeGroup, moduleOptions);
                 return (
                   <div
                     key={draft.localId}
@@ -4131,7 +5013,7 @@ function ModulesStepWorkspace({
                     <button type="button" onClick={() => onSelectModule(draft.localId)} className="min-w-0 flex-1 px-3 py-1.5 text-left">
                       <span className="block truncate text-[12px] font-bold text-foreground-950">{title}</span>
                       <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                        {isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components` : formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))) : 'Not configured'}
+                        {isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components - ${formatHoursValue(hours)}` : `${formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))} - ${formatHoursValue(hours)}`) : 'Not configured'}
                       </span>
                     </button>
                     <button
@@ -4154,6 +5036,7 @@ function ModulesStepWorkspace({
         </div>
 
         <div className="bg-background-100/50 p-4">
+          <TutorConflictWarning conflicts={tutorConflicts} onResolve={onResolveTutorConflict} />
           {activeModule ? (
             <ModulePlanningPanel
               key={activeModule.localId}
@@ -4166,6 +5049,8 @@ function ModulesStepWorkspace({
               groupTime={groupForm.startTime}
               cohortStartDate={activeCohort.startDate}
               cohortEndDate={activeCohort.endDate}
+              tutorConflict={firstTutorConflictForModule(tutorConflicts, activeModule.localId)}
+              onRefreshStaffProfiles={onRefreshStaffProfiles}
               canRemove={!removingDraftId}
               onRemove={() => onRemoveModule(activeModule.localId)}
               onChange={patch => onChangeModule(activeModule.localId, patch)}
@@ -4340,6 +5225,8 @@ function ModulePlanningPanel({
   groupTime,
   cohortStartDate,
   cohortEndDate,
+  tutorConflict,
+  onRefreshStaffProfiles,
   canRemove,
   onRemove,
   onChange,
@@ -4354,6 +5241,8 @@ function ModulePlanningPanel({
   groupTime: string;
   cohortStartDate?: string;
   cohortEndDate?: string;
+  tutorConflict?: TutorScheduleConflict;
+  onRefreshStaffProfiles: () => void;
   canRemove: boolean;
   onRemove: () => void;
   onChange: (patch: Partial<ModuleDraft>) => void;
@@ -4504,8 +5393,20 @@ function ModulePlanningPanel({
                 <div className="hidden 2xl:block" />
               )}
               <Field label="End date" type="date" value={draft.endDate} onChange={value => onChange({ endDate: value })} />
-              <StaffSelect label="Tutor" value={draft.tutor} onChange={value => onChange({ tutor: value })} options={tutors} />
+              <StaffSelect label="Tutor" value={draft.tutor} onChange={value => onChange({ tutor: value })} options={tutors} onOpen={onRefreshStaffProfiles} />
             </div>
+            {tutorConflict ? (
+              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
+                <div className="flex items-start gap-2">
+                  <i className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></i>
+                  <div>
+                    <p className="font-bold">Tutor scheduling conflict</p>
+                    <p className="mt-0.5 leading-5">{tutorConflict.message}</p>
+                    <p className="mt-1 text-[11px] font-bold">Choose a different tutor before continuing.</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
         )}
@@ -4615,6 +5516,7 @@ function ModuleBuilderContentPreview({
   onUpdateFreeComponent,
   onRemoveFreeComponent,
   onReorderFreeComponent,
+  onOpenModuleBuilder,
 }: {
   freeMode?: boolean;
   draft: ModuleDraft;
@@ -4627,6 +5529,7 @@ function ModuleBuilderContentPreview({
   onUpdateFreeComponent?: (moduleId: string, componentId: string, patch: Partial<ModuleComponent>) => void;
   onRemoveFreeComponent?: (moduleId: string, componentId: string) => void;
   onReorderFreeComponent?: (moduleId: string, sourceComponentId: string, targetComponentId: string) => void;
+  onOpenModuleBuilder?: (url: string) => void;
 }) {
   const [moduleOpen, setModuleOpen] = useState(false);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(() => new Set());
@@ -4637,7 +5540,7 @@ function ModuleBuilderContentPreview({
   const knownComponentIdsRef = useRef<Set<string>>(new Set());
   const title = draft.name || 'Untitled module';
   const componentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
-  const components = draft.weeks.flatMap(week => week.components);
+  const components = useMemo(() => draft.weeks.flatMap(week => week.components), [draft.weeks]);
   const componentIdSignature = components.map(component => component.id).join('|');
   const moduleBuilderUrl = moduleBuilderUrlForDraft(draft, moduleOptions, programmeName, programmeId, cohort, group);
 
@@ -4647,6 +5550,19 @@ function ModuleBuilderContentPreview({
     setOrderUpdated(false);
     knownComponentIdsRef.current = new Set();
   }, [draft.localId]);
+
+  useEffect(() => {
+    if (freeMode || !componentCount) return;
+    const weeksWithComponents = draft.weeks.filter(week => week.components.length).map(week => week.id);
+    if (!weeksWithComponents.length) return;
+    setModuleOpen(true);
+    setExpandedWeekIds(previous => {
+      const next = new Set(previous);
+      weeksWithComponents.forEach(id => next.add(id));
+      if (next.size === previous.size && Array.from(next).every(id => previous.has(id))) return previous;
+      return next;
+    });
+  }, [componentCount, componentIdSignature, draft.weeks, freeMode]);
 
   useEffect(() => {
     if (!freeMode) return;
@@ -4664,7 +5580,7 @@ function ModuleBuilderContentPreview({
       return next;
     });
     knownComponentIdsRef.current = currentIds;
-  }, [componentIdSignature, freeMode]);
+  }, [componentIdSignature, components, freeMode]);
 
   useEffect(() => {
     if (!freeMode || freeProgrammeComponentTypes.some(type => type.type === newComponentType)) return;
@@ -4681,7 +5597,7 @@ function ModuleBuilderContentPreview({
 
   const openModuleBuilder = () => {
     if (!moduleBuilderUrl) return;
-    window.open(moduleBuilderUrl, '_blank', 'noopener,noreferrer');
+    onOpenModuleBuilder?.(moduleBuilderUrl);
   };
 
   const toggleComponent = (componentId: string) => {
@@ -5023,20 +5939,12 @@ function FreeComponentLmsDetails({
           onChange={value => onSettingChange('completionRule', value)}
           rows={2}
         />
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <TextArea
-            label="Evidence required"
-            value={getString('evidenceRequired', '-')}
-            onChange={value => onSettingChange('evidenceRequired', value)}
-            rows={2}
-          />
-          <TextArea
-            label="Reflection prompt"
-            value={getString('reflectionPrompt', 'What did you learn and how will you apply it?')}
-            onChange={value => onSettingChange('reflectionPrompt', value)}
-            rows={2}
-          />
-        </div>
+        <TextArea
+          label="Reflection prompt"
+          value={getString('reflectionPrompt', 'What did you learn and how will you apply it?')}
+          onChange={value => onSettingChange('reflectionPrompt', value)}
+          rows={2}
+        />
 
         {component.type === 'video' && (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -5148,22 +6056,112 @@ function ReadOnlyComponentCard({ component }: { component: ModuleComponent }) {
   );
 }
 
+function TutorConflictWarning({
+  conflicts,
+  onResolve,
+}: {
+  conflicts: TutorScheduleConflict[];
+  onResolve: (conflict: TutorScheduleConflict) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  if (!conflicts.length) return null;
+  const visibleConflicts = showAll ? conflicts : conflicts.slice(0, 3);
+  const remaining = conflicts.length - visibleConflicts.length;
+  const tutorProfileCreateUrl = '/curriculum/staff-profiles?role=tutor&create=1';
+
+  return (
+    <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-700">
+            <i className="ri-calendar-close-line text-lg"></i>
+          </span>
+          <div>
+            <p className="text-sm font-heading font-bold text-red-900">Tutor scheduling conflict</p>
+            <p className="mt-1 text-[12px] font-semibold leading-5 text-red-700">
+              The same tutor cannot be assigned to two sessions that overlap on the same day.
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <span className="inline-flex h-8 items-center rounded-full bg-white px-3 text-[11px] font-bold text-red-700 shadow-sm">
+            {conflicts.length} conflict{conflicts.length === 1 ? '' : 's'}
+          </span>
+          <a
+            href={tutorProfileCreateUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-[11px] font-bold text-red-700 transition-smooth hover:border-red-300 hover:bg-red-100"
+          >
+            <i className="ri-user-add-line"></i>
+            Create tutor profile
+          </a>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {visibleConflicts.map(conflict => (
+          <div key={conflict.id} className="rounded-xl border border-red-200 bg-white/85 px-3 py-2">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-red-900">{conflict.tutor}</p>
+                <p className="mt-0.5 text-[12px] font-semibold leading-5 text-red-700">{conflict.message}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onResolve(conflict)}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-red-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-red-700"
+              >
+                <i className="ri-arrow-left-line"></i>
+                Assign different tutor
+              </button>
+              <a
+                href={tutorProfileCreateUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-[11px] font-bold text-red-700 transition-smooth hover:border-red-300 hover:bg-red-100"
+              >
+                <i className="ri-user-add-line"></i>
+                New tutor
+              </a>
+            </div>
+          </div>
+        ))}
+      </div>
+      {conflicts.length > 3 ? (
+        <button
+          type="button"
+          onClick={() => setShowAll(value => !value)}
+          className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-red-700 underline decoration-red-400 decoration-2 underline-offset-4 transition-smooth hover:text-red-900"
+        >
+          <i className={showAll ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
+          {showAll ? 'Show fewer conflict details' : `Show all ${conflicts.length} conflict details`}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function ReviewSummary({
+  isEditing = false,
   freeMode = false,
   programme,
   cohortForm,
   groupForm,
   moduleDrafts,
+  moduleOptions,
   selectedHolidays,
   cohortHolidayExtensionDays,
   cohortDrafts,
   holidays,
 }: {
+  isEditing?: boolean;
   freeMode?: boolean;
   programme: CurriculumProgramme;
   cohortForm: { name: string; startDate: string; durationMonths: string; endDate: string; color: string; holidayIds: string[] };
   groupForm: { name: string; deliveryDay: string; startTime: string; endTime: string; color: string; coach?: string };
   moduleDrafts: ModuleDraft[];
+  moduleOptions: CurriculumModule[];
   selectedHolidays: CurriculumHoliday[];
   cohortHolidayExtensionDays: number;
   cohortDrafts: CohortDraft[];
@@ -5196,10 +6194,34 @@ function ReviewSummary({
   const componentCount = configuredModules.reduce((total, draft) => total + draft.weeks.reduce((weekTotal, week) => weekTotal + week.components.length, 0), 0);
   const skippedCount = configuredModules.reduce((total, draft) => total + draft.skippedHolidaySessions.length, 0);
   const programmeColor = programme?.color || '#5b21b6';
+  const totalHours = programmeTotalHours(configuredCohorts, moduleOptions);
+  const averageGroupHours = groupCount ? totalHours / groupCount : 0;
+  const averageModuleHours = moduleCount ? totalHours / moduleCount : 0;
+  const coachCount = uniqueStaffNames(configuredGroups.map(group => group.coach)).length;
+  const tutorCount = uniqueStaffNames(configuredModules.map(module => module.tutor)).length;
+  const assignedGroupCount = configuredGroups.filter(group => Boolean(group.coach)).length;
+  const assignedModuleCount = configuredModules.filter(module => Boolean(module.tutor)).length;
+  const unassignedGroups = configuredGroups.filter(group => !group.coach).length;
+  const unassignedModules = configuredModules.filter(module => !module.tutor).length;
+  const deliveryDayCount = new Set(configuredGroups.flatMap(group => group.deliveryDays).filter(Boolean)).size;
+  const readinessWarnings = [
+    unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need coach cover` : '',
+    unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need tutor cover` : '',
+    skippedCount ? `${skippedCount} session${skippedCount === 1 ? '' : 's'} shifted by holidays` : '',
+  ].filter(Boolean);
+  const readinessLabel = readinessWarnings.length ? 'Review warnings' : 'Ready to save';
+  const readinessTone = readinessWarnings.length ? 'warning' : 'success';
+  const readyBadgeLabel = isEditing ? 'Ready to update' : 'Ready to create';
 
   if (freeMode) {
     return (
       <div className="space-y-5">
+        <ReviewReadinessPanel
+          tone={readinessTone}
+          title={readinessLabel}
+          summary={`${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'} - ${formatHoursValue(totalHours)}`}
+          warnings={readinessWarnings}
+        />
         <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
           <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -5210,20 +6232,29 @@ function ReviewSummary({
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-700">Free modules</p>
-                    <ReviewBadge tone="success">Ready to create</ReviewBadge>
+                    <ReviewBadge tone="success">{readyBadgeLabel}</ReviewBadge>
                   </div>
                   <h3 className="mt-1 truncate text-xl font-heading font-bold text-foreground-950">{programme?.name || 'Untitled programme'}</h3>
                   <p className="mt-1 text-[12px] font-semibold text-foreground-600">{programme?.level || 'Level not set'}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 lg:w-[18rem]">
+              <div className="grid grid-cols-2 gap-2 lg:w-[27rem]">
+                <ReviewStat label="Total hours" value={formatHoursValue(totalHours)} />
                 <ReviewStat label="Modules" value={String(moduleCount)} />
                 <ReviewStat label="Components" value={String(componentCount)} />
+                <ReviewStat label="Avg/module" value={formatHoursValue(averageModuleHours)} />
               </div>
             </div>
           </div>
 
           <div className="p-4 sm:p-5">
+            <ReviewInsightGrid
+              items={[
+                { icon: 'ri-time-line', label: 'Programme hours', value: formatHoursValue(totalHours), detail: 'Across all custom modules', tone: 'emerald' },
+                { icon: 'ri-stack-line', label: 'Module average', value: formatHoursValue(averageModuleHours), detail: `${componentCount} components total`, tone: 'primary' },
+                { icon: 'ri-checkbox-circle-line', label: 'Completion model', value: 'Certificate', detail: 'Issued after all components are complete', tone: 'amber' },
+              ]}
+            />
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
@@ -5238,12 +6269,14 @@ function ReviewSummary({
               <div className="flex flex-wrap gap-2">
                 <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
                 <ReviewBadge tone="success">{componentCount} components</ReviewBadge>
+                <ReviewBadge tone="success">{formatHoursValue(totalHours)}</ReviewBadge>
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {configuredModules.length ? configuredModules.map((draft, moduleIndex) => {
                 const draftComponentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
+                const moduleHours = moduleDraftTotalHours(draft, configuredGroups[0] || { startTime: '', endTime: '' }, moduleOptions);
                 const moduleColor = draft.color || '#7c3aed';
                 return (
                   <div
@@ -5258,13 +6291,13 @@ function ReviewSummary({
                           <ReviewBadge tone={draft.mode === 'existing' ? 'info' : 'success'}>{draft.mode === 'existing' ? 'Module Builder' : 'Custom module'}</ReviewBadge>
                         </div>
                         <p className="mt-1 text-[11px] text-foreground-500">
-                          {draftComponentCount} components - certificate on completion
+                          {draftComponentCount} components - {formatHoursValue(moduleHours)} - certificate on completion
                         </p>
                       </div>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      <ReviewMiniMetric label="Hours" value={formatHoursValue(moduleHours)} tone="success" />
                       <ReviewMiniMetric label="Components" value={String(draftComponentCount)} tone="info" />
-                      <ReviewMiniMetric label="Pacing" value="Self-paced" tone="success" />
                       <ReviewMiniMetric label="Certificate" value="On completion" tone="success" />
                     </div>
                   </div>
@@ -5281,6 +6314,12 @@ function ReviewSummary({
 
   return (
     <div className="space-y-5">
+      <ReviewReadinessPanel
+        tone={readinessTone}
+        title={readinessLabel}
+        summary={`${cohortCount} cohort${cohortCount === 1 ? '' : 's'} - ${groupCount} group${groupCount === 1 ? '' : 's'} - ${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'}`}
+        warnings={readinessWarnings}
+      />
       <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
         <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -5291,22 +6330,32 @@ function ReviewSummary({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-700">Programme</p>
-                  <ReviewBadge tone="success">Ready to create</ReviewBadge>
+                  <ReviewBadge tone="success">{readyBadgeLabel}</ReviewBadge>
                 </div>
                 <h3 className="mt-1 truncate text-xl font-heading font-bold text-foreground-950">{programme?.name || 'Untitled programme'}</h3>
                 <p className="mt-1 text-[12px] font-semibold text-foreground-600">{programme?.level || 'Level not set'}</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[30rem]">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:w-[36rem]">
+              <ReviewStat label="Total hours" value={formatHoursValue(totalHours)} />
               <ReviewStat label="Cohorts" value={String(cohortCount)} />
               <ReviewStat label="Groups" value={String(groupCount)} />
               <ReviewStat label="Modules" value={String(moduleCount)} />
               <ReviewStat label="Components" value={String(componentCount)} />
+              <ReviewStat label="Avg/group" value={formatHoursValue(averageGroupHours)} />
             </div>
           </div>
         </div>
 
         <div className="p-4 sm:p-5">
+          <ReviewInsightGrid
+            items={[
+              { icon: 'ri-time-line', label: 'Programme hours', value: formatHoursValue(totalHours), detail: `${formatHoursValue(averageModuleHours)} average per module`, tone: 'emerald' },
+              { icon: 'ri-calendar-schedule-line', label: 'Delivery pattern', value: `${deliveryDayCount} day${deliveryDayCount === 1 ? '' : 's'}`, detail: `${skippedCount} skipped session${skippedCount === 1 ? '' : 's'} from holidays`, tone: skippedCount ? 'amber' : 'primary' },
+              { icon: 'ri-user-star-line', label: 'Coaching cover', value: `${assignedGroupCount}/${groupCount}`, detail: unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need a coach` : `${coachCount} coach${coachCount === 1 ? '' : 'es'} assigned`, tone: unassignedGroups ? 'amber' : 'emerald' },
+              { icon: 'ri-user-line', label: 'Tutor cover', value: `${assignedModuleCount}/${moduleCount}`, detail: unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need a tutor` : `${tutorCount} tutor${tutorCount === 1 ? '' : 's'} assigned`, tone: unassignedModules ? 'amber' : 'emerald' },
+            ]}
+          />
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
@@ -5323,6 +6372,7 @@ function ReviewSummary({
             <div className="flex flex-wrap gap-2">
               <ReviewBadge>{formatGroupCount(groupCount)}</ReviewBadge>
               <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
+              <ReviewBadge tone="success">{formatHoursValue(totalHours)}</ReviewBadge>
               <ReviewBadge tone={skippedCount ? 'warning' : 'success'}>{skippedCount} skipped sessions</ReviewBadge>
             </div>
           </div>
@@ -5332,6 +6382,7 @@ function ReviewSummary({
               const cohortColor = cohort.color || '#0f766e';
               const selectedForCohort = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
               const groups = cohort.groups.filter(isConfiguredGroup);
+              const cohortHours = cohortTotalHours(cohort, moduleOptions);
               const hasExtension = cohort.localId === 'current-cohort' && cohortHolidayExtensionDays > 0;
               return (
                 <div key={cohort.localId} className="relative pl-8">
@@ -5345,6 +6396,7 @@ function ReviewSummary({
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-500">Cohort {cohortIndex + 1}</p>
                           <ReviewBadge>{formatGroupCount(groups.length)}</ReviewBadge>
+                          <ReviewBadge tone="success">{formatHoursValue(cohortHours)}</ReviewBadge>
                           <ReviewBadge tone={selectedForCohort.length ? 'warning' : 'muted'}>{selectedForCohort.length} holidays</ReviewBadge>
                           {hasExtension ? <ReviewBadge tone="warning">extended {cohortHolidayExtensionDays}d</ReviewBadge> : null}
                         </div>
@@ -5359,6 +6411,8 @@ function ReviewSummary({
                       {groups.length ? groups.map((group, groupIndex) => {
                         const groupColor = group.color || '#334155';
                         const modules = group.modules.filter(isConfiguredModule);
+                        const groupHours = groupTotalHours(group, moduleOptions);
+                        const groupDeliveryHours = modules.reduce((total, draft) => total + moduleDraftScheduledHours(draft, group, moduleOptions), 0);
                         return (
                           <div key={group.localId} className="relative rounded-xl border p-3 pl-4 shadow-[0_1px_0_rgba(15,23,42,0.03)]" style={reviewTintStyle(groupColor, 0.052, 0.18)}>
                             <span className="absolute -left-[1.05rem] top-5 h-px w-4" style={{ backgroundColor: hexToRgba(cohortColor, 0.24) }} aria-hidden="true"></span>
@@ -5371,6 +6425,7 @@ function ReviewSummary({
                                   <div className="flex flex-wrap items-center gap-2">
                                     <p className="text-[10px] font-bold uppercase text-foreground-400">Group {groupIndex + 1}</p>
                                     <ReviewBadge tone="info">{formatModuleCount(modules.length)}</ReviewBadge>
+                                    <ReviewBadge tone="success">{formatHoursValue(groupHours)}</ReviewBadge>
                                   </div>
                                   <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{group.name || `Group ${groupIndex + 1}`}</p>
                                   <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
@@ -5382,10 +6437,18 @@ function ReviewSummary({
                                 </div>
                               </div>
                             </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              <ReviewMiniMetric label="Total hours" value={formatHoursValue(groupHours)} tone="success" />
+                              <ReviewMiniMetric label="Delivery hours" value={formatHoursValue(groupDeliveryHours)} tone="info" />
+                              <ReviewMiniMetric label="Modules" value={String(modules.length)} />
+                              <ReviewMiniMetric label="Coach" value={group.coach || 'Unassigned'} tone={group.coach ? 'success' : 'warning'} />
+                            </div>
 
                             <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
                               {modules.length ? modules.map((draft, moduleIndex) => {
                                 const draftComponentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
+                                const moduleHours = moduleDraftTotalHours(draft, group, moduleOptions);
+                                const deliveryHours = moduleDraftScheduledHours(draft, group, moduleOptions);
                                 const moduleColor = draft.color || '#7c3aed';
                                 return (
                                   <div
@@ -5401,14 +6464,16 @@ function ReviewSummary({
                                           {draft.extensionDays > 0 ? <ReviewBadge tone="warning">extended {draft.extensionDays}d</ReviewBadge> : null}
                                         </div>
                                         <p className="mt-1 text-[11px] text-foreground-500">
-                                          {draft.startDate || 'No start'} to {draft.endDate || 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions
+                                          {draft.startDate || 'No start'} to {draft.endDate || 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)}
                                         </p>
                                       </div>
                                     </div>
-                                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                                      <ReviewMiniMetric label="Hours" value={formatHoursValue(moduleHours)} tone="success" />
+                                      <ReviewMiniMetric label="Delivery" value={formatHoursValue(deliveryHours)} tone="info" />
                                       <ReviewMiniMetric label="Skipped" value={String(draft.skippedHolidaySessions.length)} tone={draft.skippedHolidaySessions.length ? 'warning' : 'success'} />
                                       <ReviewMiniMetric label="Content" value={String(draftComponentCount)} tone="info" />
-                                      <ReviewMiniMetric label="Tutor" value={draft.tutor || 'Unassigned'} />
+                                      <ReviewMiniMetric label="Tutor" value={draft.tutor || 'Unassigned'} tone={draft.tutor ? 'success' : 'warning'} />
                                     </div>
                                   </div>
                                 );
@@ -5468,6 +6533,80 @@ function ReviewSummary({
   );
 }
 
+function ReviewReadinessPanel({
+  tone,
+  title,
+  summary,
+  warnings,
+}: {
+  tone: 'success' | 'warning';
+  title: string;
+  summary: string;
+  warnings: string[];
+}) {
+  const isWarning = tone === 'warning';
+
+  return (
+    <section className={`rounded-2xl border px-4 py-3 shadow-sm ${isWarning ? 'border-amber-200 bg-amber-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isWarning ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+            <i className={`${isWarning ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} text-lg`}></i>
+          </span>
+          <div>
+            <p className="text-sm font-heading font-bold text-foreground-950">{title}</p>
+            <p className="mt-0.5 text-[12px] font-semibold text-foreground-600">{summary}</p>
+          </div>
+        </div>
+        {warnings.length ? (
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            {warnings.map(warning => (
+              <span key={warning} className="rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-amber-800">
+                {warning}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-emerald-700">
+            No warnings
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReviewInsightGrid({
+  items,
+}: {
+  items: Array<{ icon: string; label: string; value: string; detail: string; tone: 'primary' | 'emerald' | 'amber' }>;
+}) {
+  const toneClasses = {
+    primary: 'bg-primary-50 text-primary-700',
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-700',
+  };
+
+  return (
+    <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {items.map(item => (
+        <div key={item.label} className="rounded-xl border border-background-200 bg-white/80 px-3 py-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${toneClasses[item.tone]}`}>
+              <i className={`${item.icon} text-base`}></i>
+            </span>
+            <div className="min-w-0">
+              <p className="text-[9px] font-bold uppercase text-foreground-400">{item.label}</p>
+              <p className="mt-0.5 truncate text-sm font-heading font-bold text-foreground-950">{item.value}</p>
+              <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">{item.detail}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ReviewStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 shadow-sm">
@@ -5480,9 +6619,9 @@ function ReviewStat({ label, value }: { label: string; value: string }) {
 function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'success' | 'warning' | 'info' | 'muted' }) {
   const classes = {
     default: 'border-background-200 bg-background-50 text-foreground-700',
-    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    success: 'border-emerald-200 bg-white text-emerald-700',
     warning: 'border-amber-200 bg-amber-50 text-amber-700',
-    info: 'border-primary-200 bg-primary-50 text-primary-700',
+    info: 'border-primary-100 bg-white text-primary-700',
     muted: 'border-background-200 bg-background-100 text-foreground-500',
   }[tone];
 
@@ -5492,9 +6631,9 @@ function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone
 function ReviewMiniMetric({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'success' | 'warning' | 'info' }) {
   const toneClass = {
     default: 'bg-background-50 text-foreground-900',
-    success: 'bg-emerald-50 text-emerald-700',
+    success: 'bg-background-50 text-emerald-700',
     warning: 'bg-amber-50 text-amber-700',
-    info: 'bg-primary-50 text-primary-700',
+    info: 'bg-background-50 text-primary-700',
   }[tone];
 
   return (
@@ -5665,7 +6804,7 @@ function SelectNative({
   );
 }
 
-function StaffSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: string[] }) {
+function StaffSelect({ label, value, onChange, options, onOpen }: { label: string; value: string; onChange: (value: string) => void; options: string[]; onOpen?: () => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement | null>(null);
@@ -5683,7 +6822,17 @@ function StaffSelect({ label, value, onChange, options }: { label: string; value
   return (
     <div ref={ref} className="relative min-w-0">
       <span className="text-[10px] font-bold uppercase text-foreground-400">{label}</span>
-      <button type="button" onClick={() => setOpen(current => !current)} className="mt-1 flex w-full items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-left text-[13px] font-semibold text-foreground-900 hover:bg-background-100/60">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen(current => {
+            const next = !current;
+            if (next) onOpen?.();
+            return next;
+          });
+        }}
+        className="mt-1 flex w-full items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-left text-[13px] font-semibold text-foreground-900 hover:bg-background-100/60"
+      >
         <i className="ri-user-line text-foreground-400"></i>
         <span className="min-w-0 flex-1 truncate">{value || 'Unassigned'}</span>
         <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>

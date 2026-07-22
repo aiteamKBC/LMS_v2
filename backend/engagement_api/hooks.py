@@ -1,4 +1,4 @@
-   """Real-time engagement-points hooks.
+"""Real-time engagement-points hooks.
 
 This module is the single entry point another app calls the instant a
 grant-worthy learner event is recorded, so engagement points are awarded

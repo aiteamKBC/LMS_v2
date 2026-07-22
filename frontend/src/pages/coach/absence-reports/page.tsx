@@ -1,11 +1,13 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { ABSENCE_REPORTS_DATA, type AbsenceReport } from '@/mocks/absence-reports';
+import type { AbsenceReport } from '@/mocks/absence-reports';
 
 const coachNav = roleNavMap.coach;
+const API_ENDPOINT = '/coach_api/coach/absence-reports';
+type ReportStatusKey = 'pending' | 'approved' | 'declined';
 
 function FilterDropdown({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; allLabel?: string }) {
   return (
@@ -19,36 +21,114 @@ function FilterDropdown({ label, value, onChange, options, allLabel }: { label: 
   );
 }
 
+function normalizeReportStatus(status?: string | null): ReportStatusKey {
+  const value = String(status || '').trim().toLowerCase();
+  if (value === 'approved' || value === 'declined') return value;
+  return 'pending';
+}
+
+function statusLabel(status?: string | null) {
+  const normalized = normalizeReportStatus(status);
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function statusBadgeClass(status?: string | null) {
+  const normalized = normalizeReportStatus(status);
+  if (normalized === 'approved') return 'bg-emerald-100 text-emerald-700';
+  if (normalized === 'declined') return 'bg-red-100 text-red-700';
+  return 'bg-amber-100 text-amber-700';
+}
+
+function isPendingReport(report: AbsenceReport) {
+  return normalizeReportStatus(report.status) === 'pending';
+}
+
+function reportPriority(report: AbsenceReport) {
+  if (report.attendanceRate < 80 || report.previousAbsences >= 5) return { label: 'High priority', className: 'bg-red-50 text-red-700 border-red-100' };
+  if (!report.evidenceProvided || report.previousAbsences >= 3) return { label: 'Check carefully', className: 'bg-amber-50 text-amber-700 border-amber-100' };
+  return { label: 'Standard review', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
+}
+
+function resolveEvidenceUrl(url?: string | null) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value) || value.startsWith('data:')) return value;
+  return value.startsWith('/') ? value : `/${value}`;
+}
+
+function isImageEvidence(report: AbsenceReport) {
+  const kind = String(report.evidenceKind || '').toLowerCase();
+  const url = resolveEvidenceUrl(report.evidenceImageUrl);
+  return kind === 'image' || (!!url && /\.(apng|avif|gif|jpe?g|png|svg|webp)(\?.*)?$/i.test(url));
+}
+
+function evidenceActionLabel(report: AbsenceReport) {
+  if (isImageEvidence(report)) return 'image';
+  if (report.evidenceImageUrl) return 'file';
+  return 'text';
+}
+
 export default function CoachAbsenceReports() {
   const { success, error } = useToast();
+  const [reports, setReports] = useState<AbsenceReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState(true);
+  const [reportsError, setReportsError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [programmeFilter, setProgrammeFilter] = useState<string>('all');
   const [cohortFilter, setCohortFilter] = useState<string>('all');
   const [reportedByFilter, setReportedByFilter] = useState<string>('all');
   const [reasonFilter, setReasonFilter] = useState<string>('all');
+  const [queueFilter, setQueueFilter] = useState<'all' | 'high-priority' | 'with-evidence' | 'missing-evidence'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
+  const [selectedEvidence, setSelectedEvidence] = useState<AbsenceReport | null>(null);
   const [actionModal, setActionModal] = useState<{ type: 'approve' | 'decline'; reportId: string } | null>(null);
   const [sendNotification, setSendNotification] = useState(true);
   const [coachNoteText, setCoachNoteText] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(8);
 
-  const programmes = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.programme))].sort(), []);
-  const cohorts = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.cohort))].sort(), []);
-  const reportedByOptions = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.reportedBy))].sort(), []);
-  const reasonCategories = useMemo(() => [...new Set(ABSENCE_REPORTS_DATA.map(r => r.reasonCategory))].sort(), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(API_ENDPOINT, { signal: controller.signal })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+        return data as { items?: AbsenceReport[] };
+      })
+      .then(data => {
+        setReports(data.items || []);
+        setReportsError(null);
+      })
+      .catch(requestError => {
+        if (controller.signal.aborted) return;
+        setReports([]);
+        setReportsError(requestError instanceof Error ? requestError.message : 'Unable to load absence reports.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingReports(false);
+      });
+    return () => controller.abort();
+  }, []);
+
+  const programmes = useMemo(() => [...new Set(reports.map(r => r.programme))].sort(), [reports]);
+  const cohorts = useMemo(() => [...new Set(reports.map(r => r.cohort))].sort(), [reports]);
+  const reportedByOptions = useMemo(() => [...new Set(reports.map(r => r.reportedBy))].sort(), [reports]);
+  const reasonCategories = useMemo(() => [...new Set(reports.map(r => r.reasonCategory))].sort(), [reports]);
 
   const filteredData = useMemo(() => {
-    let data = ABSENCE_REPORTS_DATA;
-    if (statusFilter !== 'all') data = data.filter(r => r.status === statusFilter);
+    let data = reports;
+    if (statusFilter !== 'all') data = data.filter(r => normalizeReportStatus(r.status) === statusFilter);
     if (programmeFilter !== 'all') data = data.filter(r => r.programme === programmeFilter);
     if (cohortFilter !== 'all') data = data.filter(r => r.cohort === cohortFilter);
     if (reportedByFilter !== 'all') data = data.filter(r => r.reportedBy === reportedByFilter);
     if (reasonFilter !== 'all') data = data.filter(r => r.reasonCategory === reasonFilter);
+    if (queueFilter === 'high-priority') data = data.filter(r => isPendingReport(r) && (r.attendanceRate < 80 || r.previousAbsences >= 5));
+    if (queueFilter === 'with-evidence') data = data.filter(r => r.evidenceProvided);
+    if (queueFilter === 'missing-evidence') data = data.filter(r => isPendingReport(r) && !r.evidenceProvided);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       data = data.filter(r =>
@@ -68,46 +148,52 @@ export default function CoachAbsenceReports() {
       data = data.filter(r => r.sessionDate <= dateTo);
     }
     return data.sort((a, b) => {
-      if (a.status === 'pending' && b.status !== 'pending') return -1;
-      if (a.status !== 'pending' && b.status === 'pending') return 1;
+      if (isPendingReport(a) && !isPendingReport(b)) return -1;
+      if (!isPendingReport(a) && isPendingReport(b)) return 1;
+      if (a.evidenceProvided !== b.evidenceProvided) return a.evidenceProvided ? -1 : 1;
+      if (a.previousAbsences !== b.previousAbsences) return b.previousAbsences - a.previousAbsences;
+      if (a.attendanceRate !== b.attendanceRate) return a.attendanceRate - b.attendanceRate;
       return 0;
     });
-  }, [statusFilter, programmeFilter, cohortFilter, reportedByFilter, reasonFilter, searchQuery, dateFrom, dateTo]);
+  }, [reports, statusFilter, programmeFilter, cohortFilter, reportedByFilter, reasonFilter, queueFilter, searchQuery, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  const selectedReport = ABSENCE_REPORTS_DATA.find(r => r.id === selectedReportId) || null;
+  const selectedReport = reports.find(r => r.id === selectedReportId) || null;
 
-  const pending = ABSENCE_REPORTS_DATA.filter(r => r.status === 'pending').length;
-  const approved = ABSENCE_REPORTS_DATA.filter(r => r.status === 'approved').length;
-  const declined = ABSENCE_REPORTS_DATA.filter(r => r.status === 'declined').length;
-  const total = ABSENCE_REPORTS_DATA.length;
-  const withEvidence = ABSENCE_REPORTS_DATA.filter(r => r.evidenceProvided).length;
+  const pending = reports.filter(isPendingReport).length;
+  const approved = reports.filter(r => normalizeReportStatus(r.status) === 'approved').length;
+  const declined = reports.filter(r => normalizeReportStatus(r.status) === 'declined').length;
+  const total = reports.length;
+  const withEvidence = reports.filter(r => r.evidenceProvided).length;
+  const pendingWithoutEvidence = reports.filter(r => isPendingReport(r) && !r.evidenceProvided).length;
+  const highPriority = reports.filter(r => isPendingReport(r) && (r.attendanceRate < 80 || r.previousAbsences >= 5)).length;
 
-  const handleApprove = (reportId: string) => {
-    const report = ABSENCE_REPORTS_DATA.find(r => r.id === reportId);
-    if (report) {
-      success(`Approved absence for ${report.learner}`, report.sessionTitle);
-      if (sendNotification) {
-        success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
-      }
+  const saveDecision = async (reportId: string, status: 'approved' | 'declined') => {
+    const report = reports.find(item => item.id === reportId);
+    if (!report) return;
+    try {
+      const response = await fetch(API_ENDPOINT, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: reportId, status, coachNote: coachNoteText }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      setReports(current => current.map(item => item.id === reportId ? data.item as AbsenceReport : item));
+      if (status === 'approved') success(`Approved absence for ${report.learner}`, report.sessionTitle);
+      else error(`Declined absence for ${report.learner}`, report.sessionTitle);
+      if (sendNotification) success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
+      setCoachNoteText('');
+      setActionModal(null);
+    } catch (requestError) {
+      error('Unable to save absence decision', requestError instanceof Error ? requestError.message : 'Please try again.');
     }
-    setCoachNoteText('');
-    setActionModal(null);
   };
 
-  const handleDecline = (reportId: string) => {
-    const report = ABSENCE_REPORTS_DATA.find(r => r.id === reportId);
-    if (report) {
-      error(`Declined absence for ${report.learner}`, report.sessionTitle);
-      if (sendNotification) {
-        success(`Notification sent to ${report.learner}`, coachNoteText.trim() ? 'With your message' : 'Absence decision confirmed');
-      }
-    }
-    setCoachNoteText('');
-    setActionModal(null);
-  };
+  const handleApprove = (reportId: string) => saveDecision(reportId, 'approved');
+  const handleDecline = (reportId: string) => saveDecision(reportId, 'declined');
 
   const reasonCategoryLabel: Record<string, string> = {
     illness: 'Illness',
@@ -127,7 +213,7 @@ export default function CoachAbsenceReports() {
     other: 'bg-foreground-100 text-foreground-700',
   };
 
-  const hasActiveFilters = statusFilter !== 'all' || programmeFilter !== 'all' || cohortFilter !== 'all' || reportedByFilter !== 'all' || reasonFilter !== 'all' || dateFrom || dateTo || searchQuery;
+  const hasActiveFilters = statusFilter !== 'all' || programmeFilter !== 'all' || cohortFilter !== 'all' || reportedByFilter !== 'all' || reasonFilter !== 'all' || queueFilter !== 'all' || dateFrom || dateTo || searchQuery;
 
   const clearFilters = () => {
     setStatusFilter('all');
@@ -135,6 +221,7 @@ export default function CoachAbsenceReports() {
     setCohortFilter('all');
     setReportedByFilter('all');
     setReasonFilter('all');
+    setQueueFilter('all');
     setSearchQuery('');
     setDateFrom('');
     setDateTo('');
@@ -163,6 +250,37 @@ export default function CoachAbsenceReports() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ===== Review Queue Snapshot ===== */}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: 'Needs review', value: pending, sub: 'Pending decisions', icon: 'ri-time-line', color: 'amber', onClick: () => { setStatusFilter('pending'); setQueueFilter('all'); } },
+            { label: 'High priority', value: highPriority, sub: 'Low attendance or repeat absence', icon: 'ri-alarm-warning-line', color: 'red', onClick: () => { setStatusFilter('pending'); setQueueFilter('high-priority'); } },
+            { label: 'Approved', value: approved, sub: 'Confirmed absences', icon: 'ri-check-line', color: 'emerald', onClick: () => { setStatusFilter('approved'); setQueueFilter('all'); } },
+            { label: 'Declined', value: declined, sub: 'Rejected requests', icon: 'ri-close-line', color: 'red', onClick: () => { setStatusFilter('declined'); setQueueFilter('all'); } },
+          ].map(card => (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => { card.onClick(); setCurrentPage(1); }}
+              className="group rounded-xl border border-foreground-200/60 bg-background-50 p-4 text-left shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${
+                  card.color === 'amber' ? 'bg-amber-50 text-amber-600' :
+                  card.color === 'red' ? 'bg-red-50 text-red-600' :
+                  card.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' :
+                  'bg-primary-50 text-primary-600'
+                }`}>
+                  <i className={`${card.icon} text-lg`}></i>
+                </span>
+                <span className="text-2xl font-heading font-bold text-foreground-900">{card.value}</span>
+              </div>
+              <p className="mt-3 text-[12px] font-semibold text-foreground-900">{card.label}</p>
+              <p className="mt-0.5 text-[10px] text-foreground-400">{card.sub}</p>
+            </button>
+          ))}
         </div>
 
         {/* ===== Search + Filters Bar ===== */}
@@ -288,6 +406,12 @@ export default function CoachAbsenceReports() {
                   <button onClick={() => { setReasonFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
                 </span>
               )}
+              {queueFilter !== 'all' && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
+                  {queueFilter === 'high-priority' ? 'High priority' : queueFilter === 'with-evidence' ? 'With evidence' : 'Missing evidence'}
+                  <button onClick={() => { setQueueFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                </span>
+              )}
               {(dateFrom || dateTo) && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {dateFrom || '...'} to {dateTo || '...'}
@@ -300,6 +424,19 @@ export default function CoachAbsenceReports() {
 
         {/* ===== Reports Table ===== */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-foreground-200/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Review queue</p>
+              <h3 className="mt-0.5 text-sm font-heading font-bold text-foreground-900">
+                {filteredData.length} report{filteredData.length === 1 ? '' : 's'} in view
+              </h3>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-foreground-400">
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">{pending} pending</span>
+              <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-700">{highPriority} high priority</span>
+              <span className="rounded-full bg-primary-50 px-2.5 py-1 font-semibold text-primary-700">{withEvidence} with evidence</span>
+            </div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead>
@@ -309,7 +446,6 @@ export default function CoachAbsenceReports() {
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Date</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Reason</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Evidence</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Reported By</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Prev. Absences</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Attendance</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Status</th>
@@ -319,13 +455,13 @@ export default function CoachAbsenceReports() {
               <tbody className="divide-y divide-background-200/30">
                 {paginatedData.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-16 text-center">
+                    <td colSpan={9} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3">
                         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center">
-                          <i className="ri-inbox-line text-foreground-300 text-xl"></i>
+                          <i className={`${loadingReports ? 'ri-loader-4-line animate-spin' : reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></i>
                         </span>
-                        <p className="text-[13px] text-foreground-400 font-medium">No absence reports found</p>
-                        <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>
+                        <p className="text-[13px] text-foreground-400 font-medium">{loadingReports ? 'Loading absence reports...' : reportsError || 'No absence reports found'}</p>
+                        {!loadingReports && !reportsError && <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>}
                         {hasActiveFilters && (
                           <button onClick={clearFilters} className="px-3 py-1.5 bg-background-100 text-foreground-500 rounded-lg text-[11px] font-medium hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
                             <i className="ri-close-line mr-1"></i>Clear Filters
@@ -337,6 +473,7 @@ export default function CoachAbsenceReports() {
                 ) : (
                   paginatedData.map(row => {
                     const isSel = selectedReportId === row.id;
+                    const priority = reportPriority(row);
                     return (
                       <tr
                         key={row.id}
@@ -350,7 +487,10 @@ export default function CoachAbsenceReports() {
                             </div>
                             <div className="min-w-0">
                               <p className="text-[12px] font-semibold text-foreground-900 truncate">{row.learner}</p>
-                              <p className="text-[10px] text-foreground-400 truncate">{row.programme}</p>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                                <p className="text-[10px] text-foreground-400 truncate">{row.programme}</p>
+                                <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-semibold ${priority.className}`}>{priority.label}</span>
+                              </div>
                               <p className="text-[10px] text-foreground-300 truncate">{row.cohort}</p>
                             </div>
                           </div>
@@ -377,21 +517,24 @@ export default function CoachAbsenceReports() {
                         </td>
                         <td className="px-3 py-3 text-center">
                           {row.evidenceProvided ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                              <i className="ri-check-line text-[9px]"></i>
-                              {row.evidenceType || 'Yes'}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedEvidence(row);
+                              }}
+                              className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2.5 py-1.5 rounded-lg hover:bg-primary-100 hover:border-primary-300 transition-smooth cursor-pointer whitespace-nowrap"
+                              aria-label={`View ${evidenceActionLabel(row)} evidence for ${row.learner}`}
+                            >
+                              <i className={`${isImageEvidence(row) ? 'ri-image-line' : row.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-[12px]`}></i>
+                              View {evidenceActionLabel(row)}
+                            </button>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground-400 bg-foreground-50 px-2 py-0.5 rounded-full">
                               <i className="ri-close-line text-[9px]"></i>
                               None
                             </span>
                           )}
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${row.reportedBy === 'Learner' ? 'bg-accent-100 text-accent-700' : row.reportedBy === 'Employer' ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>
-                            {row.reportedBy}
-                          </span>
                         </td>
                         <td className="px-3 py-3 text-center">
                           <span className={`text-[12px] font-semibold ${row.previousAbsences >= 5 ? 'text-red-600' : row.previousAbsences >= 3 ? 'text-amber-600' : 'text-emerald-600'}`}>
@@ -407,13 +550,13 @@ export default function CoachAbsenceReports() {
                           </div>
                         </td>
                         <td className="px-3 py-3 text-center">
-                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${row.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : row.status === 'declined' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {row.status.charAt(0).toUpperCase() + row.status.slice(1)}
+                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${statusBadgeClass(row.status)}`}>
+                            {statusLabel(row.status)}
                           </span>
                         </td>
                         <td className="pr-4 pl-3 py-3 text-center">
                           <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                            {row.status === 'pending' && (
+                            {isPendingReport(row) && (
                               <>
                                 <button
                                   onClick={() => {
@@ -523,8 +666,8 @@ export default function CoachAbsenceReports() {
                 <p className="text-[11px] text-foreground-400">{selectedReport.programme}</p>
                 <p className="text-[11px] text-foreground-300">{selectedReport.cohort} · Tutor: {selectedReport.tutor}</p>
                 <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${selectedReport.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : selectedReport.status === 'declined' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
-                    {selectedReport.status.charAt(0).toUpperCase() + selectedReport.status.slice(1)}
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusBadgeClass(selectedReport.status)}`}>
+                    {statusLabel(selectedReport.status)}
                   </span>
                   <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${reasonCategoryColor[selectedReport.reasonCategory]}`}>
                     {reasonCategoryLabel[selectedReport.reasonCategory]}
@@ -613,7 +756,7 @@ export default function CoachAbsenceReports() {
             </div>
 
             {/* Decision History (if already decided) */}
-            {selectedReport.status !== 'pending' && selectedReport.coachNotes && (
+            {!isPendingReport(selectedReport) && selectedReport.coachNotes && (
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">
                   <i className="ri-history-line text-xs"></i> Decision History
@@ -621,8 +764,8 @@ export default function CoachAbsenceReports() {
                 <div className="space-y-2">
                   <div className="flex justify-between text-[12px]">
                     <span className="text-foreground-400">Decision</span>
-                    <span className={`font-semibold ${selectedReport.status === 'approved' ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {selectedReport.status === 'approved' ? 'Approved' : 'Declined'}
+                    <span className={`font-semibold ${normalizeReportStatus(selectedReport.status) === 'approved' ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {normalizeReportStatus(selectedReport.status) === 'approved' ? 'Approved' : 'Declined'}
                     </span>
                   </div>
                   <div className="flex justify-between text-[12px]">
@@ -642,7 +785,7 @@ export default function CoachAbsenceReports() {
             )}
 
             {/* Action Buttons for pending reports */}
-            {selectedReport.status === 'pending' && (
+            {isPendingReport(selectedReport) && (
               <div className="flex flex-col gap-2 pt-2">
                 <button
                   onClick={() => {
@@ -673,6 +816,81 @@ export default function CoachAbsenceReports() {
       </RightSlidePanel>
 
       {/* ═══════ Action Confirmation Modal ═══════ */}
+      {selectedEvidence && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onClick={() => setSelectedEvidence(null)}>
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-sm"></div>
+          <div className="relative w-full max-w-[560px] overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
+                  <i className={`${isImageEvidence(selectedEvidence) ? 'ri-image-line' : selectedEvidence.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-lg`}></i>
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-foreground-900">Absence evidence</h3>
+                  <p className="truncate text-[11px] text-foreground-400">{selectedEvidence.learner} · {selectedEvidence.sessionTitle}</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setSelectedEvidence(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close evidence preview">
+                <i className="ri-close-line text-lg"></i>
+              </button>
+            </div>
+
+            <div className="p-5">
+              {isImageEvidence(selectedEvidence) ? (
+                <div className="relative flex min-h-[290px] items-center justify-center overflow-hidden rounded-xl border border-foreground-200 bg-background-100">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-foreground-400">
+                    <i className="ri-image-line text-4xl"></i>
+                    <span className="text-xs font-medium">Image preview unavailable</span>
+                    {selectedEvidence.evidenceImageUrl && (
+                      <a href={resolveEvidenceUrl(selectedEvidence.evidenceImageUrl)} target="_blank" rel="noreferrer" className="text-xs font-semibold text-primary-700 hover:text-primary-800">
+                        Open evidence file
+                      </a>
+                    )}
+                  </div>
+                  {selectedEvidence.evidenceImageUrl && (
+                    <img
+                      src={resolveEvidenceUrl(selectedEvidence.evidenceImageUrl)}
+                      alt={`Evidence submitted by ${selectedEvidence.learner}`}
+                      className="relative z-10 max-h-[430px] w-full object-contain bg-white"
+                      onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                    />
+                  )}
+                </div>
+              ) : selectedEvidence.evidenceImageUrl ? (
+                <div className="rounded-xl border border-foreground-200 bg-background-100 p-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Attached file</p>
+                  <a href={resolveEvidenceUrl(selectedEvidence.evidenceImageUrl)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] font-semibold text-primary-700 hover:bg-primary-100">
+                    <i className="ri-attachment-2"></i>
+                    Open evidence file
+                  </a>
+                  {selectedEvidence.evidenceText && (
+                    <p className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-foreground-800">{selectedEvidence.evidenceText}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-foreground-200 bg-background-100 p-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Submitted text</p>
+                  <p className="whitespace-pre-wrap text-[13px] leading-6 text-foreground-800">
+                    {selectedEvidence.evidenceText || selectedEvidence.reason || 'No text was provided.'}
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl bg-background-100 p-3 text-[11px]">
+                <div>
+                  <p className="text-foreground-400">Session date</p>
+                  <p className="mt-0.5 font-semibold text-foreground-800">{selectedEvidence.sessionDate}</p>
+                </div>
+                <div>
+                  <p className="text-foreground-400">Evidence type</p>
+                  <p className="mt-0.5 font-semibold capitalize text-foreground-800">{selectedEvidence.evidenceKind || selectedEvidence.evidenceType || 'Evidence'}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {actionModal && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center" onClick={() => setActionModal(null)}>
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
@@ -694,7 +912,7 @@ export default function CoachAbsenceReports() {
 
             {/* Report Summary */}
             {(() => {
-              const r = ABSENCE_REPORTS_DATA.find(x => x.id === actionModal.reportId);
+              const r = reports.find(x => x.id === actionModal.reportId);
               if (!r) return null;
               return (
                 <div className="bg-background-100 rounded-xl p-3 mb-4 space-y-1.5">

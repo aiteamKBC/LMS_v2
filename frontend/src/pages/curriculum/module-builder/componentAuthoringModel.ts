@@ -235,7 +235,20 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: [],
     requiredSettings: [],
     capabilities: ['ksb-mapping', 'reflection', 'evidence', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('assignment'), assignmentBrief: '', submissionInstructions: '', dueTiming: 'End of week', markingRubric: '' },
+    defaultSettings: {
+      ...advancedDefaults('assignment'),
+      assignmentBrief: '',
+      submissionInstructions: '',
+      dueTiming: 'End of week',
+      markingRubric: '',
+      uploadedFileName: '',
+      uploadedFileUrl: '',
+      uploadedFileSize: 0,
+      uploadedFileContentType: '',
+      uploadSource: '',
+      assignmentFileName: '',
+      assignmentFileUrl: '',
+    },
   },
   {
     type: 'reflection',
@@ -419,7 +432,6 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
   if (!CONTENT_STATUSES.includes(status as typeof CONTENT_STATUSES[number])) issues.push({ path: `${pathPrefix}.settings.contentStatus`, message: 'Status must be Draft, Ready for QA, Needs changes, or Approved.' });
   if (!/^\d+(?:\.\d+){0,2}$/.test(String(settings.version || '0.1'))) issues.push({ path: `${pathPrefix}.settings.version`, message: 'Version must use numbers such as 0.1 or 1.2.0.' });
   if (component.reflectionRequired && !String(settings.reflectionPrompt || '').trim()) issues.push({ path: `${pathPrefix}.settings.reflectionPrompt`, message: 'Reflection prompt is required when reflection is enabled.' });
-  if (component.workplaceEvidenceRequired && !String(settings.evidenceInstructions || settings.evidenceRequired || '').trim()) issues.push({ path: `${pathPrefix}.settings.evidenceInstructions`, message: 'Evidence instructions are required when workplace evidence is enabled.' });
   Object.keys(settings).forEach(key => {
     if (!allowed.has(key)) issues.push({ path: `${pathPrefix}.settings.${key}`, message: `Unsupported setting "${key}" for ${component.type}.` });
   });

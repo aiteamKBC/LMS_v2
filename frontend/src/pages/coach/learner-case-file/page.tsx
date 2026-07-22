@@ -140,7 +140,7 @@ export default function LearnerCaseFile() {
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle={pageTitle}
       pageSubtitle={pageSubtitle}
-      userName="Med Maher"
+      userName="--"
       userRole="Progress Coach"
     >
       <div
@@ -550,7 +550,7 @@ function statusLabel(data: CoachLearnerCaseFileData | null) {
   if (!data) {
     return 'Loading';
   }
-  return data.programStatus || 'Live learner';
+  return data.programStatus || '--';
 }
 
 function statusBadgeClass(data: CoachLearnerCaseFileData | null) {

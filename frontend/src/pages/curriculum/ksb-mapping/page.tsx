@@ -148,7 +148,7 @@ export default function KSBMapping() {
             <Select value={statusFilter} onChange={setStatusFilter} options={[['all', 'All statuses'], ['missing', 'Missing'], ['partial', 'Partial'], ['fully_covered', 'Full'], ['over_allocated', 'Over']]} />
             <Select value={moduleFilter} onChange={setModuleFilter} options={[['all', 'All modules'], ...moduleOptions]} />
             <Select value={weekFilter} onChange={setWeekFilter} options={[['all', 'All weeks'], ...weekOptions]} />
-            <Select value={classificationFilter} onChange={setClassificationFilter} options={[['all', 'All classes'], ['main', 'Main'], ['secondary', 'Secondary'], ['possible', 'Possible']]} />
+            <Select value={classificationFilter} onChange={setClassificationFilter} options={[['all', 'All classes'], ['main', 'Hard'], ['secondary', 'Soft'], ['possible', 'Possible']]} />
             <Select value={sourceFilter} onChange={setSourceFilter} options={[['all', 'All sources'], ...sourceOptions]} />
           </div>
         </section>

@@ -165,6 +165,10 @@ class ActiveUser(models.Model):
     # Refreshed on every Active mirror sync.
     start_date = models.DateField(db_column="Start_date", null=True, blank=True)
     end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    # Maintained by a database trigger whenever End_date changes.
+    alert_notify_for_epa = models.DateField(db_column="Alert_notify_for_EPA", null=True, blank=True)
+    enter_epa = models.DateField(db_column="Enter_EPA", null=True, blank=True)
+    gateway_review_date = models.DateField(db_column="Gateway_review_date", null=True, blank=True)
     minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
     maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
     # Coach contact, set per-learner on the delivery "Enrolled learners" page and
@@ -250,6 +254,10 @@ class UnactiveUser(models.Model):
     # (copied automatically by _archive_active_user's shared-field loop).
     start_date = models.DateField(db_column="Start_date", null=True, blank=True)
     end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    # Maintained by the same database trigger as the active mirror.
+    alert_notify_for_epa = models.DateField(db_column="Alert_notify_for_EPA", null=True, blank=True)
+    enter_epa = models.DateField(db_column="Enter_EPA", null=True, blank=True)
+    gateway_review_date = models.DateField(db_column="Gateway_review_date", null=True, blank=True)
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)
     coach_rag = models.TextField(db_column="coach_rag", null=True, blank=True)
@@ -268,3 +276,27 @@ class UnactiveUser(models.Model):
 
     def __str__(self):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.status or '?'}]"
+
+
+class LearnerAbsence(models.Model):
+    """Stored attendance/absence summary used by the coach attendance table."""
+
+    learner_email = models.EmailField(primary_key=True, db_column="learner_email")
+    learner_id = models.IntegerField(db_column="learner_id")
+    learner_name = models.TextField(db_column="learner_name")
+    sessions = models.PositiveIntegerField(db_column="sessions", default=0)
+    present = models.PositiveIntegerField(db_column="present", default=0)
+    absent = models.PositiveIntegerField(db_column="absent", default=0)
+    late = models.PositiveIntegerField(db_column="late", default=0)
+    catchup = models.PositiveIntegerField(db_column="catchup", default=0)
+    risk = models.CharField(db_column="risk", max_length=16, blank=True)
+    last_session_date = models.DateField(db_column="last_session_date", null=True, blank=True)
+    consecutive_missed = models.PositiveIntegerField(db_column="consecutive_missed", default=0)
+    updated_at = models.DateTimeField(db_column="updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."Absence'
+
+    def __str__(self):
+        return f"{self.learner_name}: {self.present}/{self.sessions} present"

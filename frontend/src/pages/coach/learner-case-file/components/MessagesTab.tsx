@@ -22,8 +22,8 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       id: 'learner',
       name: data.displayName,
       role: 'Learner',
-      primary: data.email || 'No learner email returned',
-      secondary: data.detail?.phone || data.programme,
+      primary: data.email || '--',
+      secondary: data.detail?.phone || data.programme || '--',
       tone: 'bg-accent-100 text-accent-700',
       target: data.email || data.displayName,
     });
@@ -31,22 +31,22 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
     if (data.coachName || data.coachEmail) {
       rows.push({
         id: 'coach',
-        name: data.coachName || 'Assigned coach',
+        name: data.coachName || '--',
         role: 'Coach',
-        primary: data.coachEmail || 'No coach email returned',
-        secondary: data.cohort ? `Cohort ${data.cohort}` : 'Coach record from caseload snapshot',
+        primary: data.coachEmail || '--',
+        secondary: data.cohort ? `Cohort ${data.cohort}` : '--',
         tone: 'bg-primary-100 text-primary-700',
         target: data.coachEmail || data.coachName,
       });
     }
 
-    if (data.employer) {
+    if (data.employer || data.employerEmail || data.employerPhone) {
       rows.push({
         id: 'employer',
-        name: data.employer,
+        name: data.employer || '--',
         role: 'Employer',
-        primary: data.employerEmail || 'No employer email returned',
-        secondary: data.employerPhone || 'No employer phone returned',
+        primary: data.employerEmail || '--',
+        secondary: data.employerPhone || '--',
         tone: 'bg-secondary-100 text-secondary-700',
         target: data.employerEmail || data.employer,
       });

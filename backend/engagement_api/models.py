@@ -142,6 +142,33 @@ class Event(models.Model):
         return self.title
 
 
+class EventBooking(models.Model):
+    """A learner RSVP for a community event."""
+
+    STATUS_CHOICES = [
+        ('booked', 'Booked'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='bookings', db_column='event_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='booked')
+    booked_at = models.DateTimeField(auto_now_add=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Engagement"."event_bookings'
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'learner_id'], name='engagement_event_booking_unique'),
+        ]
+
+    def __str__(self):
+        return f'{self.learner_name} -> {self.event.title} ({self.status})'
+
+
 class Club(models.Model):
     """A regional community club learners can join (London Club, Kent Club, etc.)."""
 
@@ -261,8 +288,8 @@ class FlashCardDeck(models.Model):
     ]
 
     title = models.CharField(max_length=255)
-    # curriculum."Training_plan".id — plain field, no FK (that table is owned
-    # by another schema/app), same rationale as learner_id elsewhere.
+    # Curriculum programme/module identifier. Plain field, no FK, matching the
+    # same rationale as learner_id elsewhere.
     programme_id = models.IntegerField(null=True, blank=True)
     programme = models.CharField(max_length=255, blank=True, default='')
     module = models.CharField(max_length=255, blank=True, default='')

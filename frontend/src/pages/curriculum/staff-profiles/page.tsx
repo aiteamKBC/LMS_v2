@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
@@ -12,6 +12,7 @@ import {
   fetchCurriculumOverview,
   updateCurriculumCoach,
   updateCurriculumTutor,
+  type CurriculumGroup,
   type CurriculumModule,
   type CurriculumOverview,
   type CurriculumStaffProfile,
@@ -24,7 +25,6 @@ type ProfileForm = {
   phone: string;
   jobTitle: string;
   notes: string;
-  assignedModuleIds: string[];
 };
 
 const EMPTY_FORM: ProfileForm = {
@@ -33,8 +33,11 @@ const EMPTY_FORM: ProfileForm = {
   phone: '',
   jobTitle: '',
   notes: '',
-  assignedModuleIds: [],
 };
+
+type AssignmentStatusKey = 'inProgress' | 'future' | 'completed';
+type AssignedModule = NonNullable<CurriculumStaffProfile['assignedModules']>[number];
+type AssignedGroup = Pick<CurriculumGroup, 'id' | 'name' | 'programme' | 'cohort' | 'schedule' | 'startDate' | 'endDate' | 'status'>;
 
 function clean(value: unknown) {
   return String(value || '').trim();
@@ -53,18 +56,48 @@ function profileInitials(profile: CurriculumStaffProfile) {
   return name.split(/\s+/).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '?';
 }
 
-function moduleAssignmentId(module: CurriculumModule) {
-  return clean(module.id || module.deliveryModuleId || module.moduleCatalogueId || module.moduleId || module.deliveryRowId || module.sourceId);
+function groupAssignmentId(group: CurriculumGroup) {
+  return clean(group.id || group.name);
 }
 
-function moduleIsInProgress(module: CurriculumModule) {
-  const status = normalise(module.deliveryStatus || module.status);
-  if (status === 'active' || status === 'in_progress' || status === 'in-progress') return true;
+function assignedModuleKey(module: AssignedModule) {
+  return clean(module.id || module.moduleId || module.moduleCatalogueId || module.deliveryRowId || module.name);
+}
+
+function dateValue(value?: string) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function todayValue() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const start = module.startDate ? new Date(module.startDate) : null;
-  const end = module.endDate ? new Date(module.endDate) : null;
-  return Boolean(start && end && start <= today && today <= end);
+  return today;
+}
+
+function assignmentStatus(item: Pick<CurriculumModule | CurriculumGroup, 'startDate' | 'endDate' | 'status'> & { deliveryStatus?: string }): AssignmentStatusKey {
+  const status = normalise(item.deliveryStatus || item.status);
+  if (['completed', 'complete', 'done', 'closed'].includes(status)) return 'completed';
+  if (['planned', 'future', 'upcoming', 'scheduled'].includes(status)) return 'future';
+  if (['active', 'in_progress', 'in-progress', 'live'].includes(status)) return 'inProgress';
+
+  const today = todayValue();
+  const start = dateValue(item.startDate);
+  const end = dateValue(item.endDate);
+  if (end && end < today) return 'completed';
+  if (start && start > today) return 'future';
+  if (start && end && start <= today && today <= end) return 'inProgress';
+  return 'inProgress';
+}
+
+function splitByStatus<T extends Pick<CurriculumModule | CurriculumGroup, 'startDate' | 'endDate' | 'status'> & { deliveryStatus?: string }>(items: T[]) {
+  return items.reduce<Record<AssignmentStatusKey, T[]>>((groupsByStatus, item) => {
+    groupsByStatus[assignmentStatus(item)].push(item);
+    return groupsByStatus;
+  }, { inProgress: [], future: [], completed: [] });
 }
 
 function profileToForm(profile?: CurriculumStaffProfile): ProfileForm {
@@ -75,8 +108,17 @@ function profileToForm(profile?: CurriculumStaffProfile): ProfileForm {
     phone: clean(profile.phone),
     jobTitle: clean(profile.jobTitle),
     notes: clean(profile.notes),
-    assignedModuleIds: (profile.assignedModules || []).map(module => clean(module.id)).filter(Boolean),
   };
+}
+
+function formsMatch(a: ProfileForm, b: ProfileForm) {
+  return (
+    clean(a.name) === clean(b.name)
+    && clean(a.email) === clean(b.email)
+    && clean(a.phone) === clean(b.phone)
+    && clean(a.jobTitle) === clean(b.jobTitle)
+    && clean(a.notes) === clean(b.notes)
+  );
 }
 
 export default function StaffProfilesPage() {
@@ -89,7 +131,6 @@ export default function StaffProfilesPage() {
   const [selected, setSelected] = useState<CurriculumStaffProfile | null>(null);
   const [editing, setEditing] = useState<CurriculumStaffProfile | 'new' | null>(null);
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
-  const [moduleSearch, setModuleSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = async () => {
@@ -115,17 +156,21 @@ export default function StaffProfilesPage() {
   }, []);
 
   useEffect(() => {
-    const requestedRole = new URLSearchParams(location.search).get('role');
+    const params = new URLSearchParams(location.search);
+    const requestedRole = params.get('role');
     if (requestedRole === 'coach' || requestedRole === 'tutor') {
       setRole(requestedRole);
       setSelected(null);
+      if (params.get('create') === '1') {
+        setEditing('new');
+        setForm(EMPTY_FORM);
+      }
     }
   }, [location.search]);
 
-  const profiles = role === 'coach' ? data?.coaches || [] : data?.tutors || [];
-  const modules = data?.modules || [];
-  const inProgressModules = modules.filter(moduleIsInProgress);
-  const assignedModuleIds = new Set(form.assignedModuleIds);
+  const profiles = useMemo(() => role === 'coach' ? data?.coaches || [] : data?.tutors || [], [data?.coaches, data?.tutors, role]);
+  const groups = useMemo(() => data?.groups || [], [data?.groups]);
+  const initialLoading = loading && !data;
 
   const filteredProfiles = useMemo(() => {
     const query = normalise(search);
@@ -135,53 +180,72 @@ export default function StaffProfilesPage() {
         profile.email,
         profile.phone,
         profile.jobTitle,
+        ...(profile.assignedGroupIds || []),
         ...(profile.assignedModules || []).map(module => module.name),
       ].some(value => normalise(value).includes(query));
       return matchesSearch;
     });
   }, [profiles, search]);
 
-  const filteredModules = useMemo(() => {
-    const query = normalise(moduleSearch);
-    return modules.filter(module => {
-      if (!moduleAssignmentId(module)) return false;
-      if (!query) return true;
-      return [module.name, module.programme, module.cohort, module.group, module.status, module.deliveryStatus]
-        .some(value => normalise(value).includes(query));
-    });
-  }, [modules, moduleSearch]);
-
   const stats = useMemo(() => {
     const people = profiles.length;
-    const assigned = profiles.filter(profile => (profile.moduleCount || 0) > 0).length;
-    const inProgress = profiles.reduce((sum, profile) => sum + (profile.inProgressCount || 0), 0);
+    const assigned = profiles.filter(profile => role === 'coach' ? (profile.groupCount || 0) > 0 : (profile.moduleCount || 0) > 0).length;
+    const inProgress = role === 'coach' ? 0 : profiles.reduce((sum, profile) => sum + (profile.inProgressCount || 0), 0);
     return { people, assigned, inProgress };
-  }, [profiles]);
+  }, [profiles, role]);
+
+  const selectedModulesByStatus = useMemo(() => {
+    if (role !== 'tutor' || !selected) return splitByStatus<AssignedModule>([]);
+    return splitByStatus<AssignedModule>(selected.assignedModules || []);
+  }, [role, selected]);
+
+  const selectedGroupsByStatus = useMemo(() => {
+    if (role !== 'coach' || !selected) return splitByStatus<AssignedGroup>([]);
+    const assignedGroups = (selected.assignedGroupIds || []).map(groupId => {
+      const group = groups.find(item => groupAssignmentId(item) === groupId);
+      return group
+        ? {
+          id: groupAssignmentId(group),
+          name: group.name,
+          programme: group.programme,
+          cohort: group.cohort,
+          schedule: group.schedule,
+          startDate: group.startDate,
+          endDate: group.endDate,
+          status: group.status,
+        }
+        : {
+          id: groupId,
+          name: groupId,
+          programme: '',
+          cohort: '',
+          schedule: '',
+          startDate: '',
+          endDate: '',
+          status: 'assigned',
+        };
+    });
+    return splitByStatus<AssignedGroup>(assignedGroups);
+  }, [groups, role, selected]);
 
   const openNew = (nextRole = role) => {
     setRole(nextRole);
     setEditing('new');
     setForm(EMPTY_FORM);
-    setModuleSearch('');
   };
 
   const openEdit = (profile: CurriculumStaffProfile) => {
     setEditing(profile);
     setForm(profileToForm(profile));
-    setModuleSearch('');
-  };
-
-  const toggleModule = (moduleId: string) => {
-    setForm(prev => {
-      const selectedIds = new Set(prev.assignedModuleIds);
-      if (selectedIds.has(moduleId)) selectedIds.delete(moduleId);
-      else selectedIds.add(moduleId);
-      return { ...prev, assignedModuleIds: [...selectedIds] };
-    });
   };
 
   const closeProfilePopup = async () => {
     if (saving) return;
+    const originalForm = editing === 'new' ? EMPTY_FORM : profileToForm(editing || undefined);
+    if (formsMatch(form, originalForm)) {
+      setEditing(null);
+      return;
+    }
     await showCurriculumConfirm({
       title: 'Close profile window?',
       text: 'Any unsaved changes in this profile window will be discarded.',
@@ -204,7 +268,6 @@ export default function StaffProfilesPage() {
       email: form.email.trim(),
       phone: form.phone.trim(),
       jobTitle: form.jobTitle.trim(),
-      assignedModuleIds: form.assignedModuleIds,
       notes: form.notes.trim(),
     };
     try {
@@ -213,10 +276,21 @@ export default function StaffProfilesPage() {
         : role === 'coach' ? await updateCurriculumCoach(editing.id || '', input) : await updateCurriculumTutor(editing.id || '', input);
       setEditing(null);
       setSelected(response.profile);
-      await load();
+      setData(prev => {
+        if (!prev) return prev;
+        const upsertProfile = (items: CurriculumStaffProfile[] = []) => {
+          const profileId = clean(response.profile.id);
+          const withoutCurrent = items.filter(item => clean(item.id) !== profileId);
+          return [...withoutCurrent, response.profile];
+        };
+        return role === 'coach'
+          ? { ...prev, coaches: upsertProfile(prev.coaches) }
+          : { ...prev, tutors: upsertProfile(prev.tutors) };
+      });
+      void load();
       await showCurriculumAlert({
         title: editing === 'new' ? `${roleLabel(role)} added` : `${roleLabel(role)} updated`,
-        text: 'Profile details and module assignments are now synced.',
+        text: 'Profile details are now synced. Programme staffing assignments remain managed in the programme wizard.',
         icon: 'success',
         timer: 1700,
       });
@@ -234,7 +308,7 @@ export default function StaffProfilesPage() {
   const deleteProfile = async (profile: CurriculumStaffProfile) => {
     await showCurriculumConfirm({
       title: `Delete ${roleLabel(role).toLowerCase()} profile?`,
-      text: `This archives ${profile.name} and removes their current module assignments.`,
+      text: `This archives ${profile.name} and removes their current ${role === 'coach' ? 'group' : 'module'} assignments.`,
       icon: 'warning',
       confirmButtonText: 'Delete profile',
       onConfirm: async () => {
@@ -255,7 +329,7 @@ export default function StaffProfilesPage() {
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
       pageTitle="Staff Profiles"
-      pageSubtitle="Manage coach and tutor details, module assignments, and in-progress delivery"
+      pageSubtitle="Maintain coach and tutor details, with programme assignments shown read-only"
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -269,8 +343,8 @@ export default function StaffProfilesPage() {
 
         <div className="grid gap-3 md:grid-cols-3">
           <Metric label={`${roleLabel(role)} profiles`} value={stats.people} icon="ri-team-line" tone="primary" />
-          <Metric label="With modules" value={stats.assigned} icon="ri-link" tone="emerald" />
-          <Metric label="Modules in progress" value={stats.inProgress} icon="ri-loader-4-line" tone="amber" />
+          <Metric label={role === 'coach' ? 'With groups' : 'With modules'} value={stats.assigned} icon="ri-link" tone="emerald" />
+          <Metric label={role === 'coach' ? 'Groups assigned' : 'Modules in progress'} value={role === 'coach' ? profiles.reduce((sum, profile) => sum + (profile.groupCount || 0), 0) : stats.inProgress} icon={role === 'coach' ? 'ri-team-line' : 'ri-loader-4-line'} tone="amber" />
         </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-foreground-200/60 bg-background-50 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -312,12 +386,14 @@ export default function StaffProfilesPage() {
             <div className="grid grid-cols-[minmax(180px,1.1fr)_minmax(150px,.8fr)_110px_120px_92px] gap-3 border-b border-background-200 px-4 py-3 text-[10px] font-bold uppercase text-foreground-400">
               <span>Name</span>
               <span>Contact</span>
-              <span>Modules</span>
-              <span>In progress</span>
-              <span className="text-right">Actions</span>
+              <span>{role === 'coach' ? 'Groups' : 'Modules'}</span>
+              <span>{role === 'coach' ? 'Coverage' : 'In progress'}</span>
+              <span className="text-right">
+                {loading && data ? <i className="ri-loader-4-line inline-block animate-spin text-sm text-primary-500"></i> : 'Actions'}
+              </span>
             </div>
 
-            {loading ? (
+            {initialLoading ? (
               <div className="space-y-2 p-4">
                 {Array.from({ length: 6 }).map((_, index) => <SkeletonBlock key={index} className="h-14 w-full" />)}
               </div>
@@ -342,8 +418,8 @@ export default function StaffProfilesPage() {
                       <span className="block truncate text-[12px] font-medium text-foreground-700">{profile.email || 'No email'}</span>
                       <span className="block truncate text-[11px] text-foreground-400">{profile.phone || profile.jobTitle || 'No contact details'}</span>
                     </span>
-                    <span className="self-center text-[13px] font-semibold text-foreground-800">{profile.moduleCount || 0}</span>
-                    <span className="self-center text-[13px] font-semibold text-amber-700">{profile.inProgressCount || 0}</span>
+                    <span className="self-center text-[13px] font-semibold text-foreground-800">{role === 'coach' ? profile.groupCount || 0 : profile.moduleCount || 0}</span>
+                    <span className="self-center text-[13px] font-semibold text-amber-700">{role === 'coach' ? (profile.groupCount ? 'Assigned' : 'Open') : profile.inProgressCount || 0}</span>
                     <span className="flex items-center justify-end gap-1 self-center">
                       <span onClick={event => { event.stopPropagation(); openEdit(profile); }} title="Edit profile" className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100">
                         <i className="ri-edit-line text-sm"></i>
@@ -380,9 +456,10 @@ export default function StaffProfilesPage() {
                   </button>
                 </div>
 
-                <div className="mt-5 grid grid-cols-2 gap-2">
-                  <SmallMetric label="Modules" value={selected.moduleCount || 0} />
-                  <SmallMetric label="In progress" value={selected.inProgressCount || 0} />
+                <div className="mt-5 grid grid-cols-3 gap-2">
+                  <SmallMetric label="In progress" value={role === 'coach' ? selectedGroupsByStatus.inProgress.length : selectedModulesByStatus.inProgress.length} />
+                  <SmallMetric label="Future" value={role === 'coach' ? selectedGroupsByStatus.future.length : selectedModulesByStatus.future.length} />
+                  <SmallMetric label="Completed" value={role === 'coach' ? selectedGroupsByStatus.completed.length : selectedModulesByStatus.completed.length} />
                 </div>
 
                 <div className="mt-5 space-y-3">
@@ -392,12 +469,27 @@ export default function StaffProfilesPage() {
 
                 <div className="mt-6">
                   <div className="mb-2 flex items-center justify-between">
-                    <h3 className="text-[12px] font-bold uppercase text-foreground-500">All assigned modules</h3>
-                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">{selected.moduleCount || 0}</span>
+                    <h3 className="text-[12px] font-bold uppercase text-foreground-500">{role === 'coach' ? 'Assigned groups' : 'Assigned modules'}</h3>
+                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">{role === 'coach' ? selected.groupCount || 0 : selected.moduleCount || 0}</span>
                   </div>
-                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                    {(selected.assignedModules || []).map(module => <ModuleRow key={clean(module.id)} module={module} />)}
-                    {!(selected.assignedModules || []).length && <EmptyDetail text="No modules assigned yet." />}
+                  <div className="max-h-72 space-y-4 overflow-y-auto pr-1">
+                    {role === 'coach' ? (
+                      (selected.assignedGroupIds || []).length
+                        ? <AssignmentStatusGroups
+                          buckets={selectedGroupsByStatus}
+                          emptyLabel="No groups"
+                          renderItem={group => <GroupAssignmentRow key={group.id} group={group} />}
+                        />
+                        : <EmptyDetail text="No groups assigned yet." />
+                    ) : (
+                      (selected.assignedModules || []).length
+                        ? <AssignmentStatusGroups
+                          buckets={selectedModulesByStatus}
+                          emptyLabel="No modules"
+                          renderItem={module => <ModuleRow key={assignedModuleKey(module)} module={module} />}
+                        />
+                        : <EmptyDetail text="No modules assigned yet." />
+                    )}
                   </div>
                 </div>
               </div>
@@ -407,7 +499,7 @@ export default function StaffProfilesPage() {
                   <i className="ri-profile-line text-xl"></i>
                 </div>
                 <p className="mt-3 text-sm font-semibold text-foreground-900">Select a profile</p>
-                <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Choose a coach or tutor to inspect contact details, assigned modules, and modules in progress.</p>
+                <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Choose a coach or tutor to inspect contact details and current assignments.</p>
               </div>
             )}
           </aside>
@@ -415,19 +507,19 @@ export default function StaffProfilesPage() {
 
         {editing && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={closeProfilePopup}>
-            <form onSubmit={saveProfile} className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <form onSubmit={saveProfile} className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-lg bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-background-200 px-5 py-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{editing === 'new' ? `Add ${roleLabel(role)}` : `Edit ${roleLabel(role)}`}</h3>
-                  <p className="mt-0.5 text-[11px] text-foreground-400">Details and assignments save into the live curriculum profile flow.</p>
+                  <p className="mt-0.5 text-[11px] text-foreground-400">Assignments are managed from the programme creation and edit wizard.</p>
                 </div>
                 <button type="button" onClick={closeProfilePopup} className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100 hover:bg-background-200">
                   <i className="ri-close-line text-foreground-500"></i>
                 </button>
               </div>
 
-              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[380px_minmax(0,1fr)]">
-                <div className="space-y-4 overflow-y-auto border-r border-background-200 p-5">
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                <div className="space-y-4">
                   <FormField label="Name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
                   <FormField label="Email" type="email" value={form.email} onChange={value => setForm(prev => ({ ...prev, email: value }))} />
                   <FormField label="Phone" value={form.phone} onChange={value => setForm(prev => ({ ...prev, phone: value }))} />
@@ -436,43 +528,6 @@ export default function StaffProfilesPage() {
                     <span className="text-[10px] font-bold uppercase text-foreground-400">Notes</span>
                     <textarea value={form.notes} onChange={event => setForm(prev => ({ ...prev, notes: event.target.value }))} rows={4} className="mt-1 w-full resize-none rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[13px] text-foreground-900 outline-none focus:border-primary-300" />
                   </label>
-                </div>
-
-                <div className="flex min-h-0 flex-col p-5">
-                  <div className="flex flex-col gap-3 border-b border-background-200 pb-4 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase text-foreground-400">Module assignment</p>
-                      <p className="mt-0.5 text-[12px] text-foreground-500">{assignedModuleIds.size} selected from {modules.length} modules</p>
-                    </div>
-                    <div className="relative">
-                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
-                      <input value={moduleSearch} onChange={event => setModuleSearch(event.target.value)} placeholder="Search modules..." className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 md:w-72" />
-                    </div>
-                  </div>
-
-                  <div className="min-h-0 flex-1 overflow-y-auto py-3 pr-1">
-                    <div className="space-y-2">
-                      {filteredModules.map(module => {
-                        const id = moduleAssignmentId(module);
-                        const checked = assignedModuleIds.has(id);
-                        return (
-                          <label key={id} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-smooth ${checked ? 'border-primary-200 bg-primary-50/70' : 'border-background-200 bg-background-50 hover:bg-background-100/60'}`}>
-                            <input type="checkbox" checked={checked} onChange={() => toggleModule(id)} className="mt-1 h-4 w-4 accent-primary-500" />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13px] font-semibold text-foreground-900">{module.name}</span>
-                              <span className="mt-0.5 block truncate text-[11px] text-foreground-500">{[module.programme, module.cohort, module.group].filter(Boolean).join(' / ') || 'Unassigned delivery context'}</span>
-                              <span className="mt-1 flex items-center gap-2 text-[10px] text-foreground-400">
-                                <span>{module.startDate || 'No start'}</span>
-                                <span>{module.endDate || 'No end'}</span>
-                                {moduleIsInProgress(module) && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-700">in progress</span>}
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                      {!filteredModules.length && <EmptyDetail text="No modules match this search." />}
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -529,15 +584,68 @@ function DetailLine({ icon, label, value }: { icon: string; label: string; value
   );
 }
 
-function ModuleRow({ module }: { module: NonNullable<CurriculumStaffProfile['assignedModules']>[number] }) {
+const ASSIGNMENT_STATUS_SECTIONS: Array<{ key: AssignmentStatusKey; label: string; tone: string }> = [
+  { key: 'inProgress', label: 'In Progress', tone: 'text-amber-700' },
+  { key: 'future', label: 'Assigned for the future', tone: 'text-sky-700' },
+  { key: 'completed', label: 'Completed', tone: 'text-emerald-700' },
+];
+
+function AssignmentStatusGroups<T>({ buckets, emptyLabel, renderItem }: { buckets: Record<AssignmentStatusKey, T[]>; emptyLabel: string; renderItem: (item: T) => ReactNode }) {
+  return (
+    <>
+      {ASSIGNMENT_STATUS_SECTIONS.map(section => (
+        <section key={section.key}>
+          <div className="mb-2 flex items-center justify-between">
+            <p className={`text-[10px] font-bold uppercase ${section.tone}`}>{section.label}</p>
+            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-semibold text-foreground-500">{buckets[section.key].length}</span>
+          </div>
+          <div className="space-y-2">
+            {buckets[section.key].length
+              ? buckets[section.key].map(renderItem)
+              : <EmptyDetail text={`${emptyLabel} ${section.label.toLowerCase()}.`} />}
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+function statusBadge(status: AssignmentStatusKey) {
+  if (status === 'completed') return 'bg-emerald-100 text-emerald-700';
+  if (status === 'future') return 'bg-sky-100 text-sky-700';
+  return 'bg-amber-100 text-amber-700';
+}
+
+function statusLabel(status: AssignmentStatusKey) {
+  if (status === 'completed') return 'completed';
+  if (status === 'future') return 'future';
+  return 'in progress';
+}
+
+function ModuleRow({ module }: { module: AssignedModule }) {
+  const status = assignmentStatus(module);
   return (
     <div className="rounded-lg border border-background-200 bg-background-50 p-3">
       <div className="flex items-start justify-between gap-2">
         <p className="min-w-0 truncate text-[12px] font-semibold text-foreground-900">{module.name}</p>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${module.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-100 text-foreground-500'}`}>{module.status || 'unknown'}</span>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${statusBadge(status)}`}>{statusLabel(status)}</span>
       </div>
       <p className="mt-1 truncate text-[10px] text-foreground-400">{[module.programme, module.cohort, module.group].filter(Boolean).join(' / ')}</p>
       <p className="mt-1 text-[10px] text-foreground-400">{module.startDate || 'No start'} to {module.endDate || 'No end'}</p>
+    </div>
+  );
+}
+
+function GroupAssignmentRow({ group }: { group: AssignedGroup }) {
+  const status = assignmentStatus(group);
+  return (
+    <div className="rounded-lg border border-background-200 bg-background-50 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-[12px] font-semibold text-foreground-900">{group.name || group.id}</p>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold ${statusBadge(status)}`}>{statusLabel(status)}</span>
+      </div>
+      <p className="mt-1 truncate text-[10px] text-foreground-400">{[group.programme, group.cohort].filter(Boolean).join(' / ') || 'Group details unavailable'}</p>
+      <p className="mt-1 text-[10px] text-foreground-400">{group.schedule || 'No schedule'}</p>
     </div>
   );
 }

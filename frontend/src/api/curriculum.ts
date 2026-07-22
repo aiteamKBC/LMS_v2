@@ -1,7 +1,7 @@
 // ============================================================================
 // Curriculum lookups for the training-plan builder.
-// Read-only cascade sourced from the `curriculum` schema (Training_plan +
-// module_authoring_* tables) via the Django backend.
+// Read-only cascade sourced from normalized `curriculum` schema tables via the
+// Django backend.
 // ============================================================================
 
 const BASE = '/learner_api/curriculum';
@@ -34,7 +34,7 @@ async function request<T>(url: string): Promise<T> {
 const qs = (params: Record<string, string>) =>
   new URLSearchParams(params).toString();
 
-/** Distinct programmes (Training_plan.Program). */
+/** Distinct programmes. */
 export async function fetchProgrammes(): Promise<string[]> {
   return (await request<{ results: string[] }>(`${BASE}/programmes/`)).results;
 }

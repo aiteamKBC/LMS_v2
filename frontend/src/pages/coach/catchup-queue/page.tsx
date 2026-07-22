@@ -5,12 +5,17 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import {
-  CATCHUP_QUEUE,
-  WEEKLY_CATCHUP_TREND,
-  MONTHLY_CATCHUP_TREND,
-  COHORT_CATCHUP_TREND,
-  CatchUpItem,
+  type CatchUpItem,
 } from '@/mocks/catchup-queue';
+import {
+  type CoachCalendarEvent,
+  eventDisplayDate,
+  fetchCoachCalendarEvents,
+  formatDateLabel,
+  initialsFor,
+  parseLocalDate,
+  startOfDay,
+} from '@/pages/coach/shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
 
@@ -25,6 +30,90 @@ const statusConfig: Record<string, { bg: string; text: string; label: string }> 
   overdue: { bg: 'bg-red-100', text: 'text-red-700', label: 'Overdue' },
   completed: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'Completed' },
 };
+
+function calendarEventToCatchUp(event: CoachCalendarEvent): CatchUpItem {
+  const today = startOfDay();
+  const targetDateIso = event.targetDate || event.date || event.scheduledDate || '';
+  const catchupDateIso = eventDisplayDate(event) || targetDateIso;
+  const catchupDate = parseLocalDate(catchupDateIso);
+  const completed = event.status === 'completed' || event.status === 'confirmed';
+  const overdue = !completed && !!catchupDate && catchupDate.getTime() < today.getTime();
+  const status: CatchUpItem['status'] = completed ? 'completed' : overdue ? 'overdue' : 'scheduled';
+  const daysUntil = catchupDate ? Math.ceil((catchupDate.getTime() - today.getTime()) / 86_400_000) : 30;
+  const priority: CatchUpItem['priority'] = overdue || event.priority === 'high' || event.priority === 'urgent'
+    ? 'high'
+    : daysUntil <= 14
+      ? 'medium'
+      : 'low';
+  const daysOverdue = overdue && catchupDate
+    ? Math.max(1, Math.floor((today.getTime() - catchupDate.getTime()) / 86_400_000))
+    : 0;
+
+  return {
+    id: event.eventKey || event.id,
+    learner: event.learner || 'Unknown learner',
+    initials: initialsFor(event.learner),
+    programme: event.programme || '--',
+    cohort: event.cohort || '--',
+    missedSession: event.title || 'Catch-up Session',
+    missedDate: formatDateLabel(targetDateIso),
+    missedDateIso: targetDateIso,
+    catchupDate: formatDateLabel(catchupDateIso),
+    catchupDateIso,
+    tutor: event.ownerName || 'Med Maher',
+    status,
+    priority,
+    notes: event.notes || 'No notes added',
+    overallProgress: 0,
+    attendance: 0,
+    otjhCompleted: 0,
+    otjhTarget: 0,
+    ksbProgress: 0,
+    employer: 'Not available',
+    group: 'Not available',
+    evidenceSubmitted: completed,
+    evidenceApproved: completed,
+    reason: event.notes || 'Catch-up session',
+    catchupRoute: event.meetingProvider || event.platform || 'Not specified',
+    daysOverdue,
+    completedDate: completed ? formatDateLabel(catchupDateIso) : '',
+    completedDateIso: completed ? catchupDateIso : '',
+  };
+}
+
+function buildCatchUpTrend(items: CatchUpItem[], view: 'week' | 'month', count: number) {
+  const buckets: Array<{ label: string; scheduled: number; overdue: number; completed: number; start: Date; end: Date }> = [];
+  const reference = startOfDay();
+
+  for (let offset = count - 1; offset >= 0; offset -= 1) {
+    let start: Date;
+    let end: Date;
+    let label: string;
+    if (view === 'month') {
+      start = new Date(reference.getFullYear(), reference.getMonth() - offset, 1);
+      end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+      label = start.toLocaleDateString('en-GB', { month: 'short' });
+    } else {
+      const day = reference.getDay();
+      const mondayOffset = day === 0 ? -6 : 1 - day;
+      start = new Date(reference);
+      start.setDate(reference.getDate() + mondayOffset - offset * 7);
+      end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      label = `${start.getDate()} ${start.toLocaleDateString('en-GB', { month: 'short' })}`;
+    }
+    buckets.push({ label, scheduled: 0, overdue: 0, completed: 0, start, end });
+  }
+
+  items.forEach((item) => {
+    const date = parseLocalDate(item.catchupDateIso || item.missedDateIso);
+    if (!date) return;
+    const bucket = buckets.find((entry) => date >= entry.start && date <= entry.end);
+    if (bucket) bucket[item.status] += 1;
+  });
+
+  return buckets.map(({ label, scheduled, overdue, completed }) => ({ label, scheduled, overdue, completed }));
+}
 
 /* ═══════ Animation Keyframes (injected via style tag) ═══════ */
 function ChartAnimations() {
@@ -195,6 +284,7 @@ function StackedBarChart({ data, height = 260, animate = true }: { data: Array<{
 /* ═══════ Status Distribution Donut ═══════ */
 function StatusDistribution({ scheduled, overdue, completed, size = 180, animate = true }: { scheduled: number; overdue: number; completed: number; size?: number; animate?: boolean }) {
   const total = scheduled + overdue + completed;
+  const chartTotal = total || 1;
   const slices = [
     { label: 'Completed', value: completed, color: '#10b981', bgColor: 'bg-emerald-100', textColor: 'text-emerald-700' },
     { label: 'Scheduled', value: scheduled, color: 'oklch(var(--primary-500))', bgColor: 'bg-primary-100', textColor: 'text-primary-700' },
@@ -210,7 +300,7 @@ function StatusDistribution({ scheduled, overdue, completed, size = 180, animate
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className={animate ? 'animate-slice' : ''}>
           {slices.map((slice, i) => {
-            const angle = (slice.value / total) * 360;
+            const angle = (slice.value / chartTotal) * 360;
             const start = cumulativeAngle;
             const end = cumulativeAngle + angle;
             cumulativeAngle = end;
@@ -277,6 +367,9 @@ export default function CoachCatchupQueue() {
   const [escalateReason, setEscalateReason] = useState('');
   const [escalateTo, setEscalateTo] = useState('');
   const [escalateSubmitted, setEscalateSubmitted] = useState(false);
+  const [catchupQueue, setCatchupQueue] = useState<CatchUpItem[]>([]);
+  const [queueLoading, setQueueLoading] = useState(true);
+  const [queueError, setQueueError] = useState('');
 
   const barRef = useRef<HTMLDivElement>(null);
 
@@ -285,7 +378,31 @@ export default function CoachCatchupQueue() {
     return () => clearTimeout(timer);
   }, []);
 
-  const filtered = CATCHUP_QUEUE.filter((c) => {
+  useEffect(() => {
+    const controller = new AbortController();
+    setQueueLoading(true);
+    setQueueError('');
+
+    fetchCoachCalendarEvents(controller.signal)
+      .then((data) => {
+        const catchups = (data.events || [])
+          .filter((event) => event.source === 'catch-up')
+          .map(calendarEventToCatchUp);
+        setCatchupQueue(catchups);
+      })
+      .catch((requestError: unknown) => {
+        if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+        setCatchupQueue([]);
+        setQueueError(requestError instanceof Error ? requestError.message : 'Could not load catch-up sessions.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setQueueLoading(false);
+      });
+
+    return () => controller.abort();
+  }, []);
+
+  const filtered = catchupQueue.filter((c) => {
     if (filter !== 'all' && c.status !== filter) return false;
     if (cohortFilter !== 'all' && c.cohort !== cohortFilter) return false;
     if (programmeFilter !== 'all' && c.programme !== programmeFilter) return false;
@@ -304,27 +421,25 @@ export default function CoachCatchupQueue() {
     return true;
   });
 
-  const scheduled = CATCHUP_QUEUE.filter((c) => c.status === 'scheduled').length;
-  const overdue = CATCHUP_QUEUE.filter((c) => c.status === 'overdue').length;
-  const completed = CATCHUP_QUEUE.filter((c) => c.status === 'completed').length;
-  const highPriority = CATCHUP_QUEUE.filter((c) => c.priority === 'high').length;
-  const totalCatchups = CATCHUP_QUEUE.length;
-  const overdueDays = CATCHUP_QUEUE.filter((c) => c.status === 'overdue').reduce((a, b) => a + b.daysOverdue, 0);
+  const scheduled = catchupQueue.filter((c) => c.status === 'scheduled').length;
+  const overdue = catchupQueue.filter((c) => c.status === 'overdue').length;
+  const completed = catchupQueue.filter((c) => c.status === 'completed').length;
+  const highPriority = catchupQueue.filter((c) => c.priority === 'high').length;
+  const totalCatchups = catchupQueue.length;
+  const overdueDays = catchupQueue.filter((c) => c.status === 'overdue').reduce((a, b) => a + b.daysOverdue, 0);
 
-  const selectedItem = CATCHUP_QUEUE.find((c) => c.id === selectedItemId) || null;
+  const selectedItem = catchupQueue.find((c) => c.id === selectedItemId) || null;
 
   const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1;
   const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  const cohorts = useMemo(() => [...new Set(CATCHUP_QUEUE.map((c) => c.cohort))].sort(), []);
-  const programmes = useMemo(() => [...new Set(CATCHUP_QUEUE.map((c) => c.programme))].sort(), []);
+  const cohorts = useMemo(() => [...new Set(catchupQueue.map((c) => c.cohort))].sort(), [catchupQueue]);
+  const programmes = useMemo(() => [...new Set(catchupQueue.map((c) => c.programme))].sort(), [catchupQueue]);
 
   // Trend data
   const trendData = useMemo(() => {
-    const base = trendView === 'month' ? MONTHLY_CATCHUP_TREND : WEEKLY_CATCHUP_TREND;
-    const count = Math.min(trendCount, base.length);
-    return base.slice(-count).map((d) => ({ label: d.week, scheduled: d.scheduled, overdue: d.overdue, completed: d.completed }));
-  }, [trendView, trendCount]);
+    return buildCatchUpTrend(catchupQueue, trendView, trendCount);
+  }, [catchupQueue, trendView, trendCount]);
 
   const maxCount = trendView === 'week' ? 52 : 12;
   const countLabel = trendView === 'week' ? 'Weeks' : 'Months';
@@ -389,9 +504,9 @@ export default function CoachCatchupQueue() {
     setShowEmployerDropdown(false);
   };
 
-  // Sparkline data
-  const cohortTrend = COHORT_CATCHUP_TREND['Cohort B — Data & Tech'];
-  const trendUp = cohortTrend[cohortTrend.length - 1] < cohortTrend[0];
+  const volumeTrend = trendData.map((item) => item.scheduled + item.overdue + item.completed);
+  const trendUp = volumeTrend.length > 1 && volumeTrend[volumeTrend.length - 1] < volumeTrend[0];
+  const percentageOfTotal = (value: number) => totalCatchups ? Math.round((value / totalCatchups) * 100) : 0;
 
   const statusCounts = [
     { key: 'all' as const, label: 'All', count: totalCatchups },
@@ -438,7 +553,7 @@ export default function CoachCatchupQueue() {
               trend: trendUp ? 'Trending down' : 'Trending up',
               trendIcon: trendUp ? 'ri-arrow-down-line text-emerald-500' : 'ri-arrow-up-line text-red-500',
               trendColor: trendUp ? 'text-emerald-600' : 'text-red-500',
-              sparkline: <Sparkline data={cohortTrend.slice(-6)} color="primary" width={80} height={32} animate={statCardsReady} />,
+              sparkline: <Sparkline data={volumeTrend.slice(-6)} color="primary" width={80} height={32} animate={statCardsReady} />,
               cardBorder: 'border-foreground-200/60',
               cardHover: 'hover:border-primary-300/40',
               numberColor: 'text-foreground-900',
@@ -450,7 +565,7 @@ export default function CoachCatchupQueue() {
               iconBg: 'bg-primary-100',
               value: scheduled,
               label: 'Scheduled',
-              badge: `${Math.round((scheduled / totalCatchups) * 100)}%`,
+              badge: `${percentageOfTotal(scheduled)}%`,
               badgeBg: 'bg-primary-100',
               badgeText: 'text-primary-700',
               cardBorder: 'border-primary-200/40',
@@ -464,7 +579,7 @@ export default function CoachCatchupQueue() {
               iconBg: 'bg-red-100',
               value: overdue,
               label: 'Overdue',
-              badge: `${Math.round((overdue / totalCatchups) * 100)}%`,
+              badge: `${percentageOfTotal(overdue)}%`,
               badgeBg: 'bg-red-100',
               badgeText: 'text-red-700',
               sub: `${overdueDays} days overdue`,
@@ -480,7 +595,7 @@ export default function CoachCatchupQueue() {
               iconBg: 'bg-emerald-100',
               value: completed,
               label: 'Completed',
-              badge: `${Math.round((completed / totalCatchups) * 100)}%`,
+              badge: `${percentageOfTotal(completed)}%`,
               badgeBg: 'bg-emerald-100',
               badgeText: 'text-emerald-700',
               cardBorder: 'border-emerald-200/40',
@@ -494,7 +609,7 @@ export default function CoachCatchupQueue() {
               iconBg: 'bg-amber-100',
               value: highPriority,
               label: 'High Priority',
-              badge: `${Math.round((highPriority / totalCatchups) * 100)}%`,
+              badge: `${percentageOfTotal(highPriority)}%`,
               badgeBg: 'bg-amber-100',
               badgeText: 'text-amber-700',
               cardBorder: 'border-amber-200/40',
@@ -695,16 +810,29 @@ export default function CoachCatchupQueue() {
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Missed Session</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Missed Date</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Catch-up Date</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Tutor</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Status</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Priority</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Overdue</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Notes</th>
                   <th className="pr-4 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
-                {paginated.map((item) => {
+                {queueLoading ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-14 text-center">
+                      <i className="ri-loader-4-line text-primary-500 text-2xl animate-spin inline-block mb-2"></i>
+                      <p className="text-sm text-foreground-400">Loading catch-up sessions...</p>
+                    </td>
+                  </tr>
+                ) : queueError ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-14 text-center">
+                      <i className="ri-error-warning-line text-red-500 text-2xl mb-2 block"></i>
+                      <p className="text-sm font-medium text-red-600">Could not load catch-up sessions</p>
+                      <p className="text-[11px] text-foreground-400 mt-1">{queueError}</p>
+                    </td>
+                  </tr>
+                ) : paginated.map((item) => {
                   const isSel = selectedItemId === item.id;
                   const pc = priorityConfig[item.priority];
                   const sc = statusConfig[item.status];
@@ -724,7 +852,6 @@ export default function CoachCatchupQueue() {
                       <td className="px-3 py-2.5 text-[11px] text-foreground-600 whitespace-nowrap max-w-[160px] truncate">{item.missedSession}</td>
                       <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{item.missedDate}</td>
                       <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{item.catchupDate}</td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{item.tutor}</td>
                       <td className="px-3 py-2.5 text-center">
                         <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sc.bg} ${sc.text} whitespace-nowrap`}>{sc.label}</span>
                       </td>
@@ -738,7 +865,6 @@ export default function CoachCatchupQueue() {
                           <span className="text-[11px] text-foreground-300">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-[11px] text-foreground-400 max-w-[200px] truncate">{item.notes}</td>
                       <td className="pr-4 py-2.5 text-center">
                         <i className={`text-foreground-300 text-sm transition-transform duration-300 ${isSel ? 'ri-arrow-up-s-line rotate-180' : 'ri-arrow-down-s-line'}`}></i>
                       </td>
@@ -748,7 +874,7 @@ export default function CoachCatchupQueue() {
               </tbody>
             </table>
           </div>
-          {filtered.length === 0 && (
+          {!queueLoading && !queueError && filtered.length === 0 && (
             <div className="py-12 text-center">
               <i className="ri-search-line text-foreground-300 text-3xl mb-2 block"></i>
               <p className="text-sm text-foreground-400">No catch-up items match your filter</p>
@@ -756,7 +882,7 @@ export default function CoachCatchupQueue() {
             </div>
           )}
           {/* Pagination bar */}
-          <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+          {!queueLoading && !queueError && filtered.length > 0 && <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-[11px] text-foreground-400">
               <span>Showing {filtered.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–{Math.min(currentPage * itemsPerPage, filtered.length)} of {filtered.length} items</span>
               <span className="text-foreground-300">|</span>
@@ -794,7 +920,7 @@ export default function CoachCatchupQueue() {
                 <i className="ri-skip-forward-line"></i>
               </button>
             </div>
-          </div>
+          </div>}
         </div>
       </div>
 
@@ -908,9 +1034,6 @@ export default function CoachCatchupQueue() {
 
             {/* Actions */}
             <div className="flex flex-col gap-2 pt-2">
-              <button onClick={() => handleSendMessage(selectedItem)} className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-mail-line"></i> Send Message
-              </button>
 
               {/* Status-aware action button */}
               {selectedItem.status === 'overdue' && (

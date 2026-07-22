@@ -233,7 +233,7 @@ WRITABLE_FIELDS = {
 # Shape: [{moduleId, moduleTitle, weeks: [{weekId, weekTitle,
 #          components: [{componentId, componentTitle}]}]}, ...]
 # Written wholesale by the training-plan wizard (frontend owns the shape);
-# ids are curriculum.module_authoring_* primary keys, so downstream lookups
+# ids are curriculum authoring table primary keys, so downstream lookups
 # (KSBs, expected_otjh) can match exactly instead of by title.
 def _normalize_training_plan(value):
     if value is None:
@@ -479,6 +479,7 @@ def to_learner_detail(source, active):
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
+        "lineManager": _s(getattr(source, "line_manager", "")),
         "isActive": active is not None,
         "modules": modules,
         "week": week,

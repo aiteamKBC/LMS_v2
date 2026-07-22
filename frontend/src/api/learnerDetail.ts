@@ -6,6 +6,10 @@
 // ============================================================================
 
 const BASE = '/learner_api/learner-detail';
+const CACHE_TTL_MS = 30_000;
+
+const detailCache = new Map<string, { data: LearnerDetail; expiresAt: number }>();
+const detailRequests = new Map<string, Promise<LearnerDetail>>();
 
 export type LearnerKind = 'commercial' | 'apprenticeship';
 
@@ -78,6 +82,7 @@ export interface LearnerDetail {
   cohort: string;
   group: string;
   employer: string;
+  lineManager: string;
   isActive: boolean;
   modules: string[];
   week: LearnerWeekEntry[];
@@ -137,6 +142,23 @@ export interface LearnerVideoProgress {
 }
 
 async function request<T>(url: string): Promise<T> {
+  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const pendingRequest = requestUncached<T>(url);
+  pendingRequests.set(url, pendingRequest);
+  try {
+    return await pendingRequest;
+  } finally {
+    pendingRequests.delete(url);
+  }
+}
+
+const pendingRequests = new Map<string, Promise<unknown>>();
+
+async function requestUncached<T>(url: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' } });
@@ -164,7 +186,34 @@ async function request<T>(url: string): Promise<T> {
   return data as T;
 }
 
-/** Fetch a single learner's detail (identity + programme + Active_users snapshot). */
-export function fetchLearnerDetail(kind: LearnerKind, id: string): Promise<LearnerDetail> {
-  return request<LearnerDetail>(`${BASE}/${kind}/${id}/`);
+/** Remove cached learner data after a progress-changing action. */
+export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
+  if (kind && id) {
+    detailCache.delete(`${kind}:${id}`);
+    return;
+  }
+  detailCache.clear();
+}
+
+/**
+ * Fetch a learner once and share the result between pages. Monthly Cycle,
+ * Coaching and Reviews frequently mount back-to-back and need the same heavy
+ * payload; this prevents duplicate requests and keeps it briefly in memory.
+ */
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerDetail> {
+  const key = `${kind}:${id}`;
+  const cached = detailCache.get(key);
+  if (!options.force && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
+
+  const pending = detailRequests.get(key);
+  if (pending) return pending;
+
+  const promise = request<LearnerDetail>(`${BASE}/${kind}/${id}/`)
+    .then((data) => {
+      detailCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      return data;
+    })
+    .finally(() => detailRequests.delete(key));
+  detailRequests.set(key, promise);
+  return promise;
 }

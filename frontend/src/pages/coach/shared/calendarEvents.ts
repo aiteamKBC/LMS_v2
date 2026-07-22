@@ -29,6 +29,9 @@ export interface CoachCalendarEvent {
   email?: string;
   programme?: string;
   cohort?: string;
+  group?: string;
+  module?: string;
+  tutor?: string;
   priority?: 'normal' | 'urgent' | 'high';
   status: CoachCalendarStatus;
   source?: 'mcr' | 'progress-review' | 'catch-up' | string;
@@ -230,11 +233,15 @@ export function isConfirmedEvent(event: CoachCalendarEvent) {
 }
 
 export function needsScheduling(event: CoachCalendarEvent) {
-  return ['not-scheduled', 'pending', 'cancelled'].includes(event.status);
+  return ['not-scheduled', 'pending'].includes(event.status);
 }
 
 export function isScheduledEvent(event: CoachCalendarEvent) {
-  return ['scheduled', 'in-progress'].includes(event.status);
+  return event.status === 'scheduled';
+}
+
+export function isInProgressEvent(event: CoachCalendarEvent) {
+  return event.status === 'in-progress';
 }
 
 export function isCancelledEvent(event: CoachCalendarEvent) {
@@ -280,6 +287,16 @@ export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new D
 
   const { start, end } = currentWeekRange(referenceDate);
   return displayDate.getTime() >= start.getTime() && displayDate.getTime() <= end.getTime();
+}
+
+export function isEventThisMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate || isCompletedEvent(event)) return false;
+
+  return (
+    displayDate.getFullYear() === referenceDate.getFullYear()
+    && displayDate.getMonth() === referenceDate.getMonth()
+  );
 }
 
 export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {

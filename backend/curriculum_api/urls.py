@@ -9,6 +9,7 @@ urlpatterns = [
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/programmes/', views.curriculum_programme_collection, name='curriculum-programmes'),
+    path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
     path('curriculum/programmes/<str:identifier>/detail/', views.curriculum_programme_tree_detail, name='curriculum-programme-tree-detail'),
     path('curriculum/programmes/<str:programme_id>/ksb-coverage/', views.curriculum_programme_ksb_coverage, name='curriculum-programme-ksb-coverage'),
