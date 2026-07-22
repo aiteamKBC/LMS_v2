@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import re
 import zipfile
+from collections import defaultdict
 from pathlib import Path
 from posixpath import normpath
 from urllib.parse import quote, urlsplit
@@ -901,20 +902,13 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
             where_programme = f"and ({' or '.join(programme_clauses)})" if programme_clauses else ""
             title_order_sql = (
                 """
-            cursor.execute(
-                f"""
-                select programme_id
-                from curriculum.modules
-                where coalesce(trim(programme_id), '') <> ''
-                  {where_programme}
-                order by
-                  case
-                    when lower(title) = lower(%s) then 0
-                    when lower(%s) like ('%%' || lower(title) || '%%') then 1
-                    when lower(%s) like ('%%' || lower(title) || '%%') then 2
-                    else 3
-                  end,
-                  length(title) desc,
+                case
+                  when lower(title) = lower(%s) then 0
+                  when lower(%s) like ('%%' || lower(title) || '%%') then 1
+                  when lower(%s) like ('%%' || lower(title) || '%%') then 2
+                  else 3
+                end,
+                length(title) desc,
                 """
                 if _curriculum_column_exists(modules_table, "title")
                 else ""
@@ -1213,6 +1207,7 @@ def _quiz_component_options(quiz):
                   {column_sql(components_table, "c", "type", "'quiz'")} as component_type,
                   {column_sql(components_table, "c", "week_id")} as week_id,
                   {column_sql(components_table, "c", "module_catalogue_id")} as module_catalogue_id,
+                  {column_sql(components_table, "c", "settings_json", "'{}'")} as settings_json,
                   {column_sql(modules_table, "m", "title", "'Module'")} as module_title,
                   {column_sql(modules_table, "m", "programme_id")} as programme_id,
                   {column_sql(modules_table, "m", "programme_name")} as programme_name,
@@ -1233,8 +1228,15 @@ def _quiz_component_options(quiz):
         return []
 
     options = []
-    for component_id, title, component_type, week_id, module_catalogue_id, module_title, component_programme_id, programme_name, cohort_name, group_name, week_number in rows:
+    for component_id, title, component_type, week_id, module_catalogue_id, settings_json, module_title, component_programme_id, programme_name, cohort_name, group_name, week_number in rows:
         component_id = str(component_id or "")
+        if isinstance(settings_json, str):
+            try:
+                settings_json = json.loads(settings_json or "{}")
+            except json.JSONDecodeError:
+                settings_json = {}
+        if not isinstance(settings_json, dict):
+            settings_json = {}
         title = title or "Untitled quiz component"
         module_title = module_title or module or "Module"
         week_label = f"Week {week_number}" if week_number else ""
@@ -1250,6 +1252,7 @@ def _quiz_component_options(quiz):
             "moduleCatalogueId": module_catalogue_id or "",
             "component": title,
             "componentType": component_type or "quiz",
+            "linkedQuizId": str(settings_json.get("linkedQuizId") or ""),
             "weekId": week_id or "",
             "week": week_number or "",
             "cohort": cohort_name or "",
@@ -1263,6 +1266,15 @@ def _quiz_component_options(quiz):
 def _infer_quiz_component_link_ids(quiz, options):
     if not options:
         return set()
+
+    quiz_id = str(quiz.id)
+    explicit_settings_links = {
+        option["id"]
+        for option in options
+        if str(option.get("linkedQuizId") or "").strip() == quiz_id
+    }
+    if explicit_settings_links:
+        return explicit_settings_links
 
     quiz_title = str(quiz.title or "").strip().lower()
     quiz_module = str(quiz.module or "").strip().lower()
@@ -1311,6 +1323,60 @@ def _sync_quiz_linked_component_count(quiz):
         quiz.linked_courses = len(selected_ids)
         quiz.save(update_fields=["linked_courses", "updated_at"])
     return quiz
+
+
+def _sync_quiz_linked_component_counts(quizzes):
+    """Refresh list counters from explicit component links without per-quiz queries."""
+    quizzes = list(quizzes)
+    if not quizzes:
+        return quizzes
+
+    quiz_ids = {str(quiz.id) for quiz in quizzes}
+    linked_component_ids = defaultdict(set)
+    components_table = _first_existing_curriculum_table("components", "module_authoring_components")
+    if components_table and _curriculum_column_exists(components_table, "settings_json"):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    select id, settings_json
+                    from {_curriculum_table_name(components_table)}
+                    where lower(coalesce(type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+                for component_id, settings_json in cursor.fetchall():
+                    if isinstance(settings_json, str):
+                        try:
+                            settings_json = json.loads(settings_json or "{}")
+                        except json.JSONDecodeError:
+                            settings_json = {}
+                    if not isinstance(settings_json, dict):
+                        continue
+                    linked_quiz_id = str(settings_json.get("linkedQuizId") or "").strip()
+                    if linked_quiz_id in quiz_ids:
+                        linked_component_ids[linked_quiz_id].add(str(component_id))
+        except Exception:
+            pass
+
+    try:
+        _ensure_quiz_component_links_table()
+        placeholders = ", ".join(["%s"] * len(quiz_ids))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"select quiz_id, component_id from curriculum.quiz_component_links where quiz_id in ({placeholders})",
+                list(quiz_ids),
+            )
+            for quiz_id, component_id in cursor.fetchall():
+                linked_component_ids[str(quiz_id)].add(str(component_id))
+    except Exception:
+        pass
+
+    for quiz in quizzes:
+        count = len(linked_component_ids.get(str(quiz.id), set()))
+        if count and quiz.linked_courses != count:
+            quiz.linked_courses = count
+            quiz.save(update_fields=["linked_courses", "updated_at"])
+    return quizzes
 
 
 def _training_plan_courses_for_programme(programme):
@@ -1468,7 +1534,7 @@ def training_plan_options(request):
     programmes = []
     modules_by_programme = {}
     seen_programmes = set()
-    for programme, module_name, programme_id, module_catalogue_id in rows:
+    for programme, module_name, programme_id, training_plan_id, module_catalogue_id in rows:
         if _is_placeholder_training_value(programme) or _is_placeholder_training_value(module_name):
             continue
         if programme not in seen_programmes:
@@ -1478,6 +1544,7 @@ def training_plan_options(request):
             "value": module_name,
             "label": module_name,
             "programmeId": programme_id,
+            "trainingPlanId": training_plan_id,
             "moduleId": module_catalogue_id or "",
             "moduleCatalogueId": module_catalogue_id or "",
         })
@@ -2417,7 +2484,7 @@ def quizzes(request):
                 queryset = queryset.filter(status=status)
         if query:
             queryset = queryset.filter(title__icontains=query)
-        quizzes_to_serialize = list(queryset)
+        quizzes_to_serialize = _sync_quiz_linked_component_counts(queryset)
         if status == "trash":
             quizzes_to_serialize = [_sync_quiz_linked_component_count(quiz) for quiz in quizzes_to_serialize]
         return JsonResponse({"results": [_serialize_quiz(quiz) for quiz in quizzes_to_serialize]})
@@ -2937,7 +3004,6 @@ def _quiz_xml_response(quiz):
     return response
 
 
-def _quiz_generated_scorm_html_response(quiz):
 def _scorm_uploaded_file_readable(quiz):
     """True only when the quiz has an uploaded package that actually exists on disk."""
     if not quiz.uploaded_file:
@@ -2968,7 +3034,6 @@ def _scorm_index_html(quiz):
         "questions": questions,
     })
     safe_title = html.escape(quiz.title or "SCORM preview")
-    index_html = f"""<!doctype html>
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -3006,17 +3071,6 @@ def _scorm_index_html(quiz):
 </body>
 </html>
 """
-    return HttpResponse(index_html, content_type="text/html; charset=utf-8")
-
-
-def _quiz_scorm_response(quiz):
-    if quiz.uploaded_file:
-        filename = quiz.file_name or _safe_download_name(quiz, "zip")
-        if not filename.lower().endswith(".zip"):
-            filename = _safe_download_name(quiz, "zip")
-        return FileResponse(quiz.uploaded_file.open("rb"), as_attachment=True, filename=filename)
-
-    index_html = _quiz_generated_scorm_html_response(quiz).content.decode("utf-8")
 
 
 def _quiz_scorm_response(quiz):
@@ -3085,13 +3139,6 @@ def quiz_scorm_launch(request, pk, asset_path=""):
         quiz = QuizPackage.objects.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
-
-    try:
-        destination, launch_path = _ensure_scorm_extracted(quiz)
-    except FileNotFoundError:
-        if asset_path:
-            raise Http404
-        return _quiz_generated_scorm_html_response(quiz)
 
     if quiz.package_type != "scorm":
         raise Http404
@@ -3184,8 +3231,8 @@ def question_bank(request):
             "name": programme["name"],
             "questionCount": 0,
             "quizCount": 0,
-            "moduleRows": programme["moduleRows"],
-            "trainingPlanRows": programme["trainingPlanRows"],
+            "moduleRows": programme.get("moduleRows", programme.get("moduleCount", 0)),
+            "trainingPlanRows": programme.get("trainingPlanRows", 0),
         }
 
     all_questions = list(

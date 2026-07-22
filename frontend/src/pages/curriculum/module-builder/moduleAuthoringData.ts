@@ -819,7 +819,10 @@ function componentAdvancedDefaults(type: ModuleComponentType): Record<string, st
   };
 }
 
-export function getDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
+// Retained from the pre-registry authoring implementation for reference and
+// backwards-compatible migration work. Runtime defaults come from
+// componentAuthoringModel.getDefaultComponentSettings above.
+export function getLegacyDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
   switch (type) {
     case 'live-session':
       return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };

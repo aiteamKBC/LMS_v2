@@ -586,7 +586,7 @@ export default function ModuleBuilder() {
     savedModuleSnapshotRef.current = moduleSnapshot(fallback);
     setWorkingModule(fallback);
     setSelection(fallback.weekStructure[0] ? { kind: 'week', weekId: fallback.weekStructure[0].id } : null);
-    setExpandedWeeks(new Set(fallback.weekStructure.map(week => week.id)));
+    setExpandedWeekIds(new Set(fallback.weekStructure.map(week => week.id)));
     setSettingsOpen(false);
     setNoticeAlert({
       title: 'Opened from Curriculum Studio',
@@ -1310,8 +1310,11 @@ export default function ModuleBuilder() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            Curriculum API error: {error}. Start the Django backend on port 8000 and refresh.
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            <span>Unable to refresh modules: {error}</span>
+            <button type="button" onClick={() => reload()} className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-1.5 font-bold text-red-700 hover:bg-red-100">
+              Retry
+            </button>
           </div>
         )}
         {actionMessage && !deletingModuleId && (
@@ -2035,7 +2038,10 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
   );
 }
 
-function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson }: {
+// Merge note: the former WeekEditor signature was left incomplete when its
+// replacement, ModuleWeekPanel, was introduced:
+// function WeekEditor({ week, ksbSourceLabels, dragState, onDragState,
+//   onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson })
 // The per-week panel, shown when a week is selected but no component is.
 // The parts timeline itself now lives inline under the week's row in
 // CourseStructure's accordion (WeekComponentRail, variant="nested") — this
@@ -2045,6 +2051,7 @@ function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapp
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onApplyTemplate: () => void;
+  onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
@@ -2362,7 +2369,13 @@ function TypeSpecificFields({
       <EditorBlock title="Podcast source">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <SelectInput label="Source type" value={sourceType} options={PODCAST_SOURCE_TYPES} onChange={value => onSettingChange('podcastSource', value)} />
-          <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          {sourceType === 'Embed' ? (
+            <TextArea label="Embed code" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+          ) : sourceType === 'Shortcode' ? (
+            <TextInput label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} />
+          ) : (
+            <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          )}
         </div>
         <ComponentResourceUpload
           label="Upload podcast audio"
@@ -4181,8 +4194,8 @@ function ksbSetMatchesModule(set: CurriculumKsbSet, module: ModuleCatalogueItem 
   if (!module) return false;
   const programmeCandidates = Array.from(moduleStandardCandidates(module, programmes));
   const moduleCandidates = [module.catalogueId, module.id, module.sourceId, module.sourceModule?.id, module.sourceModule?.sourceId];
-  const cohortCandidates = [module.cohortId, module.cohortName, module.cohort];
-  const groupCandidates = [module.groupId, module.groupName, module.group];
+  const cohortCandidates = [module.cohortId, module.cohort];
+  const groupCandidates = [module.groupId, module.group];
   return valuesMatchAny(set.programmeIds?.length ? set.programmeIds : [set.programmeId], programmeCandidates)
     && valuesMatchAny(set.moduleCatalogueIds, moduleCandidates)
     && valuesMatchAny(set.cohortIds, cohortCandidates)
@@ -4792,8 +4805,9 @@ function ModuleCatalogueCard({
   const weekCount = module.weekStructure.length || module.weeks || module.sessionsNumber || 0;
   const sessionCount = module.sessionsNumber || module.weeks || weekCount;
   const hasContent = componentCount > 0;
-  const sessionCount = module.sessionsNumber || module.weeks || 0;
-  const weekCount = module.weekStructure.length || module.weeks || 0;
+  // Legacy fallbacks retained by the merge were:
+  // sessionCount = module.sessionsNumber || module.weeks || 0
+  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className="group rounded-xl border border-background-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md">

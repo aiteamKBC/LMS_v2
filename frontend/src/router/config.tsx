@@ -113,7 +113,6 @@ const CurriculumStandards = lazy(() => import("../pages/curriculum/standards/pag
 const CurriculumWeekBuilder = lazy(() => import("../pages/curriculum/week-builder/page"));
 const QuizXmlWorkspace = lazy(() => import("../pages/curriculum/quiz-xml/page"));
 const ManualQuizPage = lazy(() => import("../pages/curriculum/quiz-xml/manual/page"));
-const TestBanksPage = lazy(() => import("../pages/curriculum/test-banks/page"));
 const CheckpointsPage = lazy(() => import("../pages/curriculum/checkpoints/page"));
 const TutorSessionsPage = lazy(() => import("../pages/tutor/sessions/page"));
 const TutorEvidenceReview = lazy(() => import("../pages/tutor/evidence-review/page"));
@@ -349,6 +348,7 @@ import KSBMapping from "../pages/curriculum/ksb-mapping/page";
 import CurriculumStandards from "../pages/curriculum/standards/page";
 import CurriculumWeekBuilder from "../pages/curriculum/week-builder/page";
 import QuizXmlWorkspace from "../pages/curriculum/quiz-xml/page";
+import ManualQuizPage from "../pages/curriculum/quiz-xml/manual/page";
 import QuizEditPage from "../pages/curriculum/quiz-xml/edit/page";
 import QuestionBankPage from "../pages/curriculum/question-bank/page";
 import CheckpointsPage from "../pages/curriculum/checkpoints/page";

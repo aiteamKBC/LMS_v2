@@ -67,14 +67,12 @@ def _display_component_title(type_, title):
 def _otjh_by_component_id(components):
     """Exact expected_otjh lookup for components saved with the structured
     plan format (they carry the real curriculum.components id)."""
-    plan format (they carry the real curriculum.components id)."""
     ids = sorted({c["componentId"] for c in components if c.get("componentId")})
     if not ids:
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 [ids],
             )
@@ -124,7 +122,6 @@ def _otjh_by_legacy_title(components):
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
@@ -209,7 +206,6 @@ def _display_quiz_title(title):
 
 def _resolve_week_ids(weeks):
     """Map each week entry to its real curriculum.weeks id.
-    """Map each week entry to its real curriculum.weeks id.
     Structured-plan weeks already carry weekId; legacy (pre-id) weeks are
     resolved by module+week title, mirroring _otjh_by_legacy_title."""
     resolved = {}  # (module, week) -> week_id
@@ -227,7 +223,6 @@ def _resolve_week_ids(weeks):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT module_catalogue_id, title FROM curriculum.modules "
-                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
             )
@@ -236,7 +231,6 @@ def _resolve_week_ids(weeks):
                 return resolved
 
             cur.execute(
-                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
                 "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
