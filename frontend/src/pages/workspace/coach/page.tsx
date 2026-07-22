@@ -7,6 +7,7 @@ import {
   DEFAULT_COACH_EMAIL,
   type CoachCalendarEvent,
   eventDisplayDate,
+  eventTargetDate,
   eventPeriodLabel,
   fetchCoachCalendarEvents,
   formatDateLabel,
@@ -23,9 +24,11 @@ type OtjhFilter = 'all' | 'at-risk' | 'need-attention' | 'on-track';
 type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'gateway' | 'epa' | 'evidence' | 'reviews';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
+type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
+const ATTENDANCE_ENDPOINT = `/coach_api/coach/attendance?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const ABSENCE_REPORTS_ENDPOINT = `/coach_api/coach/absence-reports?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const EVIDENCE_AWAITING_REVIEW_ENDPOINT = `/coach_api/coach/evidence-awaiting-review?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const CASELOAD_PAGE_SIZE = 5;
@@ -36,6 +39,7 @@ interface CoachLearner {
   initials: string;
   programme: string;
   cohortName?: string | null;
+  group: string;
   employer: string;
   avatar: string;
   status: PerformanceStatus;
@@ -53,7 +57,9 @@ interface CoachLearner {
   evidenceCountAvailable?: boolean;
   evidenceCompletedCount: number;
   nextCoaching: string;
+  nextCoachingStatus?: ScheduleStatus;
   nextReview: string;
+  nextReviewStatus?: ScheduleStatus;
   lastContact: string;
   recentFlag: string | null;
   email?: string | null;
@@ -70,6 +76,18 @@ interface CaseloadApiResponse {
     email?: string;
   };
   learners?: CaseloadApiLearner[];
+}
+
+interface AttendanceApiLearner {
+  id: string;
+  learner: string;
+  email?: string | null;
+  attendance: number | null;
+  hasAttendance?: boolean;
+}
+
+interface AttendanceApiResponse {
+  learners?: AttendanceApiLearner[];
 }
 
 function displayValue(value?: string | number | null): string {
@@ -101,6 +119,13 @@ function clampPercent(value?: number | string | null): number {
 function statusFromApi(value?: string | null): PerformanceStatus {
   if (value === 'at-risk' || value === 'high' || value === 'new-starter') return value;
   return 'on-track';
+}
+
+function isVisibleRiskFlag(value?: string | null) {
+  const normalized = displayValue(value).toLowerCase();
+  return normalized !== EMPTY_VALUE
+    && !normalized.startsWith('variance')
+    && normalized !== 'otjh at risk';
 }
 
 function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
@@ -171,7 +196,7 @@ function isEpaLearner(learner: CoachLearner): boolean {
 
 const OTJH_STATUS_META: Record<OtjhStatusKey, { label: string; cardLabel: string; sub: string; color: 'primary' | 'emerald' | 'red' | 'amber'; bg: string; text: string; bar: string; avatar: string }> = {
   'at-risk': {
-    label: 'At Risk',
+    label: 'OTJH at risk',
     cardLabel: 'At Risk',
     sub: 'OTJH at risk',
     color: 'red',
@@ -219,6 +244,10 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
   const id = displayValue(learner.id);
   const programme = displayValue(learner.programme) === EMPTY_VALUE ? displayValue(learner.cohortName) : displayValue(learner.programme);
   const cohortName = displayValue(learner.cohortName);
+  const riskFlags = Array.isArray(learner.riskFlags) ? learner.riskFlags.filter(isVisibleRiskFlag) : [];
+  const recentFlag = isVisibleRiskFlag(learner.recentFlag) && !riskFlags.includes(String(learner.recentFlag))
+    ? String(learner.recentFlag)
+    : null;
 
   return {
     id: id === EMPTY_VALUE ? `learner-${index}` : id,
@@ -226,14 +255,15 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     initials: initials === EMPTY_VALUE ? fallbackName.slice(0, 2).toUpperCase() : initials,
     programme,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
+    group: displayValue(learner.group),
     employer: displayValue(learner.employer),
     avatar: displayValue(learner.avatar),
     status: statusFromApi(learner.status),
-    riskFlags: Array.isArray(learner.riskFlags) ? learner.riskFlags.filter(Boolean) : [],
+    riskFlags,
     overallProgress: clampPercent(learner.overallProgress),
     overallProgressAvailable: learner.overallProgressAvailable,
-    attendanceRate: clampPercent(learner.attendanceRate),
-    attendanceRateAvailable: learner.attendanceRateAvailable,
+    attendanceRate: 0,
+    attendanceRateAvailable: false,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhStatus: displayValue(learner.otjhStatus),
@@ -243,12 +273,50 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     evidenceCountAvailable: learner.evidenceCountAvailable,
     evidenceCompletedCount: toNumber(learner.evidenceCompletedCount),
     nextCoaching: displayValue(learner.nextCoaching),
+    nextCoachingStatus: 'none',
     nextReview: displayValue(learner.nextReview),
+    nextReviewStatus: 'none',
     lastContact: displayValue(learner.lastContact),
-    recentFlag: displayValue(learner.recentFlag) === EMPTY_VALUE ? null : String(learner.recentFlag),
+    recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
   };
+}
+
+function findAttendanceRecord(learner: CoachLearner, attendanceLearners: AttendanceApiLearner[]) {
+  const learnerId = normalizeIdentity(learner.id);
+  const learnerEmail = normalizeIdentity(learner.email);
+  const learnerName = normalizeIdentity(learner.name);
+
+  return attendanceLearners.find((attendance) => {
+    const attendanceId = normalizeIdentity(attendance.id);
+    const attendanceEmail = normalizeIdentity(attendance.email);
+    const attendanceName = normalizeIdentity(attendance.learner);
+
+    return Boolean(
+      (learnerId && attendanceId && learnerId === attendanceId)
+      || (learnerEmail && attendanceEmail && learnerEmail === attendanceEmail)
+      || (learnerName && attendanceName && learnerName === attendanceName),
+    );
+  });
+}
+
+function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: AttendanceApiLearner[]) {
+  return learners.map((learner) => {
+    const attendance = findAttendanceRecord(learner, attendanceLearners);
+    const hasAttendance = Boolean(
+      attendance
+      && attendance.attendance !== null
+      && attendance.attendance !== undefined
+      && attendance.hasAttendance !== false,
+    );
+
+    return {
+      ...learner,
+      attendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : 0,
+      attendanceRateAvailable: hasAttendance,
+    };
+  });
 }
 
 function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, index: number): EvidenceQueueLearner {
@@ -300,26 +368,79 @@ function eventMatchesLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   return displayValue(event.learner).toLowerCase() === learner.name.toLowerCase();
 }
 
-function nextEventDateForLearner(events: CoachCalendarEvent[], learner: CoachLearner, source?: string) {
-  const match = sortEvents(events).find(event => (
-    (!source || event.source === source) &&
-    eventMatchesLearner(event, learner) &&
-    !isCompletedEvent(event) &&
-    !['cancelled', 'not-scheduled'].includes(event.status) &&
-    isFutureCalendarEvent(event)
-  ));
-  return match ? formatDateLabel(eventDisplayDate(match)) : EMPTY_VALUE;
+function scheduleDateForEvent(event: CoachCalendarEvent): { value: string; status: Exclude<ScheduleStatus, 'none'>; time: number } | null {
+  const displayValue = eventDisplayDate(event);
+  const targetValue = eventTargetDate(event);
+  const displayDate = parseLocalDate(displayValue);
+  const targetDate = parseLocalDate(targetValue);
+  const eventDate = event.status === 'not-scheduled'
+    ? targetDate || displayDate
+    : displayDate || targetDate;
+  const eventValue = event.status === 'not-scheduled'
+    ? targetValue || displayValue
+    : displayValue || targetValue;
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  if (event.status === 'not-scheduled') {
+    return eventDate && eventValue
+      ? { value: eventValue, status: 'needs-schedule', time: eventDate.getTime() }
+      : null;
+  }
+
+  if (displayDate && displayDate.getTime() >= start.getTime()) {
+    return { value: displayValue, status: 'upcoming', time: displayDate.getTime() };
+  }
+
+  if (targetDate && targetDate.getTime() >= start.getTime()) {
+    return { value: targetValue, status: 'upcoming', time: targetDate.getTime() };
+  }
+
+  const fallbackDate = displayDate || targetDate;
+  const fallbackValue = displayDate ? displayValue : targetValue;
+  if (!fallbackDate || !fallbackValue) {
+    return null;
+  }
+
+  return { value: fallbackValue, status: 'overdue', time: fallbackDate.getTime() };
+}
+
+function nextEventSummaryForLearner(events: CoachCalendarEvent[], learner: CoachLearner, source: string) {
+  const matches = events
+    .filter(event => (
+      event.source === source &&
+      eventMatchesLearner(event, learner) &&
+      !isCompletedEvent(event) &&
+      event.status !== 'cancelled'
+    ))
+    .map(event => ({ event, schedule: scheduleDateForEvent(event) }))
+    .filter((entry): entry is { event: CoachCalendarEvent; schedule: Exclude<ReturnType<typeof scheduleDateForEvent>, null> } => Boolean(entry.schedule))
+    .sort((left, right) => {
+      if (left.schedule.status !== right.schedule.status) {
+        return left.schedule.status === 'upcoming' ? -1 : 1;
+      }
+      return left.schedule.status === 'upcoming'
+        ? left.schedule.time - right.schedule.time
+        : right.schedule.time - left.schedule.time;
+    });
+
+  const match = matches[0]?.schedule;
+  return {
+    label: match ? formatDateLabel(match.value) : EMPTY_VALUE,
+    status: match?.status || 'none',
+  };
 }
 
 function enrichLearnerSchedule(learners: CoachLearner[], events: CoachCalendarEvent[]) {
   return learners.map(learner => {
-    const nextMonthlyCoaching = nextEventDateForLearner(events, learner, 'mcr');
+    const nextMonthlyCoaching = nextEventSummaryForLearner(events, learner, 'mcr');
+    const nextProgressReview = nextEventSummaryForLearner(events, learner, 'progress-review');
     return {
       ...learner,
-      nextCoaching: nextMonthlyCoaching === EMPTY_VALUE
-        ? nextEventDateForLearner(events, learner)
-        : nextMonthlyCoaching,
-      nextReview: nextEventDateForLearner(events, learner, 'progress-review'),
+      nextCoaching: nextMonthlyCoaching.label,
+      nextCoachingStatus: nextMonthlyCoaching.status,
+      nextReview: nextProgressReview.label,
+      nextReviewStatus: nextProgressReview.status,
     };
   });
 }
@@ -532,8 +653,9 @@ export default function CoachDashboard() {
       setLoadWarning(null);
       const warnings: string[] = [];
 
-      const [caseloadResult, timetableResult, absenceResult, curriculumResult, markingResult] = await Promise.allSettled([
+      const [caseloadResult, attendanceResult, timetableResult, absenceResult, curriculumResult, markingResult] = await Promise.allSettled([
         fetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadApiResponse>(response)),
+        fetch(ATTENDANCE_ENDPOINT, { signal: controller.signal }).then(response => readJson<AttendanceApiResponse>(response)),
         fetchCoachCalendarEvents(controller.signal),
         fetch(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }).then(response => readJson<AbsenceReportsResponse>(response)),
         fetchCurriculumOverview(controller.signal),
@@ -545,10 +667,19 @@ export default function CoachDashboard() {
       if (caseloadResult.status === 'fulfilled') {
         setOwnerName(displayValue(caseloadResult.value.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseloadResult.value.owner?.name));
         setOwnerEmail(displayValue(caseloadResult.value.owner?.email) === EMPTY_VALUE ? DEFAULT_COACH_EMAIL : String(caseloadResult.value.owner?.email));
-        setLearners((caseloadResult.value.learners || []).map(normalizeLearner));
+        const normalizedLearners = (caseloadResult.value.learners || []).map(normalizeLearner);
+        if (attendanceResult.status === 'fulfilled') {
+          setLearners(mergeAttendanceRates(normalizedLearners, attendanceResult.value.learners || []));
+        } else {
+          setLearners(normalizedLearners);
+          warnings.push('attendance');
+        }
       } else {
         setLearners([]);
         warnings.push('caseload');
+        if (attendanceResult.status === 'rejected') {
+          warnings.push('attendance');
+        }
       }
 
       if (timetableResult.status === 'fulfilled') {
@@ -1075,7 +1206,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                           <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${status.bg} ${status.text}`}>{status.label}</span>
                         )}
                       </div>
-                      <p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.employer}</p>
+                      <p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
                     </div>
                     <div className="hidden items-center gap-4 text-center sm:flex">
                       <div><p className="text-[10px] font-bold text-foreground-800">{otjh}</p><p className="text-[7px] text-foreground-400">OTJH</p></div>
@@ -1206,6 +1337,32 @@ function StatCard({ label, value, sub, icon, color, active = false, onClick }: {
 /* ═══════════════════════════════════════════════════════════
    Learner Row
    ═══════════════════════════════════════════════════════════ */
+function ScheduleDateLine({ label, value, status = 'none' }: { label: string; value: string; status?: ScheduleStatus }) {
+  const hasDate = displayValue(value) !== EMPTY_VALUE;
+  const statusClass = status === 'overdue'
+    ? 'border-red-100 bg-red-50 text-red-700'
+    : status === 'needs-schedule'
+      ? 'border-amber-100 bg-amber-50 text-amber-700'
+    : status === 'upcoming'
+      ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+      : 'border-foreground-100 bg-background-50 text-foreground-400';
+  const statusLabel = status === 'overdue' ? 'Overdue' : status === 'needs-schedule' ? 'Need Schedule' : 'Next';
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5">
+      <span className="text-[10px] font-bold text-foreground-500">{label}</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate text-[11px] font-semibold text-foreground-900">{hasDate ? value : EMPTY_VALUE}</span>
+        {hasDate && status !== 'none' && (
+          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${statusClass}`}>
+            {statusLabel}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; isSelected: boolean; onSelect: () => void }) {
   const sc = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
   const otjhLabel = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
@@ -1234,7 +1391,7 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
               <span className="text-[9px] font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">{learner.recentFlag}</span>
             )}
           </div>
-          <p className="text-[11px] text-foreground-400 mt-0.5">{learner.programme} · {learner.employer}</p>
+          <p className="text-[11px] text-foreground-400 mt-0.5">{learner.programme} · {learner.group}</p>
         </div>
         <div className="hidden lg:flex items-center gap-4 text-[11px] text-foreground-500 shrink-0">
           <span>OTJH: {otjhLabel}</span>
@@ -1268,9 +1425,12 @@ function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; 
             <p className={`text-lg font-bold ${attendanceTone}`}>{attendanceLabel}</p>
             <p className="text-[10px] text-foreground-400">{learner.attendanceRateAvailable ? learner.attendanceRate >= 90 ? 'On target' : 'Below 90%' : EMPTY_VALUE}</p>
           </div>
-          <div className="bg-background-100/50 rounded-lg p-3 text-center">
-            <p className="text-[10px] text-foreground-400 mb-1">Next Coaching</p>
-            <p className="text-sm font-semibold text-foreground-900">{learner.nextCoaching}</p>
+          <div className="bg-background-100/50 rounded-lg p-3">
+            <p className="text-center text-[10px] text-foreground-400 mb-2">Coaching & Reviews</p>
+            <div className="space-y-1.5">
+              <ScheduleDateLine label="MCM" value={learner.nextCoaching} status={learner.nextCoachingStatus} />
+              <ScheduleDateLine label="PR" value={learner.nextReview} status={learner.nextReviewStatus} />
+            </div>
           </div>
           <div className="bg-background-100/50 rounded-lg p-3 text-center">
             <p className="text-[10px] text-foreground-400 mb-1">Evidence</p>

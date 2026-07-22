@@ -10,7 +10,6 @@ import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
 import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
-import MessagesTab from './components/MessagesTab';
 import NetworkTab from './components/NetworkTab';
 import {
   flattenJourney,
@@ -32,7 +31,6 @@ const TABS = [
   { id: 'activity', label: 'Activity', icon: 'ri-history-line' },
   { id: 'network', label: 'Network', icon: 'ri-user-heart-line' },
   { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
-  { id: 'messages', label: 'Messages', icon: 'ri-mail-line' },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -87,11 +85,6 @@ export default function LearnerCaseFile() {
     return new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime();
   })[0];
 
-  const handleMessage = () => {
-    const target = data?.email || learnerName || learnerId || '';
-    navigate('/messages', { state: { openContact: target } });
-  };
-
   const handleOpenTrainingPlan = () => {
     if (!data?.kind || !data.learnerId) {
       return;
@@ -125,8 +118,6 @@ export default function LearnerCaseFile() {
         return <NetworkTab data={data} />;
       case 'documents':
         return <DocumentsTab data={data} />;
-      case 'messages':
-        return <MessagesTab data={data} />;
       default:
         return <OverviewTab data={data} />;
     }
@@ -150,7 +141,7 @@ export default function LearnerCaseFile() {
       >
         <div className="bg-background-50/95 backdrop-blur-md border-b border-foreground-200 shadow-sm">
           <div className="max-w-6xl mx-auto px-4 md:px-8 h-14 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary-400 to-accent-400 flex items-center justify-center shrink-0 text-xs font-bold text-white font-heading">
+            <div className="w-9 h-9 rounded-full border border-background-200 bg-background-100 flex items-center justify-center shrink-0 text-xs font-bold text-foreground-800 font-heading">
               {data?.initials || '--'}
             </div>
             <div className="flex-1 min-w-0">
@@ -158,12 +149,6 @@ export default function LearnerCaseFile() {
               <p className="text-[10px] text-foreground-400 truncate">{pageSubtitle}</p>
             </div>
             <div className="flex items-center gap-1.5">
-              <button
-                onClick={handleMessage}
-                className="px-3 py-1.5 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[11px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1"
-              >
-                <i className="ri-message-3-line text-xs"></i> Message
-              </button>
               {data?.kind && (
                 <button
                   onClick={handleOpenTrainingPlan}
@@ -177,82 +162,102 @@ export default function LearnerCaseFile() {
         </div>
       </div>
 
-      <div className="pb-8">
-        <section className="relative">
-          <div className="relative h-40 md:h-48 lg:h-52 rounded-b-lg overflow-hidden bg-background-50 border-b border-background-200">
-            <div className="absolute inset-0 bg-gradient-to-br from-background-50 via-background-100 to-background-200"></div>
-            <div className="absolute top-0 right-0 w-1/3 h-full opacity-30 bg-gradient-to-l from-primary-100 to-transparent"></div>
-          </div>
+      <div className="min-h-screen bg-background-100/70 pb-10">
+        <div className="px-4 md:px-8 py-5 space-y-5">
+          {error && data && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800 shadow-sm">
+              {error}
+            </div>
+          )}
 
-          <div className="relative px-4 md:px-8">
-            <div className="-mt-14 md:-mt-16 flex flex-col md:flex-row md:items-start gap-4 md:gap-6 pb-6">
-              <div className="relative shrink-0 w-28 h-28 md:w-32 md:h-32">
-                <ProgressRing progress={data?.overallProgress ?? null} initials={data?.initials || '--'} />
-              </div>
-
-              <div className="flex-1 min-w-0 flex flex-col md:flex-row md:items-start gap-4 md:gap-6">
-                <div className="flex-1 min-w-0 pt-1 md:pt-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-1">
-                    <h1 className="text-xl md:text-2xl font-heading font-bold text-foreground-900 tracking-tight">
-                      {pageTitle}
-                    </h1>
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border w-fit ${statusBadgeClass(data)}`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${statusDotClass(data)}`}></span>
-                      {statusLabel(data)}
-                    </span>
+          <section className="relative overflow-hidden rounded-3xl border border-foreground-200/70 bg-background-50 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+            <div className="relative p-5 md:p-6">
+              <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-col gap-4 md:flex-row md:items-center">
+                  <div className="relative mx-auto h-28 w-28 shrink-0 md:mx-0">
+                    <ProgressRing progress={data?.overallProgress ?? null} initials={data?.initials || '--'} />
                   </div>
 
-                  <div className="flex items-center gap-2 mb-2 flex-wrap">
-                    {data?.employer && (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary-50 text-primary-700 text-[11px] font-medium border border-primary-200">
-                        <i className="ri-building-2-line text-xs"></i>
-                        {data.employer}
+                  <div className="min-w-0 text-center md:text-left">
+                    <div className="flex flex-col items-center gap-2 md:flex-row md:items-center">
+                      <h1 className="text-2xl font-heading font-bold tracking-tight text-foreground-950 md:text-3xl">
+                        {pageTitle}
+                      </h1>
+                      <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusBadgeClass(data)}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${statusDotClass(data)}`}></span>
+                        {statusLabel(data)}
                       </span>
-                    )}
-                    {data?.programme && (
-                      <p className="text-sm text-foreground-500">{data.programme}</p>
-                    )}
-                  </div>
+                    </div>
 
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-foreground-400">
-                    {data?.cohort && (
-                      <span className="flex items-center gap-1">
-                        <i className="ri-group-line text-foreground-300"></i>
-                        Cohort {data.cohort}
-                      </span>
-                    )}
-                    {data?.group && (
-                      <span className="flex items-center gap-1">
-                        <i className="ri-team-line text-foreground-300"></i>
-                        Group {data.group}
-                      </span>
-                    )}
-                    {data?.startDate && data.startDate !== '--' && (
-                      <span className="flex items-center gap-1">
-                        <i className="ri-calendar-line text-foreground-300"></i>
-                        Started {data.startDate}
-                      </span>
-                    )}
-                    {data?.email && (
-                      <span className="flex items-center gap-1">
-                        <i className="ri-mail-line text-foreground-300"></i>
-                        {data.email}
-                      </span>
-                    )}
+                    <div className="mt-2 flex flex-wrap items-center justify-center gap-2 md:justify-start">
+                      {data?.programme && (
+                        <span className="text-sm font-semibold text-foreground-700">{data.programme}</span>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[12px] text-foreground-500 md:justify-start">
+                      {data?.cohort && (
+                        <span className="inline-flex items-center gap-1">
+                          <i className="ri-group-line text-foreground-400"></i>
+                          Cohort {data.cohort}
+                        </span>
+                      )}
+                      {data?.group && (
+                        <span className="inline-flex items-center gap-1">
+                          <i className="ri-team-line text-foreground-400"></i>
+                          Group {data.group}
+                        </span>
+                      )}
+                      {data?.startDate && data.startDate !== '--' && (
+                        <span className="inline-flex items-center gap-1">
+                          <i className="ri-calendar-line text-foreground-400"></i>
+                          Started {data.startDate}
+                        </span>
+                      )}
+                      {data?.email && (
+                        <span className="inline-flex min-w-0 items-center gap-1">
+                          <i className="ri-mail-line text-foreground-400"></i>
+                          <span className="truncate">{data.email}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0 md:pt-4">
-                  <button
-                    onClick={handleMessage}
-                    className="px-4 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[13px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 shadow-sm"
-                  >
-                    <i className="ri-message-3-line text-sm"></i> Message
-                  </button>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:w-[500px]">
+                  <SignalCard icon="ri-pie-chart-line" label="Progress" value={formatPercent(data?.overallProgress ?? null)} tone="primary" />
+                  <SignalCard icon="ri-calendar-check-line" label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
+                  <SignalCard icon="ri-time-line" label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} tone="amber" />
+                  <SignalCard icon="ri-folder-upload-line" label="Evidence" value={String(data?.evidenceCount ?? '--')} tone="accent" />
+                </div>
+              </div>
+
+              <div className="mt-5 flex flex-col gap-3 border-t border-background-200 pt-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-1 overflow-x-auto rounded-2xl border border-background-200 bg-background-100/65 p-1 scrollbar-hide">
+                  {TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`relative px-3.5 py-2.5 rounded-xl text-[12px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
+                        activeTab === tab.id
+                          ? 'bg-background-50 text-foreground-950 shadow-sm ring-1 ring-background-200'
+                          : 'text-foreground-500 hover:bg-background-50/75 hover:text-foreground-900'
+                      }`}
+                    >
+                      <i className={`${tab.icon} text-sm ${activeTab === tab.id ? 'text-primary-600' : 'text-foreground-500'}`}></i>
+                      {tab.label}
+                      {activeTab === tab.id && (
+                        <span className="absolute inset-x-4 bottom-1 h-0.5 rounded-full bg-primary-600"></span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
                   {data?.kind && (
                     <button
                       onClick={handleOpenTrainingPlan}
-                      className="px-4 py-2 rounded-full bg-background-50 text-foreground-700 text-[13px] font-semibold hover:bg-background-100 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 shadow-sm border border-background-200"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-4 py-2.5 text-[13px] font-semibold text-foreground-800 shadow-sm transition-all hover:bg-background-100"
                     >
                       <i className="ri-route-line text-sm"></i> View Plan
                     </button>
@@ -260,39 +265,14 @@ export default function LearnerCaseFile() {
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <div className="px-4 md:px-8 mt-4">
-          {error && data && (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800">
-              {error}
-            </div>
-          )}
-
-          <div className="flex items-center gap-1 overflow-x-auto pb-1 scrollbar-hide">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-full text-[13px] font-medium transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
-                  activeTab === tab.id
-                    ? 'bg-primary-500 text-background-50 dark:text-foreground-950 shadow-sm'
-                    : 'text-foreground-500 hover:text-foreground-700 hover:bg-background-100'
-                }`}
-              >
-                <i className={`${tab.icon} text-sm`}></i>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-5 mt-4">
-            <div className="flex-1 min-w-0">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
+            <div className="min-w-0">
               {renderTab()}
             </div>
 
-            <div className="w-full lg:w-[340px] shrink-0 space-y-4">
+            <div className="w-full space-y-4 xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)] xl:self-start xl:overflow-y-auto xl:pr-1 scrollbar-hide">
               <SidebarCard title="Risk Assessment">
                 {riskItems.length === 0 ? (
                   <EmptyState text="Risk indicators will appear when live learner metrics are available." />
@@ -408,11 +388,49 @@ export default function LearnerCaseFile() {
   );
 }
 
+function SignalCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  tone: 'primary' | 'emerald' | 'amber' | 'accent';
+}) {
+  const toneMap = {
+    primary: 'bg-background-100 text-primary-600 border-background-200',
+    emerald: 'bg-background-100 text-emerald-600 border-background-200',
+    amber: 'bg-background-100 text-amber-600 border-background-200',
+    accent: 'bg-background-100 text-foreground-600 border-background-200',
+  } as const;
+
+  return (
+    <div className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-[0_8px_18px_rgba(15,23,42,0.035)]">
+      <div className="flex items-center gap-2">
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${toneMap[tone]}`}>
+          <i className={`${icon} text-sm`}></i>
+        </span>
+        <div className="min-w-0">
+          <p className="whitespace-nowrap text-[9px] font-bold text-foreground-400">{label}</p>
+          <p className="whitespace-nowrap text-sm font-heading font-bold text-foreground-950">{value}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SidebarCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
-      <h3 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-3">{title}</h3>
-      <div className="space-y-2">{children}</div>
+    <div className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-[0_10px_30px_rgba(31,14,59,0.05)]">
+      <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/45 px-4 py-3">
+        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-background-50 text-primary-600 ring-1 ring-background-200">
+          <i className={`${sidebarIcon(title)} text-sm`}></i>
+        </span>
+        <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-500">{title}</h3>
+      </div>
+      <div className="space-y-2 p-4">{children}</div>
     </div>
   );
 }
@@ -426,7 +444,7 @@ function ProgressRing({ progress, initials }: { progress: number | null; initial
 
   return (
     <>
-      <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)] rotate-[-90deg]" viewBox="0 0 136 136">
+      <svg className="absolute -inset-2 h-[calc(100%+16px)] w-[calc(100%+16px)] rotate-[-90deg]" viewBox="0 0 136 136">
         <circle cx="68" cy="68" r={ringRadius} fill="none" stroke="oklch(var(--background-200))" strokeWidth="5" />
         <circle
           cx="68"
@@ -439,14 +457,23 @@ function ProgressRing({ progress, initials }: { progress: number | null; initial
           strokeDasharray={`${ringDash} ${ringGap}`}
         />
       </svg>
-      <div className="w-28 h-28 md:w-32 md:h-32 rounded-full ring-4 ring-background-50 bg-gradient-to-br from-primary-400 to-accent-400 flex items-center justify-center overflow-hidden shadow-lg relative z-10">
-        <span className="text-3xl md:text-4xl font-bold text-white font-heading">{initials}</span>
+      <div className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-background-200 bg-background-100 shadow-sm ring-4 ring-background-50">
+        <span className="text-3xl font-bold text-foreground-900 font-heading">{initials}</span>
       </div>
       <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-20 px-2 py-0.5 rounded-full bg-background-50 border border-background-200 shadow-sm text-[10px] font-bold text-foreground-700 whitespace-nowrap">
         {progress === null ? 'No progress yet' : `${safeProgress}% progress`}
       </div>
     </>
   );
+}
+
+function sidebarIcon(title: string) {
+  if (title.includes('Risk')) return 'ri-shield-check-line';
+  if (title.includes('People')) return 'ri-team-line';
+  if (title.includes('Plan')) return 'ri-route-line';
+  if (title.includes('Programme')) return 'ri-information-line';
+  if (title.includes('Assessment')) return 'ri-question-answer-line';
+  return 'ri-file-list-3-line';
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -463,7 +490,7 @@ function buildSubtitle(data: CoachLearnerCaseFileData | null) {
     return '';
   }
 
-  return [data.programme, data.employer, data.cohort ? `Cohort ${data.cohort}` : '']
+  return [data.programme, data.cohort ? `Cohort ${data.cohort}` : '', data.group ? `Group ${data.group}` : '']
     .filter(Boolean)
     .join(' - ');
 }
