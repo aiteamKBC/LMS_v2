@@ -59,7 +59,7 @@ def create_groups_table(apps, schema_editor):
                 mode varchar(64) not null default 'Live',
                 status varchar(32) not null default 'planned',
                 notes text,
-                source_type varchar(64) not null default 'training_plan',
+                source_type varchar(64) not null default 'curriculum_authoring',
                 source_id varchar(128),
                 created_at timestamp not null default {timestamp_default},
                 updated_at timestamp not null default {timestamp_default}

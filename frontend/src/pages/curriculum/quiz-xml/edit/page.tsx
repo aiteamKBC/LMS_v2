@@ -94,7 +94,8 @@ interface QuizEditorData {
 }
 
 interface CourseLinkOption {
-  id: number;
+  id: string;
+  moduleCatalogueId?: string;
   label: string;
   programme: string;
   module: string;
@@ -105,7 +106,8 @@ interface CourseLinkOption {
 
 interface CourseLinksState {
   programme: string;
-  selectedIds: number[];
+  selectedIds: string[];
+  selectedModuleCatalogueIds?: string[];
   courses: CourseLinkOption[];
 }
 
@@ -257,7 +259,23 @@ function serializeSettings(settings: QuizSettingsState) {
 }
 
 function serializeCourseLinks(courseLinks: CourseLinksState | null) {
-  return JSON.stringify([...(courseLinks?.selectedIds ?? [])].sort((a, b) => a - b));
+  return JSON.stringify([...(courseLinks?.selectedModuleCatalogueIds ?? courseLinks?.selectedIds ?? [])].sort());
+}
+
+function normaliseCourseLinks(payload: CourseLinksState | null): CourseLinksState | null {
+  if (!payload) return null;
+  const selectedIds = (payload.selectedModuleCatalogueIds ?? payload.selectedIds ?? []).map(id => String(id));
+  return {
+    ...payload,
+    selectedIds,
+    selectedModuleCatalogueIds: selectedIds,
+    courses: (payload.courses ?? []).map(course => ({
+      ...course,
+      id: String(course.moduleCatalogueId ?? course.id),
+      moduleCatalogueId: String(course.moduleCatalogueId ?? course.id),
+      selected: selectedIds.includes(String(course.moduleCatalogueId ?? course.id)),
+    })),
+  };
 }
 
 export default function QuizEditPage() {
@@ -304,7 +322,7 @@ export default function QuizEditPage() {
       if (!response.ok) throw new Error('Could not load quiz editor');
       const nextData: QuizEditorData = await response.json();
       const courseLinksResponse = await fetch(`/quiz_api/quizzes/${nextData.quiz.id}/course-links/`);
-      const nextCourseLinks: CourseLinksState | null = courseLinksResponse.ok ? await courseLinksResponse.json() : null;
+      const nextCourseLinks = normaliseCourseLinks(courseLinksResponse.ok ? await courseLinksResponse.json() : null);
       const nextSettings = settingsFromQuiz(nextData.quiz);
       setData(nextData);
       setSettings(nextSettings);
@@ -588,15 +606,16 @@ export default function QuizEditPage() {
     }
   };
 
-  const toggleCourseLink = (courseId: number) => {
+  const toggleCourseLink = (courseId: string) => {
     setCourseLinks(prev => {
       if (!prev) return prev;
-      const selected = prev.selectedIds.includes(courseId)
-        ? prev.selectedIds.filter(id => id !== courseId)
-        : [...prev.selectedIds, courseId];
+      const selected = (prev.selectedModuleCatalogueIds ?? prev.selectedIds).includes(courseId)
+        ? (prev.selectedModuleCatalogueIds ?? prev.selectedIds).filter(id => id !== courseId)
+        : [...(prev.selectedModuleCatalogueIds ?? prev.selectedIds), courseId];
       return {
         ...prev,
         selectedIds: selected,
+        selectedModuleCatalogueIds: selected,
         courses: prev.courses.map(course => course.id === courseId ? { ...course, selected: selected.includes(course.id) } : course),
       };
     });
@@ -609,11 +628,12 @@ export default function QuizEditPage() {
       const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/course-links/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trainingPlanIds: courseLinks.selectedIds }),
+        body: JSON.stringify({ moduleCatalogueIds: courseLinks.selectedModuleCatalogueIds ?? courseLinks.selectedIds }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'Could not save linked courses');
-      const nextCourseLinks: CourseLinksState = payload;
+      const nextCourseLinks = normaliseCourseLinks(payload);
+      if (!nextCourseLinks) throw new Error('Could not save linked courses');
       setCourseLinks(nextCourseLinks);
       setCourseLinksBaseline(serializeCourseLinks(nextCourseLinks));
       setData(prev => prev ? { ...prev, quiz: payload.quiz } : prev);
@@ -991,7 +1011,7 @@ export default function QuizEditPage() {
                   <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">Course links are loading.</div>
                 ) : courseLinks.courses.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">
-                    No matching courses found for this programme in Training_plan.
+                    No matching courses found for this programme.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto quiz-preview-scroll pr-1">
