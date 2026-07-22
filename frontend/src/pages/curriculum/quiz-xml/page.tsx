@@ -60,6 +60,7 @@ const dateFilterPresets: { value: DateFilterPreset; label: string }[] = [
 ];
 
 function parseStatusParam(value: string | null): 'all' | QuizStatus {
+  if (value === 'archive') return 'trash';
   return statusOptions.some(option => option.value === value) ? value as 'all' | QuizStatus : 'all';
 }
 
@@ -152,6 +153,33 @@ interface QuizStudentResultsData {
     averageBest: number | null;
   };
   students: QuizStudentResult[];
+}
+
+interface QuizCourseLinkOption {
+  id: string;
+  componentId?: string;
+  label: string;
+  programme: string;
+  programmeId?: string;
+  module: string;
+  moduleCatalogueId?: string;
+  component?: string;
+  componentType?: string;
+  weekId?: string;
+  week?: string | number;
+  cohort: string;
+  group?: string;
+  context?: string;
+  startDate: string;
+  selected: boolean;
+}
+
+interface QuizCourseLinksData {
+  programme: string;
+  linkType?: string;
+  selectedIds: string[];
+  courses: QuizCourseLinkOption[];
+  quiz: QuizPackage;
 }
 
 interface QuizFormState {
@@ -871,6 +899,8 @@ export default function QuizXmlWorkspacePage() {
   const [studentResultsLoadingId, setStudentResultsLoadingId] = useState<number | null>(null);
   const [activeStudentId, setActiveStudentId] = useState<number | null>(null);
   const [activeAttemptIndex, setActiveAttemptIndex] = useState(0);
+  const [courseLinksData, setCourseLinksData] = useState<QuizCourseLinksData | null>(null);
+  const [courseLinksLoadingId, setCourseLinksLoadingId] = useState<number | null>(null);
   const [editorData, setEditorData] = useState<QuizPreviewData | null>(null);
   const [editorLoadingId, setEditorLoadingId] = useState<number | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<number | null>(null);
@@ -922,7 +952,12 @@ export default function QuizXmlWorkspacePage() {
   useEffect(() => {
     const nextStatus = parseStatusParam(searchParams.get('status'));
     setFilterStatus(current => current === nextStatus ? current : nextStatus);
-  }, [searchParams]);
+    if (searchParams.get('status') === 'trash') {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('status', 'archive');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1044,6 +1079,17 @@ export default function QuizXmlWorkspacePage() {
   const draft = visibleQuizzes.filter(q => q.status === 'draft').length;
   const validationIssues = visibleQuizzes.filter(q => !q.schemaValid).length;
   const totalQuestions = visibleQuizzes.reduce((sum, quiz) => sum + quiz.questions, 0);
+  const isArchiveView = filterStatus === 'trash';
+  const pageHeading = isArchiveView ? 'Quiz Archive' : 'Quiz Workspace';
+  const pageSubtitle = isArchiveView
+    ? 'Review archived quiz packages and restore anything needed back to the workspace'
+    : 'Upload XML, SCORM or spreadsheet quiz files, then store questions and answers';
+  const heroSummary = isArchiveView
+    ? `${visibleQuizzes.length} archived quiz packages ready to restore or permanently delete.`
+    : `${published} published, ${draft} in draft. ${validationIssues} with validation issues.`;
+  const tertiaryStat = isArchiveView
+    ? { value: visibleQuizzes.length, label: 'Archived' }
+    : { value: published, label: 'Published' };
   const numericPageSize = Number(pageSize);
   const pageCount = Math.max(1, Math.ceil(visibleQuizzes.length / numericPageSize));
   const safeCurrentPage = Math.min(currentPage, pageCount);
@@ -1166,7 +1212,7 @@ export default function QuizXmlWorkspacePage() {
     if (status === 'all') {
       nextParams.delete('status');
     } else {
-      nextParams.set('status', status);
+      nextParams.set('status', status === 'trash' ? 'archive' : status);
     }
     setSearchParams(nextParams, { replace: true });
   };
@@ -1584,6 +1630,25 @@ export default function QuizXmlWorkspacePage() {
     }
   };
 
+  const openLinkedCourses = async (quiz: QuizPackage) => {
+    setCourseLinksLoadingId(quiz.id);
+    setError('');
+    try {
+      const response = await fetch(`/quiz_api/quizzes/${quiz.id}/course-links/`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Could not load linked courses');
+      setCourseLinksData(data);
+      if (data?.quiz) {
+        setQuizzes(prev => prev.map(item => item.id === data.quiz.id ? data.quiz : item));
+        setSelectedQuiz(prev => prev?.id === data.quiz.id ? data.quiz : prev);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load linked courses');
+    } finally {
+      setCourseLinksLoadingId(null);
+    }
+  };
+
   const openQuestionEditor = async (quiz: QuizPackage) => {
     window.location.href = `/curriculum/quiz-xml/${quiz.id}/edit`;
   };
@@ -1669,19 +1734,19 @@ export default function QuizXmlWorkspacePage() {
   };
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Quiz Workspace" pageSubtitle="Upload XML, SCORM or spreadsheet quiz files, then store questions and answers" userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle={pageHeading} pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-code-box-line text-white text-2xl"></i></span>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Quiz Workspace</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{visibleQuizzes.length} quiz packages</strong> - {published} published, {draft} in draft. {validationIssues} with validation issues.</p>
+              <h2 className="text-lg font-heading font-bold text-white mb-1">{pageHeading}</h2>
+              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{visibleQuizzes.length} quiz packages</strong> - {heroSummary}</p>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full md:w-auto shrink-0">
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{visibleQuizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Quizzes</p></div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{totalQuestions}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Questions</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{published}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Published</p></div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{tertiaryStat.value}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">{tertiaryStat.label}</p></div>
             </div>
           </div>
         </div>
@@ -1936,7 +2001,18 @@ export default function QuizXmlWorkspacePage() {
                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Linked</p>
-                        <p className="font-semibold text-primary-600">{quiz.linkedCourses}</p>
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            void openLinkedCourses(quiz);
+                          }}
+                          className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
+                          disabled={courseLinksLoadingId === quiz.id}
+                          title="View linked courses"
+                        >
+                          {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                        </button>
                       </div>
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Date</p>
@@ -2002,7 +2078,17 @@ export default function QuizXmlWorkspacePage() {
                       <p className="text-sm font-semibold text-foreground-900">{quiz.title}</p>
                       <p className="text-xs text-foreground-400">{quiz.module || 'No module'} - {quiz.questions} questions</p>
                     </td>
-                    <td className="px-4 py-3 text-sm text-primary-600">{quiz.linkedCourses}</td>
+                    <td className="px-4 py-3 text-sm" onClick={event => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => void openLinkedCourses(quiz)}
+                        className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
+                        disabled={courseLinksLoadingId === quiz.id}
+                        title="View linked courses"
+                      >
+                        {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-sm text-foreground-700">
                       <p>Last Modified - <span>{statusLabel(quiz.status)}</span></p>
                       <p>{formatDate(quiz.updatedAt)}</p>
@@ -2093,6 +2179,58 @@ export default function QuizXmlWorkspacePage() {
             </div>
           )}
         </div>
+
+        {courseLinksData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCourseLinksData(null)}>
+            <div className="w-full max-w-2xl rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 border-b border-foreground-200/60 p-5">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">Linked Quiz Components</p>
+                  <h3 className="text-lg font-heading font-bold text-foreground-900 truncate">{courseLinksData.quiz.title}</h3>
+                  <p className="text-sm text-foreground-400">{courseLinksData.programme || courseLinksData.quiz.programme || 'No programme'}</p>
+                </div>
+                <button onClick={() => setCourseLinksData(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0">
+                  <i className="ri-close-line"></i>
+                </button>
+              </div>
+
+              <div className="max-h-[60vh] overflow-y-auto p-5 quiz-preview-scroll">
+                {courseLinksData.courses.filter(course => course.selected).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-foreground-200/80 bg-background-100/60 px-4 py-10 text-center">
+                    <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-white text-foreground-300 border border-foreground-200/60">
+                      <i className="ri-links-line text-xl"></i>
+                    </span>
+                    <p className="text-sm font-semibold text-foreground-700">No linked quiz components</p>
+                    <p className="mt-1 text-xs text-foreground-400">This quiz is not linked to any module authoring component yet.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {courseLinksData.courses.filter(course => course.selected).map(course => (
+                      <article key={course.id} className="rounded-xl border border-[#dbe3ee] bg-white p-4 shadow-sm">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700 border border-primary-100">
+                            <i className="ri-book-open-line"></i>
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-sm font-heading font-bold text-foreground-900 break-words">{course.component || course.label || 'Quiz component'}</h4>
+                            <p className="mt-1 text-xs text-foreground-500 break-words">{course.label || course.module || course.programme || courseLinksData.programme}</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {course.module && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Module: {course.module}</span>}
+                              {course.week && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Week: {course.week}</span>}
+                              {course.cohort && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Cohort: {course.cohort}</span>}
+                              {course.group && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Group: {course.group}</span>}
+                              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">Component: {course.id}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedQuiz && (
           <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setSelectedQuiz(null)}>

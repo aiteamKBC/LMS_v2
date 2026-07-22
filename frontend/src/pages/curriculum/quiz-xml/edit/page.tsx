@@ -94,18 +94,27 @@ interface QuizEditorData {
 }
 
 interface CourseLinkOption {
-  id: number;
+  id: string;
+  componentId?: string;
   label: string;
   programme: string;
+  programmeId?: string;
   module: string;
+  moduleCatalogueId?: string;
+  component?: string;
+  componentType?: string;
+  weekId?: string;
+  week?: string | number;
   cohort: string;
+  group?: string;
   startDate: string;
   selected: boolean;
 }
 
 interface CourseLinksState {
   programme: string;
-  selectedIds: number[];
+  linkType?: string;
+  selectedIds: string[];
   courses: CourseLinkOption[];
 }
 
@@ -257,7 +266,7 @@ function serializeSettings(settings: QuizSettingsState) {
 }
 
 function serializeCourseLinks(courseLinks: CourseLinksState | null) {
-  return JSON.stringify([...(courseLinks?.selectedIds ?? [])].sort((a, b) => a - b));
+  return JSON.stringify([...(courseLinks?.selectedIds ?? [])].sort((a, b) => a.localeCompare(b)));
 }
 
 export default function QuizEditPage() {
@@ -588,7 +597,7 @@ export default function QuizEditPage() {
     }
   };
 
-  const toggleCourseLink = (courseId: number) => {
+  const toggleCourseLink = (courseId: string) => {
     setCourseLinks(prev => {
       if (!prev) return prev;
       const selected = prev.selectedIds.includes(courseId)
@@ -609,7 +618,7 @@ export default function QuizEditPage() {
       const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/course-links/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trainingPlanIds: courseLinks.selectedIds }),
+        body: JSON.stringify({ componentIds: courseLinks.selectedIds }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || 'Could not save linked courses');
@@ -617,9 +626,9 @@ export default function QuizEditPage() {
       setCourseLinks(nextCourseLinks);
       setCourseLinksBaseline(serializeCourseLinks(nextCourseLinks));
       setData(prev => prev ? { ...prev, quiz: payload.quiz } : prev);
-      success('Courses linked', 'Quiz course links were updated.');
+      success('Components linked', 'Quiz component links were updated.');
     } catch (err) {
-      toastError('Save failed', err instanceof Error ? err.message : 'Could not save linked courses');
+      toastError('Save failed', err instanceof Error ? err.message : 'Could not save linked components');
     } finally {
       setSavingCourseLinks(false);
     }
@@ -965,10 +974,10 @@ export default function QuizEditPage() {
                       <span className="w-8 h-8 rounded-lg bg-[#f2edff] text-[#5b21b6] flex items-center justify-center">
                         <i className="ri-links-line"></i>
                       </span>
-                      <h3 className="text-sm font-heading font-bold text-[#0f172a]">Linked courses</h3>
+                      <h3 className="text-sm font-heading font-bold text-[#0f172a]">Linked quiz components</h3>
                     </div>
                     <p className="text-xs text-[#64748b] leading-5">
-                      Add this quiz to another course in the same programme only.
+                      Link this quiz package to quiz components from Module Authoring.
                       {courseLinks?.programme && <span className="font-semibold text-[#475569]"> Programme: {courseLinks.programme}</span>}
                     </p>
                   </div>
@@ -988,10 +997,10 @@ export default function QuizEditPage() {
                 </div>
 
                 {!courseLinks ? (
-                  <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">Course links are loading.</div>
+                  <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">Component links are loading.</div>
                 ) : courseLinks.courses.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">
-                    No matching courses found for this programme in Training_plan.
+                    No quiz components found for this programme in module authoring.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto quiz-preview-scroll pr-1">
@@ -1009,9 +1018,9 @@ export default function QuizEditPage() {
                               <i className="ri-check-line text-sm"></i>
                             </span>
                             <span className="min-w-0">
-                              <span className="block text-sm font-semibold text-[#0f172a] truncate">{course.module}</span>
+                              <span className="block text-sm font-semibold text-[#0f172a] truncate">{course.component || course.label || 'Quiz component'}</span>
                               <span className="block text-xs text-[#64748b] truncate">
-                                {[course.cohort ? `Cohort: ${course.cohort}` : '', course.startDate ? `Starts: ${course.startDate}` : ''].filter(Boolean).join(' · ') || course.programme}
+                                {[course.module ? `Module: ${course.module}` : '', course.week ? `Week: ${course.week}` : '', course.group ? `Group: ${course.group}` : '', course.cohort ? `Cohort: ${course.cohort}` : ''].filter(Boolean).join(' - ') || course.programme}
                               </span>
                             </span>
                           </div>

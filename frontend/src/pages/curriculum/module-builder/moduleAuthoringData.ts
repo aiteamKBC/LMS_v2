@@ -707,6 +707,116 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
   }
 }
 
+function componentAdvancedDefaults(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
+  const completionRules: Partial<Record<ModuleComponentType, string>> = {
+    'live-session': 'Attend or watch recording',
+    'recording-placeholder': 'Mark complete after watching',
+    video: 'Watch video and mark complete',
+    podcast: 'Listen and mark complete',
+    reading: 'Read the material and confirm completion',
+    powerpoint: 'Review slide deck',
+    quiz: 'Submit',
+    'monthly-ksb-quiz': 'Submit monthly KSB quiz',
+    reflection: 'Submit reflection',
+    'workplace-evidence': 'Upload + describe',
+    assignment: 'Submit assignment',
+    checkpoint: 'Complete checkpoint',
+    'coaching-preparation': 'Complete coaching preparation',
+  };
+  const evidenceRequired: Partial<Record<ModuleComponentType, string>> = {
+    'live-session': 'Attendance or recording completion',
+    quiz: 'Quiz result',
+    'monthly-ksb-quiz': 'Quiz result',
+    checkpoint: 'Quiz result',
+    reflection: 'Reflection + signature',
+    'workplace-evidence': 'File + 100-word description',
+    assignment: 'Submission file',
+    'coaching-preparation': 'Preparation notes',
+  };
+  const reflectionPrompt =
+    type === 'workplace-evidence'
+      ? 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?'
+      : ['quiz', 'monthly-ksb-quiz', 'checkpoint'].includes(type)
+        ? 'Which questions or topics do you need to revisit after this activity?'
+        : 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
+
+  return {
+    completionRule: completionRules[type] || 'Mark complete',
+    evidenceRequired: evidenceRequired[type] || '-',
+    reflectionPrompt,
+    contentStatus: 'Draft',
+    version: '0.1',
+  };
+}
+
+export function getDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
+  switch (type) {
+    case 'live-session':
+      return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };
+    case 'recording-placeholder':
+      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session', captionsExpected: false };
+    case 'video':
+      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, captionsAvailable: false, learningBrief: '', postWatchTask: '' };
+    case 'podcast':
+      return { ...componentAdvancedDefaults(type), podcastSource: 'External URL', podcastUrl: '', durationMinutes: 20, listeningFocus: '', podcastReflectionQuestion: '' };
+    case 'reading':
+      return {
+        ...componentAdvancedDefaults(type),
+        difficulty: 'Standard',
+        requirement: 'Required',
+        readingSource: 'Written in LMS',
+        resourceUrl: '',
+        readingContent: '',
+        mainLearningOutcomes: '',
+        ksbEvidenceNotes: '',
+        focusSections: '',
+        learnerInstruction: '',
+        keyPointCount: '0',
+        keyPoints: '',
+        glossaryTerms: '',
+        estimatedReadingTime: 20,
+        otjhRationale: '',
+        audioEnabled: false,
+        audioUrl: '',
+        reflectionQuestionCount: '0 qs',
+        readingReflectionPrompts: '',
+        readingEvidenceRequired: '',
+        completionRuleCount: '3 rules',
+        completionConfirmationRequired: true,
+        linkedActivity: '',
+        coachingPrompt: '',
+        requiredReading: true,
+      };
+    case 'powerpoint':
+      return { ...componentAdvancedDefaults(type), fileName: '', slideRange: '', speakerNotes: '', downloadAllowed: true };
+    case 'quiz':
+      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 10, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, questionsPlaceholder: '', completionFeedback: '' };
+    case 'monthly-ksb-quiz':
+      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 12, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, monthFocus: '' };
+    case 'reflection':
+      return { ...componentAdvancedDefaults(type), minimumWordCount: 250, learnerGuidance: '', tutorReviewGuidance: '' };
+    case 'workplace-evidence':
+      return { ...componentAdvancedDefaults(type), evidenceInstructions: '', acceptedEvidenceTypes: 'Document, image, video, witness statement', assessmentChecklist: '', minimumDescriptionWords: 100 };
+    case 'assignment':
+      return { ...componentAdvancedDefaults(type), assignmentBrief: '', submissionInstructions: '', dueTiming: 'End of week', markingRubric: '' };
+    case 'checkpoint':
+      return { ...componentAdvancedDefaults(type), checkpointTitle: '', checkpointQuestions: '', progressReviewLinked: true, monthlyCoachingReviewLinked: true };
+    case 'coaching-preparation':
+      return { ...componentAdvancedDefaults(type), preparationPrompt: '', evidenceToBring: '', coachDiscussionPoints: '', coachingReviewLinked: true };
+    default:
+      return componentAdvancedDefaults(type);
+  }
+}
+
+function readStore<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function cleanUserFacingText(value: string) {
   return String(value || '')
     .split(/\r?\n/)

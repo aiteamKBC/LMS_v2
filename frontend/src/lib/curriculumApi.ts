@@ -112,6 +112,20 @@ export interface CurriculumComponent {
   contentSections: number;
   quizQuestions?: number | null;
   hasResources: boolean;
+  description?: string;
+  expectedOtjh?: number;
+  points?: number;
+  reflectionRequired?: boolean;
+  workplaceEvidenceRequired?: boolean;
+  tutorValidationRequired?: boolean;
+  ksbMappings?: Array<{
+    id: string;
+    ksbId: string;
+    code: string;
+    description: string;
+    type: 'main' | 'secondary' | 'practice' | string;
+  }>;
+  settings?: Record<string, string | number | boolean | string[]>;
   settings?: Record<string, unknown>;
 }
 
@@ -435,6 +449,14 @@ export interface CurriculumGroup {
 
 export interface CurriculumSession {
   id: string;
+  trainingPlanId: number | string;
+  programmeId?: string;
+  programmeSourceId?: string;
+  cohortId?: string;
+  groupId?: string;
+  moduleId?: string;
+  moduleCatalogueId?: string;
+  weekId?: string;
   trainingPlanId: number;
   deliveryRowId?: number | string;
   programmeId?: string;

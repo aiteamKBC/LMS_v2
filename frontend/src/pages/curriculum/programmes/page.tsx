@@ -188,19 +188,32 @@ export default function CurriculumProgrammes() {
         {loading ? (
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
             {filtered.map(prog => {
             const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
             return (
+              <article key={prog.id} className={`group relative flex min-h-[268px] flex-col overflow-hidden rounded-2xl border bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-lg ${isArchivedSelected ? 'border-red-300 ring-2 ring-red-100' : 'border-foreground-200/70 hover:border-primary-200/80'}`}>
               <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
+                {status === 'archived' && statusFilter === 'archived' && (
+                  <button
+                    type="button"
+                    aria-label={`Select ${prog.name}`}
+                    onClick={event => { event.stopPropagation(); toggleArchivedSelection(prog); }}
+                    className={`absolute right-4 top-4 h-7 w-7 rounded-lg border flex items-center justify-center transition-smooth ${isArchivedSelected ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-foreground-200 text-foreground-500 hover:border-red-300 hover:text-red-600'}`}
+                  >
+                    <i className={`${isArchivedSelected ? 'ri-check-line' : 'ri-checkbox-blank-line'} text-sm`}></i>
+                  </button>
+                )}
+                <div className="mb-4 flex items-start justify-between gap-4">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: prog.color || '#6941c6' }}>
+                    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-white shadow-sm ring-4 ring-background-100" style={{ backgroundColor: prog.color || '#6941c6' }}>
                       <i className="ri-book-2-line text-base"></i>
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
+                      <p className="mt-0.5 line-clamp-1 text-[11px] font-medium text-foreground-500">{prog.standard} - {prog.level || 'Level not set'}</p>
                       <p className="text-[11px] text-foreground-400">{prog.standard} - {prog.level || 'Level not set'}</p>
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
                         <i className="ri-calendar-event-line text-[10px]"></i>
@@ -209,31 +222,51 @@ export default function CurriculumProgrammes() {
                     </div>
                   </div>
                 </div>
-                <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
+                <div className="mb-4 grid grid-cols-2 gap-2.5 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
                   <Metric label="Modules" value={String(prog.modules)} />
                   <Metric label="Sessions" value={`${prog.weeks}`} />
                   <Metric label="Learners" value={String(prog.learners)} />
-                  <div className="col-span-2 sm:col-span-5">
-                    <p className="text-[9px] text-foreground-400 uppercase">KSB Mapping</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <div className="flex-1 h-1.5 bg-background-200 rounded-full overflow-hidden">
+                  <div className="col-span-2 mt-1 rounded-lg border border-background-200 bg-background-50 p-2.5 sm:col-span-5">
+                    <div className="mb-1.5 flex items-center justify-between gap-3">
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-500">KSB Mapping</p>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${coverage >= 100 ? 'bg-emerald-50 text-emerald-700' : coverage >= 70 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{coverage}%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-background-200">
                         <div className={`h-full rounded-full ${coverage >= 100 ? 'bg-emerald-500' : coverage >= 70 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${coverage}%` }}></div>
                       </div>
-                      <span className="text-[10px] font-semibold">{coverage}%</span>
                     </div>
                   </div>
                 </div>
-                {prog.description && <p className="mb-4 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
-                <div className="flex flex-wrap items-center gap-2 border-t border-background-200/70 pt-4">
-                  <button className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
+                <p className="mb-4 min-h-[40px] flex-1 line-clamp-2 text-[12px] leading-5 text-foreground-500">
+                  {prog.description || 'No description added yet.'}
+                </p>
+                <div className="mt-auto grid grid-cols-2 items-center gap-2 border-t border-background-200/70 pt-4 sm:grid-cols-[1fr_auto_auto]">
+                  <button className="inline-flex h-9 min-w-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
                     <i className="ri-eye-line"></i>
                     Open
                   </button>
+                  <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
+                    <i className="ri-settings-3-line"></i>Edit
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                     <i className="ri-pencil-line text-sm"></i>Edit
                   </button>
+                  {status === 'archived' ? (
+                    <>
+                      <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-200/70 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); restoreProgramme(prog); }}>
+                        <i className="ri-refresh-line mr-1"></i>Restore
+                      </button>
+                      <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-600 bg-red-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-red-700" onClick={e => { e.stopPropagation(); setSelectedArchivedIds(new Set([archivedKey])); setPermanentDeleteOpen(true); }}>
+                        <i className="ri-delete-bin-6-line mr-1"></i>Delete
+                      </button>
+                    </>
+                  ) : (
+                    <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-200/70 bg-red-50 px-3 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100" onClick={e => { e.stopPropagation(); setArchiveTarget({ kind: 'programme', id: prog.id, sourceId: prog.sourceId, name: prog.name }); }}>
+                      <i className="ri-archive-line mr-1"></i>Archive
+                    </button>
+                  )}
                   <button
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
@@ -1193,9 +1226,9 @@ function ArchiveConfirmDialog({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
-      <p className="text-sm font-semibold text-foreground-900">{value}</p>
+    <div className="min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-background-200/80">
+      <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
     </div>
   );
 }
