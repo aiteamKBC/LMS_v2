@@ -389,12 +389,6 @@ function curriculumSessionToCalendarEvent(session: CurriculumSession): CoachCale
   };
 }
 
-function formatCalendarDay(value?: string | null) {
-  const date = parseLocalDate(value);
-  if (!date) return EMPTY_VALUE;
-  return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
-}
-
 function formatCalendarMonth(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
