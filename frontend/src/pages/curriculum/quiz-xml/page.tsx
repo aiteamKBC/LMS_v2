@@ -8,6 +8,7 @@ import { kbcUsers } from '@/mocks/users';
 import { useToast } from '@/hooks/useToast';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { formatQuizGradeRange, type QuizGradeRow, type QuizGradeSettings, useQuizGradeSettings } from '@/lib/quizGradeSettings';
+import { type QuizGeneralSettings, useQuizGeneralSettings } from '@/lib/quizGeneralSettings';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 const curriculumNav = roleNavMap.curriculum;
@@ -15,6 +16,7 @@ const curriculumNav = roleNavMap.curriculum;
 type QuizStatus = 'published' | 'pending' | 'draft' | 'trash' | 'private' | 'validating';
 type PackageType = 'xml' | 'scorm' | 'excel' | 'csv' | 'file';
 type QuestionType = 'single_choice' | 'multiple_choice' | 'true_false' | 'matching' | 'image_matching' | 'keywords' | 'fill_gap' | 'ordering';
+type DateFilterPreset = 'all' | 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'this_year' | 'last_year' | 'custom';
 
 const questionTypeOptions: { value: QuestionType; label: string }[] = [
   { value: 'single_choice', label: 'Single choice' },
@@ -45,7 +47,20 @@ const pageSizeOptions = [
   { value: '50', label: '50 per page' },
 ];
 
+const dateFilterPresets: { value: DateFilterPreset; label: string }[] = [
+  { value: 'all', label: 'All Time' },
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'this_week', label: 'This Week' },
+  { value: 'last_week', label: 'Last Week' },
+  { value: 'this_month', label: 'This Month' },
+  { value: 'last_month', label: 'Last Month' },
+  { value: 'this_year', label: 'This Year' },
+  { value: 'last_year', label: 'Last Year' },
+];
+
 function parseStatusParam(value: string | null): 'all' | QuizStatus {
+  if (value === 'archive') return 'trash';
   return statusOptions.some(option => option.value === value) ? value as 'all' | QuizStatus : 'all';
 }
 
@@ -140,6 +155,33 @@ interface QuizStudentResultsData {
   students: QuizStudentResult[];
 }
 
+interface QuizCourseLinkOption {
+  id: string;
+  componentId?: string;
+  label: string;
+  programme: string;
+  programmeId?: string;
+  module: string;
+  moduleCatalogueId?: string;
+  component?: string;
+  componentType?: string;
+  weekId?: string;
+  week?: string | number;
+  cohort: string;
+  group?: string;
+  context?: string;
+  startDate: string;
+  selected: boolean;
+}
+
+interface QuizCourseLinksData {
+  programme: string;
+  linkType?: string;
+  selectedIds: string[];
+  courses: QuizCourseLinkOption[];
+  quiz: QuizPackage;
+}
+
 interface QuizFormState {
   title: string;
   module: string;
@@ -225,6 +267,80 @@ Core rules:
 - Align explanations to source concepts and KSBs where available.
 - Keep distractors plausible and avoid repeated stems or obvious patterns.
 - Return structured JSON only so the LMS can save and preview the questions.`;
+
+function isAlwaysCorrectType(type: QuestionType) {
+  return ['ordering', 'matching', 'image_matching', 'keywords', 'fill_gap'].includes(type);
+}
+
+function splitAnswerPair(value: string) {
+  const parts = value.split(/\s*(?:->|=>|=)\s*/);
+  return {
+    left: (parts[0] || '').trim(),
+    right: (parts.length > 1 ? parts.slice(1).join(' -> ') : '').trim(),
+  };
+}
+
+function joinAnswerPair(left: string, right: string) {
+  return `${left.trim()} -> ${right.trim()}`;
+}
+
+function normalizeAnswersForQuestionType(answers: QuizPreviewQuestion['answers'], type: QuestionType): QuizPreviewQuestion['answers'] {
+  const fallbackId = -Date.now();
+  const nextAnswers = answers.length ? [...answers] : [{ id: fallbackId, text: '', isCorrect: true }];
+
+  if (type === 'true_false') {
+    const correctText = nextAnswers.find(answer => answer.isCorrect)?.text.toLowerCase() || '';
+    const trueAnswer = nextAnswers.find(answer => answer.text.toLowerCase().trim() === 'true') || nextAnswers[0] || { id: fallbackId, text: 'True', isCorrect: true };
+    const falseAnswer = nextAnswers.find(answer => answer.text.toLowerCase().trim() === 'false') || nextAnswers[1] || { id: fallbackId - 1, text: 'False', isCorrect: false };
+    const falseIsCorrect = correctText.includes('false');
+
+    return [
+      { ...trueAnswer, text: 'True', isCorrect: !falseIsCorrect },
+      { ...falseAnswer, text: 'False', isCorrect: falseIsCorrect },
+    ];
+  }
+
+  if (isAlwaysCorrectType(type)) {
+    return nextAnswers.map(answer => ({ ...answer, isCorrect: true }));
+  }
+
+  if (type === 'multiple_choice') {
+    const hasCorrect = nextAnswers.some(answer => answer.isCorrect);
+    return nextAnswers.map((answer, index) => ({ ...answer, isCorrect: hasCorrect ? answer.isCorrect : index === 0 }));
+  }
+
+  const firstCorrectIndex = Math.max(nextAnswers.findIndex(answer => answer.isCorrect), 0);
+  return nextAnswers.map((answer, index) => ({ ...answer, isCorrect: index === firstCorrectIndex }));
+}
+
+function createManualQuestion(order: number, questionType: QuestionType = 'single_choice'): QuizPreviewQuestion {
+  const questionId = -Date.now() - order;
+  const baseAnswerId = questionId * 10;
+
+  return {
+    id: questionId,
+    text: '',
+    questionType,
+    explanation: '',
+    answers: normalizeAnswersForQuestionType([
+      { id: baseAnswerId - 1, text: '', isCorrect: true },
+      { id: baseAnswerId - 2, text: '', isCorrect: false },
+      { id: baseAnswerId - 3, text: '', isCorrect: false },
+      { id: baseAnswerId - 4, text: '', isCorrect: false },
+    ], questionType),
+  };
+}
+
+function answerEditorCopy(type: QuestionType) {
+  if (type === 'multiple_choice') return { title: 'Answer choices', hint: 'Tick every option that should be accepted as correct.', addLabel: 'Add option' };
+  if (type === 'true_false') return { title: 'True/False answers', hint: 'Choose whether True or False is the correct answer.', addLabel: 'Add option' };
+  if (type === 'matching') return { title: 'Matching pairs', hint: 'Write each pair as a left prompt and a matching answer.', addLabel: 'Add pair' };
+  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Write each image prompt and the answer it should match.', addLabel: 'Add match' };
+  if (type === 'keywords') return { title: 'Accepted keywords', hint: 'Every row is treated as an accepted keyword or phrase.', addLabel: 'Add keyword' };
+  if (type === 'fill_gap') return { title: 'Accepted gap answers', hint: 'Every row is treated as an accepted answer for the blank.', addLabel: 'Add answer' };
+  if (type === 'ordering') return { title: 'Correct order', hint: 'Add the steps in the correct sequence.', addLabel: 'Add step' };
+  return { title: 'Answer choices', hint: 'Choose the one best correct answer.', addLabel: 'Add option' };
+}
 
 function QuizRowActions({
   quiz,
@@ -528,6 +644,109 @@ function GradeAddField({ label, children }: { label: string; children: ReactNode
   );
 }
 
+function GeneralQuizSettingsModal({
+  settings,
+  onChange,
+  onClose,
+  onSaved,
+}: {
+  settings: QuizGeneralSettings;
+  onChange: (settings: QuizGeneralSettings) => void;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const updateSettings = (patch: Partial<QuizGeneralSettings>) => onChange({ ...settings, ...patch });
+  const saveAndClose = () => {
+    onSaved();
+    onClose();
+  };
+  const SettingSwitch = ({ checked, onToggle }: { checked: boolean; onToggle: (checked: boolean) => void }) => (
+    <button
+      type="button"
+      onClick={() => onToggle(!checked)}
+      className={`h-7 w-12 rounded-full p-1 transition-smooth flex items-center ${checked ? 'bg-primary-500' : 'bg-foreground-200'}`}
+      aria-pressed={checked}
+    >
+      <span className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
+    </button>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-6" onClick={onClose}>
+      <div className="w-full max-w-4xl rounded-2xl bg-background-50 p-5 sm:p-6 shadow-2xl border border-foreground-200/60" onClick={event => event.stopPropagation()}>
+        <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">General Quiz Settings</p>
+            <h3 className="text-2xl font-heading font-bold text-foreground-900">Quiz</h3>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative w-full sm:w-72">
+              <input placeholder="Search..." className="h-10 w-full rounded-full border border-foreground-200/70 bg-white px-4 pr-10 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
+              <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            </div>
+            <button type="button" onClick={saveAndClose} className="h-10 px-5 rounded-lg bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 transition-smooth">
+              Save Settings
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <GradeSettingRow title="Attempts to retake quizzes" subtitle="Choose limited or unlimited attempts for students to retake quizzes.">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_120px] gap-2">
+              <ThemedSelect
+                value={settings.attemptMode}
+                options={[
+                  { value: 'unlimited', label: 'Unlimited attempts' },
+                  { value: 'limited', label: 'Limited attempts' },
+                ]}
+                onChange={attemptMode => updateSettings({ attemptMode })}
+                buttonClassName="h-10"
+              />
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={settings.attemptLimit}
+                onChange={event => updateSettings({ attemptLimit: Number(event.target.value || 1) })}
+                disabled={settings.attemptMode === 'unlimited'}
+                className="h-10 rounded-lg border border-foreground-200/70 bg-white px-3 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100 disabled:text-foreground-300"
+                title="Attempt limit"
+              />
+            </div>
+          </GradeSettingRow>
+
+          <GradeSettingRow title="Quiz Attempt History" subtitle="Let students view their past quiz attempts in the course player.">
+            <div className="flex items-center gap-3">
+              <SettingSwitch checked={settings.attemptHistory} onToggle={attemptHistory => updateSettings({ attemptHistory })} />
+              <span className={`text-xs font-bold ${settings.attemptHistory ? 'text-primary-600' : 'text-foreground-400'}`}>{settings.attemptHistory ? 'On' : 'Off'}</span>
+            </div>
+          </GradeSettingRow>
+
+          <GradeSettingRow title="Retake After Passing" subtitle="Allow students to retake the quiz even after passing.">
+            <div className="flex items-center gap-3">
+              <SettingSwitch checked={settings.retakeAfterPass} onToggle={retakeAfterPass => updateSettings({ retakeAfterPass })} />
+              <span className={`text-xs font-bold ${settings.retakeAfterPass ? 'text-primary-600' : 'text-foreground-400'}`}>{settings.retakeAfterPass ? 'On' : 'Off'}</span>
+            </div>
+          </GradeSettingRow>
+
+          <GradeSettingRow title="Quiz style" subtitle="Choose how quizzes are shown to learners.">
+            <ThemedSelect
+              value={settings.quizStyle}
+              options={[
+                { value: 'default', label: 'Default' },
+                { value: 'pagination', label: 'Pagination' },
+                { value: 'global', label: 'Global' },
+              ]}
+              onChange={quizStyle => updateSettings({ quizStyle })}
+              buttonClassName="h-10"
+            />
+          </GradeSettingRow>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const emptyGeneratorForm: AiGeneratorState = {
   title: '',
   topic: '',
@@ -550,6 +769,70 @@ function formatDate(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function dateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function startOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfDay(date: Date) {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateRangeForPreset(preset: DateFilterPreset, base = new Date()) {
+  const today = startOfDay(base);
+  const day = today.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const thisWeekStart = addDays(today, mondayOffset);
+  const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const thisYearStart = new Date(today.getFullYear(), 0, 1);
+
+  if (preset === 'today') return { start: today, end: endOfDay(today) };
+  if (preset === 'yesterday') {
+    const yesterday = addDays(today, -1);
+    return { start: yesterday, end: endOfDay(yesterday) };
+  }
+  if (preset === 'this_week') return { start: thisWeekStart, end: endOfDay(addDays(thisWeekStart, 6)) };
+  if (preset === 'last_week') {
+    const start = addDays(thisWeekStart, -7);
+    return { start, end: endOfDay(addDays(start, 6)) };
+  }
+  if (preset === 'this_month') return { start: thisMonthStart, end: endOfDay(new Date(today.getFullYear(), today.getMonth() + 1, 0)) };
+  if (preset === 'last_month') {
+    const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    return { start, end: endOfDay(new Date(today.getFullYear(), today.getMonth(), 0)) };
+  }
+  if (preset === 'this_year') return { start: thisYearStart, end: endOfDay(new Date(today.getFullYear(), 11, 31)) };
+  if (preset === 'last_year') {
+    const start = new Date(today.getFullYear() - 1, 0, 1);
+    return { start, end: endOfDay(new Date(today.getFullYear() - 1, 11, 31)) };
+  }
+  return { start: null, end: null };
+}
+
+function compactDate(value: Date) {
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(value);
+}
+
+function monthCalendarDays(viewDate: Date) {
+  const firstOfMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
+  const startOffset = firstOfMonth.getDay();
+  const gridStart = addDays(firstOfMonth, -startOffset);
+  return Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
 }
 
 function statusClasses(status: QuizStatus) {
@@ -586,16 +869,27 @@ export default function QuizXmlWorkspacePage() {
   const [bulkAction, setBulkAction] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | QuizStatus>(() => parseStatusParam(searchParams.get('status')));
   const [search, setSearch] = useState('');
+  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>('all');
+  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [dateFilterOpen, setDateFilterOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [calendarViewDate, setCalendarViewDate] = useState(() => new Date());
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState('10');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [showManualCreate, setShowManualCreate] = useState(false);
   const [showGradeSettings, setShowGradeSettings] = useState(false);
+  const [showGeneralSettings, setShowGeneralSettings] = useState(false);
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
+  const [savingManualQuiz, setSavingManualQuiz] = useState(false);
+  const [manualQuestions, setManualQuestions] = useState<QuizPreviewQuestion[]>(() => [createManualQuestion(1)]);
+  const [openManualQuestionId, setOpenManualQuestionId] = useState<number | null>(null);
   const [gradeSettings, setGradeSettings] = useQuizGradeSettings();
-  const [trainingPlanOptions, setTrainingPlanOptions] = useState<CurriculumModuleOptions>({ programmes: [], modulesByProgramme: {} });
+  const [generalSettings, setGeneralSettings] = useQuizGeneralSettings();
+  const [trainingPlanOptions, setTrainingPlanOptions] = useState<TrainingPlanOptions>({ programmes: [], modulesByProgramme: {} });
   const [formWeeks, setFormWeeks] = useState<WeekItem[]>([]);
   const [formWeeksState, setFormWeeksState] = useState<WeekLoadState>('idle');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -605,6 +899,8 @@ export default function QuizXmlWorkspacePage() {
   const [studentResultsLoadingId, setStudentResultsLoadingId] = useState<number | null>(null);
   const [activeStudentId, setActiveStudentId] = useState<number | null>(null);
   const [activeAttemptIndex, setActiveAttemptIndex] = useState(0);
+  const [courseLinksData, setCourseLinksData] = useState<QuizCourseLinksData | null>(null);
+  const [courseLinksLoadingId, setCourseLinksLoadingId] = useState<number | null>(null);
   const [editorData, setEditorData] = useState<QuizPreviewData | null>(null);
   const [editorLoadingId, setEditorLoadingId] = useState<number | null>(null);
   const [activeQuestionId, setActiveQuestionId] = useState<number | null>(null);
@@ -656,11 +952,16 @@ export default function QuizXmlWorkspacePage() {
   useEffect(() => {
     const nextStatus = parseStatusParam(searchParams.get('status'));
     setFilterStatus(current => current === nextStatus ? current : nextStatus);
-  }, [searchParams]);
+    if (searchParams.get('status') === 'trash') {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('status', 'archive');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterStatus, search, pageSize]);
+  }, [filterStatus, search, pageSize, dateFilterPreset, customDateRange.start, customDateRange.end]);
 
   useEffect(() => {
     setCurrentPage(current => Math.min(current, Math.max(1, Math.ceil(quizzes.length / Number(pageSize)))));
@@ -757,16 +1058,44 @@ export default function QuizXmlWorkspacePage() {
     };
   }, [previewData?.quiz.id, previewData?.quiz.packageType]);
 
-  const published = quizzes.filter(q => q.status === 'published').length;
-  const draft = quizzes.filter(q => q.status === 'draft').length;
-  const validationIssues = quizzes.filter(q => !q.schemaValid).length;
-  const totalQuestions = quizzes.reduce((sum, quiz) => sum + quiz.questions, 0);
+  const activeDateRange = dateFilterPreset === 'custom' ? customDateRange : dateRangeForPreset(dateFilterPreset);
+  const dateFilterLabel = dateFilterPresets.find(option => option.value === dateFilterPreset)?.label || 'Custom';
+  const dateRangeLabel = activeDateRange.start && activeDateRange.end
+    ? activeDateRange.start.toDateString() === activeDateRange.end.toDateString()
+      ? compactDate(activeDateRange.start)
+      : `${compactDate(activeDateRange.start)} - ${compactDate(activeDateRange.end)}`
+    : 'Jan 1, 1970 - ∞';
+  const calendarDays = useMemo(() => monthCalendarDays(calendarViewDate), [calendarViewDate]);
+  const visibleQuizzes = useMemo(() => {
+    if (!activeDateRange.start || !activeDateRange.end) return quizzes;
+    return quizzes.filter(quiz => {
+      const updatedAt = new Date(quiz.updatedAt);
+      if (Number.isNaN(updatedAt.getTime())) return false;
+      return updatedAt >= activeDateRange.start! && updatedAt <= activeDateRange.end!;
+    });
+  }, [quizzes, activeDateRange.start, activeDateRange.end]);
+
+  const published = visibleQuizzes.filter(q => q.status === 'published').length;
+  const draft = visibleQuizzes.filter(q => q.status === 'draft').length;
+  const validationIssues = visibleQuizzes.filter(q => !q.schemaValid).length;
+  const totalQuestions = visibleQuizzes.reduce((sum, quiz) => sum + quiz.questions, 0);
+  const isArchiveView = filterStatus === 'trash';
+  const pageHeading = isArchiveView ? 'Quiz Archive' : 'Quiz Workspace';
+  const pageSubtitle = isArchiveView
+    ? 'Review archived quiz packages and restore anything needed back to the workspace'
+    : 'Upload XML, SCORM or spreadsheet quiz files, then store questions and answers';
+  const heroSummary = isArchiveView
+    ? `${visibleQuizzes.length} archived quiz packages ready to restore or permanently delete.`
+    : `${published} published, ${draft} in draft. ${validationIssues} with validation issues.`;
+  const tertiaryStat = isArchiveView
+    ? { value: visibleQuizzes.length, label: 'Archived' }
+    : { value: published, label: 'Published' };
   const numericPageSize = Number(pageSize);
-  const pageCount = Math.max(1, Math.ceil(quizzes.length / numericPageSize));
+  const pageCount = Math.max(1, Math.ceil(visibleQuizzes.length / numericPageSize));
   const safeCurrentPage = Math.min(currentPage, pageCount);
   const pageStartIndex = (safeCurrentPage - 1) * numericPageSize;
   const pageEndIndex = pageStartIndex + numericPageSize;
-  const paginatedQuizzes = quizzes.slice(pageStartIndex, pageEndIndex);
+  const paginatedQuizzes = visibleQuizzes.slice(pageStartIndex, pageEndIndex);
   const allVisibleSelected = paginatedQuizzes.length > 0 && paginatedQuizzes.every(q => selectedIds.includes(q.id));
   const visiblePageNumbers = useMemo(() => {
     const pages = new Set<number>([1, pageCount, safeCurrentPage]);
@@ -849,6 +1178,15 @@ export default function QuizXmlWorkspacePage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const resetManualModal = () => {
+    setShowManualCreate(false);
+    setForm(emptyForm);
+    const firstQuestion = createManualQuestion(1);
+    setManualQuestions([firstQuestion]);
+    setOpenManualQuestionId(firstQuestion.id);
+    setSavingManualQuiz(false);
+  };
+
   const resetGenerator = () => {
     setShowGenerator(false);
     setGeneratorForm(emptyGeneratorForm);
@@ -874,9 +1212,21 @@ export default function QuizXmlWorkspacePage() {
     if (status === 'all') {
       nextParams.delete('status');
     } else {
-      nextParams.set('status', status);
+      nextParams.set('status', status === 'trash' ? 'archive' : status);
     }
     setSearchParams(nextParams, { replace: true });
+  };
+
+  const applyDatePreset = (preset: DateFilterPreset) => {
+    setDateFilterPreset(preset);
+    if (preset !== 'custom') setCustomDateRange({ start: null, end: null });
+    setDateFilterOpen(false);
+  };
+
+  const selectCalendarDate = (date: Date) => {
+    setDateFilterPreset('custom');
+    setCustomDateRange({ start: startOfDay(date), end: endOfDay(date) });
+    setDateFilterOpen(false);
   };
 
   const createQuiz = async () => {
@@ -912,6 +1262,151 @@ export default function QuizXmlWorkspacePage() {
       throw new Error(errorData?.error || 'Could not save quiz');
     }
     return response.json();
+  };
+
+  const updateManualQuestion = (questionId: number, patch: Partial<QuizPreviewQuestion>) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? { ...question, ...patch } : question));
+  };
+
+  const updateManualQuestionType = (questionId: number, questionType: QuestionType) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      questionType,
+      answers: normalizeAnswersForQuestionType(question.answers, questionType),
+    } : question));
+  };
+
+  const updateManualAnswer = (questionId: number, answerId: number, patch: Partial<QuizPreviewQuestion['answers'][number]>) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      answers: question.answers.map(answer => answer.id === answerId ? { ...answer, ...patch } : answer),
+    } : question));
+  };
+
+  const updateManualAnswerPair = (questionId: number, answerId: number, side: 'left' | 'right', value: string) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      answers: question.answers.map(answer => {
+        if (answer.id !== answerId) return answer;
+        const pair = splitAnswerPair(answer.text);
+        return {
+          ...answer,
+          text: joinAnswerPair(side === 'left' ? value : pair.left, side === 'right' ? value : pair.right),
+          isCorrect: true,
+        };
+      }),
+    } : question));
+  };
+
+  const markManualCorrectAnswer = (questionId: number, answerId: number) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      answers: question.answers.map(answer => ({
+        ...answer,
+        isCorrect: isAlwaysCorrectType(question.questionType)
+          ? true
+          : question.questionType === 'multiple_choice'
+            ? answer.id === answerId ? !answer.isCorrect : answer.isCorrect
+            : answer.id === answerId,
+      })),
+    } : question));
+  };
+
+  const addManualAnswer = (questionId: number) => {
+    setManualQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      answers: [...question.answers, { id: -Date.now(), text: '', isCorrect: isAlwaysCorrectType(question.questionType) }],
+    } : question));
+  };
+
+  const removeManualAnswer = (questionId: number, answerId: number) => {
+    setManualQuestions(prev => prev.map(question => {
+      if (question.id !== questionId || question.answers.length <= 1) return question;
+      return {
+        ...question,
+        answers: normalizeAnswersForQuestionType(question.answers.filter(answer => answer.id !== answerId), question.questionType),
+      };
+    }));
+  };
+
+  const addManualQuestion = () => {
+    setManualQuestions(prev => {
+      const nextQuestion = createManualQuestion(prev.length + 1);
+      setOpenManualQuestionId(nextQuestion.id);
+      return [...prev, nextQuestion];
+    });
+  };
+
+  const removeManualQuestion = (questionId: number) => {
+    setManualQuestions(prev => {
+      if (prev.length <= 1) return prev;
+      const nextQuestions = prev.filter(question => question.id !== questionId);
+      if (openManualQuestionId === questionId) setOpenManualQuestionId(nextQuestions[0]?.id ?? null);
+      return nextQuestions;
+    });
+  };
+
+  const validateManualQuestions = () => {
+    for (const [index, question] of manualQuestions.entries()) {
+      if (!question.text.trim()) return `Question ${index + 1} needs question text.`;
+      if (question.answers.some(answer => !answer.text.trim())) return `Question ${index + 1} has an empty answer.`;
+      if (!isAlwaysCorrectType(question.questionType) && !question.answers.some(answer => answer.isCorrect)) return `Question ${index + 1} needs at least one correct answer.`;
+      if (['single_choice', 'multiple_choice', 'true_false'].includes(question.questionType) && question.answers.length < 2) return `Question ${index + 1} needs at least two answers.`;
+    }
+    return '';
+  };
+
+  const submitManualQuiz = async (event: FormEvent) => {
+    event.preventDefault();
+    if (savingManualQuiz) return;
+    const validationMessage = validateManualQuestions();
+    if (validationMessage) {
+      setError(validationMessage);
+      return;
+    }
+
+    setError('');
+    setSavingManualQuiz(true);
+    try {
+      const createResponse = await fetch('/quiz_api/quizzes/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: form.title,
+          module: form.module,
+          programme: form.programme,
+          programmeId: form.programmeId,
+          week: form.week,
+          weekId: form.weekId,
+          version: form.version,
+          questions: manualQuestions.length,
+          questionType: manualQuestions[0]?.questionType || 'single_choice',
+          status: form.status,
+          author: form.author,
+          linkedCourses: Number(form.linkedCourses || (form.programmeId ? 1 : 0)),
+          packageType: 'xml',
+          schemaValid: true,
+        }),
+      });
+      const created = await createResponse.json().catch(() => null);
+      if (!createResponse.ok) throw new Error(created?.error || 'Could not create manual quiz');
+
+      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions: manualQuestions, removeMissing: true }),
+      });
+      const saved = await saveResponse.json().catch(() => null);
+      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save manual questions');
+
+      setQuizzes(prev => [saved.quiz, ...prev.filter(quiz => quiz.id !== saved.quiz.id)]);
+      resetManualModal();
+      success('Quiz created', 'Manual questions were saved as a quiz draft.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save manual quiz');
+    } finally {
+      setSavingManualQuiz(false);
+    }
   };
 
   const submitQuiz = async (event: FormEvent) => {
@@ -1135,6 +1630,25 @@ export default function QuizXmlWorkspacePage() {
     }
   };
 
+  const openLinkedCourses = async (quiz: QuizPackage) => {
+    setCourseLinksLoadingId(quiz.id);
+    setError('');
+    try {
+      const response = await fetch(`/quiz_api/quizzes/${quiz.id}/course-links/`);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Could not load linked courses');
+      setCourseLinksData(data);
+      if (data?.quiz) {
+        setQuizzes(prev => prev.map(item => item.id === data.quiz.id ? data.quiz : item));
+        setSelectedQuiz(prev => prev?.id === data.quiz.id ? data.quiz : prev);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load linked courses');
+    } finally {
+      setCourseLinksLoadingId(null);
+    }
+  };
+
   const openQuestionEditor = async (quiz: QuizPackage) => {
     window.location.href = `/curriculum/quiz-xml/${quiz.id}/edit`;
   };
@@ -1220,19 +1734,19 @@ export default function QuizXmlWorkspacePage() {
   };
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle="Quiz Workspace" pageSubtitle="Upload XML, SCORM or spreadsheet quiz files, then store questions and answers" userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle={pageHeading} pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-code-box-line text-white text-2xl"></i></span>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Quiz Workspace</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{quizzes.length} quiz packages</strong> - {published} published, {draft} in draft. {validationIssues} with validation issues.</p>
+              <h2 className="text-lg font-heading font-bold text-white mb-1">{pageHeading}</h2>
+              <p className="text-[13px] text-white/80 leading-relaxed"><strong>{visibleQuizzes.length} quiz packages</strong> - {heroSummary}</p>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:gap-3 w-full md:w-auto shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{quizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Quizzes</p></div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{visibleQuizzes.length}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Quizzes</p></div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{totalQuestions}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Questions</p></div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{published}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">Published</p></div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-3 sm:px-4 py-3 text-center min-w-0"><p className="text-xl sm:text-2xl font-bold text-white">{tertiaryStat.value}</p><p className="text-[10px] text-white/70 uppercase tracking-wide truncate">{tertiaryStat.label}</p></div>
             </div>
           </div>
         </div>
@@ -1282,44 +1796,173 @@ export default function QuizXmlWorkspacePage() {
             value={filterStatus}
             options={statusOptions}
             onChange={handleStatusFilterChange}
-            className="w-full sm:w-44 xl:ml-auto"
+            className="w-full sm:w-44 lg:ml-auto"
           />
 
-          <div className="relative w-full sm:w-64">
+          <div className="relative w-full sm:w-52">
+            <button
+              type="button"
+              onClick={() => setDateFilterOpen(open => !open)}
+              className={`h-10 w-full rounded-lg border px-3 text-left text-sm transition-smooth flex items-center gap-2 ${
+                dateFilterOpen || dateFilterPreset !== 'all'
+                  ? 'bg-white border-primary-300 text-primary-700 ring-1 ring-primary-200'
+                  : 'bg-background-50 border-foreground-200/60 text-foreground-700 hover:border-primary-300'
+              }`}
+            >
+              <i className="ri-calendar-2-line text-base shrink-0"></i>
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold truncate">{dateFilterLabel}</span>
+                <span className="block text-[10px] text-foreground-400 truncate">{dateRangeLabel}</span>
+              </span>
+              <i className={`${dateFilterOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-400 shrink-0`}></i>
+            </button>
+
+            {dateFilterOpen && (
+              <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-[min(92vw,410px)] rounded-xl border border-[#d8dde6] bg-white shadow-2xl overflow-hidden">
+                <div className="grid grid-cols-[130px_1fr]">
+                  <aside className="bg-[#f8fafc] border-r border-[#e2e8f0] p-2">
+                    {dateFilterPresets.map(option => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => applyDatePreset(option.value)}
+                        className={`w-full h-8 rounded-lg px-3 text-left text-sm font-medium transition-smooth ${
+                          dateFilterPreset === option.value
+                            ? 'bg-[#e7efff] text-[#2563eb]'
+                            : 'text-[#526173] hover:bg-white hover:text-[#0f172a]'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDateFilterPreset('all');
+                        setCustomDateRange({ start: null, end: null });
+                        setDateFilterOpen(false);
+                      }}
+                      className="mt-2 h-9 px-3 rounded-lg border border-primary-200 bg-white text-primary-700 text-sm font-semibold hover:bg-primary-50"
+                    >
+                      Reset
+                    </button>
+                  </aside>
+
+                  <section className="p-4">
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                      <h4 className="text-sm font-heading font-bold text-[#0f172a]">
+                        {new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(calendarViewDate)}
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))} className="w-8 h-8 rounded-full bg-[#f1f5f9] text-[#64748b] hover:bg-[#e2e8f0]">
+                          <i className="ri-arrow-left-s-line"></i>
+                        </button>
+                        <button type="button" onClick={() => setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))} className="w-8 h-8 rounded-full bg-[#f1f5f9] text-[#64748b] hover:bg-[#e2e8f0]">
+                          <i className="ri-arrow-right-s-line"></i>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-7 gap-1 text-center">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                        <span key={day} className="text-xs font-semibold text-[#94a3b8] py-1">{day}</span>
+                      ))}
+                      {calendarDays.map(day => {
+                        const inMonth = day.getMonth() === calendarViewDate.getMonth();
+                        const selected = activeDateRange.start && activeDateRange.end && day >= startOfDay(activeDateRange.start) && day <= activeDateRange.end;
+                        return (
+                          <button
+                            key={dateKey(day)}
+                            type="button"
+                            onClick={() => selectCalendarDate(day)}
+                            className={`h-8 rounded-lg text-sm font-medium transition-smooth ${
+                              selected
+                                ? 'bg-[#3b82f6] text-white'
+                                : inMonth
+                                  ? 'text-[#0f172a] hover:bg-[#eff6ff] hover:text-[#2563eb]'
+                                  : 'text-[#94a3b8] hover:bg-[#f8fafc]'
+                            }`}
+                          >
+                            {day.getDate()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="relative w-full sm:w-72 lg:flex-1 lg:max-w-md">
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-full rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
             <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
           </div>
 
-          <button
-            type="button"
-            onClick={() => handleStatusFilterChange(filterStatus === 'trash' ? 'all' : 'trash')}
-            className={`h-10 px-4 rounded-lg text-sm font-semibold transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto ${
-              filterStatus === 'trash'
-                ? 'bg-[#fff7ed] border border-[#fed7aa] text-[#c2410c]'
-                : 'bg-white border border-[#d8dde6] text-[#5b2dbb] hover:bg-[#f7f3ff]'
-            }`}
-            title={filterStatus === 'trash' ? 'Back to all quizzes' : 'View archived quizzes'}
-          >
-            <i className={`${filterStatus === 'trash' ? 'ri-arrow-left-line' : 'ri-archive-line'} mr-1`}></i>
-            {filterStatus === 'trash' ? 'Back to quizzes' : 'Archive'}
-          </button>
+          <div className="relative w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={() => setMoreMenuOpen(open => !open)}
+              className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center justify-center gap-1.5 w-full sm:w-auto"
+            >
+              <i className="ri-more-2-line"></i>
+              More
+              <i className={`${moreMenuOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></i>
+            </button>
+            {moreMenuOpen && (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-60 rounded-xl border border-[#d8dde6] bg-white p-2 shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleStatusFilterChange(filterStatus === 'trash' ? 'all' : 'trash');
+                    setMoreMenuOpen(false);
+                  }}
+                  className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
+                >
+                  <i className={`${filterStatus === 'trash' ? 'ri-arrow-left-line' : 'ri-archive-line'}`}></i>
+                  {filterStatus === 'trash' ? 'Back to quizzes' : 'Archive'}
+                </button>
+                <Link to="/curriculum/question-bank" onClick={() => setMoreMenuOpen(false)} className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2">
+                  <i className="ri-questionnaire-line"></i>
+                  Question Bank
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGradeSettings(true);
+                    setMoreMenuOpen(false);
+                  }}
+                  className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
+                >
+                  <i className="ri-graduation-cap-line"></i>
+                  Grade Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowGeneralSettings(true);
+                    setMoreMenuOpen(false);
+                  }}
+                  className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
+                >
+                  <i className="ri-settings-3-line"></i>
+                  General Settings
+                </button>
+              </div>
+            )}
+          </div>
 
-          <Link to="/curriculum/question-bank" className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto">
-            <i className="ri-questionnaire-line mr-1"></i> Question Bank
-          </Link>
-          <button
-            type="button"
-            onClick={() => setShowGradeSettings(true)}
-            className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto"
-          >
-            <i className="ri-graduation-cap-line mr-1"></i> Grade Settings
-          </button>
+          <div className="basis-full h-px bg-foreground-200/50" />
+
           <button onClick={() => setShowGenerator(true)} className="h-10 px-4 bg-[#0f172a] text-white rounded-lg text-sm font-semibold hover:bg-[#111827] transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-sparkling-2-line mr-1"></i> Generate Questions
           </button>
           <button onClick={() => setShowCreate(true)} className="h-10 px-4 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-add-circle-fill mr-1"></i> Add New Quiz
           </button>
+          <Link to="/curriculum/quiz-xml/manual" className="h-10 px-4 bg-white border border-primary-200 rounded-lg text-sm font-semibold text-primary-700 hover:bg-primary-50 transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto">
+            <i className="ri-edit-2-line mr-1"></i> Manual Quiz
+          </Link>
           <button onClick={() => fileInputRef.current?.click()} className="h-10 px-4 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap w-full sm:w-auto">
             <i className="ri-upload-cloud-line mr-1"></i> Upload Quiz File
           </button>
@@ -1358,7 +2001,18 @@ export default function QuizXmlWorkspacePage() {
                     <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Linked</p>
-                        <p className="font-semibold text-primary-600">{quiz.linkedCourses}</p>
+                        <button
+                          type="button"
+                          onClick={event => {
+                            event.stopPropagation();
+                            void openLinkedCourses(quiz);
+                          }}
+                          className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
+                          disabled={courseLinksLoadingId === quiz.id}
+                          title="View linked courses"
+                        >
+                          {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                        </button>
                       </div>
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
                         <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Date</p>
@@ -1393,7 +2047,7 @@ export default function QuizXmlWorkspacePage() {
                 </div>
               </article>
             ))}
-            {!loading && quizzes.length === 0 && (
+            {!loading && visibleQuizzes.length === 0 && (
               <div className="px-4 py-10 text-center text-sm text-foreground-400">No quizzes match this filter</div>
             )}
           </div>
@@ -1424,7 +2078,17 @@ export default function QuizXmlWorkspacePage() {
                       <p className="text-sm font-semibold text-foreground-900">{quiz.title}</p>
                       <p className="text-xs text-foreground-400">{quiz.module || 'No module'} - {quiz.questions} questions</p>
                     </td>
-                    <td className="px-4 py-3 text-sm text-primary-600">{quiz.linkedCourses}</td>
+                    <td className="px-4 py-3 text-sm" onClick={event => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => void openLinkedCourses(quiz)}
+                        className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
+                        disabled={courseLinksLoadingId === quiz.id}
+                        title="View linked courses"
+                      >
+                        {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                      </button>
+                    </td>
                     <td className="px-4 py-3 text-sm text-foreground-700">
                       <p>Last Modified - <span>{statusLabel(quiz.status)}</span></p>
                       <p>{formatDate(quiz.updatedAt)}</p>
@@ -1460,18 +2124,18 @@ export default function QuizXmlWorkspacePage() {
                     </td>
                   </tr>
                 ))}
-                {!loading && quizzes.length === 0 && (
+                {!loading && visibleQuizzes.length === 0 && (
                   <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-foreground-400">No quizzes match this filter</td></tr>
                 )}
               </tbody>
             </table>
           </div>
-          {!loading && quizzes.length > 0 && (
+          {!loading && visibleQuizzes.length > 0 && (
             <div className="border-t border-foreground-200/50 bg-white px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div className="text-xs text-foreground-400">
                 Showing <span className="font-semibold text-foreground-700">{pageStartIndex + 1}</span>-
-                <span className="font-semibold text-foreground-700">{Math.min(pageEndIndex, quizzes.length)}</span> of{' '}
-                <span className="font-semibold text-foreground-700">{quizzes.length}</span> quizzes
+                <span className="font-semibold text-foreground-700">{Math.min(pageEndIndex, visibleQuizzes.length)}</span> of{' '}
+                <span className="font-semibold text-foreground-700">{visibleQuizzes.length}</span> quizzes
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
@@ -1515,6 +2179,58 @@ export default function QuizXmlWorkspacePage() {
             </div>
           )}
         </div>
+
+        {courseLinksData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCourseLinksData(null)}>
+            <div className="w-full max-w-2xl rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 border-b border-foreground-200/60 p-5">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">Linked Quiz Components</p>
+                  <h3 className="text-lg font-heading font-bold text-foreground-900 truncate">{courseLinksData.quiz.title}</h3>
+                  <p className="text-sm text-foreground-400">{courseLinksData.programme || courseLinksData.quiz.programme || 'No programme'}</p>
+                </div>
+                <button onClick={() => setCourseLinksData(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0">
+                  <i className="ri-close-line"></i>
+                </button>
+              </div>
+
+              <div className="max-h-[60vh] overflow-y-auto p-5 quiz-preview-scroll">
+                {courseLinksData.courses.filter(course => course.selected).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-foreground-200/80 bg-background-100/60 px-4 py-10 text-center">
+                    <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-white text-foreground-300 border border-foreground-200/60">
+                      <i className="ri-links-line text-xl"></i>
+                    </span>
+                    <p className="text-sm font-semibold text-foreground-700">No linked quiz components</p>
+                    <p className="mt-1 text-xs text-foreground-400">This quiz is not linked to any module authoring component yet.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {courseLinksData.courses.filter(course => course.selected).map(course => (
+                      <article key={course.id} className="rounded-xl border border-[#dbe3ee] bg-white p-4 shadow-sm">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700 border border-primary-100">
+                            <i className="ri-book-open-line"></i>
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="text-sm font-heading font-bold text-foreground-900 break-words">{course.component || course.label || 'Quiz component'}</h4>
+                            <p className="mt-1 text-xs text-foreground-500 break-words">{course.label || course.module || course.programme || courseLinksData.programme}</p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {course.module && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Module: {course.module}</span>}
+                              {course.week && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Week: {course.week}</span>}
+                              {course.cohort && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Cohort: {course.cohort}</span>}
+                              {course.group && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Group: {course.group}</span>}
+                              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">Component: {course.id}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {selectedQuiz && (
           <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setSelectedQuiz(null)}>
@@ -2131,6 +2847,253 @@ export default function QuizXmlWorkspacePage() {
             onClose={() => setShowGradeSettings(false)}
             onSaved={() => success('Grade settings updated', 'Default quiz grades now appear in the settings grade table.')}
           />
+        )}
+
+        {showGeneralSettings && (
+          <GeneralQuizSettingsModal
+            settings={generalSettings}
+            onChange={setGeneralSettings}
+            onClose={() => setShowGeneralSettings(false)}
+            onSaved={() => success('General settings updated', 'Default quiz behaviour now applies to newly created quizzes.')}
+          />
+        )}
+
+        {showManualCreate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={resetManualModal}>
+            <form onSubmit={submitManualQuiz} className="w-full max-w-6xl max-h-[92vh] bg-background-50 rounded-2xl border border-foreground-200/60 shadow-xl flex flex-col overflow-hidden" onClick={event => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 p-5 border-b border-foreground-200/60">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-primary-600 mb-1">Manual Quiz Builder</p>
+                  <h3 className="text-lg font-heading font-bold text-foreground-900">Create quiz manually</h3>
+                  <p className="text-sm text-foreground-400">Add each question, choose its type, then mark the correct answer.</p>
+                </div>
+                <button type="button" onClick={resetManualModal} disabled={savingManualQuiz} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
+                  <i className="ri-close-line"></i>
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto quiz-preview-scroll p-4 sm:p-5 space-y-5">
+                <section className="rounded-xl border border-foreground-200/60 bg-white p-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <input required value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="Quiz title" className="sm:col-span-2 h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
+                    <input value={form.version} onChange={event => setForm({ ...form, version: event.target.value })} placeholder="Version" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
+                    <input value={form.author} onChange={event => setForm({ ...form, author: event.target.value })} placeholder="Author" className="h-10 rounded-lg border border-foreground-200/60 px-3 text-sm outline-none focus:border-primary-400" />
+                    <ThemedSelect
+                      value={form.programme}
+                      options={programmeOptions}
+                      onChange={programme => setForm({ ...form, programme, module: '', programmeId: '', week: '', weekId: '' })}
+                      menuClassName="max-h-56"
+                    />
+                    <ThemedSelect
+                      value={form.module}
+                      options={moduleOptions}
+                      onChange={module => {
+                        const selectedModule = moduleOptions.find(option => option.value === module);
+                        setForm({ ...form, module, programmeId: selectedModule?.programmeId ? String(selectedModule.programmeId) : '', week: '', weekId: '' });
+                      }}
+                      disabled={!form.programme}
+                      menuClassName="max-h-56"
+                    />
+                    <ThemedSelect
+                      value={form.weekId}
+                      options={formWeekOptions}
+                      onChange={weekId => {
+                        const selectedWeek = formWeeks.find(week => week.id === weekId);
+                        setForm({ ...form, weekId, week: selectedWeek?.title || '' });
+                      }}
+                      disabled={!form.module || formWeeksState === 'loading' || formWeeks.length === 0}
+                      menuClassName="max-h-56"
+                    />
+                    <ThemedSelect
+                      value={form.status}
+                      options={editableStatusOptions}
+                      onChange={status => setForm({ ...form, status })}
+                    />
+                  </div>
+                </section>
+
+                <section className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-heading font-bold text-foreground-900">Questions</h4>
+                      <p className="text-xs text-foreground-400">{manualQuestions.length} question{manualQuestions.length === 1 ? '' : 's'} in this manual quiz.</p>
+                    </div>
+                    <button type="button" onClick={addManualQuestion} className="h-9 px-4 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth w-full sm:w-auto">
+                      <i className="ri-add-line mr-1"></i>Add question
+                    </button>
+                  </div>
+
+                  {manualQuestions.map((question, questionIndex) => {
+                    const answerCopy = answerEditorCopy(question.questionType);
+                    const showCorrectSelector = !isAlwaysCorrectType(question.questionType);
+                    const pairType = question.questionType === 'matching' || question.questionType === 'image_matching';
+                    const canEditAnswerCount = question.questionType !== 'true_false';
+                    const isOpen = openManualQuestionId === question.id;
+                    const questionLabel = question.text.trim() || `Question ${questionIndex + 1}`;
+                    const questionTypeLabel = questionTypeOptions.find(option => option.value === question.questionType)?.label || question.questionType;
+
+                    return (
+                      <article key={question.id} className="rounded-2xl border border-[#dbe3ee] bg-white overflow-hidden shadow-sm">
+                        <button
+                          type="button"
+                          onClick={() => setOpenManualQuestionId(isOpen ? null : question.id)}
+                          className={`w-full flex items-center gap-3 p-4 sm:p-5 text-left transition-smooth ${isOpen ? 'border-b border-[#edf2f7] bg-white' : 'bg-white hover:bg-[#fbfcff]'}`}
+                        >
+                          <span className="w-10 h-10 rounded-xl bg-[#f2edff] text-[#5b21b6] border border-[#ded2ff] flex items-center justify-center text-sm font-bold shrink-0">
+                            {String(questionIndex + 1).padStart(2, '0')}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-foreground-900 truncate">{questionLabel}</span>
+                            <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-foreground-400">
+                              <span>{questionTypeLabel}</span>
+                              <span className="text-foreground-300">|</span>
+                              <span>{question.answers.length} answer{question.answers.length === 1 ? '' : 's'}</span>
+                            </span>
+                          </span>
+                          <span className="flex items-center gap-2 shrink-0">
+                            <span className={`hidden sm:inline-flex text-[10px] font-bold uppercase px-2 py-1 rounded-md ${isOpen ? 'bg-primary-100 text-primary-700' : 'bg-foreground-100 text-foreground-500'}`}>
+                              {isOpen ? 'Editing' : 'Collapsed'}
+                            </span>
+                            <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xl text-foreground-400`}></i>
+                          </span>
+                        </button>
+
+                        {isOpen && (
+                          <>
+                            <div className="flex flex-col lg:flex-row lg:items-start gap-4 p-4 sm:p-5 border-b border-[#edf2f7]">
+                              <div className="min-w-0 flex-1 space-y-3">
+                                <textarea
+                                  required
+                                  value={question.text}
+                                  onChange={event => updateManualQuestion(question.id, { text: event.target.value })}
+                                  placeholder="Question text"
+                                  className="w-full min-h-24 rounded-xl border border-foreground-200/60 bg-background-50 p-3 text-sm leading-relaxed outline-none focus:border-primary-400"
+                                />
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <ThemedSelect
+                                    value={question.questionType}
+                                    options={questionTypeOptions}
+                                    onChange={questionType => updateManualQuestionType(question.id, questionType)}
+                                  />
+                                  <input
+                                    value={question.explanation}
+                                    onChange={event => updateManualQuestion(question.id, { explanation: event.target.value })}
+                                    placeholder="Feedback or explanation"
+                                    className="h-10 rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-sm outline-none focus:border-primary-400"
+                                  />
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeManualQuestion(question.id)}
+                                disabled={manualQuestions.length === 1}
+                                className="h-9 px-3 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed lg:self-start"
+                              >
+                                <i className="ri-delete-bin-line mr-1"></i>Remove
+                              </button>
+                            </div>
+
+                            <div className="p-4 sm:p-5 bg-[#fbfcff]">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                            <div>
+                              <h5 className="text-sm font-heading font-bold text-foreground-900">{answerCopy.title}</h5>
+                              <p className="text-xs text-foreground-400">{answerCopy.hint}</p>
+                            </div>
+                            {canEditAnswerCount && (
+                              <button type="button" onClick={() => addManualAnswer(question.id)} className="h-8 px-3 rounded-lg bg-white border border-primary-200 text-primary-700 text-xs font-semibold hover:bg-primary-50 w-full sm:w-auto">
+                                <i className="ri-add-line mr-1"></i>{answerCopy.addLabel}
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="space-y-3">
+                            {question.answers.map((answer, answerIndex) => {
+                              const pair = splitAnswerPair(answer.text);
+                              return (
+                                <div key={answer.id} className="rounded-xl border border-foreground-200/60 bg-white p-3">
+                                  <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+                                    <span className="w-7 h-7 rounded-full bg-background-50 border border-foreground-200/60 flex items-center justify-center text-xs font-bold text-foreground-500 shrink-0">
+                                      {String.fromCharCode(65 + answerIndex)}
+                                    </span>
+                                    {pairType ? (
+                                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2 flex-1 min-w-0">
+                                        <input
+                                          value={pair.left}
+                                          onChange={event => updateManualAnswerPair(question.id, answer.id, 'left', event.target.value)}
+                                          placeholder={question.questionType === 'image_matching' ? 'Image prompt' : 'Prompt'}
+                                          className="h-10 rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-sm outline-none focus:border-primary-400"
+                                        />
+                                        <span className="hidden sm:flex items-center justify-center text-foreground-300">
+                                          <i className="ri-arrow-right-line"></i>
+                                        </span>
+                                        <input
+                                          value={pair.right}
+                                          onChange={event => updateManualAnswerPair(question.id, answer.id, 'right', event.target.value)}
+                                          placeholder="Match"
+                                          className="h-10 rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-sm outline-none focus:border-primary-400"
+                                        />
+                                      </div>
+                                    ) : (
+                                      <input
+                                        value={answer.text}
+                                        onChange={event => updateManualAnswer(question.id, answer.id, { text: event.target.value })}
+                                        readOnly={question.questionType === 'true_false'}
+                                        placeholder={question.questionType === 'ordering' ? 'Step in correct order' : 'Answer'}
+                                        className="flex-1 min-w-0 h-10 rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-sm outline-none focus:border-primary-400 read-only:bg-background-100"
+                                      />
+                                    )}
+                                    {showCorrectSelector && (
+                                      <label className="inline-flex items-center gap-2 text-sm text-foreground-700 shrink-0">
+                                        <input
+                                          type={question.questionType === 'multiple_choice' ? 'checkbox' : 'radio'}
+                                          name={`manual-correct-${question.id}`}
+                                          checked={answer.isCorrect}
+                                          onChange={() => markManualCorrectAnswer(question.id, answer.id)}
+                                          className="w-4 h-4"
+                                        />
+                                        Correct
+                                      </label>
+                                    )}
+                                    {canEditAnswerCount && (
+                                      <button
+                                        type="button"
+                                        onClick={() => removeManualAnswer(question.id, answer.id)}
+                                        disabled={question.answers.length <= 1}
+                                        className="w-9 h-9 rounded-lg bg-background-100 text-foreground-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                                        title="Remove answer"
+                                      >
+                                        <i className="ri-close-line"></i>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                            </div>
+                          </>
+                        )}
+                      </article>
+                    );
+                  })}
+                </section>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-t border-foreground-200/60 bg-white">
+                <p className="text-xs text-foreground-400">The quiz will be saved with {manualQuestions.length} manual question{manualQuestions.length === 1 ? '' : 's'}.</p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button type="button" disabled={savingManualQuiz} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
+                    <i className="ri-add-line mr-1"></i>Add question
+                  </button>
+                  <button type="button" disabled={savingManualQuiz} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                  <button type="submit" disabled={savingManualQuiz} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
+                    {savingManualQuiz && <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden="true"></span>}
+                    {savingManualQuiz ? 'Saving...' : 'Save Manual Quiz'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
         )}
 
         {showCreate && (

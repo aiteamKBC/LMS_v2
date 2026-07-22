@@ -72,6 +72,12 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       }));
   }, [navItems, canSeeNavItem]);
 
+  const queryMatchedHref = useMemo(() => {
+    const current = `${location.pathname}${location.search}`;
+    const items = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])]);
+    return items.find(item => item.href.includes('?') && item.href === current)?.href ?? '';
+  }, [filteredNavItems, location.pathname, location.search]);
+
   const toggleGroup = useCallback((id: string) => {
     setActiveDropdown(prev => prev === id ? null : id);
   }, []);
@@ -86,6 +92,11 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
   const isActive = (href: string) => {
     if (!href) return false;
+    const [hrefPath] = href.split('?');
+    const current = `${location.pathname}${location.search}`;
+    if (href.includes('?')) return current === href;
+    if (queryMatchedHref && hrefPath === queryMatchedHref.split('?')[0]) return false;
+    return location.pathname === href || location.pathname.startsWith(href + '/');
     const matches = location.pathname === href || location.pathname.startsWith(href + '/');
     if (!matches) return false;
 
@@ -351,7 +362,8 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
   const [tooltipStyle, setTooltipStyle] = useState<{ top: number; left: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
-  const needsSearch = (item.children?.length ?? 0) > 5;
+  const childCount = item.children?.length ?? 0;
+  const needsSearch = childCount > 5;
 
   const filteredChildren = useMemo(() => {
     if (!searchQuery.trim()) return item.children ?? [];
@@ -363,7 +375,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
   useLayoutEffect(() => {
     if (isDropdownOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
-      const dropdownHeight = Math.min((item.children?.length ?? 0) * 40 + 60, 400);
+      const dropdownHeight = Math.min(childCount * 40 + 60, 400);
       let top = rect.top;
       if (rect.top + dropdownHeight > window.innerHeight - 16) {
         top = Math.max(8, window.innerHeight - dropdownHeight - 8);
@@ -372,7 +384,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
     } else {
       setDropdownStyle(null);
     }
-  }, [isDropdownOpen]);
+  }, [childCount, isDropdownOpen]);
 
   useLayoutEffect(() => {
     if (hovered && buttonRef.current) {
@@ -668,6 +680,14 @@ function SoonDot() {
   );
 }
 
+function NavBadge({ count }: { count: number }) {
+  return (
+    <span className="bg-accent-500/90 text-foreground-950 text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center leading-none animate-pulse-slow">
+      {count}
+    </span>
+  );
+}
+
 function MobileSidebarBottomLink({ href, icon, label, isActive }: {
   href: string;
   icon: string;
@@ -689,17 +709,10 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
   );
 }
 
-function NavBadge({ count }: { count: number }) {
-  return (
-    <span className="bg-accent-500/90 text-foreground-950 text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center leading-none animate-pulse-slow">
-      {count}
-    </span>
-  );
-}
-
 function StatusDot({ color }: { color: 'red' | 'amber' | 'blue' | 'green' }) {
   const colorMap = { red: 'bg-red-500', amber: 'bg-amber-500', blue: 'bg-blue-500', green: 'bg-emerald-500' };
   return (
     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${colorMap[color]}`}></span>
   );
 }
+

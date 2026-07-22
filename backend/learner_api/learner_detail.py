@@ -9,6 +9,7 @@ mirror (present only while the learner is Active) into one response shaped by
 mappers.to_learner_detail, then annotates each saved component with its
 authored expected_otjh (curriculum.components) and a
 programme-wide total.
+authored expected_otjh (curriculum.components) and a programme-wide total.
 """
 import json
 import logging
@@ -66,12 +67,14 @@ def _display_component_title(type_, title):
 def _otjh_by_component_id(components):
     """Exact expected_otjh lookup for components saved with the structured
     plan format (they carry the real curriculum.components id)."""
+    plan format (they carry the real curriculum.components id)."""
     ids = sorted({c["componentId"] for c in components if c.get("componentId")})
     if not ids:
         return {}
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
+                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
                 [ids],
             )
@@ -122,6 +125,7 @@ def _otjh_by_legacy_title(components):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT module_catalogue_id, title FROM curriculum.modules "
+                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
             )
@@ -133,6 +137,8 @@ def _otjh_by_legacy_title(components):
                 "SELECT id, module_catalogue_id, title, week_number FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY module_catalogue_id, week_number, display_order",
+                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
+                "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
             )
             weeks_by_title = {}   # (cat_id, title)       -> week_id
@@ -149,6 +155,9 @@ def _otjh_by_legacy_title(components):
                 "WHERE week_id = ANY(%s) "
                 "ORDER BY week_id, display_order",
                 [list(set(weeks_by_title.values()))],
+                "SELECT week_id, type, title, expected_otjh FROM curriculum.components "
+                "WHERE week_id = ANY(%s)",
+                [list(set(week_ids.values()))],
             )
             # Per week: exact display-title -> otjh, and ordered otjh-lists per humanised type.
             otjh_by_exact = {}                 # (week_id, display_title) -> otjh
@@ -200,6 +209,7 @@ def _display_quiz_title(title):
 
 def _resolve_week_ids(weeks):
     """Map each week entry to its real curriculum.weeks id.
+    """Map each week entry to its real curriculum.weeks id.
     Structured-plan weeks already carry weekId; legacy (pre-id) weeks are
     resolved by module+week title, mirroring _otjh_by_legacy_title."""
     resolved = {}  # (module, week) -> week_id
@@ -217,6 +227,7 @@ def _resolve_week_ids(weeks):
         with connections["enrolment"].cursor() as cur:
             cur.execute(
                 "SELECT module_catalogue_id, title FROM curriculum.modules "
+                "SELECT module_catalogue_id, title FROM curriculum.modules "
                 "WHERE title = ANY(%s)",
                 [module_titles],
             )
@@ -225,6 +236,7 @@ def _resolve_week_ids(weeks):
                 return resolved
 
             cur.execute(
+                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
                 "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
