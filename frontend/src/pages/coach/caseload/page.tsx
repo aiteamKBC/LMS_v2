@@ -690,10 +690,6 @@ export default function CoachCaseload() {
     setSelectedLearnerId(isSelected ? null : learnerId);
   };
 
-  const handleViewProgressReport = () => {
-    setShowProgressReport(true);
-  };
-
   const handleMetricDetailClick = (event: React.MouseEvent, learner: Learner, metric: LearnerMetric) => {
     event.stopPropagation();
     setSelectedLearnerId(null);
@@ -1238,12 +1234,6 @@ export default function CoachCaseload() {
                 )}
               </div>
 
-              {/* Actions */}
-              <div className="flex flex-col gap-2 pt-2">
-                <button onClick={handleViewProgressReport} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap text-center">
-                  <i className="ri-file-chart-line mr-1.5"></i> View Full Progress Report
-                </button>
-              </div>
             </div>
           )}
         </RightSlidePanel>
