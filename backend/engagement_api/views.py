@@ -824,9 +824,7 @@ def _is_placeholder_training_value(value):
 
 @csrf_exempt
 def training_plan_options(request):
-    """Programme/module options for the deck builder's selectors — read straight
-    from curriculum."Training_plan" over the default connection, exactly as
-    quiz_api does, so the programmeId we hand back matches the quiz world."""
+    """Programme/module options for the deck builder's selectors."""
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
 
@@ -834,12 +832,12 @@ def training_plan_options(request):
         with connection.cursor() as cursor:
             cursor.execute(
                 '''
-                select "Program", module_name, max(id) as programme_id
-                from curriculum."Training_plan"
-                where coalesce(trim("Program"), '') <> ''
-                  and coalesce(trim(module_name), '') <> ''
-                group by "Program", module_name
-                order by "Program", module_name
+                select programme_name, title, max(module_catalogue_id) as programme_id
+                from curriculum.modules
+                where coalesce(trim(programme_name), '') <> ''
+                  and coalesce(trim(title), '') <> ''
+                group by programme_name, title
+                order by programme_name, title
                 '''
             )
             rows = cursor.fetchall()

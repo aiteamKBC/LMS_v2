@@ -82,6 +82,7 @@ export interface ModuleCatalogueItem {
   group?: string;
   title: string;
   description: string;
+  color?: string;
   status: ModuleStatus;
   authoringStatus?: ModuleStatus;
   sourceType?: string;
@@ -89,6 +90,9 @@ export interface ModuleCatalogueItem {
   importedFromTrainingPlanId?: string;
   deliveryStatus?: string;
   deliveryMetadata?: Record<string, string>;
+  ksbProfileSourceId?: string;
+  tutor?: string;
+  coach?: string;
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
@@ -272,6 +276,7 @@ export async function createNewModule(input: { programme: string; title: string;
         completionCriteria: draft.completionCriteria,
         advancedDetails: draft.advancedDetails,
         moduleKsbMappings: draft.moduleKsbMappings,
+        ksbProfileSourceId: draft.ksbProfileSourceId || '',
         background: draft.background,
         epaRequirements: draft.epaRequirements,
         qualificationOutcomes: draft.qualificationOutcomes,
@@ -344,9 +349,7 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
 
 export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
   try {
-    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`, {
-      timeoutMs: 8000,
-    }));
+    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`));
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404) return null;
@@ -404,6 +407,8 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   const id = `module-${catalogueId}`;
   const title = cleanUserFacingText(module.name) || `Module ${catalogueId}`;
   const description = cleanUserFacingText(module.notes || '');
+  const tutor = String(module.tutor || '').trim();
+  const coach = String(module.coach || '').trim();
   const weekStructure = (module.weekStructure || []).map((week, index): ModuleWeek => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
@@ -427,7 +432,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
         workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
         tutorValidationRequired: Boolean(component.tutorValidationRequired),
         ksbMappings: (component.ksbMappings || []) as KsbMapping[],
-        settings: normaliseComponentSettings(component.type as ModuleComponentType, component.settings || {}),
+        settings: normaliseComponentSettings(component.type as ModuleComponentType, (component.settings || {}) as ComponentSettings),
       })),
       ksbMappings: [],
     };
@@ -441,10 +446,21 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     description,
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
-    sourceType: module.sourceType,
-    sourceId: module.sourceId ? String(module.sourceId) : undefined,
-    importedFromTrainingPlanId: module.importedFromTrainingPlanId,
+    sourceType: undefined,
+    sourceId: undefined,
+    importedFromTrainingPlanId: undefined,
     deliveryStatus: module.deliveryStatus,
+    ksbProfileSourceId: '',
+    tutor,
+    coach,
+    deliveryMetadata: {
+      tutor,
+      coach,
+      cohortId: module.cohortId || '',
+      cohort: module.cohort || '',
+      groupId: module.groupId || '',
+      group: module.group || '',
+    },
     sessionsNumber: module.sessionsNumber || module.weeks || module.sessionNames?.length || 0,
     startDate: module.startDate || '',
     endDate: module.endDate || '',
@@ -499,21 +515,26 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
 
 export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueItem {
   const moduleId = String(module.catalogueId || module.id);
-  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || []);
+  const fallbackKsbSource = moduleKsbSourceMetadata(module.ksbProfileSourceId);
+  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || [], fallbackKsbSource);
+  const completionCriteria = {
+    ...emptyCompletionCriteria(),
+    ...(module.completionCriteria || {}),
+  };
   const normalisedWeeks = module.weekStructure.map((week, index) => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
       ...week,
       id: weekId,
       moduleId,
-      ksbMappings: normaliseKsbMappings(week.ksbMappings || []),
+      ksbMappings: normaliseKsbMappings(week.ksbMappings || [], fallbackKsbSource),
       weekNumber: index + 1,
       components: (week.components || []).map(component => ({
         ...component,
         moduleId,
         weekId,
         workplaceEvidenceRequired: false,
-        ksbMappings: normaliseKsbMappings(component.ksbMappings || []),
+        ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
         settings: normaliseComponentSettings(component.type, component.settings || {}),
       })),
     };
@@ -525,10 +546,11 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
   const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
-  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
+  const quality = calculateQualityScore({ ...module, completionCriteria, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
   return {
     ...module,
+    completionCriteria,
     weeks: module.weekStructure.length,
     totalOtjh,
     declaredTotalOtjh: module.declaredTotalOtjh,
@@ -545,13 +567,29 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   };
 }
 
-function normaliseKsbMappings(mappings: KsbMapping[]) {
-  return mappings.map(mapping => ({
-    ...mapping,
-    type: normaliseKsbMappingType(mapping.type || mapping.classification),
-    classification: normaliseKsbMappingType(mapping.classification || mapping.type),
-    weight: clampKsbWeight(mapping.weight ?? defaultKsbWeight(mapping.type)),
-  }));
+function normaliseKsbMappings(mappings: KsbMapping[], fallbackSource?: Pick<KsbMapping, 'sourceType' | 'sourceId'>) {
+  return mappings.map(mapping => {
+    const type = normaliseKsbMappingType(mapping.type || mapping.classification);
+    const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+    const weight = clampKsbWeight(mapping.weight);
+    return {
+      ...mapping,
+      sourceType: mapping.sourceType || fallbackSource?.sourceType,
+      sourceId: mapping.sourceId || fallbackSource?.sourceId,
+      type,
+      classification,
+      weight: weight > 0 ? weight : defaultKsbWeight(classification),
+    };
+  });
+}
+
+function moduleKsbSourceMetadata(sourceId?: string) {
+  const id = String(sourceId || '').trim();
+  if (!id) return undefined;
+  return {
+    sourceType: id.startsWith('standard:') ? 'standard' : 'framework',
+    sourceId: id,
+  };
 }
 
 function defaultKsbWeight(type: KsbMappingType) {
@@ -632,7 +670,7 @@ export async function saveModuleStructure(moduleCatalogueId: string, payload: Mo
   return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
-    timeoutMs: 45000,
+    timeoutMs: 90000,
   }));
 }
 
@@ -718,7 +756,11 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
       let message = `Curriculum API returned ${response.status} for ${path}`;
       try {
         const payload = await response.json();
-        if (payload?.error) message = payload.error;
+        const validation = Array.isArray(payload?.validationErrors)
+          ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
+          : '';
+        if (validation) message = validation;
+        else if (payload?.error) message = payload.error;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
