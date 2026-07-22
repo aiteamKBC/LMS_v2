@@ -1,6 +1,9 @@
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/calendar';
+const CACHE_TTL_MS = 30_000;
+const calendarCache = new Map<string, { data: LearnerCalendarResponse; expiresAt: number }>();
+const calendarRequests = new Map<string, Promise<LearnerCalendarResponse>>();
 
 export interface LearnerCalendarEvent {
   id: string;
@@ -48,8 +51,30 @@ async function request<T>(url: string): Promise<T> {
   return data as T;
 }
 
-export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string): Promise<LearnerCalendarResponse> {
-  return request<LearnerCalendarResponse>(`${BASE}/${kind}/${id}/`);
+export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string): void {
+  if (kind && id) {
+    calendarCache.delete(`${kind}:${id}`);
+    return;
+  }
+  calendarCache.clear();
+}
+
+export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, options: { force?: boolean } = {}): Promise<LearnerCalendarResponse> {
+  const key = `${kind}:${id}`;
+  const cached = calendarCache.get(key);
+  if (!options.force && cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.data);
+
+  const pending = calendarRequests.get(key);
+  if (pending) return pending;
+
+  const promise = request<LearnerCalendarResponse>(`${BASE}/${kind}/${id}/`)
+    .then((data) => {
+      calendarCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      return data;
+    })
+    .finally(() => calendarRequests.delete(key));
+  calendarRequests.set(key, promise);
+  return promise;
 }
 
 export type BookableSessionType = 'catch-up' | 'student-support';
@@ -93,6 +118,7 @@ export async function bookLearnerCalendarSession(
     const message = (data as { error?: string } | null)?.error || `Request failed with ${res.status}`;
     throw new Error(message);
   }
+  invalidateLearnerCalendarCache(kind, id);
   return data as BookSessionResponse;
 }
 

@@ -479,6 +479,7 @@ def to_learner_detail(source, active):
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
+        "lineManager": _s(getattr(source, "line_manager", "")),
         "isActive": active is not None,
         "modules": modules,
         "week": week,

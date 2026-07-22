@@ -4,6 +4,8 @@
 // POSTs to /learner_api/videos/<componentId>/complete/ (proxied to :8000 in dev).
 // ============================================================================
 
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+
 const BASE = '/learner_api/videos';
 
 export interface VideoProgressSubmission {
@@ -63,5 +65,8 @@ export function submitVideoProgress(
   return request<VideoProgressResponse>(
     `${BASE}/${encodeURIComponent(componentId)}/complete/?kind=${kind}&learnerId=${learnerId}`,
     { method: 'POST', body: JSON.stringify(submission) },
-  );
+  ).then((result) => {
+    invalidateLearnerDetailCache(kind, learnerId);
+    return result;
+  });
 }

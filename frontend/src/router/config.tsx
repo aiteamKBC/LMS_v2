@@ -290,8 +290,8 @@ import KSBsPage from "../pages/learner/ksbs/page";
 import EvidencePage from "../pages/learner/evidence/page";
 import QuizzesPage from "../pages/learner/quizzes/page";
 import MonthlyCyclePage from "../pages/learner/monthly-cycle/page";
-import MonthlyCoachingPage from "../pages/learner/monthly-coaching/page";
-import ProgressReviewsPage from "../pages/learner/progress-reviews/page";
+import MonthlyCoachingPage, { MonthlyCoachingListPage } from "../pages/learner/monthly-coaching/page";
+import ProgressReviewsPage, { ProgressReviewsListPage } from "../pages/learner/progress-reviews/page";
 import RewardsPage from "../pages/learner/rewards/page";
 import BadgeDetailPage from "../pages/learner/rewards/badge-detail/page";
 import ClubsPage from "../pages/learner/clubs/page";
@@ -701,10 +701,18 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-coaching",
+    element: <MonthlyCoachingListPage />,
+  },
+  {
+    path: "/learner/monthly-coaching/:sessionId",
     element: <MonthlyCoachingPage />,
   },
   {
     path: "/learner/progress-reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/progress-reviews/:reviewId",
     element: <ProgressReviewsPage />,
   },
   {
