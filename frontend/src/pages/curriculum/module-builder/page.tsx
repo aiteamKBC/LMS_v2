@@ -38,6 +38,8 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
 } from './moduleAuthoringData';
+import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel, type GroupOption, type WeekComponentUploader, type WeekScope } from '@/pages/curriculum/week-builder/page';
+import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 import {
   CONTENT_STATUSES,
   MEDIA_SOURCE_TYPES,
@@ -49,6 +51,11 @@ import {
   validateComponentAuthoring,
   validateModuleAuthoringStructure,
 } from './componentAuthoringModel';
+import { RichTextDraft } from './RichTextEditor';
+
+// Course structure accordion: whether expanding a week collapses the others.
+// false = classic single-open accordion (the current default look/feel).
+const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
 type Selection =
   | { kind: 'week'; weekId: string }
@@ -59,10 +66,7 @@ type KsbTarget =
   | { scope: 'week'; weekId: string }
   | { scope: 'component'; weekId: string; componentId: string };
 
-type DragState =
-  | { type: 'week'; weekId: string }
-  | { type: 'component'; weekId: string; componentId: string }
-  | null;
+type DragState = { type: 'week'; weekId: string } | null;
 
 type NewModuleInput = {
   programme: string;
@@ -186,7 +190,7 @@ export default function ModuleBuilder() {
   const [programmeFilter, setProgrammeFilter] = useState<string>('All');
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
+  const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [creatingQuickModule, setCreatingQuickModule] = useState(false);
@@ -204,6 +208,7 @@ export default function ModuleBuilder() {
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [templatePickerWeekId, setTemplatePickerWeekId] = useState<string | null>(null);
+  const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
@@ -227,6 +232,26 @@ export default function ModuleBuilder() {
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes();
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
   const liveCurriculumProgrammes = curriculumProgrammes;
+
+  // Reuse of the week-builder component editor needs group options, rule-driven
+  // points and a scope — sourced the same way the week builder does.
+  const [componentGroupOptions, setComponentGroupOptions] = useState<GroupOption[]>([]);
+  const [componentPointsByType, setComponentPointsByType] = useState<Partial<Record<ModuleComponentType, number>>>({});
+  useEffect(() => {
+    let active = true;
+    fetchComponentPointsDefaults().then(map => { if (active) setComponentPointsByType(map); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
+    loadCurriculumScope().then(({ groups }) => {
+      if (!active) return;
+      const scoped = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
+      setComponentGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [workingModule?.programmeId, workingModule?.programmeName]);
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
@@ -297,6 +322,18 @@ export default function ModuleBuilder() {
     return matchingStandard ? ksbStandardSourceId(matchingStandard) : '';
   }, [curriculumProgrammes, ksbSets, standards, workingModule]);
 
+  // Scope + module-scoped uploader passed to the shared week-builder editor.
+  const weekScopeForModule = useMemo<WeekScope>(() => ({
+    courseType: 'paid',
+    programmeId: workingModule?.programmeId || '',
+    programmeName: workingModule?.programmeName || '',
+    moduleName: workingModule?.title || '',
+  }), [workingModule?.programmeId, workingModule?.programmeName, workingModule?.title]);
+  const uploadComponentForModule = useCallback<WeekComponentUploader>(
+    (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
+    [workingModule?.catalogueId],
+  );
+
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
@@ -347,7 +384,6 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
       setSelection(next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null);
-      setExpandedWeeks(new Set(next.weekStructure.map(week => week.id)));
       setSettingsOpen(openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -500,7 +536,6 @@ export default function ModuleBuilder() {
           savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
           setWorkingModule(nextModule);
           setSelection(nextModule.weekStructure[0] ? { kind: 'week', weekId: nextModule.weekStructure[0].id } : null);
-          setExpandedWeeks(new Set(nextModule.weekStructure.map(week => week.id)));
           setSettingsOpen(false);
           await finishLoadingProgress(setOpeningModuleComplete);
         }).catch(err => {
@@ -551,7 +586,7 @@ export default function ModuleBuilder() {
     savedModuleSnapshotRef.current = moduleSnapshot(fallback);
     setWorkingModule(fallback);
     setSelection(fallback.weekStructure[0] ? { kind: 'week', weekId: fallback.weekStructure[0].id } : null);
-    setExpandedWeeks(new Set(fallback.weekStructure.map(week => week.id)));
+    setExpandedWeekIds(new Set(fallback.weekStructure.map(week => week.id)));
     setSettingsOpen(false);
     setNoticeAlert({
       title: 'Opened from Curriculum Studio',
@@ -564,6 +599,29 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, []);
+
+  // Import a saved week template as a NEW week in this module: copy the week's
+  // fields + components, regenerating ids so they're independent of the source.
+  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate) => {
+    updateWorkingModule(module => {
+      const shell = createEmptyWeek(module.id, module.weekStructure.length + 1);
+      const newWeek: ModuleWeek = {
+        ...shell,
+        title: template.title || shell.title,
+        summary: template.summary || '',
+        learningOutcomes: template.learningOutcomes || [],
+        ksbMappings: (template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+        components: (template.components || []).map(component => ({
+          ...component,
+          id: makeAuthoringId('component'),
+          weekId: shell.id,
+          ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+        })),
+      };
+      return { ...module, weekStructure: [...module.weekStructure, newWeek] };
+    });
+    setWeekTemplateImportOpen(false);
+  }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
@@ -586,39 +644,12 @@ export default function ModuleBuilder() {
 
         await wait(550);
         updateWorkingModule(module => removeWeekFromModule(module, weekId));
-        setExpandedWeeks(current => {
-          const next = new Set(current);
-          next.delete(weekId);
-          return next;
-        });
         setDragState(null);
         if (lessonPickerWeekId === weekId) setLessonPickerWeekId(null);
         if (templatePickerWeekId === weekId) setTemplatePickerWeekId(null);
         if (selection?.weekId === weekId) {
           setSelection(nextSelectedWeek ? { kind: 'week', weekId: nextSelectedWeek.id } : null);
         }
-      },
-    });
-  };
-
-  const confirmDeleteComponent = async (weekId: string, componentId: string) => {
-    const component = workingModule?.weekStructure.find(week => week.id === weekId)?.components.find(item => item.id === componentId);
-    const title = component?.title || 'this component';
-
-    await showBuilderDeleteSwal({
-      title: 'Delete component?',
-      message: `${title} will be removed from this week.`,
-      confirmButtonText: 'Delete component',
-      processingText: 'Deleting component...',
-      successTitle: 'Component deleted',
-      successText: `${title} was removed successfully.`,
-      onConfirm: async () => {
-        await wait(550);
-        updateWorkingModule(module => ({
-          ...module,
-          weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components: week.components.filter(componentItem => componentItem.id !== componentId) } : week)),
-        }));
-        setSelection({ kind: 'week', weekId });
       },
     });
   };
@@ -829,7 +860,6 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
       setWorkingModule(nextModule);
       setSelection(null);
-      setExpandedWeeks(new Set());
       setSettingsOpen(false);
       setPreviewOpen(false);
       setLessonPickerWeekId(null);
@@ -864,7 +894,6 @@ export default function ModuleBuilder() {
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
       setWorkingModule(restored);
-      setExpandedWeeks(new Set(restored.weekStructure.map(week => week.id)));
       return restored;
     } catch {
       return workingModule;
@@ -930,6 +959,18 @@ export default function ModuleBuilder() {
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
     applySelectionSafely(nextSelection);
   }, [applySelectionSafely]);
+
+  // Whichever week is selected (directly, or via one of its components) is
+  // always expanded in the Course structure accordion — this is the single
+  // source of "make sure the active week's parts are visible."
+  useEffect(() => {
+    const weekId = selection?.weekId;
+    if (!weekId) return;
+    setExpandedWeekIds(prev => {
+      if (prev.has(weekId) && (ALLOW_MULTIPLE_EXPANDED_WEEKS || prev.size === 1)) return prev;
+      return ALLOW_MULTIPLE_EXPANDED_WEEKS ? new Set([...prev, weekId]) : new Set([weekId]);
+    });
+  }, [selection?.weekId]);
 
   useEffect(() => {
     if (!hasUnsavedWorkingModuleChanges) return;
@@ -1040,67 +1081,42 @@ export default function ModuleBuilder() {
             />
           )}
 
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)_290px] 2xl:grid-cols-[320px_minmax(760px,1fr)_310px]">
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
               module={workingModule}
               selection={selection}
-              expandedWeeks={expandedWeeks}
               dragState={dragState}
               onDragState={setDragState}
-              onToggleWeek={weekId => {
-                setExpandedWeeks(current => {
-                  const next = new Set(current);
-                  next.has(weekId) ? next.delete(weekId) : next.add(weekId);
-                  return next;
-                });
-              }}
               onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
               onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
+              onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
-                setExpandedWeeks(current => new Set([...current, week.id]));
                 setSelection({ kind: 'week', weekId: week.id });
               }}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
-              onOpenAddComponent={weekId => setLessonPickerWeekId(weekId)}
-              onDeleteComponent={(weekId, componentId) => {
-                void confirmDeleteComponent(weekId, componentId);
-              }}
-              onDuplicateComponent={(weekId, componentId) => {
-                const week = workingModule.weekStructure.find(item => item.id === weekId);
-                const component = week?.components.find(item => item.id === componentId);
-                if (!component) return;
-                const duplicate = cloneComponentForWeek(component, weekId, `${componentDisplayTitle(component.title)} copy`);
-                updateWorkingModule(module => ({
-                  ...module,
-                  weekStructure: module.weekStructure.map(item => (item.id === weekId ? { ...item, components: [...item.components, duplicate] } : item)),
-                }));
-                setSelection({ kind: 'component', weekId, componentId: duplicate.id });
-              }}
-              onDropReorder={(targetWeekId, targetComponentId) => {
+              onDropReorder={targetWeekId => {
                 if (!dragState) return;
-                if (dragState.type === 'week') {
-                  updateWorkingModule(module => ({ ...module, weekStructure: moveById(module.weekStructure, dragState.weekId, targetWeekId) }));
-                } else {
-                  updateWorkingModule(module => ({ ...module, weekStructure: moveComponent(module.weekStructure, dragState, targetWeekId, targetComponentId) }));
-                }
+                updateWorkingModule(module => ({ ...module, weekStructure: moveById(module.weekStructure, dragState.weekId, targetWeekId) }));
                 setDragState(null);
               }}
+              onComponentsChange={(weekId, components) => updateWorkingModule(module => ({
+                ...module,
+                weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
+              }))}
+              pointsByType={componentPointsByType}
+              expandedWeekIds={expandedWeekIds}
+              onExpandedWeekIdsChange={setExpandedWeekIds}
+              allowMultipleExpanded={ALLOW_MULTIPLE_EXPANDED_WEEKS}
             />
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <ComponentEditor
+                <WeekComponentEditor
                   component={selectedComponent}
-                  module={workingModule}
-                  week={selectedWeek}
-                  availableModules={catalogueModules}
-                  liveProgrammes={liveCurriculumProgrammes}
-                  quizzes={quizPackages}
-                  quizzesLoading={quizzesLoading}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
@@ -1108,28 +1124,15 @@ export default function ModuleBuilder() {
                       components: week.components.map(component => component.id === selectedComponent.id ? { ...component, ...updates } : component),
                     } : week),
                   }))}
-                  onSettingChange={(key, value) => updateWorkingModule(module => ({
-                    ...module,
-                    weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
-                      ...week,
-                      components: week.components.map(component => component.id === selectedComponent.id ? { ...component, settings: { ...component.settings, [key]: value } } : component),
-                    } : week),
-                  }))}
-                  onAddKsb={() => setKsbTarget({ scope: 'component', weekId: selectedWeek.id, componentId: selectedComponent.id })}
-                  onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'component', weekId: selectedWeek.id, componentId: selectedComponent.id }, mappingId))}
+                  onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
+                  groupOptions={componentGroupOptions}
+                  rulePoints={componentPointsByType[selectedComponent.type]}
+                  weekScope={weekScopeForModule}
+                  uploadResource={uploadComponentForModule}
                 />
               ) : selectedWeek ? (
-                <WeekEditor
+                <ModuleWeekPanel
                   week={selectedWeek}
-                  ksbSourceLabels={ksbSourceLabels}
-                  dragState={dragState}
-                  onDragState={setDragState}
-                  onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
-                  onDropReorder={targetComponentId => {
-                    if (!dragState || dragState.type !== 'component') return;
-                    updateWorkingModule(module => ({ ...module, weekStructure: moveComponent(module.weekStructure, dragState, selectedWeek.id, targetComponentId) }));
-                    setDragState(null);
-                  }}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
@@ -1208,7 +1211,6 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
               }));
               setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
-              setExpandedWeeks(current => new Set([...current, week.id]));
               setLessonPickerWeekId(null);
             }}
           />
@@ -1230,9 +1232,15 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...template] } : item),
               }));
               setSelection({ kind: 'component', weekId: week.id, componentId: template[template.length - 1].id });
-              setExpandedWeeks(current => new Set([...current, week.id]));
               setTemplatePickerWeekId(null);
             }}
+          />
+        )}
+        {weekTemplateImportOpen && workingModule && (
+          <WeekTemplateImportModal
+            scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
+            onClose={() => setWeekTemplateImportOpen(false)}
+            onImport={importWeekTemplateAsNewWeek}
           />
         )}
         {openingModule && (
@@ -1302,8 +1310,11 @@ export default function ModuleBuilder() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            Curriculum API error: {error}. Start the Django backend on port 8000 and refresh.
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            <span>Unable to refresh modules: {error}</span>
+            <button type="button" onClick={() => reload()} className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-1.5 font-bold text-red-700 hover:bg-red-100">
+              Retry
+            </button>
           </div>
         )}
         {actionMessage && !deletingModuleId && (
@@ -1640,23 +1651,41 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
   );
 }
 
-function CourseStructure({ module, selection, expandedWeeks, dragState, onDragState, onToggleWeek, onSelectWeek, onSelectComponent, onAddWeek, onDeleteWeek, onOpenAddComponent, onDeleteComponent, onDuplicateComponent, onDropReorder }: {
+// Course structure: a week navigator whose rows double as an accordion —
+// expanding a week renders its parts timeline (the shared WeekComponentRail,
+// nested variant) indented underneath, so the week list and "the week, in
+// order" view are one nested panel instead of two side-by-side ones.
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDropReorder, onComponentsChange, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
-  expandedWeeks: Set<string>;
   dragState: DragState;
   onDragState: (state: DragState) => void;
-  onToggleWeek: (weekId: string) => void;
   onSelectWeek: (weekId: string) => void;
   onSelectComponent: (weekId: string, componentId: string) => void;
   onAddWeek: () => void;
+  onAddWeekFromTemplate: () => void;
   onDeleteWeek: (weekId: string) => void;
-  onOpenAddComponent: (weekId: string) => void;
-  onDeleteComponent: (weekId: string, componentId: string) => void;
-  onDuplicateComponent: (weekId: string, componentId: string) => void;
-  onDropReorder: (targetWeekId: string, targetComponentId?: string) => void;
+  onDropReorder: (targetWeekId: string) => void;
+  onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
+  pointsByType: Partial<Record<ModuleComponentType, number>>;
+  expandedWeekIds: Set<string>;
+  onExpandedWeekIdsChange: (next: Set<string>) => void;
+  allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+
+  const toggleExpanded = (weekId: string) => {
+    const next = new Set(expandedWeekIds);
+    if (next.has(weekId)) {
+      next.delete(weekId);
+    } else if (allowMultipleExpanded) {
+      next.add(weekId);
+    } else {
+      next.clear();
+      next.add(weekId);
+    }
+    onExpandedWeekIdsChange(next);
+  };
 
   return (
     <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
@@ -1664,12 +1693,18 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, components and order</p>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, in order</p>
           </div>
-          <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
-            <i className="ri-add-line"></i>
-            Week
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button onClick={onAddWeekFromTemplate} title="Add a week from a saved template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+              <i className="ri-import-line"></i>
+              Template
+            </button>
+            <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
+              <i className="ri-add-line"></i>
+              Week
+            </button>
+          </div>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
@@ -1680,38 +1715,44 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
           <div className="h-full rounded-full bg-primary-500" style={{ width: `${Math.min(100, Math.max(0, module.qualityScore))}%` }} />
         </div>
       </div>
-      <div className="space-y-1.5 max-h-[calc(100vh-300px)] overflow-y-auto p-2.5">
-        {module.weekStructure.map(week => {
-          const expanded = expandedWeeks.has(week.id);
+      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto p-2.5">
+        {module.weekStructure.map((week, index) => {
           const selected = selection?.kind === 'week' && selection.weekId === week.id;
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
+          const active = selected || selectedChild;
+          const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
+          const expanded = expandedWeekIds.has(week.id);
+          const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
           return (
             <div
               key={week.id}
-              draggable
-              onDragStart={event => {
-                event.dataTransfer.effectAllowed = 'move';
-                onDragState({ type: 'week', weekId: week.id });
-              }}
-              onDragEnd={() => onDragState(null)}
-              onDragOver={event => event.preventDefault()}
-              onDrop={event => {
-                event.preventDefault();
-                onDropReorder(week.id);
-              }}
-              className={`overflow-visible rounded-xl border transition-smooth ${selected || selectedChild ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
+              className={`overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
-              <div className="flex items-center gap-1.5 p-2">
-                <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-                <button onClick={() => onToggleWeek(week.id)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background-50 text-foreground-500 hover:bg-background-100">
+              <div
+                draggable
+                onDragStart={event => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  onDragState({ type: 'week', weekId: week.id });
+                }}
+                onDragEnd={() => onDragState(null)}
+                onDragOver={event => event.preventDefault()}
+                onDrop={event => {
+                  event.preventDefault();
+                  onDropReorder(week.id);
+                }}
+                className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
+              >
+                <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><i className="ri-draggable"></i></button>
+                <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <i className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></i>
                 </button>
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0).toFixed(1)}h</span>
+                    <span>{totalOtjh.toFixed(1)}h</span>
                   </p>
                 </button>
                 <button
@@ -1721,7 +1762,7 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                     event.stopPropagation();
                     onDeleteWeek(week.id);
                   }}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-red-500 transition-smooth hover:bg-red-50 hover:text-red-700"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover/week:opacity-100"
                   title="Delete week"
                   aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
                 >
@@ -1729,42 +1770,16 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                 </button>
               </div>
               {expanded && (
-                <div className="space-y-1 px-2 pb-2">
-                  {week.components.map(component => (
-                    <ComponentTreeRow
-                      key={component.id}
-                      week={week}
-                      component={component}
-                      selected={selection?.kind === 'component' && selection.componentId === component.id}
-                      dragging={dragState?.type === 'component' && dragState.componentId === component.id}
-                      onSelect={() => onSelectComponent(week.id, component.id)}
-                      onDelete={() => onDeleteComponent(week.id, component.id)}
-                      onDuplicate={() => onDuplicateComponent(week.id, component.id)}
-                      onDragStart={() => onDragState({ type: 'component', weekId: week.id, componentId: component.id })}
-                      onDrop={() => onDropReorder(week.id, component.id)}
-                      onDragEnd={() => onDragState(null)}
-                    />
-                  ))}
-                  <div className="relative">
-                    {dragState?.type === 'component' && (
-                      <div
-                        onDragOver={event => event.preventDefault()}
-                        onDrop={event => {
-                          event.preventDefault();
-                          onDropReorder(week.id);
-                        }}
-                        className="mb-2 rounded-lg border border-dashed border-primary-300 bg-primary-50 px-3 py-2 text-center text-[11px] font-semibold text-primary-700"
-                      >
-                        Drop here to move to the end
-                      </div>
-                    )}
-                    <button
-                      onClick={() => onOpenAddComponent(week.id)}
-                      className="w-full rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-2 text-left text-[12px] font-semibold text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
-                    >
-                      <i className="ri-add-line mr-1.5"></i>Add component
-                    </button>
-                  </div>
+                <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                  <WeekComponentRail
+                    weekId={week.id}
+                    components={week.components}
+                    selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                    onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
+                    onChange={next => onComponentsChange(week.id, next)}
+                    pointsByType={pointsByType}
+                    variant="nested"
+                  />
                 </div>
               )}
             </div>
@@ -1910,58 +1925,6 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
   );
 }
 
-function ComponentTreeRow({ week, component, selected, dragging, onSelect, onDelete, onDuplicate, onDragStart, onDrop, onDragEnd }: {
-  week: ModuleWeek;
-  component: ModuleComponent;
-  selected: boolean;
-  dragging: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onDragStart: () => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
-}) {
-  const meta = componentTypes.find(item => item.type === component.type);
-  const tone = componentToneClasses(meta?.tone);
-  return (
-    <div
-      draggable
-      onDragStart={event => {
-        event.stopPropagation();
-        event.dataTransfer.effectAllowed = 'move';
-        onDragStart();
-      }}
-      onDragEnd={event => {
-        event.stopPropagation();
-        onDragEnd();
-      }}
-      onDragOver={event => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      onDrop={event => {
-        event.preventDefault();
-        event.stopPropagation();
-        onDrop();
-      }}
-      className={`group grid min-h-8 grid-cols-[14px_22px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 transition-smooth ${selected ? 'border-primary-300 bg-primary-100/70' : dragging ? 'border-primary-200 bg-primary-50' : 'border-background-200 bg-background-100/70 hover:border-primary-200 hover:bg-background-50'}`}
-    >
-      <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${tone.soft} ${tone.text}`}>
-        <i className={`${meta?.icon || 'ri-file-line'} text-xs`}></i>
-      </span>
-      <button onClick={onSelect} className="min-w-0 flex-1 text-left" title={readableComponentTitle(component.title)}>
-        <p className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] font-semibold text-foreground-800">{readableComponentTitle(component.title)}</p>
-      </button>
-      <span className="flex items-center gap-1">
-        <button onClick={onDuplicate} className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-foreground-500 hover:bg-background-200 group-hover:flex" title="Duplicate"><i className="ri-file-copy-line text-xs"></i></button>
-        <button onClick={onDelete} className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-red-500 hover:bg-red-50 group-hover:flex" title="Delete"><i className="ri-delete-bin-line text-xs"></i></button>
-      </span>
-    </div>
-  );
-}
-
 function CreatingModuleAlert({ complete }: { complete: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
@@ -2075,30 +2038,36 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
   );
 }
 
-function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson }: {
+// Merge note: the former WeekEditor signature was left incomplete when its
+// replacement, ModuleWeekPanel, was introduced:
+// function WeekEditor({ week, ksbSourceLabels, dragState, onDragState,
+//   onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson })
+// The per-week panel, shown when a week is selected but no component is.
+// The parts timeline itself now lives inline under the week's row in
+// CourseStructure's accordion (WeekComponentRail, variant="nested") — this
+// panel just keeps the week-level header actions (Apply template, Session
+// KSB Mapping, bulk Add component) and the summary/KSB-coverage inspector.
+function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson }: {
   week: ModuleWeek;
-  ksbSourceLabels: Record<string, string>;
-  dragState: DragState;
-  onDragState: (state: DragState) => void;
-  onDropReorder: (targetComponentId?: string) => void;
-  onSelectComponent: (componentId: string) => void;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onApplyTemplate: () => void;
+  onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
-  const totalPoints = week.components.reduce((total, component) => total + Number(component.points || 0), 0);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-      <div className="grid gap-3 border-b border-background-200 bg-background-50 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
+    <section className="space-y-4">
+      <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
-          <h3 className="mt-1.5 truncate text-lg font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
+          <div className="mt-1.5">
+            <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
@@ -2112,91 +2081,14 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
         </div>
       </div>
 
-      <div className="space-y-3 p-4 lg:p-5">
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_240px]">
-          <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
-          <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="Points" value={String(totalPoints)} />
-            <MiniMetric label="KSB mappings" value={String(uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]).length)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 rounded-xl border border-background-200 bg-background-100/35 p-3 2xl:grid-cols-2">
-          <TextArea label="Week summary" value={week.summary} onChange={value => onChange({ summary: value })} rows={3} />
-          <TextArea label="Learning outcomes" value={week.learningOutcomes.join('\n')} onChange={value => onChange({ learningOutcomes: value.split('\n').map(item => item.trim()).filter(Boolean) })} rows={3} />
-        </div>
-        <div className="rounded-xl border border-background-200 bg-background-100/35 p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <h4 className="text-[11px] font-bold uppercase text-foreground-500">Components in this week</h4>
-            </div>
-            <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{week.components.length} components</span>
-          </div>
-          <div className="space-y-2">
-            {week.components.map((component, index) => {
-              const meta = componentTypes.find(item => item.type === component.type);
-              const tone = componentToneClasses(meta?.tone);
-              const isDragging = dragState?.type === 'component' && dragState.componentId === component.id;
-              return (
-                <div
-                  key={component.id}
-                  draggable
-                  onDragStart={(event: DragEvent<HTMLDivElement>) => {
-                    event.stopPropagation();
-                    event.dataTransfer.effectAllowed = 'move';
-                    onDragState({ type: 'component', weekId: week.id, componentId: component.id });
-                  }}
-                  onDragEnd={event => {
-                    event.stopPropagation();
-                    onDragState(null);
-                  }}
-                  onDragOver={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onDrop={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onDropReorder(component.id);
-                  }}
-                  className={`grid grid-cols-[20px_28px_minmax(0,1fr)_auto_20px] items-center gap-2.5 rounded-lg border px-3 py-2 transition-smooth ${isDragging ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
-                >
-                  <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-                    <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
-                  </span>
-                  <button onClick={() => onSelectComponent(component.id)} className="min-w-0 text-left" title={readableComponentTitle(component.title)}>
-                    <p className="truncate text-[12px] font-semibold leading-snug text-foreground-900">{readableComponentTitle(component.title)}</p>
-                    <p className="mt-0.5 text-[9px] text-foreground-400">Order {index + 1} · {meta?.label || 'Component'}</p>
-                    <ComponentKsbChips mappings={component.ksbMappings} sourceLabels={ksbSourceLabels} />
-                  </button>
-                  <div className="hidden items-center gap-2 sm:flex">
-                    <ReadOnlyMetricChip label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} suffix="h" tone="emerald" />
-                    <ReadOnlyMetricChip label="Points" value={String(component.points || 0)} suffix="pts" tone="amber" />
-                  </div>
-                  <i className="ri-arrow-right-s-line text-foreground-300"></i>
-                </div>
-              );
-            })}
-            {dragState?.type === 'component' && (
-              <div
-                onDragOver={event => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onDrop={event => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onDropReorder();
-                }}
-                className="rounded-xl border border-dashed border-primary-300 bg-primary-50 px-3 py-3 text-center text-[11px] font-semibold text-primary-700"
-              >
-                Drop here to move to the end of this week
-              </div>
-            )}
-            {!week.components.length && <EmptyState text="No components in this week yet." />}
-          </div>
-        </div>
-      </div>
+      <WeekOverviewPanel
+        components={week.components}
+        ksbMappings={week.ksbMappings}
+        summary={week.summary}
+        learningOutcomes={week.learningOutcomes}
+        onChangeSummary={value => onChange({ summary: value })}
+        onChangeLearningOutcomes={value => onChange({ learningOutcomes: value })}
+      />
     </section>
   );
 }
@@ -2436,77 +2328,6 @@ function TypeSpecificFields({
     );
   }
 
-  if (component.type === 'recording-placeholder') {
-    const groupOptions = liveSessionGroupOptions(module);
-    const selectedGroupKeys = getStringArray('selectedGroupKeys');
-    const selectedGroupSet = new Set(selectedGroupKeys);
-    const updateSelectedGroups = (nextKeys: string[]) => {
-      const nextSet = new Set(nextKeys);
-      onSettingChange('selectedGroupKeys', nextKeys);
-      onSettingChange('selectedGroupNames', groupOptions.filter(option => nextSet.has(option.key)).map(option => option.group));
-    };
-    const toggleGroup = (key: string) => {
-      const nextSet = new Set(selectedGroupKeys);
-      if (nextSet.has(key)) nextSet.delete(key);
-      else nextSet.add(key);
-      updateSelectedGroups(groupOptions.map(option => option.key).filter(optionKey => nextSet.has(optionKey)));
-    };
-    return (
-      <EditorBlock title="Recording placeholder">
-        <p className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[11px] font-medium text-foreground-500">Recording files are attached later after cohort allocation. This placeholder reserves the component space and completion rule.</p>
-        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
-            </div>
-            {!!groupOptions.length && (
-              <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
-                  Select all
-                </button>
-                <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-          {groupOptions.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {groupOptions.map(option => (
-                <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedGroupSet.has(option.key)}
-                    onChange={() => toggleGroup(option.key)}
-                    className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-[12px] font-bold">{option.group}</span>
-                    {option.cohort && <span className="mt-0.5 block truncate text-[10px] font-semibold opacity-70">{option.cohort}</span>}
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
-              No delivery groups are linked to this module yet.
-            </p>
-          )}
-        </div>
-        {!!selectedGroupKeys.length && (
-          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-            <div className="mb-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Recording link</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
-            </div>
-            <TextInput label="Recording URL" value={getString('recordingUrl')} onChange={value => onSettingChange('recordingUrl', value)} error={fieldError('settings.recordingUrl')} />
-          </div>
-        )}
-      </EditorBlock>
-    );
-  }
-
   if (component.type === 'video') {
     const sourceType = normaliseVideoSourceType(getString('sourceType') || getString('provider'));
     const updateSourceType = (value: string) => {
@@ -2548,7 +2369,13 @@ function TypeSpecificFields({
       <EditorBlock title="Podcast source">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <SelectInput label="Source type" value={sourceType} options={PODCAST_SOURCE_TYPES} onChange={value => onSettingChange('podcastSource', value)} />
-          <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          {sourceType === 'Embed' ? (
+            <TextArea label="Embed code" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+          ) : sourceType === 'Shortcode' ? (
+            <TextInput label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} />
+          ) : (
+            <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          )}
         </div>
         <ComponentResourceUpload
           label="Upload podcast audio"
@@ -3041,229 +2868,6 @@ function findModuleForDeliveryPath(
   }) || null;
 }
 
-type RichTextMode = 'design' | 'html';
-
-function RichTextDraft({ label, value, onChange, rows = 9, compact = false }: { label: string; value: string; onChange: (value: string) => void; rows?: number; compact?: boolean }) {
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const [mode, setMode] = useState<RichTextMode>('design');
-  const [fullscreen, setFullscreen] = useState(false);
-  const lastHtmlRef = useRef(value || '');
-  const placeholder = compact
-    ? 'Briefly introduce what the learner will read.'
-    : 'Use headings, short paragraphs, bold key terms, and bullet lists. You can paste prepared HTML here.';
-  const plainText = htmlToPlainText(value);
-  const wordCount = plainText ? plainText.split(/\s+/).filter(Boolean).length : 0;
-  const minHeight = compact ? 'min-h-[220px]' : 'min-h-[360px]';
-
-  useEffect(() => {
-    if (mode !== 'design') return;
-    const editor = editorRef.current;
-    if (!editor || document.activeElement === editor || value === lastHtmlRef.current) return;
-    editor.innerHTML = value || '';
-    lastHtmlRef.current = value || '';
-  }, [mode, value]);
-
-  const commitHtml = useCallback((html: string) => {
-    lastHtmlRef.current = html;
-    onChange(html);
-  }, [onChange]);
-
-  const syncFromEditor = useCallback(() => {
-    const html = editorRef.current?.innerHTML || '';
-    commitHtml(html);
-  }, [commitHtml]);
-
-  const focusEditor = () => {
-    if (mode !== 'design') return;
-    editorRef.current?.focus();
-  };
-
-  const runCommand = (command: string, commandValue?: string) => {
-    if (mode !== 'design') return;
-    focusEditor();
-    document.execCommand(command, false, commandValue);
-    syncFromEditor();
-  };
-
-  const insertHtml = (html: string) => {
-    if (mode !== 'design') return;
-    focusEditor();
-    document.execCommand('insertHTML', false, html);
-    syncFromEditor();
-  };
-
-  const addLink = () => {
-    const url = window.prompt('Enter link URL');
-    if (!url) return;
-    runCommand('createLink', url);
-  };
-
-  const addImage = () => {
-    const url = window.prompt('Enter image URL');
-    if (!url) return;
-    insertHtml(`<img src="${escapeAttribute(url)}" alt="" style="max-width:100%;height:auto;" />`);
-  };
-
-  const addVideo = () => {
-    const url = window.prompt('Enter video URL');
-    if (!url) return;
-    insertHtml(`<video controls src="${escapeAttribute(url)}" style="max-width:100%;height:auto;"></video>`);
-  };
-
-  const pasteAsHtml = (event: React.ClipboardEvent<HTMLDivElement>) => {
-    const html = event.clipboardData.getData('text/html');
-    if (!html) return;
-    event.preventDefault();
-    insertHtml(html);
-  };
-
-  const shellClass = fullscreen
-    ? 'fixed inset-4 z-[80] flex flex-col rounded-xl border border-foreground-200 bg-background-50 shadow-2xl'
-    : 'mt-1 overflow-hidden rounded-lg border border-foreground-200/60 bg-background-50';
-
-  return (
-    <div className="block">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase text-foreground-400">{label}</span>
-        <div className="flex items-center gap-1 rounded-lg bg-background-100 p-0.5">
-          <button type="button" onClick={() => setMode('design')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'design' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>Design</button>
-          <button type="button" onClick={() => setMode('html')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'html' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>HTML</button>
-        </div>
-      </div>
-      <div className={shellClass}>
-        <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-2 text-[11px] text-foreground-600">
-          <RichSelect title="Block style" disabled={mode !== 'design'} defaultValue="P" onChange={tag => runCommand('formatBlock', tag)}>
-            <option value="P">Paragraph</option>
-            <option value="H1">Heading 1</option>
-            <option value="H2">Heading 2</option>
-            <option value="H3">Heading 3</option>
-            <option value="BLOCKQUOTE">Quote</option>
-          </RichSelect>
-          <RichSelect title="Font" disabled={mode !== 'design'} defaultValue="" onChange={font => font && runCommand('fontName', font)}>
-            <option value="">System Font</option>
-            <option value="Arial">Arial</option>
-            <option value="Georgia">Georgia</option>
-            <option value="Times New Roman">Times</option>
-            <option value="Courier New">Courier</option>
-          </RichSelect>
-          <RichSelect title="Size" disabled={mode !== 'design'} defaultValue="3" onChange={size => runCommand('fontSize', size)}>
-            <option value="2">13px</option>
-            <option value="3">16px</option>
-            <option value="4">18px</option>
-            <option value="5">24px</option>
-            <option value="6">32px</option>
-          </RichSelect>
-          <RichToolbarDivider />
-          <RichTool icon="ri-arrow-go-back-line" label="Undo" disabled={mode !== 'design'} onClick={() => runCommand('undo')} />
-          <RichTool icon="ri-arrow-go-forward-line" label="Redo" disabled={mode !== 'design'} onClick={() => runCommand('redo')} />
-          <RichToolbarDivider />
-          <RichTool icon="ri-bold" label="Bold" disabled={mode !== 'design'} onClick={() => runCommand('bold')} />
-          <RichTool icon="ri-italic" label="Italic" disabled={mode !== 'design'} onClick={() => runCommand('italic')} />
-          <RichTool icon="ri-underline" label="Underline" disabled={mode !== 'design'} onClick={() => runCommand('underline')} />
-          <RichTool icon="ri-strikethrough" label="Strikethrough" disabled={mode !== 'design'} onClick={() => runCommand('strikeThrough')} />
-          <label title="Text color" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-font-color text-base"></i>
-            <input type="color" className="sr-only" onChange={event => runCommand('foreColor', event.target.value)} />
-          </label>
-          <label title="Highlight" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-mark-pen-line text-base"></i>
-            <input type="color" className="sr-only" onChange={event => runCommand('hiliteColor', event.target.value)} />
-          </label>
-          <RichToolbarDivider />
-          <RichTool icon="ri-link" label="Link" disabled={mode !== 'design'} onClick={addLink} />
-          <RichTool icon="ri-image-line" label="Image" disabled={mode !== 'design'} onClick={addImage} />
-          <RichTool icon="ri-video-line" label="Video" disabled={mode !== 'design'} onClick={addVideo} />
-          <RichTool icon="ri-separator" label="Divider" disabled={mode !== 'design'} onClick={() => insertHtml('<hr />')} />
-          <RichToolbarDivider />
-          <RichTool icon="ri-align-left" label="Align left" disabled={mode !== 'design'} onClick={() => runCommand('justifyLeft')} />
-          <RichTool icon="ri-align-center" label="Align center" disabled={mode !== 'design'} onClick={() => runCommand('justifyCenter')} />
-          <RichTool icon="ri-align-right" label="Align right" disabled={mode !== 'design'} onClick={() => runCommand('justifyRight')} />
-          <RichTool icon="ri-list-unordered" label="Bullet list" disabled={mode !== 'design'} onClick={() => runCommand('insertUnorderedList')} />
-          <RichTool icon="ri-list-ordered" label="Numbered list" disabled={mode !== 'design'} onClick={() => runCommand('insertOrderedList')} />
-          <RichTool icon="ri-indent-increase" label="Indent" disabled={mode !== 'design'} onClick={() => runCommand('indent')} />
-          <RichTool icon="ri-indent-decrease" label="Outdent" disabled={mode !== 'design'} onClick={() => runCommand('outdent')} />
-          <RichTool icon="ri-format-clear" label="Clear formatting" disabled={mode !== 'design'} onClick={() => runCommand('removeFormat')} />
-          <RichTool icon={fullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(open => !open)} />
-          <span className="ml-auto rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{wordCount} words</span>
-        </div>
-        {mode === 'design' ? (
-          <div className="relative">
-            {!plainText && (
-              <span className="pointer-events-none absolute left-4 top-4 text-[13px] text-foreground-300">{placeholder}</span>
-            )}
-            <div
-              ref={editorRef}
-              contentEditable
-              suppressContentEditableWarning
-              onInput={syncFromEditor}
-              onBlur={syncFromEditor}
-              onPaste={pasteAsHtml}
-              className={`rich-text-surface ${minHeight} max-h-[70vh] overflow-y-auto bg-background-50 px-4 py-4 text-[14px] leading-relaxed text-foreground-900 outline-none`}
-              dangerouslySetInnerHTML={{ __html: value || '' }}
-            />
-          </div>
-        ) : (
-          <textarea
-            value={value}
-            onChange={event => commitHtml(event.target.value)}
-            rows={rows}
-            className={`${minHeight} max-h-[70vh] w-full resize-y bg-[#0f172a] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#e2e8f0] outline-none`}
-            placeholder="<h2>Section heading</h2><p>Paste prepared HTML here...</p>"
-          />
-        )}
-        <div className="border-t border-background-200 bg-background-100/70 px-3 py-1.5 text-[10px] font-semibold text-foreground-400">
-          {mode === 'design' ? 'p' : 'HTML source'}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RichTool({ icon, label, onClick, disabled = false }: { icon: string; label: string; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      title={label}
-      disabled={disabled}
-      onMouseDown={event => event.preventDefault()}
-      onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-700 transition-smooth hover:bg-background-200 hover:text-foreground-950 disabled:pointer-events-none disabled:opacity-35"
-    >
-      <i className={`${icon} text-base`}></i>
-    </button>
-  );
-}
-
-function RichSelect({ title, defaultValue, onChange, disabled, children }: { title: string; defaultValue: string; onChange: (value: string) => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <select
-      title={title}
-      defaultValue={defaultValue}
-      disabled={disabled}
-      onMouseDown={event => event.stopPropagation()}
-      onChange={event => onChange(event.target.value)}
-      className="h-8 rounded-md border border-transparent bg-background-50 px-2 text-[12px] font-semibold text-foreground-700 outline-none hover:border-background-200 disabled:opacity-40"
-    >
-      {children}
-    </select>
-  );
-}
-
-function RichToolbarDivider() {
-  return <span className="mx-1 h-6 w-px bg-background-200" />;
-}
-
-function htmlToPlainText(html: string) {
-  if (!html) return '';
-  if (typeof document === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  const element = document.createElement('div');
-  element.innerHTML = html;
-  return (element.textContent || element.innerText || '').trim();
-}
-
-function escapeAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
   module: ModuleCatalogueItem;
@@ -4246,6 +3850,75 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
   );
 }
 
+function WeekTemplateImportModal({ scope, onClose, onImport }: {
+  scope: { programmeId: string; programmeName: string };
+  onClose: () => void;
+  onImport: (template: WeekTemplate) => void;
+}) {
+  const [templates, setTemplates] = useState<WeekTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetchWeekTemplates({})
+      .then(rows => { if (active) { setTemplates(rows); setLoading(false); } })
+      .catch(err => { if (active) { setError(err instanceof Error ? err.message : 'Unable to load week templates.'); setLoading(false); } });
+    return () => { active = false; };
+  }, []);
+
+  const list = filterWeekTemplatesForScope(templates, scope);
+
+  const pick = async (template: WeekTemplate) => {
+    setImportingId(template.id);
+    setError('');
+    try {
+      const detail = await fetchWeekTemplateDetail(template.id);
+      onImport(detail);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load that template.');
+      setImportingId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground-950/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
+          <div>
+            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><i className="ri-close-line text-lg"></i></button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" />Loading templates…</div>
+          ) : list.length ? (
+            <div className="space-y-2">
+              {list.map(template => (
+                <button key={template.id} type="button" disabled={Boolean(importingId)} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><i className="ri-calendar-todo-line"></i></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-bold text-foreground-900">{template.title || 'Untitled week'}</span>
+                    <span className="block text-[11px] text-foreground-500">{template.componentCount || template.components.length} components{template.programmeName ? ` · ${template.programmeName}` : ''}</span>
+                  </span>
+                  {importingId === template.id ? <i className="ri-loader-4-line animate-spin text-foreground-400"></i> : <i className="ri-add-line text-primary-600"></i>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="py-10 text-center text-[12px] text-foreground-400">No week templates found. Create one in the Week Builder first.</p>
+          )}
+          {error && <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeOptions: string[]; onClose: () => void; onCreate: (input: { programme: string; title: string; description: string; weeks: number; status: string }) => Promise<void> | void }) {
   const [programme, setProgramme] = useState(programmeOptions[0] || 'Unassigned programme');
   const [title, setTitle] = useState('');
@@ -4521,8 +4194,8 @@ function ksbSetMatchesModule(set: CurriculumKsbSet, module: ModuleCatalogueItem 
   if (!module) return false;
   const programmeCandidates = Array.from(moduleStandardCandidates(module, programmes));
   const moduleCandidates = [module.catalogueId, module.id, module.sourceId, module.sourceModule?.id, module.sourceModule?.sourceId];
-  const cohortCandidates = [module.cohortId, module.cohortName, module.cohort];
-  const groupCandidates = [module.groupId, module.groupName, module.group];
+  const cohortCandidates = [module.cohortId, module.cohort];
+  const groupCandidates = [module.groupId, module.group];
   return valuesMatchAny(set.programmeIds?.length ? set.programmeIds : [set.programmeId], programmeCandidates)
     && valuesMatchAny(set.moduleCatalogueIds, moduleCandidates)
     && valuesMatchAny(set.cohortIds, cohortCandidates)
@@ -5132,6 +4805,9 @@ function ModuleCatalogueCard({
   const weekCount = module.weekStructure.length || module.weeks || module.sessionsNumber || 0;
   const sessionCount = module.sessionsNumber || module.weeks || weekCount;
   const hasContent = componentCount > 0;
+  // Legacy fallbacks retained by the merge were:
+  // sessionCount = module.sessionsNumber || module.weeks || 0
+  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className="group rounded-xl border border-background-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md">
@@ -6094,24 +5770,6 @@ function moveById<T extends { id: string }>(items: T[], sourceId: string, target
   return next;
 }
 
-function moveComponent(weeks: ModuleWeek[], drag: { weekId: string; componentId: string }, targetWeekId: string, targetComponentId?: string): ModuleWeek[] {
-  let moved: ModuleComponent | null = null;
-  const without = weeks.map(week => {
-    if (week.id !== drag.weekId) return week;
-    moved = week.components.find(component => component.id === drag.componentId) || null;
-    return { ...week, components: week.components.filter(component => component.id !== drag.componentId) };
-  });
-  if (!moved) return weeks;
-  return without.map(week => {
-    if (week.id !== targetWeekId) return week;
-    const nextComponent = { ...moved, weekId: targetWeekId };
-    const targetIndex = targetComponentId ? week.components.findIndex(component => component.id === targetComponentId) : week.components.length;
-    const next = [...week.components];
-    next.splice(targetIndex < 0 ? next.length : targetIndex, 0, nextComponent);
-    return { ...week, components: next };
-  });
-}
-
 function uniqueMappings(mappings: KsbMapping[]) {
   const seen = new Set<string>();
   return mappings.filter(mapping => {
@@ -6337,29 +5995,9 @@ function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
 }
 
-function cloneComponentForWeek(component: ModuleComponent, weekId: string, title: string): ModuleComponent {
-  const clonedId = createLocalComponentId();
-  return {
-    ...component,
-    id: clonedId,
-    weekId,
-    title,
-    settings: { ...(component.settings || {}) },
-    ksbMappings: component.ksbMappings.map(mapping => ({
-      ...mapping,
-      id: makeAuthoringId('KSBMAP'),
-    })),
-  };
-}
-
-function createLocalComponentId() {
-  return makeAuthoringId('COMP');
-}
-
 function componentTypeDescription(type: ModuleComponentType) {
   const descriptions: Record<ModuleComponentType, string> = {
     'live-session': 'Tutor-led session via Teams',
-    'recording-placeholder': 'Auto-published after live session',
     video: 'Upload or link a video',
     podcast: 'Upload audio or podcast link',
     reading: 'PDF, Word, or typed text',

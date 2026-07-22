@@ -320,8 +320,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     children: [
       { id: 'curriculum-quiz-xml', label: 'Quiz Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
       { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
-      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=trash' },
-      { id: 'curriculum-test-banks', label: 'Test Banks', icon: 'ri-database-2-line', href: '/curriculum/test-banks' },
+      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=archive' },
       { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
     ],
   },

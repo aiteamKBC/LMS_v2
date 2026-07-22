@@ -213,8 +213,8 @@ export default function CurriculumProgrammes() {
         ) : filtered.length ? (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {filtered.map(prog => {
-            const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
-            return (
+              const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              return (
               <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
                 <div className="mb-4 flex items-start justify-between gap-3">
@@ -1447,9 +1447,9 @@ function ArchiveConfirmDialog({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
-      <p className="text-sm font-semibold text-foreground-900">{value}</p>
+    <div className="min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-background-200/80">
+      <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
+      <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
     </div>
   );
 }

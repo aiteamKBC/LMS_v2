@@ -93,6 +93,12 @@ desktop.ini
 # Local-only project files
 # ---------------------------------------------------------------------------
 /backend/engagement_api/sql/
+/backend/curriculum_api/sql/
+/backend/curriculum_component_uploads/
+/backend/quiz_packages/
 /backend/run.ps1
 /CLAUDE.md
 /.claude/
+/frontend/src/pages/curriculum/week-builder/quizLinkPersistence.test.tsx
+/frontend/src/pages/curriculum/week-builder/WeekComponentRail.test.tsx
+/frontend/src/pages/curriculum/week-builder/weekTemplateData.test.ts
