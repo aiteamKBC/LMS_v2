@@ -43,20 +43,19 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
       { id: 'learner-absence-report', label: 'Absence Report', icon: 'ri-file-warning-line', href: '/learner/report-absence' },
-      { id: 'learner-catchup', label: 'Catch-up', icon: 'ri-timer-line', href: '/learner/catchup' },
     ],
   },
 
-  // Monthly Progress
+  // My Progress
   {
     id: 'learner-group-monthly',
-    label: 'Monthly Progress',
+    label: 'My Progress',
     icon: 'ri-loop-left-line',
     href: '',
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
@@ -92,8 +91,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/learner/knowledge-base' },
-      { id: 'learner-messages', label: 'Messages', icon: 'ri-mail-line', href: '/learner/messages', badge: 2 },
-      { id: 'learner-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },

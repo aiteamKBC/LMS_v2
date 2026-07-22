@@ -599,16 +599,23 @@ def learner_detail(request, kind, pk):
     detail["otjhStatus"] = otjh_status
     if active is not None:
         try:
-            active.planned_hours = planned
-            active.completed_hours = completed
-            active.target_hours = target_str
-            active.progress_hours = progress_hours_str
-            active.progress_variance = variance_str
-            active.otjh_status = otjh_status
-            active.save(update_fields=[
-                "planned_hours", "completed_hours",
-                "target_hours", "progress_hours", "progress_variance", "otjh_status",
-            ])
+            calculated = {
+                "planned_hours": planned,
+                "completed_hours": completed,
+                "target_hours": target_str,
+                "progress_hours": progress_hours_str,
+                "progress_variance": variance_str,
+                "otjh_status": otjh_status,
+            }
+            changed_fields = []
+            for field, value in calculated.items():
+                if getattr(active, field) != value:
+                    setattr(active, field, value)
+                    changed_fields.append(field)
+            # This endpoint is read on almost every learner page. Avoid a
+            # remote database UPDATE when all calculated values are unchanged.
+            if changed_fields:
+                active.save(update_fields=changed_fields)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 

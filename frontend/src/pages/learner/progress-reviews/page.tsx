@@ -104,14 +104,30 @@ function Accordion({
 }: {
   id: string; title: string; icon: string; open: boolean; onToggle: (id: string) => void; children: ReactNode;
 }) {
+  const steps: Record<string, number> = {
+    learning: 1,
+    notes: 2,
+    'learner-reflection': 3,
+    'manager-reflection': 4,
+    'coach-reflection': 5,
+    actions: 6,
+    rag: 7,
+  };
+  const step = steps[id];
   return (
-    <section className="overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-sm">
-      <button type="button" onClick={() => onToggle(id)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition hover:bg-background-100">
-        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className={icon} /></span>
-        <span className="flex-1 text-sm font-bold text-foreground-800">{title}</span>
-        <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+    <section className={`overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${open ? 'border-primary-200 shadow-[0_10px_30px_rgba(69,26,128,0.08)]' : 'border-foreground-200/70 shadow-[0_3px_12px_rgba(25,12,50,0.035)] hover:border-primary-200 hover:shadow-md'}`}>
+      <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors sm:px-5 sm:py-4 ${open ? 'bg-gradient-to-r from-primary-50/90 to-secondary-50/30' : 'hover:bg-primary-50/35'}`}>
+        <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${open ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20' : id === 'rag' ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}>
+          <i className={`${icon} text-base`} />
+          <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 7</span>
+          <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
+        </span>
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><i className="ri-arrow-down-s-line text-lg" /></span>
       </button>
-      {open && <div className="border-t border-background-200 p-4 sm:p-5">{children}</div>}
+      {open && <div className="border-t border-primary-100 bg-white p-4 sm:p-6">{children}</div>}
     </section>
   );
 }
@@ -147,6 +163,10 @@ export function ProgressReviewsListPage() {
   const pageSize = 10;
   const totalPages = Math.max(1, Math.ceil(reviews.length / pageSize));
   const visibleReviews = reviews.slice((page - 1) * pageSize, page * pageSize);
+  const completedCount = reviews.filter((review) => review.status === 'completed').length;
+  const scheduledCount = reviews.filter((review) => ['scheduled', 'in-progress'].includes(review.status)).length;
+  const planningCount = reviews.filter((review) => review.status === 'not-scheduled').length;
+  const reviewerName = reviews.find((review) => review.coachName)?.coachName || 'Your reviewer';
 
   return (
     <WorkspaceShell
@@ -159,53 +179,72 @@ export function ProgressReviewsListPage() {
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <div className="space-y-5 p-4 md:p-6">
+      <main className="w-full space-y-5 p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <section className="overflow-hidden rounded-xl border border-background-300 bg-background-50 shadow-sm">
-          <div className="border-b border-background-200 px-5 py-4">
-            <h1 className="text-base font-bold text-foreground-900">Progress Reviews</h1>
-            <p className="mt-1 text-xs text-foreground-500">View scheduled reviews, check their status and open each full PR record.</p>
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-6 text-white shadow-xl shadow-primary-950/10 md:p-7">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><i className="ri-team-line text-secondary-300" />Formal review</span>
+              <h1 className="mt-3 text-2xl font-bold text-white md:text-3xl">Progress reviews</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
+              {[
+                ['Total', reviews.length, 'ri-stack-line', 'text-secondary-300'],
+                ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
+                ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
+                ['To plan', planningCount, 'ri-time-line', 'text-amber-300'],
+              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur"><i className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/50">{label}</p></div>)}
+            </div>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><i className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
+            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />Open calendar</Link>
           </div>
           {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading progress reviews...</div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
             <>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[980px] text-left">
-                  <thead className="border-b border-background-300 bg-[#f1f4f8] text-[10px] font-semibold text-foreground-500">
-                    <tr><th className="px-4 py-3">Review Name / Review Type</th><th className="px-4 py-3">Reviewer</th><th className="px-4 py-3">Planned / Scheduled Date</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Scheduling Assistant</th><th className="px-4 py-3 text-right">Review Actions</th></tr>
+                  <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60">
+                    <tr><th className="px-5 py-3.5">Review Name / Review Type</th><th className="px-5 py-3.5">Reviewer</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Review Actions</th></tr>
                   </thead>
-                  <tbody className="divide-y divide-background-300">
+                  <tbody className="divide-y divide-background-200">
                   {visibleReviews.map((review) => {
                     const isBooked = Boolean(review.scheduledDate && review.scheduledTime) && !['not-scheduled', 'cancelled'].includes(review.status);
                     return (
-                      <tr key={review.id} className="transition hover:bg-primary-50/30">
-                        <td className="px-4 py-3.5"><p className="text-xs font-bold text-foreground-800">Progress Review #{review.sequence}</p><p className="mt-1 text-[10px] text-foreground-500">Progress Review</p></td>
-                        <td className="px-4 py-3.5 text-xs font-medium text-foreground-600">{review.coachName || '-'}</td>
-                        <td className="px-4 py-3.5"><p className="text-xs font-medium text-foreground-600">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</td>
-                        <td className="px-4 py-3.5"><span className={`inline-flex rounded px-2 py-1 text-[10px] font-semibold ${review.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : isBooked ? 'bg-blue-100 text-blue-700' : 'bg-background-200 text-foreground-600'}`}>{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
-                        <td className="px-4 py-3.5"><Link to="/learner/calendar" className="inline-flex items-center gap-2 text-xs font-medium text-foreground-600 hover:text-primary-700"><i className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
-                        <td className="px-4 py-3.5"><div className="flex items-center justify-end gap-3"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="rounded-full bg-primary-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-primary-700">View</Link><i className="ri-more-2-fill text-lg text-foreground-500" /></div></td>
+                      <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
+                        <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">Progress Review #{review.sequence}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-2"><i className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
+                        <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><i className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
+                        <td className="px-5 py-4"><Link to="/learner/calendar" className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><i className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
+                        <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <i className="ri-arrow-right-line" /></Link></div></td>
                       </tr>
                     );
                   })}
                   </tbody>
                 </table>
               </div>
-              <div className="flex flex-col gap-3 border-t border-background-300 bg-[#f1f4f8] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-1">
-                  <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button>
-                  <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>
-                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-7 min-w-7 border px-2 text-xs ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
-                  <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button>
-                  <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-7 w-7 items-center justify-center border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button>
-                  <span className="ml-3 text-[10px] text-foreground-500">10 items per page</span>
+              <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-1.5">
+                  <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button>
+                  <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>
+                  {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
+                  <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button>
+                  <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button>
+                  <span className="ml-2 text-[10px] text-foreground-400">10 items per page</span>
                 </div>
                 <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, reviews.length)} of {reviews.length} items</p>
               </div>
             </>
           )}
         </section>
-      </div>
+      </main>
     </WorkspaceShell>
   );
 }
@@ -342,21 +381,22 @@ export default function ProgressReviewsPage() {
       <div className="space-y-5 p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <Link to="/learner/progress-reviews" className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 transition hover:text-primary-800">
-          <i className="ri-arrow-left-line" /> Back to PR sessions
+        <Link to="/learner/progress-reviews" className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
+          <i className="ri-arrow-left-line" /> Back to progress reviews
         </Link>
 
-        <section className="rounded-2xl border border-background-200 bg-background-50 p-5 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
+          <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-xl text-white shadow-lg shadow-primary-600/20"><i className="ri-team-line" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-xl text-secondary-200 shadow-lg"><i className="ri-team-line" /></span>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Formal progress review</span>
-                  <span className="rounded-full bg-accent-50 px-2.5 py-1 text-[10px] font-bold text-accent-700">{loading ? 'Loading...' : learner?.programme || '-'}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-200">Formal progress review</span>
+                  <span className="rounded-full border border-white/10 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{loading ? 'Loading...' : learner?.programme || '-'}</span>
                 </div>
-                <h1 className="font-heading text-xl font-bold text-foreground-950 sm:text-2xl">Your progress review record</h1>
-                <p className="mt-1 max-w-2xl text-sm text-foreground-500">Each PR brings together you, your coach and your line manager to review learning, progress and next actions.</p>
+                <h1 className="font-heading text-xl font-bold text-white sm:text-2xl">Your progress review record</h1>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-white/65">Each review brings together you, your coach and line manager to discuss learning, progress and next actions.</p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:min-w-[390px]">
@@ -365,10 +405,10 @@ export default function ProgressReviewsPage() {
                 ['Planned', loading ? '-' : planned.length, 'text-primary-600', 'ri-calendar-event-line'],
                 ['All PRs', loading ? '-' : reviews.length, 'text-foreground-900', 'ri-stack-line'],
               ].map(([label, value, color, icon]) => (
-                <div key={label} className="rounded-xl border border-background-200 bg-background-100 px-3 py-3 text-center">
-                  <i className={`${icon} ${color} text-sm`} />
-                  <p className={`mt-0.5 text-xl font-bold ${color}`}>{value}</p>
-                  <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
+                <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-center backdrop-blur">
+                  <i className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
+                  <p className="mt-0.5 text-xl font-bold text-white">{value}</p>
+                  <p className="text-[9px] font-semibold uppercase tracking-wider text-white/45">{label}</p>
                 </div>
               ))}
             </div>
@@ -380,8 +420,8 @@ export default function ProgressReviewsPage() {
         ) : reviews.length === 0 ? (
           <section className="rounded-2xl border border-background-200 bg-background-50 p-6"><Empty>No progress reviews have been created for this learner.</Empty></section>
         ) : (
-          <div className="grid items-start gap-5 lg:grid-cols-[310px_minmax(0,1fr)]">
-            <aside className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-sm lg:sticky lg:top-4">
+          <div className={`grid items-start gap-5 ${reviews.length > 1 ? 'lg:grid-cols-[300px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
+            {reviews.length > 1 && <aside className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-sm lg:sticky lg:top-4">
               <div className="px-2 pb-3 pt-1">
                 <h2 className="text-sm font-bold text-foreground-900">All progress reviews</h2>
                 <p className="mt-0.5 text-xs text-foreground-400">Completed and planned sessions</p>
@@ -401,13 +441,14 @@ export default function ProgressReviewsPage() {
                   );
                 })}
               </div>
-            </aside>
+            </aside>}
 
             <main className="space-y-4">
-              <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
-                <div className="border-b border-background-200 bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6">
+              <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
+                <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
+                  <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-secondary-400/10 blur-3xl"></div>
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
+                    <div className="relative">
                       <span className={`inline-flex rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80`}>{statusLabel(selected?.status)}</span>
                       <h2 className="mt-2 text-xl font-bold text-white">Progress Review #{selected?.sequence}</h2>
                       <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
@@ -424,7 +465,7 @@ export default function ProgressReviewsPage() {
                     <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Review participants</p>
                     <div className="grid gap-3 sm:grid-cols-3">
                       <PersonCard role="Learner" name={learner?.name} icon="ri-user-line" tone="bg-primary-100 text-primary-700" />
-                      <PersonCard role="Coach" name={selected?.coachName} icon="ri-user-star-line" tone="bg-accent-100 text-accent-700" />
+                      <PersonCard role="Coach" name={selected?.coachName} icon="ri-user-star-line" tone="bg-amber-100 text-amber-700" />
                       <PersonCard role="Line manager" name={learner?.lineManager} icon="ri-briefcase-line" tone="bg-emerald-100 text-emerald-700" />
                     </div>
                   </div>
