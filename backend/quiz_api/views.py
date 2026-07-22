@@ -3,6 +3,7 @@ import csv
 import html
 import io
 import base64
+import logging
 import mimetypes
 import re
 import zipfile
@@ -22,6 +23,8 @@ from django.views.decorators.http import require_http_methods
 from .models import QuizAnswer, QuizPackage, QuizQuestion
 from learner_api.models import ActiveUser
 
+logger = logging.getLogger(__name__)
+
 AI_GENERATION_MAX_FILE_SIZE = 50 * 1024 * 1024
 AI_GENERATION_MAX_CONTENT_CHARS = 60000
 AI_GENERATION_MAX_OCR_PDF_PAGES = 24
@@ -39,6 +42,28 @@ AI_GENERATION_QUESTION_TYPES = {
 }
 QUIZ_STATUSES = {"draft", "published", "pending", "validating", "trash", "private"}
 ASSESSMENT_TYPES = {"quiz", "checkpoint"}
+
+
+def _curriculum_table_exists(table_name):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select 1
+                from information_schema.tables
+                where table_schema = 'curriculum'
+                  and table_name = %s
+                limit 1
+                """,
+                [table_name],
+            )
+            return bool(cursor.fetchone())
+    except Exception:
+        return False
+
+
+def _training_plan_table_exists():
+    return _curriculum_table_exists("Training_plan")
 
 
 def _ensure_quiz_assessment_type_column():
@@ -62,52 +87,90 @@ def _ensure_quiz_assessment_type_column():
             end $$;
             """
         )
-        cursor.execute(
-            """
-            with matches as (
-              select
-                q.id as quiz_id,
-                mam.programme_id,
-                row_number() over (
-                  partition by q.id
-                  order by
-                    case
-                      when mam.imported_from_training_plan_id = q.programme_id then 0
-                      when lower(mam.title) = lower(q.module) then 1
-                      else 2
-                    end,
-                    mam.updated_at desc nulls last,
-                    mam.created_at desc nulls last
-                ) as match_rank
-              from curriculum.quizzes q
-              left join curriculum."Training_plan" tp
-                on q.programme_id ~ '^[0-9]+$'
-               and tp.id = q.programme_id::integer
-              join curriculum.module_authoring_modules mam
-                on coalesce(trim(mam.programme_id), '') <> ''
-               and (
-                 mam.imported_from_training_plan_id = q.programme_id
-                 or (
-                   (lower(mam.title) = lower(q.module) or lower(q.module) like ('%%' || lower(mam.title) || '%%'))
+        if _training_plan_table_exists():
+            cursor.execute(
+                """
+                with matches as (
+                  select
+                    q.id as quiz_id,
+                    mam.programme_id,
+                    row_number() over (
+                      partition by q.id
+                      order by
+                        case
+                          when mam.imported_from_training_plan_id = q.programme_id then 0
+                          when lower(mam.title) = lower(q.module) then 1
+                          else 2
+                        end,
+                        mam.updated_at desc nulls last,
+                        mam.created_at desc nulls last
+                    ) as match_rank
+                  from curriculum.quizzes q
+                  left join curriculum."Training_plan" tp
+                    on q.programme_id ~ '^[0-9]+$'
+                   and tp.id = q.programme_id::integer
+                  join curriculum.modules mam
+                    on coalesce(trim(mam.programme_id), '') <> ''
                    and (
-                     lower(mam.programme_name) = lower(q.programme)
-                     or lower(mam.programme_id) = lower(q.programme)
+                     mam.imported_from_training_plan_id = q.programme_id
+                     or (
+                       (lower(mam.title) = lower(q.module) or lower(q.module) like ('%%' || lower(mam.title) || '%%'))
+                       and (
+                         lower(mam.programme_name) = lower(q.programme)
+                         or lower(mam.programme_id) = lower(q.programme)
+                         or lower(mam.programme_name) = lower(tp."Program")
+                         or lower(mam.programme_id) = lower(tp."Program")
+                       )
+                     )
                      or lower(mam.programme_name) = lower(tp."Program")
                      or lower(mam.programme_id) = lower(tp."Program")
                    )
-                 )
-                 or lower(mam.programme_name) = lower(tp."Program")
-                 or lower(mam.programme_id) = lower(tp."Program")
-               )
-              where q.programme_id ~ '^[0-9]+$'
+                  where q.programme_id ~ '^[0-9]+$'
+                )
+                update curriculum.quizzes q
+                set programme_id = matches.programme_id
+                from matches
+                where q.id = matches.quiz_id
+                  and matches.match_rank = 1
+                """
             )
-            update curriculum.quizzes q
-            set programme_id = matches.programme_id
-            from matches
-            where q.id = matches.quiz_id
-              and matches.match_rank = 1
-            """
-        )
+        else:
+            cursor.execute(
+                """
+                with matches as (
+                  select
+                    q.id as quiz_id,
+                    mam.programme_id,
+                    row_number() over (
+                      partition by q.id
+                      order by
+                        case
+                          when mam.imported_from_training_plan_id = q.programme_id then 0
+                          when lower(mam.title) = lower(q.module) then 1
+                          else 2
+                        end,
+                        mam.updated_at desc nulls last,
+                        mam.created_at desc nulls last
+                    ) as match_rank
+                  from curriculum.quizzes q
+                  join curriculum.modules mam
+                    on coalesce(trim(mam.programme_id), '') <> ''
+                   and (
+                     mam.imported_from_training_plan_id = q.programme_id
+                     or lower(mam.title) = lower(q.module)
+                     or lower(q.module) like ('%%' || lower(mam.title) || '%%')
+                     or lower(mam.programme_name) = lower(q.programme)
+                     or lower(mam.programme_id) = lower(q.programme)
+                   )
+                  where q.programme_id ~ '^[0-9]+$'
+                )
+                update curriculum.quizzes q
+                set programme_id = matches.programme_id
+                from matches
+                where q.id = matches.quiz_id
+                  and matches.match_rank = 1
+                """
+            )
         cursor.execute(
             """
             update curriculum.quizzes
@@ -366,7 +429,18 @@ def _extract_text_from_ai_files_with_report(files):
     extracted_chunks = []
     unreadable_files = []
     for uploaded_file in sorted(files[:10], key=lambda file: file.name.lower()):
-        extracted = _extract_text_for_ai(uploaded_file).strip()
+        try:
+            extracted = _extract_text_for_ai(uploaded_file).strip()
+        except ValueError:
+            # File-level validation problems (too large, unsupported type) must
+            # surface to the caller as a 400, not be swallowed here.
+            raise
+        except Exception:
+            # A single unreadable/corrupt file, or a missing optional extraction
+            # dependency, should mark that file unreadable rather than 500 the
+            # whole generation request.
+            logger.exception("AI source extraction failed for %s", getattr(uploaded_file, "name", "?"))
+            extracted = ""
         if extracted:
             extracted_chunks.append((uploaded_file.name, extracted))
         else:
@@ -503,6 +577,8 @@ def _program_candidates(programme):
 
 
 def _match_training_plan_id(programme, module, title):
+    if not _training_plan_table_exists():
+        return None
     candidates = _program_candidates(programme)
     module_text = module or ""
     title_text = title or ""
@@ -570,7 +646,7 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
                 cursor.execute(
                     """
                     select programme_id
-                    from curriculum.module_authoring_modules
+                    from curriculum.modules
                     where coalesce(trim(programme_id), '') <> ''
                       and imported_from_training_plan_id = %s
                     order by updated_at desc nulls last, created_at desc nulls last
@@ -582,32 +658,33 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
                 if row and row[0]:
                     return row[0]
 
-                cursor.execute(
-                    """
-                    select mam.programme_id
-                    from curriculum."Training_plan" tp
-                    join curriculum.module_authoring_modules mam
-                      on coalesce(trim(mam.programme_id), '') <> ''
-                     and (
-                       lower(mam.programme_name) = lower(tp."Program")
-                       or lower(mam.programme_id) = lower(tp."Program")
-                     )
-                    where tp.id = %s
-                    order by
-                      case
-                        when lower(mam.title) = lower(%s) then 0
-                        when lower(%s) like ('%%' || lower(mam.title) || '%%') then 1
-                        else 2
-                      end,
-                      mam.updated_at desc nulls last,
-                      mam.created_at desc nulls last
-                    limit 1
-                    """,
-                    [supplied_text, module_text, module_text],
-                )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    return row[0]
+                if _training_plan_table_exists():
+                    cursor.execute(
+                        """
+                        select mam.programme_id
+                        from curriculum."Training_plan" tp
+                        join curriculum.modules mam
+                          on coalesce(trim(mam.programme_id), '') <> ''
+                         and (
+                           lower(mam.programme_name) = lower(tp."Program")
+                           or lower(mam.programme_id) = lower(tp."Program")
+                         )
+                        where tp.id = %s
+                        order by
+                          case
+                            when lower(mam.title) = lower(%s) then 0
+                            when lower(%s) like ('%%' || lower(mam.title) || '%%') then 1
+                            else 2
+                          end,
+                          mam.updated_at desc nulls last,
+                          mam.created_at desc nulls last
+                        limit 1
+                        """,
+                        [supplied_text, module_text, module_text],
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        return row[0]
 
             programme_clauses = []
             params = []
@@ -621,7 +698,7 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
             cursor.execute(
                 f"""
                 select programme_id
-                from curriculum.module_authoring_modules
+                from curriculum.modules
                 where coalesce(trim(programme_id), '') <> ''
                   {where_programme}
                 order by
@@ -645,6 +722,8 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
 
 
 def _training_plan_programme_for_id(plan_id):
+    if not _training_plan_table_exists():
+        return ""
     if not plan_id or not _is_int_like(plan_id):
         return ""
     try:
@@ -660,6 +739,21 @@ def _training_plan_programme_for_id(plan_id):
 
 
 def _training_plan_programmes():
+    if not _training_plan_table_exists():
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select programme_name, count(*) as rows_count
+                    from curriculum.modules
+                    where coalesce(trim(programme_name), '') <> ''
+                    group by programme_name
+                    order by programme_name
+                    """
+                )
+                return [{"name": row[0], "trainingPlanRows": row[1]} for row in cursor.fetchall()]
+        except Exception:
+            return []
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -677,6 +771,8 @@ def _training_plan_programmes():
 
 
 def _training_plan_programme_map(plan_ids):
+    if not _training_plan_table_exists():
+        return {}
     ids = [int(plan_id) for plan_id in plan_ids if _is_int_like(plan_id)]
     if not ids:
         return {}
@@ -694,17 +790,30 @@ def _training_plan_programme_map(plan_ids):
 
 def _ensure_quiz_course_links_table():
     with connection.cursor() as cursor:
-        cursor.execute(
-            """
-            create table if not exists curriculum.quiz_course_links (
-              id bigserial primary key,
-              quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
-              training_plan_id integer not null references curriculum."Training_plan"(id) on delete cascade,
-              created_at timestamptz not null default now(),
-              unique (quiz_id, training_plan_id)
+        if _training_plan_table_exists():
+            cursor.execute(
+                """
+                create table if not exists curriculum.quiz_course_links (
+                  id bigserial primary key,
+                  quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
+                  training_plan_id integer not null references curriculum."Training_plan"(id) on delete cascade,
+                  created_at timestamptz not null default now(),
+                  unique (quiz_id, training_plan_id)
+                )
+                """
             )
-            """
-        )
+        else:
+            cursor.execute(
+                """
+                create table if not exists curriculum.quiz_course_links (
+                  id bigserial primary key,
+                  quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
+                  training_plan_id integer not null,
+                  created_at timestamptz not null default now(),
+                  unique (quiz_id, training_plan_id)
+                )
+                """
+            )
 
 
 def _quiz_course_link_ids(quiz_id):
@@ -720,6 +829,51 @@ def _quiz_course_link_ids(quiz_id):
 def _training_plan_courses_for_programme(programme):
     if not programme:
         return []
+    if not _training_plan_table_exists():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                  module_catalogue_id,
+                  programme_name,
+                  title,
+                  cohort_name,
+                  start_date
+                from curriculum.modules
+                where (
+                  lower(trim(programme_name)) = lower(trim(%s))
+                  or lower(trim(programme_id)) = lower(trim(%s))
+                )
+                  and coalesce(trim(title), '') <> ''
+                order by title, cohort_name, module_catalogue_id
+                """,
+                [programme, programme],
+            )
+            rows = cursor.fetchall()
+
+        courses = []
+        seen = set()
+        for module_id, program, module_name, cohort_name, starting_date in rows:
+            if _is_placeholder_training_value(program) or _is_placeholder_training_value(module_name):
+                continue
+            key = (module_name, cohort_name or "", starting_date or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            label_parts = [module_name]
+            if cohort_name:
+                label_parts.append(cohort_name)
+            if starting_date:
+                label_parts.append(str(starting_date))
+            courses.append({
+                "id": module_id,
+                "programme": program,
+                "module": module_name,
+                "cohort": cohort_name or "",
+                "startDate": str(starting_date or ""),
+                "label": " - ".join(label_parts),
+            })
+        return courses
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -772,31 +926,47 @@ def _is_placeholder_training_value(value):
 def training_plan_options(request):
     try:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                select
-                  tp."Program",
-                  tp.module_name,
-                  max(coalesce(nullif(mam.programme_id, ''), tp."Program")) as programme_id,
-                  max(tp.id) as training_plan_id,
-                  max(mam.module_catalogue_id) as module_catalogue_id
-                from curriculum."Training_plan" tp
-                left join curriculum.module_authoring_modules mam
-                  on mam.imported_from_training_plan_id = tp.id::text
-                  or (
-                    mam.title = tp.module_name
-                    and (
-                      mam.programme_id = tp."Program"
-                      or mam.programme_name = tp."Program"
-                      or tp."Program" like mam.programme_name || ' %%'
-                    )
-                  )
-                where coalesce(trim(tp."Program"), '') <> ''
-                  and coalesce(trim(tp.module_name), '') <> ''
-                group by tp."Program", tp.module_name
-                order by tp."Program", tp.module_name
-                """
-            )
+            if _training_plan_table_exists():
+                cursor.execute(
+                    """
+                    select
+                      tp."Program",
+                      tp.module_name,
+                      max(coalesce(nullif(mam.programme_id, ''), tp."Program")) as programme_id,
+                      max(tp.id) as training_plan_id,
+                      max(mam.module_catalogue_id) as module_catalogue_id
+                    from curriculum."Training_plan" tp
+                    left join curriculum.modules mam
+                      on mam.imported_from_training_plan_id = tp.id::text
+                      or (
+                        mam.title = tp.module_name
+                        and (
+                          mam.programme_id = tp."Program"
+                          or mam.programme_name = tp."Program"
+                          or tp."Program" like mam.programme_name || ' %%'
+                        )
+                      )
+                    where coalesce(trim(tp."Program"), '') <> ''
+                      and coalesce(trim(tp.module_name), '') <> ''
+                    group by tp."Program", tp.module_name
+                    order by tp."Program", tp.module_name
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    select
+                      programme_name,
+                      title,
+                      programme_id,
+                      null::integer as training_plan_id,
+                      module_catalogue_id
+                    from curriculum.modules
+                    where coalesce(trim(programme_name), '') <> ''
+                      and coalesce(trim(title), '') <> ''
+                    order by programme_name, title
+                    """
+                )
             rows = cursor.fetchall()
     except Exception:
         rows = []
@@ -1321,7 +1491,7 @@ def _safe_scorm_member_path(destination, member_name):
 
 
 def _ensure_scorm_extracted(quiz):
-    if quiz.package_type != "scorm" or not quiz.uploaded_file:
+    if quiz.package_type != "scorm" or not _scorm_uploaded_file_readable(quiz):
         raise Http404
 
     destination = (settings.MEDIA_ROOT / "scorm_runtime" / f"quiz_{quiz.id}").resolve()
@@ -1637,7 +1807,7 @@ Rules:
     try:
         from openai import OpenAI
     except ImportError:
-        return JsonResponse({"error": "OpenAI Python package is not installed. Run pip install -r requirments.txt."}, status=503)
+        return JsonResponse({"error": "OpenAI Python package is not installed. Run pip install -r requirements.txt."}, status=503)
 
     try:
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -2227,13 +2397,17 @@ def _quiz_xml_response(quiz):
     return response
 
 
-def _quiz_scorm_response(quiz):
-    if quiz.uploaded_file:
-        filename = quiz.file_name or _safe_download_name(quiz, "zip")
-        if not filename.lower().endswith(".zip"):
-            filename = _safe_download_name(quiz, "zip")
-        return FileResponse(quiz.uploaded_file.open("rb"), as_attachment=True, filename=filename)
+def _scorm_uploaded_file_readable(quiz):
+    """True only when the quiz has an uploaded package that actually exists on disk."""
+    if not quiz.uploaded_file:
+        return False
+    try:
+        return quiz.uploaded_file.storage.exists(quiz.uploaded_file.name)
+    except Exception:
+        return False
 
+
+def _scorm_index_html(quiz):
     questions = [
         {
             "text": question.question_text,
@@ -2252,7 +2426,7 @@ def _quiz_scorm_response(quiz):
         "module": quiz.module,
         "questions": questions,
     })
-    index_html = f"""<!doctype html>
+    return f"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -2289,6 +2463,16 @@ def _quiz_scorm_response(quiz):
 </body>
 </html>
 """
+
+
+def _quiz_scorm_response(quiz):
+    if _scorm_uploaded_file_readable(quiz):
+        filename = quiz.file_name or _safe_download_name(quiz, "zip")
+        if not filename.lower().endswith(".zip"):
+            filename = _safe_download_name(quiz, "zip")
+        return FileResponse(quiz.uploaded_file.open("rb"), as_attachment=True, filename=filename)
+
+    index_html = _scorm_index_html(quiz)
     manifest = f"""<?xml version="1.0" encoding="UTF-8"?>
 <manifest identifier="quiz-{quiz.id}" version="1.2"
   xmlns="http://www.imsproject.org/xsd/imscp_rootv1p1p2"
@@ -2347,6 +2531,17 @@ def quiz_scorm_launch(request, pk, asset_path=""):
         quiz = QuizPackage.objects.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
+
+    if quiz.package_type != "scorm":
+        raise Http404
+
+    # No real package on disk (or it never uploaded): serve a generated preview
+    # built from the quiz's saved questions instead of returning a 500/404 that
+    # the browser renders as an empty, broken iframe.
+    if not _scorm_uploaded_file_readable(quiz):
+        if asset_path and normpath(asset_path.replace("\\", "/")).lstrip("/") not in ("", ".", "index.html"):
+            raise Http404
+        return HttpResponse(_scorm_index_html(quiz), content_type="text/html; charset=utf-8")
 
     destination, launch_path = _ensure_scorm_extracted(quiz)
     requested_path = asset_path or launch_path

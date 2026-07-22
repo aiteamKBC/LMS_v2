@@ -6,13 +6,13 @@ import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculum
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
+import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
   archiveCurriculumCohort,
   archiveCurriculumGroup,
   archiveCurriculumModule,
   deleteCurriculumProgramme,
-  permanentlyDeleteCurriculumProgramme,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumModule,
@@ -26,32 +26,12 @@ import {
   type CurriculumStaffProfile,
 } from '@/lib/curriculumApi';
 
-type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'status' | 'color' | 'description'>>;
-type ArchiveTarget = { kind: 'programme'; id: string; name: string; sourceId?: string };
-
-const STATUS_OPTIONS = [
-  { value: 'active', label: 'Active' },
-  { value: 'planned', label: 'Planned' },
-  { value: 'archived', label: 'Archived' },
-];
+type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'color' | 'description'>>;
 
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string };
-
-function programmeStatusBucket(status: string) {
-  const value = String(status || '').toLowerCase();
-  if (value === 'archived') return 'archived';
-  if (value === 'planned' || value === 'draft') return 'planned';
-  return 'active';
-}
-
-function programmeStatusLabel(status: string) {
-  const bucket = programmeStatusBucket(status);
-  if (bucket === 'planned') return 'planned';
-  return bucket;
-}
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
   return showCurriculumAlert({
@@ -65,116 +45,69 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
 
 export default function CurriculumProgrammes() {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
+  const [wizardProgramme, setWizardProgramme] = useState<CurriculumProgramme | undefined>();
   const [actionError, setActionError] = useState<string | null>(null);
-  const [archiveTarget, setArchiveTarget] = useState<ArchiveTarget | null>(null);
-  const [selectedArchivedIds, setSelectedArchivedIds] = useState<Set<string>>(new Set());
-  const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
   const { programmes, loading, error, reload } = useCurriculumProgrammes();
 
-  useEffect(() => {
-    if (statusFilter !== 'archived') setSelectedArchivedIds(new Set());
-  }, [statusFilter]);
-
   const filtered = programmes.filter(p => {
-    const status = programmeStatusBucket(p.status);
     const needle = search.toLowerCase();
     if (needle && !p.name.toLowerCase().includes(needle) && !p.standard.toLowerCase().includes(needle)) return false;
-    if (statusFilter === 'all') return status !== 'archived';
-    if (status !== statusFilter) return false;
     return true;
   });
 
-  const active = programmes.filter(p => programmeStatusBucket(p.status) === 'active').length;
-  const planned = programmes.filter(p => programmeStatusBucket(p.status) === 'planned').length;
-  const archived = programmes.filter(p => programmeStatusBucket(p.status) === 'archived').length;
-  const liveProgrammes = programmes.filter(p => programmeStatusBucket(p.status) !== 'archived');
-  const visibleProgrammes = liveProgrammes.length;
-  const totalLearners = liveProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
-  const totalCohorts = liveProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
-  const totalModules = liveProgrammes.reduce((a, b) => a + (b.modules || 0), 0);
-  const totalSessions = liveProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
-  const programmesWithKsb = liveProgrammes.filter(programme => programme.ksbTotal > 0);
+  const totalProgrammes = programmes.length;
+  const totalLearners = programmes.reduce((a, b) => a + (b.learners || 0), 0);
+  const totalCohorts = programmes.reduce((a, b) => a + (b.cohorts || 0), 0);
+  const totalModules = programmes.reduce((a, b) => a + (b.modules || 0), 0);
+  const totalSessions = programmes.reduce((a, b) => a + (b.weeks || 0), 0);
+  const programmesWithKsb = programmes.filter(programme => programme.ksbTotal > 0);
   const averageKsbCoverage = programmesWithKsb.length
     ? Math.round(programmesWithKsb.reduce((sum, programme) => sum + ((programme.ksbMapped / programme.ksbTotal) * 100), 0) / programmesWithKsb.length)
     : 0;
-  const statusFilterOptions = [
-    { key: 'all', label: 'Live', count: visibleProgrammes },
-    { key: 'active', label: 'Active', count: active },
-    { key: 'planned', label: 'Planned', count: planned },
-    { key: 'archived', label: 'Archive', count: archived },
-  ];
-  const pageSubtitle = `${visibleProgrammes} programmes - ${active} active - ${planned} planned - ${archived} archived - ${totalLearners} learners`;
-  const heroSummary = <><strong>{visibleProgrammes} programmes</strong> - {active} active - {planned} planned - {totalCohorts} cohorts</>;
-
-  const archivedFiltered = filtered.filter(programme => programmeStatusBucket(programme.status) === 'archived');
-  const selectedArchivedProgrammes = archivedFiltered.filter(programme => selectedArchivedIds.has(programme.sourceId || programme.id));
-  const allArchivedSelected = archivedFiltered.length > 0 && archivedFiltered.every(programme => selectedArchivedIds.has(programme.sourceId || programme.id));
+  const pageSubtitle = `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
+  const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {totalCohorts} cohorts - {totalModules} modules</>;
 
   const openEdit = (programme: CurriculumProgramme) => {
     setActionError(null);
     setWizardProgrammeId(programme.sourceId || programme.id);
+    setWizardProgramme(programme);
     setWizardOpen(true);
   };
 
+  const closeWizard = () => {
+    setWizardOpen(false);
+    setWizardProgrammeId(undefined);
+    setWizardProgramme(undefined);
+  };
+
   const deleteProgramme = async (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
     setActionError(null);
-    try {
-      await deleteCurriculumProgramme(programme.sourceId || programme.id);
-      if (editingProgramme?.id === programme.id) setEditingProgramme(null);
-      await reload();
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Unable to delete programme.';
-      setActionError(detail);
-      showProgrammeSwalToast('Archive failed', detail, 'error');
-      throw err;
-    }
-  };
-
-  const restoreProgramme = async (programme: CurriculumProgramme) => {
-    setActionError(null);
-    try {
-      await updateCurriculumProgramme(programme.sourceId || programme.id, { status: 'active' });
-      await reload();
-      showProgrammeSwalToast('Programme restored', `${programme.name} is active again.`);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Unable to restore programme.';
-      setActionError(detail);
-      showProgrammeSwalToast('Restore failed', detail, 'error');
-    }
-  };
-
-  const toggleArchivedSelection = (programme: CurriculumProgramme) => {
-    const id = programme.sourceId || programme.id;
-    setSelectedArchivedIds(previous => {
-      const next = new Set(previous);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+    await showCurriculumConfirm({
+      title: 'Delete programme?',
+      text: `Delete "${programme.name}" from the curriculum programme list? Related curriculum records will be kept for audit and reporting.`,
+      icon: 'warning',
+      confirmButtonText: 'Delete Programme',
+      cancelButtonText: 'Cancel',
+      successTitle: 'Programme deleted',
+      successText: `${programme.name} was removed from the active programme list.`,
+      onConfirm: async () => {
+        setDeletingProgrammeId(programmeId);
+        try {
+          await deleteCurriculumProgramme(programmeId);
+          await reload();
+        } catch (err) {
+          setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
+          throw err;
+        } finally {
+          setDeletingProgrammeId(null);
+        }
+      },
     });
-  };
-
-  const permanentlyDeleteSelected = async () => {
-    if (!selectedArchivedProgrammes.length) return;
-    setBulkDeleting(true);
-    setActionError(null);
-    try {
-      await Promise.all(selectedArchivedProgrammes.map(programme => permanentlyDeleteCurriculumProgramme(programme.sourceId || programme.id)));
-      setSelectedArchivedIds(new Set());
-      await reload();
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Unable to permanently delete selected programmes.';
-      setActionError(detail);
-      showProgrammeSwalToast('Permanent delete failed', detail, 'error');
-      throw err;
-    } finally {
-      setBulkDeleting(false);
-      setPermanentDeleteOpen(false);
-    }
   };
 
   return (
@@ -195,7 +128,7 @@ export default function CurriculumProgrammes() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={() => { setWizardProgrammeId(undefined); setWizardOpen(true); }}
+                  onClick={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
                   <i className="ri-add-line text-base"></i>
@@ -212,7 +145,7 @@ export default function CurriculumProgrammes() {
               </div>
             </div>
             <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <DashboardStat icon="ri-layout-masonry-line" label="Live programmes" value={String(visibleProgrammes)} detail={`${active} active - ${planned} planned`} />
+              <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
               <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalSessions} planned sessions`} />
               <DashboardStat icon="ri-node-tree" label="KSB coverage" value={`${averageKsbCoverage}%`} detail={programmesWithKsb.length ? 'Average mapped coverage' : 'No mapped KSBs yet'} />
@@ -233,7 +166,7 @@ export default function CurriculumProgrammes() {
         )}
 
         <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
               <input
@@ -249,51 +182,8 @@ export default function CurriculumProgrammes() {
                 </button>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-1 rounded-xl bg-background-100 p-1">
-              {statusFilterOptions.map(f => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setStatusFilter(f.key)}
-                  className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-[11px] font-bold transition-smooth ${statusFilter === f.key ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}
-                >
-                  {f.label}
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${statusFilter === f.key ? 'bg-primary-50 text-primary-700' : 'bg-background-200 text-foreground-500'}`}>{f.count}</span>
-                </button>
-              ))}
-            </div>
           </div>
         </section>
-
-        {statusFilter === 'archived' && !loading && (
-          <div className="rounded-2xl border border-red-200/70 bg-red-50/70 px-4 py-3 flex flex-col lg:flex-row lg:items-center gap-3">
-            <div className="flex-1">
-              <p className="text-[12px] font-bold text-red-800">Archived programmes</p>
-              <p className="text-[11px] text-red-700/80">Select archived programmes to permanently delete them. This removes stored curriculum rows and cannot be undone.</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="px-3 py-1.5 rounded-full bg-white border border-red-200 text-[11px] font-bold text-red-700">
-                {selectedArchivedProgrammes.length} selected
-              </span>
-              <button
-                type="button"
-                onClick={() => setSelectedArchivedIds(allArchivedSelected ? new Set() : new Set(archivedFiltered.map(programme => programme.sourceId || programme.id)))}
-                className="px-3 py-1.5 rounded-lg bg-white border border-red-200 text-[11px] font-semibold text-foreground-700 hover:bg-red-100 transition-smooth"
-              >
-                {allArchivedSelected ? 'Clear selection' : 'Select all'}
-              </button>
-              <button
-                type="button"
-                disabled={!selectedArchivedProgrammes.length || bulkDeleting}
-                onClick={() => setPermanentDeleteOpen(true)}
-                className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-smooth"
-              >
-                <i className="ri-delete-bin-6-line mr-1"></i>
-                {bulkDeleting ? 'Deleting...' : 'Permanent delete selected'}
-              </button>
-            </div>
-          </div>
-        )}
 
         {loading ? (
           <CardGridSkeleton count={6} />
@@ -301,22 +191,9 @@ export default function CurriculumProgrammes() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {filtered.map(prog => {
             const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
-            const status = programmeStatusBucket(prog.status);
-            const archivedKey = prog.sourceId || prog.id;
-            const isArchivedSelected = selectedArchivedIds.has(archivedKey);
             return (
-              <article key={prog.id} className={`group relative overflow-hidden rounded-2xl border bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:shadow-lg ${isArchivedSelected ? 'border-red-300 ring-2 ring-red-100' : 'border-foreground-200/70 hover:border-primary-200/80'}`}>
+              <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
-                {status === 'archived' && statusFilter === 'archived' && (
-                  <button
-                    type="button"
-                    aria-label={`Select ${prog.name}`}
-                    onClick={event => { event.stopPropagation(); toggleArchivedSelection(prog); }}
-                    className={`absolute right-4 top-4 h-7 w-7 rounded-lg border flex items-center justify-center transition-smooth ${isArchivedSelected ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-foreground-200 text-foreground-500 hover:border-red-300 hover:text-red-600'}`}
-                  >
-                    <i className={`${isArchivedSelected ? 'ri-check-line' : 'ri-checkbox-blank-line'} text-sm`}></i>
-                  </button>
-                )}
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: prog.color || '#6941c6' }}>
@@ -325,9 +202,12 @@ export default function CurriculumProgrammes() {
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">{prog.standard} - {prog.level || 'Level not set'}</p>
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                        <i className="ri-calendar-event-line text-[10px]"></i>
+                        Programme
+                      </span>
                     </div>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ${status === 'archived' && statusFilter === 'archived' ? 'mr-9' : ''} ${status === 'active' ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/70' : status === 'planned' ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-200/70' : 'bg-background-100 text-foreground-500 ring-1 ring-background-200'}`}>{programmeStatusLabel(prog.status)}</span>
                 </div>
                 <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
@@ -352,22 +232,16 @@ export default function CurriculumProgrammes() {
                     Open
                   </button>
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
-                    <i className="ri-settings-3-line"></i>Edit
+                    <i className="ri-pencil-line text-sm"></i>Edit
                   </button>
-                  {status === 'archived' ? (
-                    <>
-                      <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200/70 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); restoreProgramme(prog); }}>
-                        <i className="ri-refresh-line mr-1"></i>Restore
-                      </button>
-                      <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-600 bg-red-600 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-red-700" onClick={e => { e.stopPropagation(); setSelectedArchivedIds(new Set([archivedKey])); setPermanentDeleteOpen(true); }}>
-                        <i className="ri-delete-bin-6-line mr-1"></i>Delete
-                      </button>
-                    </>
-                  ) : (
-                    <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200/70 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100" onClick={e => { e.stopPropagation(); setArchiveTarget({ kind: 'programme', id: prog.id, sourceId: prog.sourceId, name: prog.name }); }}>
-                      <i className="ri-archive-line mr-1"></i>Archive
-                    </button>
-                  )}
+                  <button
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
+                    onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
+                  >
+                    <i className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></i>
+                    Delete
+                  </button>
                 </div>
               </article>
             );
@@ -375,10 +249,9 @@ export default function CurriculumProgrammes() {
           </div>
         ) : (
           <ProgrammesEmptyState
-            archivedMode={statusFilter === 'archived'}
             hasSearch={Boolean(search.trim())}
-            onClear={() => { setSearch(''); setStatusFilter('all'); }}
-            onCreate={() => { setWizardProgrammeId(undefined); setWizardOpen(true); }}
+            onClear={() => setSearch('')}
+            onCreate={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
           />
         )}
 
@@ -389,39 +262,19 @@ export default function CurriculumProgrammes() {
             onSaved={reload}
             onOpenAddStructure={() => {
               setWizardProgrammeId(editingProgramme.sourceId || editingProgramme.id);
+              setWizardProgramme(editingProgramme);
               setEditingProgramme(null);
               setWizardOpen(true);
             }}
           />
         )}
-        <AddCurriculumStructureWizard isOpen={wizardOpen} onClose={() => setWizardOpen(false)} onSaved={reload} initialProgrammeId={wizardProgrammeId} startStep={wizardProgrammeId ? 'cohort' : 'programme'} />
-        <ArchiveConfirmDialog
-          open={Boolean(archiveTarget)}
-          title="Archive programme?"
-          body={archiveTarget ? `Archiving "${archiveTarget.name}" will hide it from active curriculum planning. Existing cohorts, groups and modules will remain stored for history and reporting.` : ''}
-          confirmLabel="Archive Programme"
-          successTitle="Programme archived"
-          successText={archiveTarget ? `${archiveTarget.name} was moved to the curriculum archive.` : 'Programme was moved to the curriculum archive.'}
-          onCancel={() => setArchiveTarget(null)}
-          onConfirm={async () => {
-            const target = archiveTarget;
-            if (!target) return;
-            const programme = programmes.find(item => item.id === target.id || item.sourceId === target.sourceId);
-            if (programme) await deleteProgramme(programme);
-          }}
-        />
-        <ArchiveConfirmDialog
-          open={permanentDeleteOpen}
-          title="Permanently delete programmes?"
-          body={`This will permanently delete ${selectedArchivedProgrammes.length} archived programme${selectedArchivedProgrammes.length === 1 ? '' : 's'} from the curriculum archive. It will remove the selected programme records and their stored curriculum rows.`}
-          warning="This cannot be undone. Restoring will no longer be possible after permanent deletion."
-          confirmLabel="Permanent Delete"
-          successTitle="Archived programmes deleted"
-          successText={`${selectedArchivedProgrammes.length} archived programme${selectedArchivedProgrammes.length === 1 ? '' : 's'} permanently deleted.`}
-          onCancel={() => {
-            if (!bulkDeleting) setPermanentDeleteOpen(false);
-          }}
-          onConfirm={permanentlyDeleteSelected}
+        <AddCurriculumStructureWizard
+          isOpen={wizardOpen}
+          onClose={closeWizard}
+          onSaved={reload}
+          initialProgrammeId={wizardProgrammeId}
+          initialProgramme={wizardProgramme}
+          startStep="programme"
         />
       </div>
     </WorkspaceShell>
@@ -442,43 +295,37 @@ function DashboardStat({ icon, label, value, detail }: { icon: string; label: st
 }
 
 function ProgrammesEmptyState({
-  archivedMode,
   hasSearch,
   onClear,
   onCreate,
 }: {
-  archivedMode: boolean;
   hasSearch: boolean;
   onClear: () => void;
   onCreate: () => void;
 }) {
-  const title = archivedMode ? 'No archived programmes found' : hasSearch ? 'No programmes match your search' : 'No programmes created yet';
-  const message = archivedMode
-    ? 'Archived programmes will appear here after they are removed from active planning.'
-    : hasSearch
-      ? 'Try a different programme name, standard, or status filter.'
-      : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
+  const title = hasSearch ? 'No programmes match your search' : 'No programmes created yet';
+  const message = hasSearch
+    ? 'Try a different programme name or standard.'
+    : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
 
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 px-6 py-14 text-center shadow-sm">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-        <i className={`${archivedMode ? 'ri-archive-line' : hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></i>
+        <i className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></i>
       </span>
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
       <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
-        {(hasSearch || archivedMode) && (
+        {hasSearch && (
           <button type="button" onClick={onClear} className="inline-flex h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
             <i className="ri-filter-off-line"></i>
-            Clear filters
+            Clear search
           </button>
         )}
-        {!archivedMode && (
-          <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-            <i className="ri-add-line"></i>
-            Create programme
-          </button>
-        )}
+        <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+          <i className="ri-add-line"></i>
+          Create programme
+        </button>
       </div>
     </div>
   );
@@ -502,10 +349,6 @@ function TextAreaField({ label, value, onChange, rows = 3 }: { label: string; va
   );
 }
 
-function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
-  return <ChoiceSelect label={label} value={value} onChange={onChange} options={options} placeholder={`Select ${label.toLowerCase()}...`} required />;
-}
-
 function ChoiceSelect({
   label,
   value,
@@ -513,6 +356,7 @@ function ChoiceSelect({
   options,
   placeholder = 'Select...',
   required,
+  onOpen,
 }: {
   label: string;
   value: string;
@@ -520,6 +364,7 @@ function ChoiceSelect({
   options: SelectOption[];
   placeholder?: string;
   required?: boolean;
+  onOpen?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -602,7 +447,13 @@ function ChoiceSelect({
       <span className="text-[10px] font-bold text-foreground-500 uppercase tracking-wide">{label}{required ? ' *' : ''}</span>
       <button
         type="button"
-        onClick={() => setOpen(current => !current)}
+        onClick={() => {
+          setOpen(current => {
+            const next = !current;
+            if (next) onOpen?.();
+            return next;
+          });
+        }}
         className={`mt-1.5 h-10 w-full rounded-xl border px-3 text-left shadow-sm transition-smooth ${open ? 'border-primary-400 bg-background-50 ring-2 ring-primary-100' : 'border-foreground-200/70 bg-background-50 hover:border-primary-200 hover:bg-background-100/50'}`}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -827,7 +678,8 @@ function ProgrammeStructureEditor({
   onSaved: () => void;
   onOpenAddStructure: () => void;
 }) {
-  const { data, loading, error, reload } = useCurriculumData();
+  const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true });
+  const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, error: staffError, reload: reloadStaffProfiles } = useCurriculumStaffProfiles();
   const [tab, setTab] = useState<'programme' | 'cohorts' | 'groups' | 'modules'>('programme');
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -837,8 +689,8 @@ function ProgrammeStructureEditor({
   const groups = useMemo(() => (data?.groups ?? []).filter(group => cohortIds.has(group.cohortId) || matchesProgramme(liveProgramme, group.programme)), [cohortIds, data?.groups, liveProgramme]);
   const modules = useMemo(() => (data?.modules ?? []).filter(module => matchesProgramme(liveProgramme, module.programme)), [data?.modules, liveProgramme]);
   const sessions = data?.sessions ?? [];
-  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(data?.tutors ?? [])), [data?.tutors]);
-  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(data?.coaches ?? [])), [data?.coaches]);
+  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(staffTutors)), [staffTutors]);
+  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(staffCoaches)), [staffCoaches]);
   const catalogueModuleOptions = useMemo(() => moduleOptions(data?.modules ?? []), [data?.modules]);
 
   const refresh = async (message: string) => {
@@ -847,6 +699,19 @@ function ProgrammeStructureEditor({
     setNotice(message);
     showProgrammeSwalToast('Saved', message);
   };
+
+  useEffect(() => {
+    const refreshStaffProfiles = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      void reloadStaffProfiles({ silent: true });
+    };
+    window.addEventListener('focus', refreshStaffProfiles);
+    document.addEventListener('visibilitychange', refreshStaffProfiles);
+    return () => {
+      window.removeEventListener('focus', refreshStaffProfiles);
+      document.removeEventListener('visibilitychange', refreshStaffProfiles);
+    };
+  }, [reloadStaffProfiles]);
 
   const tabs = [
     { key: 'programme' as const, label: 'Programme', count: 1 },
@@ -889,8 +754,9 @@ function ProgrammeStructureEditor({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {loading && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">Loading live curriculum structure...</div>}
+          {(loading || staffLoading) && <div className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">Loading live curriculum structure...</div>}
           {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{error}</div>}
+          {staffError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">{staffError}</div>}
           {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[12px] font-medium text-emerald-700">{notice}</div>}
 
           {tab === 'programme' && <ProgrammeEditorForm programme={liveProgramme} onSaved={() => refresh('Programme details saved.')} />}
@@ -904,7 +770,7 @@ function ProgrammeStructureEditor({
 
           {tab === 'groups' && (
             <div className="space-y-3">
-              {groups.map(group => <GroupEditorRow key={group.id} group={group} tutors={tutorOptions} coaches={coachOptions} onSaved={() => refresh('Group saved.')} />)}
+              {groups.map(group => <GroupEditorRow key={group.id} group={group} tutors={tutorOptions} coaches={coachOptions} onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })} onSaved={() => refresh('Group saved.')} />)}
               {!groups.length && <EmptyStructure label="No groups linked to this programme yet." />}
             </div>
           )}
@@ -919,6 +785,7 @@ function ProgrammeStructureEditor({
                   moduleOptions={catalogueModuleOptions}
                   tutors={tutorOptions}
                   coaches={coachOptions}
+                  onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })}
                   onSaved={() => refresh('Module saved.')}
                 />
               ))}
@@ -985,7 +852,6 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
     name: programme.name,
     standard: programme.standard,
     level: programme.level || '',
-    status: programme.status || 'active',
     color: programme.color || '#6941c6',
     description: programme.description || '',
   });
@@ -1008,8 +874,7 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
         <Field label="Programme name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
         <Field label="Standard" value={form.standard} onChange={value => setForm(prev => ({ ...prev, standard: value }))} />
         <Field label="Level" value={form.level} onChange={value => setForm(prev => ({ ...prev, level: value }))} placeholder="Example: L4" />
-        <SelectField label="Status" value={form.status} onChange={value => setForm(prev => ({ ...prev, status: value }))} options={STATUS_OPTIONS} />
-        <div className="md:col-span-2">
+        <div>
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} />
         </div>
       </div>
@@ -1079,7 +944,7 @@ function CohortEditorRow({ cohort, onSaved }: { cohort: CurriculumCohort; onSave
   );
 }
 
-function GroupEditorRow({ group, tutors, coaches, onSaved }: { group: CurriculumGroup; tutors: SelectOption[]; coaches: SelectOption[]; onSaved: () => Promise<void> | void }) {
+function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSaved }: { group: CurriculumGroup; tutors: SelectOption[]; coaches: SelectOption[]; onRefreshStaffProfiles: () => void; onSaved: () => Promise<void> | void }) {
   const [form, setForm] = useState({
     name: group.name,
     tutor: group.tutor === 'Unassigned' ? '' : group.tutor || '',
@@ -1124,8 +989,8 @@ function GroupEditorRow({ group, tutors, coaches, onSaved }: { group: Curriculum
         />
         <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-3">
           <Field label="Group name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
-          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." />
-          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." />
+          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." onOpen={onRefreshStaffProfiles} />
+          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." onOpen={onRefreshStaffProfiles} />
           <WeekdayMultiSelect value={form.weekDays} onChange={value => setForm(prev => ({ ...prev, weekDays: value }))} />
           <Field label="Start time" type="time" value={form.startTime} onChange={value => setForm(prev => ({ ...prev, startTime: value }))} />
           <Field label="End time" type="time" value={form.endTime} onChange={value => setForm(prev => ({ ...prev, endTime: value }))} />
@@ -1152,6 +1017,7 @@ function ModuleEditorRow({
   moduleOptions: availableModules,
   tutors,
   coaches,
+  onRefreshStaffProfiles,
   onSaved,
 }: {
   module: CurriculumModule;
@@ -1159,6 +1025,7 @@ function ModuleEditorRow({
   moduleOptions: SelectOption[];
   tutors: SelectOption[];
   coaches: SelectOption[];
+  onRefreshStaffProfiles: () => void;
   onSaved: () => Promise<void> | void;
 }) {
   const sortedSessions = [...sessions].sort((left, right) => String(left.date).localeCompare(String(right.date)));
@@ -1229,8 +1096,8 @@ function ModuleEditorRow({
           <div className="md:col-span-2"><ChoiceSelect label="Module" value={form.name} onChange={selectModule} options={availableModules} placeholder="Select module..." required /></div>
           <Field label="Sessions / weeks" type="number" value={form.weeks} onChange={value => setForm(prev => ({ ...prev, weeks: value }))} />
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} compact />
-          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." />
-          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." />
+          <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." onOpen={onRefreshStaffProfiles} />
+          <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." onOpen={onRefreshStaffProfiles} />
           <Field label="Start date" type="date" value={form.startDate} onChange={value => setForm(prev => ({ ...prev, startDate: value }))} />
           <Field label="End date" type="date" value={form.endDate} onChange={value => setForm(prev => ({ ...prev, endDate: value }))} />
           <WeekdayMultiSelect value={form.weekDays} onChange={value => setForm(prev => ({ ...prev, weekDays: value }))} />

@@ -8,6 +8,8 @@ interface DatePickerFieldProps {
   required?: boolean;
   placeholder?: string;
   disabled?: boolean;
+  min?: string;
+  max?: string;
   error?: string;
   helper?: string;
 }
@@ -19,6 +21,8 @@ export function DatePickerField({
   required,
   placeholder = 'Select date',
   disabled,
+  min,
+  max,
   error,
   helper,
 }: DatePickerFieldProps) {
@@ -84,8 +88,16 @@ export function DatePickerField({
   const monthLabel = viewDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   const calendarDays = buildCalendarDays(viewDate);
   const todayValue = toDateInput(new Date());
+  const minDate = dateFromInput(min || '');
+  const maxDate = dateFromInput(max || '');
+
+  const isDateDisabled = (date: Date) => (
+    Boolean(minDate && date < minDate) ||
+    Boolean(maxDate && date > maxDate)
+  );
 
   const selectDate = (date: Date) => {
+    if (isDateDisabled(date)) return;
     onChange(toDateInput(date));
     setOpen(false);
   };
@@ -126,12 +138,14 @@ export function DatePickerField({
             const dayValue = toDateInput(day.date);
             const selected = value === dayValue;
             const today = todayValue === dayValue;
+            const dayDisabled = isDateDisabled(day.date);
             return (
               <button
                 key={dayValue}
                 type="button"
+                disabled={dayDisabled}
                 onClick={() => selectDate(day.date)}
-                className={`flex h-9 items-center justify-center rounded-lg text-[12px] font-bold transition-smooth ${selected ? 'bg-primary-600 text-white shadow-sm' : day.inCurrentMonth ? 'text-foreground-900 hover:bg-primary-50 hover:text-primary-700' : 'text-foreground-300 hover:bg-background-100'} ${today && !selected ? 'ring-1 ring-primary-200' : ''}`}
+                className={`flex h-9 items-center justify-center rounded-lg text-[12px] font-bold transition-smooth disabled:cursor-not-allowed disabled:text-foreground-200 disabled:hover:bg-transparent ${selected ? 'bg-primary-600 text-white shadow-sm' : day.inCurrentMonth ? 'text-foreground-900 hover:bg-primary-50 hover:text-primary-700' : 'text-foreground-300 hover:bg-background-100'} ${today && !selected ? 'ring-1 ring-primary-200' : ''}`}
               >
                 {day.date.getDate()}
               </button>
@@ -144,7 +158,7 @@ export function DatePickerField({
         <button type="button" onClick={() => onChange('')} className="rounded-lg px-3 py-1.5 text-[11px] font-bold text-foreground-500 hover:bg-background-50 hover:text-red-600">
           Clear
         </button>
-        <button type="button" onClick={() => selectDate(new Date())} className="rounded-lg bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
+        <button type="button" onClick={() => selectDate(new Date())} disabled={isDateDisabled(new Date())} className="rounded-lg bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
           Today
         </button>
       </div>

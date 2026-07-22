@@ -3,6 +3,8 @@
 // Talks to the Django backend at /learner_api/quizzes (proxied to :8000 by Vite in dev).
 // ============================================================================
 
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+
 const BASE = '/learner_api/quizzes';
 
 export type QuestionType =
@@ -74,19 +76,19 @@ export interface QuizQuestionResult {
   correctAnswer: string | null;
 }
 
+// The slim stored attempt (also echoed in the submit response's `attempt`).
 export interface QuizAttempt {
-  week: string | null;
+  kind: 'quiz';
   attempt: number;            // 1-based attempt number for this quiz
-  grade: string;              // e.g. "30%"
-  Score: string;              // questions correct / total, e.g. "6/20"
-  module: string | null;
+  grade: number;              // 0-1 decimal, e.g. 0.9
+  achievedScore: number;      // questions correct
+  totalScore: number;         // questions total
   passed: boolean;
   quizId: number;
-  quizName: string;
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
-  questions: QuizQuestionResult[];
+  questions: unknown[];       // slim id-referenced questions (not read by the results screen)
   startedAt: string;
   submittedAt: string;
   timeTaken: string;          // "MM:SS", e.g. "00:26"
@@ -94,9 +96,15 @@ export interface QuizAttempt {
 
 export interface QuizAttemptResult {
   attempt: QuizAttempt;
-  breakdown: QuizQuestionResult[];
+  breakdown: QuizQuestionResult[];   // full-text, for the results screen
   earned: number;
   possible: number;
+  grade: number;              // 0-1 decimal
+  achievedScore: number;
+  totalScore: number;
+  passed: boolean;
+  timeTaken: string;
+  quizName: string;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -127,5 +135,8 @@ export function submitQuizAttempt(
   return request<QuizAttemptResult>(`${BASE}/${quizId}/submit/?kind=${kind}&learnerId=${learnerId}`, {
     method: 'POST',
     body: JSON.stringify(submission),
+  }).then((result) => {
+    invalidateLearnerDetailCache(kind, learnerId);
+    return result;
   });
 }

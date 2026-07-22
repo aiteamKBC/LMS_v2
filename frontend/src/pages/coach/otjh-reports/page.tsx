@@ -63,6 +63,7 @@ interface OtjhRow {
   startDate: string;
   plannedEndDate: string;
   gatewayReviewDate: string;
+  target: number;
   minimum: number;
   planned: number;
   submitted: number;
@@ -84,6 +85,10 @@ interface OtjhRow {
 function toNumber(value: unknown): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function formatHours(value: number): string {
+  return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value);
 }
 
 function displayText(value?: string | null): string {
@@ -143,12 +148,13 @@ function getProgressBarStyle(tone: RiskTone): string {
 }
 
 function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
+  const target = Math.max(toNumber(learner.otjhTarget), 0);
   const minimum = Math.max(toNumber(learner.otjhMinimum), 0);
-  const planned = Math.max(toNumber(learner.otjhPlanned ?? learner.otjhTarget), 0);
+  const planned = Math.max(toNumber(learner.otjhPlanned), 0);
   const completed = Math.max(toNumber(learner.otjhCompleted), 0);
-  const denominator = planned > 0 ? planned : Math.max(toNumber(learner.otjhTarget), 1);
+  const denominator = target > 0 ? target : Math.max(planned, 1);
   const statusFromDb = normalizeOtjhStatus(learner.otjhStatus);
-  const status = statusFromDb === 'unknown' && planned > 0 && completed > planned ? 'ahead' : statusFromDb;
+  const status = statusFromDb === 'unknown' && denominator > 0 && completed > denominator ? 'ahead' : statusFromDb;
   const pace = denominator > 0 ? Math.round((completed / denominator) * 100) : 0;
 
   return {
@@ -166,6 +172,7 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
     startDate: displayText(learner.startDate),
     plannedEndDate: displayText(learner.plannedEndDate),
     gatewayReviewDate: displayText(learner.gatewayReviewDate),
+    target,
     minimum,
     planned,
     submitted: Math.max(toNumber(learner.otjhSubmitted), 0),
@@ -173,7 +180,7 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
     forecast: Math.max(toNumber(learner.otjhForecast), 0),
     expected: Math.max(toNumber(learner.otjhExpected), 0),
     progressHours: displayText(learner.otjhProgressHours),
-    remaining: Math.max(planned - completed, 0),
+    remaining: Math.max(denominator - completed, 0),
     pace,
     ksbStatus: displayText(learner.ksbStatus),
     ksbProgress: Math.max(toNumber(learner.ksbProgress), 0),
@@ -226,14 +233,15 @@ export default function CoachOtjhReports() {
   }, []);
 
   const stats = useMemo(() => {
+    const totalTarget = rows.reduce((total, row) => total + row.target, 0);
     const totalPlanned = rows.reduce((total, row) => total + row.planned, 0);
     const totalCompleted = rows.reduce((total, row) => total + row.completed, 0);
     const behind = rows.filter(row => row.status === 'behind').length;
     const onTrack = rows.filter(row => row.status === 'on-track').length;
     const needAttention = rows.filter(row => row.status === 'need-attention').length;
-    const completion = totalPlanned > 0 ? Math.round((totalCompleted / totalPlanned) * 100) : 0;
+    const completion = totalTarget > 0 ? Math.round((totalCompleted / totalTarget) * 100) : 0;
 
-    return { totalPlanned, totalCompleted, behind, onTrack, needAttention, completion };
+    return { totalTarget, totalPlanned, totalCompleted, behind, onTrack, needAttention, completion };
   }, [rows]);
 
   const filteredRows = useMemo(
@@ -255,7 +263,7 @@ export default function CoachOtjhReports() {
   };
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="OTJH Reports" pageSubtitle="Monitor Off-The-Job Hours progress and pace" userName={ownerName} userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="OTJH Reports" pageSubtitle="Monitor Off-The-Job Hours progress and targets" userName={ownerName} userRole="Progress Coach">
       <div className="p-6 space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
@@ -267,17 +275,21 @@ export default function CoachOtjhReports() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">OTJH Reports</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                Total caseload: <strong>{stats.totalCompleted}/{stats.totalPlanned} hours</strong> ({stats.completion}%). {stats.behind} at risk, {stats.needAttention} need attention, {stats.onTrack} on track.
+                Total caseload: <strong>{formatHours(stats.totalCompleted)}/{formatHours(stats.totalTarget)} target hours</strong> ({stats.completion}%). Planned hours {formatHours(stats.totalPlanned)}. {stats.behind} at risk, {stats.needAttention} need attention, {stats.onTrack} on track.
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{stats.totalCompleted}</p>
+                <p className="text-2xl font-bold text-white">{formatHours(stats.totalCompleted)}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Completed hrs</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{stats.totalPlanned}</p>
+                <p className="text-2xl font-bold text-white">{formatHours(stats.totalPlanned)}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Planned hrs</p>
+              </div>
+              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
+                <p className="text-2xl font-bold text-white">{formatHours(stats.totalTarget)}</p>
+                <p className="text-[10px] text-white/70 uppercase tracking-wide">Target hrs</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
                 <p className="text-2xl font-bold text-red-300">{stats.behind}</p>
@@ -304,9 +316,9 @@ export default function CoachOtjhReports() {
             <span>Learner</span>
             <span>Programme</span>
             <span className="text-center">Planned</span>
+            <span className="text-center">Target</span>
             <span className="text-center">Completed</span>
             <span className="text-center">Remaining</span>
-            <span className="text-center">Pace</span>
             <span className="text-center">OTJH Status</span>
             <span className="text-center">Action</span>
           </div>
@@ -342,10 +354,10 @@ export default function CoachOtjhReports() {
                     </div>
                   </div>
                   <span className="text-[11px] text-foreground-500 truncate">{row.programme}</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{row.planned}</span>
-                  <span className="text-[11px] font-semibold text-primary-600 text-center">{row.completed}</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{row.remaining}</span>
-                  <span className={`text-[11px] font-semibold text-center ${getPaceTone(row.pace)}`}>{row.pace}%</span>
+                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.planned)}</span>
+                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.target)}</span>
+                  <span className="text-[11px] font-semibold text-primary-600 text-center">{formatHours(row.completed)}</span>
+                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.remaining)}</span>
                   <div className="flex justify-center">
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getBadgeStyle(row.risk)}`}>{row.statusLabel}</span>
                   </div>
@@ -388,26 +400,26 @@ export default function CoachOtjhReports() {
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
-                <p className="mt-1 text-xl font-bold text-foreground-900">{selectedRow.planned}</p>
+                <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.planned)}</p>
+              </div>
+              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
+                <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.target)}</p>
               </div>
               <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
-                <p className="mt-1 text-xl font-bold text-primary-600">{selectedRow.completed}</p>
+                <p className="mt-1 text-xl font-bold text-primary-600">{formatHours(selectedRow.completed)}</p>
               </div>
               <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Remaining</p>
-                <p className="mt-1 text-xl font-bold text-foreground-900">{selectedRow.remaining}</p>
-              </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Pace</p>
-                <p className={`mt-1 text-xl font-bold ${getPaceTone(selectedRow.pace)}`}>{selectedRow.pace}%</p>
+                <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.remaining)}</p>
               </div>
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <div className="flex items-center justify-between text-[11px] text-foreground-500">
-                <span>OTJH completion against Planned</span>
-                <span className="font-semibold text-foreground-900">{selectedRow.completed}/{selectedRow.planned}</span>
+                <span>OTJH completion against Target</span>
+                <span className="font-semibold text-foreground-900">{formatHours(selectedRow.completed)}/{formatHours(selectedRow.target)}</span>
               </div>
               <div className="mt-3 h-2 rounded-full bg-background-200 overflow-hidden">
                 <div
@@ -456,23 +468,31 @@ export default function CoachOtjhReports() {
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-              <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Aptem OTJH Source Values</h4>
+              <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">OTJH Source Values</h4>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl bg-background-100/60 p-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.planned)}</p>
+                </div>
+                <div className="rounded-xl bg-background-100/60 p-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.target)}</p>
+                </div>
+                <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Minimum</p>
-                  <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.minimum}</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.minimum)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Submitted</p>
-                  <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.submitted}</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.submitted)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Forecast</p>
-                  <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.forecast}</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.forecast)}</p>
                 </div>
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Expected</p>
-                  <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.expected}</p>
+                  <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.expected)}</p>
                 </div>
               </div>
               <div className="mt-3 space-y-2 text-[11px]">
@@ -519,7 +539,7 @@ export default function CoachOtjhReports() {
                       {selectedRow.statusLabel}
                     </p>
                     <p className={`mt-1 text-[11px] leading-relaxed ${selectedRow.status === 'behind' ? 'text-red-600' : 'text-amber-600'}`}>
-                      This learner is behind the planned OTJH pace. Current variance is {selectedRow.progressVariance}, with {selectedRow.progressHours} recorded in Progress-Hours.
+                      This learner is behind the current OTJH target. Current variance is {selectedRow.progressVariance}, with {selectedRow.progressHours} recorded in Progress-Hours.
                     </p>
                   </div>
                 </div>

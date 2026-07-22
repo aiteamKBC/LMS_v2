@@ -1,28 +1,29 @@
 import type { CurriculumKsbEntry, CurriculumModule } from '@/lib/curriculumApi';
+import {
+  componentTypeGroups,
+  componentTypes,
+  getDefaultComponentSettings,
+  getComponentDefinition,
+  normaliseComponentSettings,
+  type ComponentSettings,
+  type KsbMappingType,
+  type ModuleComponentType,
+  type ModuleStatus,
+} from './componentAuthoringModel';
 
-export type ModuleStatus = 'draft' | 'review' | 'published' | string;
-export type KsbMappingType = 'main' | 'secondary' | 'practice';
-export type ModuleComponentType =
-  | 'live-session'
-  | 'recording-placeholder'
-  | 'video'
-  | 'podcast'
-  | 'reading'
-  | 'powerpoint'
-  | 'quiz'
-  | 'monthly-ksb-quiz'
-  | 'reflection'
-  | 'workplace-evidence'
-  | 'assignment'
-  | 'checkpoint'
-  | 'coaching-preparation';
+export { componentTypeGroups, componentTypes, getDefaultComponentSettings };
+export type { ComponentSettings, KsbMappingType, ModuleComponentType, ModuleStatus };
 
 export interface KsbMapping {
   id: string;
   ksbId: string;
   code: string;
   description: string;
+  sourceType?: string;
+  sourceId?: string;
   type: KsbMappingType;
+  classification?: KsbMappingType;
+  weight: number;
 }
 
 export interface CompletionCriteria {
@@ -44,6 +45,7 @@ export interface AdvancedModuleDetails {
 
 export interface ModuleComponent {
   id: string;
+  sourceId?: string;
   moduleId?: string;
   weekId: string;
   type: ModuleComponentType;
@@ -55,7 +57,7 @@ export interface ModuleComponent {
   workplaceEvidenceRequired: boolean;
   tutorValidationRequired: boolean;
   ksbMappings: KsbMapping[];
-  settings: Record<string, string | number | boolean | string[]>;
+  settings: ComponentSettings;
 }
 
 export interface ModuleWeek {
@@ -112,78 +114,21 @@ export interface KsbOption {
   code: string;
   description: string;
   type?: string;
+  title?: string;
+  sourceType?: string;
+  sourceId?: string;
 }
 
-const STRUCTURE_STORE_KEY = 'lms.module-builder.structures.v1';
-const LOCAL_MODULE_STORE_KEY = 'lms.module-builder.local-modules.v1';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
-const DEV_FALLBACK = Boolean(import.meta.env.DEV);
 
 export const MODULE_BUILDER_WIZARD_DRAFT_PREFIX = 'lms.module-builder.wizard-draft.';
-const MODULE_BUILDER_SYNC_PREFIX = 'lms.module-builder.sync.';
 
 export function wizardDraftLocalIdFromKey(storageKey: string) {
-  return String(storageKey || '').startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)
-    ? String(storageKey).slice(MODULE_BUILDER_WIZARD_DRAFT_PREFIX.length)
-    : '';
+  const key = String(storageKey || '').trim();
+  return key.startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)
+    ? key.slice(MODULE_BUILDER_WIZARD_DRAFT_PREFIX.length)
+    : key;
 }
-
-export function moduleBuilderSyncKey(identifier: string) {
-  return `${MODULE_BUILDER_SYNC_PREFIX}${identifier}`;
-}
-
-export function readModuleBuilderSync(identifier: string): ModuleCatalogueItem | null {
-  if (typeof window === 'undefined' || !identifier) return null;
-  try {
-    const raw = window.localStorage.getItem(moduleBuilderSyncKey(identifier));
-    if (!raw) return null;
-    const payload = JSON.parse(raw) as { module?: ModuleCatalogueItem };
-    return payload.module ? recalculateModule(payload.module) : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeModuleBuilderSync(module: ModuleCatalogueItem, wizardDraftLocalId = '') {
-  if (typeof window === 'undefined') return;
-  const payload = JSON.stringify({
-    module: recalculateModule(module),
-    catalogueId: module.catalogueId,
-    wizardDraftLocalId,
-    updatedAt: new Date().toISOString(),
-  });
-  window.localStorage.setItem(moduleBuilderSyncKey(module.catalogueId), payload);
-  if (wizardDraftLocalId) window.localStorage.setItem(moduleBuilderSyncKey(wizardDraftLocalId), payload);
-}
-
-export const componentTypes: Array<{ type: ModuleComponentType; label: string; icon: string; group: string; tone: string }> = [
-  { type: 'live-session', label: 'Live Teams Session', icon: 'ri-group-line', group: 'Live & recorded', tone: 'violet' },
-  { type: 'recording-placeholder', label: 'Recording Placeholder', icon: 'ri-play-circle-line', group: 'Live & recorded', tone: 'slate' },
-  { type: 'video', label: 'Video', icon: 'ri-video-line', group: 'Learning materials', tone: 'rose' },
-  { type: 'podcast', label: 'Podcast', icon: 'ri-mic-line', group: 'Learning materials', tone: 'amber' },
-  { type: 'reading', label: 'Reading Material', icon: 'ri-book-open-line', group: 'Learning materials', tone: 'emerald' },
-  { type: 'powerpoint', label: 'PowerPoint', icon: 'ri-file-ppt-2-line', group: 'Learning materials', tone: 'orange' },
-  { type: 'quiz', label: 'Quiz', icon: 'ri-questionnaire-line', group: 'Assessment', tone: 'sky' },
-  { type: 'assignment', label: 'Assignment', icon: 'ri-file-list-3-line', group: 'Assessment', tone: 'purple' },
-  { type: 'reflection', label: 'Reflection', icon: 'ri-chat-quote-line', group: 'Assessment', tone: 'teal' },
-  { type: 'workplace-evidence', label: 'Evidence Task', icon: 'ri-upload-cloud-2-line', group: 'Assessment', tone: 'lime' },
-  { type: 'checkpoint', label: 'Checkpoint Quiz', icon: 'ri-checkbox-circle-line', group: 'Monthly cycle', tone: 'blue' },
-  { type: 'monthly-ksb-quiz', label: 'Monthly KSB Quiz', icon: 'ri-award-line', group: 'Monthly cycle', tone: 'violet' },
-  { type: 'coaching-preparation', label: 'Coaching Preparation', icon: 'ri-user-heart-line', group: 'Monthly cycle', tone: 'pink' },
-];
-
-export const componentTypeGroups = ['Live & recorded', 'Learning materials', 'Assessment', 'Monthly cycle'];
-
-export const mockKsbOptions: KsbOption[] = [
-  { id: 'mock-k1', code: 'K1', description: 'Principles, practices and regulation relevant to the occupational standard.' },
-  { id: 'mock-k2', code: 'K2', description: 'Tools, systems and sources of information used to complete role-specific tasks.' },
-  { id: 'mock-k3', code: 'K3', description: 'Approaches to communication, collaboration and stakeholder engagement.' },
-  { id: 'mock-s1', code: 'S1', description: 'Plan, prioritise and deliver work to agreed quality, time and compliance expectations.' },
-  { id: 'mock-s2', code: 'S2', description: 'Analyse information, solve problems and recommend practical improvements.' },
-  { id: 'mock-s3', code: 'S3', description: 'Use digital tools and workplace systems to produce reliable outputs.' },
-  { id: 'mock-b1', code: 'B1', description: 'Act professionally, ethically and with accountability for own work.' },
-  { id: 'mock-b2', code: 'B2', description: 'Commit to continuous development, reflection and inclusive working.' },
-];
 
 export const emptyCompletionCriteria = (): CompletionCriteria => ({
   quizzesCompletedRequired: false,
@@ -219,19 +164,29 @@ export function makeAuthoringId(prefix: string) {
 
 const makeId = makeAuthoringId;
 
+function isCanonicalModuleCatalogueId(value: unknown) {
+  return /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(String(value || '').trim());
+}
+
+function canonicalModuleCatalogueId(module: CurriculumModule) {
+  return [module.moduleCatalogueId, module.catalogueId, module.moduleId, module.structureId]
+    .map(value => String(value || '').trim())
+    .find(isCanonicalModuleCatalogueId) || '';
+}
+
 export function createEmptyComponent(weekId: string, type: ModuleComponentType, index: number): ModuleComponent {
-  const label = componentTypes.find(item => item.type === type)?.label || 'Component';
+  const definition = getComponentDefinition(type);
   return {
     id: makeId('component'),
     weekId,
     type,
-    title: `${label} ${index}`,
+    title: `${definition.label} ${index}`,
     description: '',
-    expectedOtjh: type === 'live-session' ? 1.5 : ['checkpoint', 'monthly-ksb-quiz', 'coaching-preparation'].includes(type) ? 0.5 : 1,
-    points: ['quiz', 'assignment', 'checkpoint', 'monthly-ksb-quiz', 'workplace-evidence'].includes(type) ? 20 : 10,
-    reflectionRequired: ['reflection', 'coaching-preparation'].includes(type),
-    workplaceEvidenceRequired: type === 'workplace-evidence',
-    tutorValidationRequired: ['reflection', 'workplace-evidence', 'assignment', 'coaching-preparation'].includes(type),
+    expectedOtjh: definition.defaultOtjh,
+    points: definition.defaultPoints,
+    reflectionRequired: definition.reflectionDefault,
+    workplaceEvidenceRequired: definition.workplaceEvidenceDefault,
+    tutorValidationRequired: definition.tutorValidationDefault,
     ksbMappings: [],
     settings: getDefaultComponentSettings(type),
   };
@@ -324,9 +279,7 @@ export async function createNewModule(input: { programme: string; title: string;
     });
     return recalculateModule(response.module || { ...draft, catalogueId: response.moduleCatalogueId || draft.catalogueId });
   } catch (err) {
-    if (!DEV_FALLBACK) throw err;
-    persistLocalModule(draft);
-    return withLocalWarning(draft);
+    throw err;
   }
 }
 
@@ -379,9 +332,7 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
   } catch (err) {
-    if (!DEV_FALLBACK) throw err;
-    persistLocalModule(duplicate);
-    return withLocalWarning(duplicate);
+    throw err;
   }
 }
 
@@ -389,7 +340,6 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
   await apiJson<{ deleted?: boolean; archived?: boolean; deletedAuthoring?: boolean; id?: string }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/`, {
     method: 'DELETE',
   });
-  removeLocalModuleStructure(moduleCatalogueId);
 }
 
 export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
@@ -399,10 +349,8 @@ export async function loadModuleStructure(catalogueId: string): Promise<ModuleCa
     }));
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
-    if (status === 404) return loadSavedModuleStructure(catalogueId);
-    if (!DEV_FALLBACK) throw err;
-    const local = loadSavedModuleStructure(catalogueId);
-    return local ? withLocalWarning(local) : null;
+    if (status === 404) return null;
+    throw err;
   }
 }
 
@@ -414,12 +362,7 @@ export async function updateModuleSettings(moduleCatalogueId: string, payload: P
     });
     return recalculateModule(response.module);
   } catch (err) {
-    if (!DEV_FALLBACK) throw err;
-    const local = loadSavedModuleStructure(moduleCatalogueId);
-    if (!local) throw err;
-    const next = recalculateModule({ ...local, ...payload });
-    persistLocalStructure(moduleCatalogueId, next);
-    return withLocalWarning(next);
+    throw err;
   }
 }
 
@@ -455,14 +398,16 @@ export function createLegacyLocalModule(input: { programme: string; title: strin
 }
 
 export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCatalogueItem {
-  const catalogueId = String(module.catalogueId || module.sourceId || module.id);
+  const canonicalId = canonicalModuleCatalogueId(module);
+  // Temporary legacy fallback: unlinked delivery rows still open through their delivery identifier.
+  const catalogueId = canonicalId || String(module.deliveryModuleId || module.id || module.sourceId);
   const id = `module-${catalogueId}`;
   const title = cleanUserFacingText(module.name) || `Module ${catalogueId}`;
   const description = cleanUserFacingText(module.notes || '');
   return recalculateModule({
     id,
     catalogueId,
-    programmeId: module.programme || 'programme',
+    programmeId: module.programmeId || module.programme || 'programme',
     programmeName: module.programme || 'Unassigned programme',
     title,
     description,
@@ -487,6 +432,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
       code,
       description: `Mapped KSB ${code}`,
       type: index < 3 ? 'main' : 'secondary',
+      weight: index < 3 ? 40 : 20,
     })),
     completionCriteria: emptyCompletionCriteria(),
     advancedDetails: emptyAdvancedDetails(),
@@ -525,28 +471,33 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
 
 export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueItem {
   const moduleId = String(module.catalogueId || module.id);
+  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || []);
   const normalisedWeeks = module.weekStructure.map((week, index) => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
       ...week,
       id: weekId,
       moduleId,
+      ksbMappings: normaliseKsbMappings(week.ksbMappings || []),
       weekNumber: index + 1,
       components: (week.components || []).map(component => ({
         ...component,
         moduleId,
         weekId,
+        workplaceEvidenceRequired: false,
+        ksbMappings: normaliseKsbMappings(component.ksbMappings || []),
+        settings: normaliseComponentSettings(component.type, component.settings || {}),
       })),
     };
   });
   const allComponents = normalisedWeeks.flatMap(week => week.components);
   const hasStructure = module.weekStructure.length > 0;
   const componentKsbCodes = new Set(allComponents.flatMap(component => component.ksbMappings.map(mapping => mapping.code)));
-  (module.moduleKsbMappings || []).forEach(mapping => componentKsbCodes.add(mapping.code));
+  moduleKsbMappings.forEach(mapping => componentKsbCodes.add(mapping.code));
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
   const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
-  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size });
+  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
   return {
     ...module,
@@ -557,12 +508,41 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
     lessonCount: hasStructure ? allComponents.length : module.lessonCount,
     quizCount: hasStructure ? allComponents.filter(component => ['quiz', 'checkpoint', 'monthly-ksb-quiz'].includes(component.type)).length : module.quizCount,
     qualityScore: quality,
+    moduleKsbMappings,
     weekStructure: normalisedWeeks,
     description: cleanUserFacingText(module.description || module.sourceModule?.notes || ''),
     background: module.background || '',
     epaRequirements: module.epaRequirements || [],
     qualificationOutcomes: module.qualificationOutcomes || [],
   };
+}
+
+function normaliseKsbMappings(mappings: KsbMapping[]) {
+  return mappings.map(mapping => ({
+    ...mapping,
+    type: normaliseKsbMappingType(mapping.type || mapping.classification),
+    classification: normaliseKsbMappingType(mapping.classification || mapping.type),
+    weight: clampKsbWeight(mapping.weight ?? defaultKsbWeight(mapping.type)),
+  }));
+}
+
+function defaultKsbWeight(type: KsbMappingType) {
+  if (type === 'main') return 40;
+  if (type === 'secondary') return 20;
+  return 10;
+}
+
+function clampKsbWeight(value: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.round(parsed * 100) / 100);
+}
+
+function normaliseKsbMappingType(value?: string): KsbMappingType {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'main' || raw === 'secondary' || raw === 'possible') return raw;
+  if (raw === 'practice') return 'possible';
+  return 'secondary';
 }
 
 export function calculateQualityChecklist(module: ModuleCatalogueItem) {
@@ -588,7 +568,8 @@ export function calculateQualityChecklist(module: ModuleCatalogueItem) {
     { label: 'Recording placeholder for live sessions', passed: liveSessions.every(component => typeof component.settings.recordingExpected === 'boolean') },
     { label: 'All components have estimated OTJH greater than 0', passed: allComponents.length > 0 && allComponents.every(component => Number(component.expectedOtjh) > 0) },
     { label: 'All components have at least one KSB mapping', passed: allComponents.length > 0 && allComponents.every(component => component.ksbMappings.length > 0) },
-    { label: 'Every mapped KSB is classified', passed: allMappedKsbs(module).every(mapping => ['main', 'secondary', 'practice'].includes(mapping.type)) },
+    { label: 'All mapped KSBs have a weight', passed: allMappedKsbs(module).every(mapping => Number(mapping.weight || 0) > 0) },
+    { label: 'Every mapped KSB is classified', passed: allMappedKsbs(module).every(mapping => ['main', 'secondary', 'possible'].includes(normaliseKsbMappingType(mapping.type))) },
     { label: 'Completion criteria configured', passed: criteriaConfigured },
     { label: 'Total module OTJH matches component sum', passed: Math.abs(declaredTotal - expectedTotal) < 0.01 },
   ];
@@ -614,68 +595,40 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
     code: entry.code || entry.fullCode || entry.rawCode || String(entry.id),
     description: entry.description || entry.title || '',
     type: entry.type,
+    title: entry.title,
   }));
-}
-
-export function loadSavedModuleStructure(catalogueId: string): ModuleCatalogueItem | null {
-  if (typeof window === 'undefined') return null;
-  const store = readStore<Record<string, ModuleCatalogueItem>>(STRUCTURE_STORE_KEY, {});
-  return store[catalogueId] || null;
 }
 
 export async function saveModuleStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
   const body = recalculateModule(payload);
-  try {
-    const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-      timeoutMs: 45000,
-    }));
-    persistLocalStructure(saved.catalogueId || moduleCatalogueId, saved);
-    return saved;
-  } catch (err) {
-    if (!DEV_FALLBACK) throw err;
-    return withLocalWarning(persistLocalStructure(moduleCatalogueId, body));
-  }
+  return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+    timeoutMs: 45000,
+  }));
 }
 
-export function loadLocalModules(): ModuleCatalogueItem[] {
-  if (typeof window === 'undefined') return [];
-  return readStore<ModuleCatalogueItem[]>(LOCAL_MODULE_STORE_KEY, []).map(module => recalculateModule(module));
+export interface ComponentUploadResult {
+  uploaded: boolean;
+  savedToComponent: boolean;
+  componentId: string;
+  moduleCatalogueId: string;
+  file: {
+    fileName: string;
+    storedPath: string;
+    url: string;
+    size: number;
+    contentType: string;
+    componentType: string;
+  };
 }
 
-export function saveLocalModules(modules: ModuleCatalogueItem[]) {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(LOCAL_MODULE_STORE_KEY, JSON.stringify(modules.map(module => recalculateModule(module))));
-}
-
-function persistLocalStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
-  const store = readStore<Record<string, ModuleCatalogueItem>>(STRUCTURE_STORE_KEY, {});
-  store[moduleCatalogueId] = recalculateModule(payload);
-  window.localStorage.setItem(STRUCTURE_STORE_KEY, JSON.stringify(store));
-  return store[moduleCatalogueId];
-}
-
-function persistLocalModule(module: ModuleCatalogueItem) {
-  const modules = loadLocalModules();
-  const next = modules.some(item => item.catalogueId === module.catalogueId)
-    ? modules.map(item => item.catalogueId === module.catalogueId ? module : item)
-    : [...modules, module];
-  saveLocalModules(next);
-  persistLocalStructure(module.catalogueId, module);
-}
-
-function removeLocalModuleStructure(moduleCatalogueId: string) {
-  if (typeof window === 'undefined') return;
-  const structures = readStore<Record<string, ModuleCatalogueItem>>(STRUCTURE_STORE_KEY, {});
-  delete structures[moduleCatalogueId];
-  window.localStorage.setItem(STRUCTURE_STORE_KEY, JSON.stringify(structures));
-  const modules = loadLocalModules().filter(module => module.catalogueId !== moduleCatalogueId);
-  saveLocalModules(modules);
-}
-
-function withLocalWarning(module: ModuleCatalogueItem): ModuleCatalogueItem & { localFallback?: boolean } {
-  return { ...recalculateModule(module), localFallback: true };
+export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'assignment'; file: File }) {
+  const form = new FormData();
+  form.set('file', input.file);
+  form.set('moduleCatalogueId', input.moduleCatalogueId);
+  form.set('componentType', input.componentType);
+  return apiForm<ComponentUploadResult>(`/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form, { timeoutMs: 90000 });
 }
 
 class ApiError extends Error {
@@ -684,6 +637,38 @@ class ApiError extends Error {
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
+  }
+}
+
+async function apiForm<T>(path: string, body: FormData, init?: { timeoutMs?: number }): Promise<T> {
+  const controller = init?.timeoutMs ? new AbortController() : undefined;
+  const timeout = controller && init?.timeoutMs
+    ? window.setTimeout(() => controller.abort(), init.timeoutMs)
+    : undefined;
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      body,
+      signal: controller?.signal,
+    });
+    if (!response.ok) {
+      let message = `Curriculum API returned ${response.status} for ${path}`;
+      try {
+        const payload = await response.json();
+        if (payload?.error) message = payload.error;
+      } catch {
+        // Keep the original status message when a non-JSON error body is returned.
+      }
+      throw new ApiError(response.status, message);
+    }
+    return response.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('The file upload is taking too long. It was stopped so you can retry.');
+    }
+    throw err;
+  } finally {
+    if (timeout) window.clearTimeout(timeout);
   }
 }
 
@@ -719,116 +704,6 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     throw err;
   } finally {
     if (timeout) window.clearTimeout(timeout);
-  }
-}
-
-function componentAdvancedDefaults(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
-  const completionRules: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attend or watch recording',
-    'recording-placeholder': 'Mark complete after watching',
-    video: 'Watch video and mark complete',
-    podcast: 'Listen and mark complete',
-    reading: 'Read the material and confirm completion',
-    powerpoint: 'Review slide deck',
-    quiz: 'Submit',
-    'monthly-ksb-quiz': 'Submit monthly KSB quiz',
-    reflection: 'Submit reflection',
-    'workplace-evidence': 'Upload + describe',
-    assignment: 'Submit assignment',
-    checkpoint: 'Complete checkpoint',
-    'coaching-preparation': 'Complete coaching preparation',
-  };
-  const evidenceRequired: Partial<Record<ModuleComponentType, string>> = {
-    'live-session': 'Attendance or recording completion',
-    quiz: 'Quiz result',
-    'monthly-ksb-quiz': 'Quiz result',
-    checkpoint: 'Quiz result',
-    reflection: 'Reflection + signature',
-    'workplace-evidence': 'File + 100-word description',
-    assignment: 'Submission file',
-    'coaching-preparation': 'Preparation notes',
-  };
-  const reflectionPrompt =
-    type === 'workplace-evidence'
-      ? 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?'
-      : ['quiz', 'monthly-ksb-quiz', 'checkpoint'].includes(type)
-        ? 'Which questions or topics do you need to revisit after this activity?'
-        : 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
-
-  return {
-    completionRule: completionRules[type] || 'Mark complete',
-    evidenceRequired: evidenceRequired[type] || '-',
-    reflectionPrompt,
-    contentStatus: 'Draft',
-    version: '0.1',
-  };
-}
-
-function getDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
-  switch (type) {
-    case 'live-session':
-      return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };
-    case 'recording-placeholder':
-      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session', captionsExpected: false };
-    case 'video':
-      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, captionsAvailable: false, learningBrief: '', postWatchTask: '' };
-    case 'podcast':
-      return { ...componentAdvancedDefaults(type), podcastSource: 'External URL', podcastUrl: '', durationMinutes: 20, listeningFocus: '', podcastReflectionQuestion: '' };
-    case 'reading':
-      return {
-        ...componentAdvancedDefaults(type),
-        difficulty: 'Standard',
-        requirement: 'Required',
-        readingSource: 'Written in LMS',
-        resourceUrl: '',
-        readingContent: '',
-        mainLearningOutcomes: '',
-        ksbEvidenceNotes: '',
-        focusSections: '',
-        learnerInstruction: '',
-        keyPointCount: '0',
-        keyPoints: '',
-        glossaryTerms: '',
-        estimatedReadingTime: 20,
-        otjhRationale: '',
-        audioEnabled: false,
-        audioUrl: '',
-        reflectionQuestionCount: '0 qs',
-        readingReflectionPrompts: '',
-        readingEvidenceRequired: '',
-        completionRuleCount: '3 rules',
-        completionConfirmationRequired: true,
-        linkedActivity: '',
-        coachingPrompt: '',
-        requiredReading: true,
-      };
-    case 'powerpoint':
-      return { ...componentAdvancedDefaults(type), fileName: '', slideRange: '', speakerNotes: '', downloadAllowed: true };
-    case 'quiz':
-      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 10, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, questionsPlaceholder: '', completionFeedback: '' };
-    case 'monthly-ksb-quiz':
-      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 12, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, monthFocus: '' };
-    case 'reflection':
-      return { ...componentAdvancedDefaults(type), minimumWordCount: 250, learnerGuidance: '', tutorReviewGuidance: '' };
-    case 'workplace-evidence':
-      return { ...componentAdvancedDefaults(type), evidenceInstructions: '', acceptedEvidenceTypes: 'Document, image, video, witness statement', assessmentChecklist: '', minimumDescriptionWords: 100 };
-    case 'assignment':
-      return { ...componentAdvancedDefaults(type), assignmentBrief: '', submissionInstructions: '', dueTiming: 'End of week', markingRubric: '' };
-    case 'checkpoint':
-      return { ...componentAdvancedDefaults(type), checkpointTitle: '', checkpointQuestions: '', progressReviewLinked: true, monthlyCoachingReviewLinked: true };
-    case 'coaching-preparation':
-      return { ...componentAdvancedDefaults(type), preparationPrompt: '', evidenceToBring: '', coachDiscussionPoints: '', coachingReviewLinked: true };
-    default:
-      return componentAdvancedDefaults(type);
-  }
-}
-
-function readStore<T>(key: string, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) as T : fallback;
-  } catch {
-    return fallback;
   }
 }
 

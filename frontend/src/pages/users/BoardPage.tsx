@@ -89,7 +89,6 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
             subtitle={<>Owner: {board.user.owner || '—'}{board.programme.name ? ` · ${board.programme.name}` : ''}</>}
             right={
               <>
-                <HeroStat value={board.programme.status} label="Programme" />
                 <HeroStat value={board.programme.onboardingStatus} label="Onboarding" />
                 <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
                   <i className="ri-magic-line" />Show Wizard
@@ -136,7 +135,6 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
               </div>
               <FieldRow readonly label="Programme Type" value={board.programme.type} />
               <FieldRow readonly label="Programme" value={board.programme.name} />
-              <FieldRow readonly label="Status" value={<StatusBadge status={board.programme.status} />} />
               <FieldRow readonly label="Start date" value={board.programme.startDate} />
               <FieldRow readonly label="End date" value={board.programme.endDate} />
               <FieldRow readonly label="Enrolled" value={`${board.programme.enrolledAt} by ${board.programme.enrolledBy}`} />

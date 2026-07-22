@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RealThisWeekView } from '@/components/feature/RealThisWeekView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { useMyLearner } from '@/hooks/useMyLearner';
+import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { VideoPlayerModal } from '@/pages/learner/this-week/components/VideoPlayerModal';
 import { QuizModal } from '@/pages/learner/this-week/components/QuizModal';
@@ -107,10 +107,8 @@ const statusStyle: Record<string, { bg: string; text: string; dot: string; borde
    ═══════════════════════════════════════════════════════════════ */
 export default function ThisWeekPage() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
-  // Sidebar self-view has no :kind/:id — resolve the logged-in learner's real id.
-  const myLearner = useMyLearner();
-  const kind = urlKind ?? myLearner?.kind;
-  const id = urlId ?? myLearner?.id;
+  // Sidebar self-view has no :kind/:id — resolve the active learner's real id.
+  const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const p = LEARNER_PROFILE;
   const [searchParams, setSearchParams] = useSearchParams();

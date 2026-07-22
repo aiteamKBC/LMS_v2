@@ -37,6 +37,10 @@ def load_env_file(path):
 load_env_file(BASE_DIR / '.env')
 
 
+DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
+DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
+
+
 def database_from_url(database_url):
     parsed = urlparse(database_url)
     scheme = parsed.scheme.replace('postgresql', 'postgres')
@@ -65,6 +69,8 @@ def database_from_url(database_url):
         'HOST': parsed.hostname or '',
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
+        'CONN_MAX_AGE': DB_CONN_MAX_AGE,
+        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -78,11 +84,12 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.5-mini")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
     if host.strip()
 ]
 
@@ -100,6 +107,7 @@ INSTALLED_APPS = [
     'coach_api',
     'learner_api',
     'curriculum_api',
+    'engagement_api',
 ]
 
 MIDDLEWARE = [
@@ -135,7 +143,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("DATABASEURL")
 
 if DATABASE_URL:
     parsed_db = urlparse(DATABASE_URL)
@@ -149,6 +157,8 @@ if DATABASE_URL:
             "HOST": parsed_db.hostname,
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
+            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
     }
 else:
@@ -160,7 +170,12 @@ else:
     }
 
 # Enrolment (Neon) database used by the learner_api app via EnrolmentRouter.
-_enrolment_database_url = os.environ.get('ENROLMENT_DATABASE_URL') or os.environ.get('Database_url')
+_enrolment_database_url = (
+    os.environ.get('ENROLMENT_DATABASE_URL')
+    or os.environ.get('Database_url')
+    or os.environ.get('DATABASEURL')
+    or os.environ.get('DATABASE_URL')
+)
 if _enrolment_database_url:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
@@ -209,6 +224,14 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Uploaded media (quiz packages, extracted SCORM runtime, etc.). FileField's
+# upload_to is relative to MEDIA_ROOT; without this it defaults to '' and the
+# SCORM runtime extraction path (MEDIA_ROOT / 'scorm_runtime') breaks.
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR
 
 LOGGING = {
     'version': 1,

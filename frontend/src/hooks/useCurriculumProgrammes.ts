@@ -1,36 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumProgrammes, type CurriculumProgramme } from '@/lib/curriculumApi';
 
-function normaliseProgrammeName(value: unknown) {
-  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
-}
-
-function programmeCompletenessScore(programme: CurriculumProgramme) {
-  const deliveryScore = (programme.cohorts || 0) * 1000 + (programme.groups || 0) * 100 + (programme.modules || 0) * 10 + (programme.weeks || 0);
-  const statusScore = programme.status === 'active' ? 3 : programme.status === 'planned' ? 2 : programme.status === 'draft' ? 1 : 0;
-  return deliveryScore * 10 + statusScore;
-}
-
-function dedupeProgrammes(programmes: CurriculumProgramme[]) {
-  const byName = new Map<string, CurriculumProgramme>();
-  const orderedKeys: string[] = [];
-
-  for (const programme of programmes) {
-    const key = normaliseProgrammeName(programme.name) || String(programme.sourceId || programme.id);
-    const current = byName.get(key);
-    if (!current) {
-      byName.set(key, programme);
-      orderedKeys.push(key);
-      continue;
-    }
-    if (programmeCompletenessScore(programme) > programmeCompletenessScore(current)) {
-      byName.set(key, programme);
-    }
-  }
-
-  return orderedKeys.map(key => byName.get(key)).filter(Boolean) as CurriculumProgramme[];
-}
-
 export function useCurriculumProgrammes() {
   const [programmes, setProgrammes] = useState<CurriculumProgramme[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,7 +14,7 @@ export function useCurriculumProgrammes() {
     try {
       const programmeResult = await fetchCurriculumProgrammes(signal);
       if (signal?.aborted || requestId !== requestIdRef.current) return [];
-      setProgrammes(dedupeProgrammes(programmeResult));
+      setProgrammes(programmeResult);
       setError(null);
       return programmeResult;
     } catch (err) {

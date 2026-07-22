@@ -5,9 +5,13 @@ type LoadOptions = {
   silent?: boolean;
 };
 
-export function useCurriculumModules() {
+type UseCurriculumModulesOptions = {
+  autoLoad?: boolean;
+};
+
+export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOptions = {}) {
   const [modules, setModules] = useState<CurriculumModule[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback((options: LoadOptions = {}) => {
@@ -37,7 +41,10 @@ export function useCurriculumModules() {
 
   const reload = useCallback((options?: LoadOptions) => load(options), [load]);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    if (!autoLoad) return;
+    return load();
+  }, [autoLoad, load]);
 
   return { modules, loading, error, reload };
 }

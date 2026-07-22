@@ -18,21 +18,21 @@ interface WorkspaceSection {
 }
 
 const WORKSPACE_SECTIONS: WorkspaceSection[] = [
-  { slug: 'learner', label: 'Learner', icon: 'ri-user-line', email: 'learner@kbc.test', workspacePath: '/workspace/learner', highlighted: true },
+  //{ slug: 'learner', label: 'Learner', icon: 'ri-user-line', email: 'learner@kbc.test', workspacePath: '/workspace/learner', highlighted: true },
   { slug: 'coach', label: 'Coach', icon: 'ri-user-heart-line', email: 'coach@kbc.test', workspacePath: '/workspace/coach', highlighted: true },
-  { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
-  { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
+  // { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
+  // { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
   { slug: 'enrolment', label: 'Enrolment', icon: 'ri-user-add-line', email: 'compliance@kbc.test', workspacePath: '/users', highlighted: true },
-  { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
-  { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
+  // { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
+  // { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
   { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-2-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
-  { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement' },
-  { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
-  { slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
-  { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
-  { slug: 'auditor', label: 'Auditor', icon: 'ri-history-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor' },
-  { slug: 'support', label: 'Support', icon: 'ri-customer-service-2-line', email: 'admin@kbc.test', workspacePath: '/workspace/support' },
-  { slug: 'safeguarding', label: 'Safeguarding', icon: 'ri-shield-line', email: 'compliance@kbc.test', workspacePath: '/workspace/safeguarding' },
+  { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement', highlighted: true },
+  // { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
+  //{ slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
+  // { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
+  // { slug: 'auditor', label: 'Auditor', icon: 'ri-history-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor' },
+  // { slug: 'support', label: 'Support', icon: 'ri-customer-service-2-line', email: 'admin@kbc.test', workspacePath: '/workspace/support' },
+  // { slug: 'safeguarding', label: 'Safeguarding', icon: 'ri-shield-line', email: 'compliance@kbc.test', workspacePath: '/workspace/safeguarding' },
 ];
 
 function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: { end: number; suffix?: string; prefix?: string; duration?: number; label: string }) {
@@ -81,6 +81,8 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 export default function Home() {
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Enter a section directly — sign in as its demo account, then route in.
   const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
 
   // Enter a section directly — sign in as its demo account, then route in.
@@ -194,13 +196,6 @@ export default function Home() {
               <i className="ri-grid-line text-[15px]" />
               Choose your workspace
             </button>
-            <a
-              href="/onboarding"
-              className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl border border-white/10 text-white/80 text-[14px] font-medium hover:bg-white/5 hover:border-white/20 transition-all duration-300 whitespace-nowrap hover:-translate-y-0.5"
-            >
-              <i className="ri-map-2-line text-[15px] text-accent-400" />
-              View Learner Journey
-            </a>
           </div>
 
           {/* Quick trust badges */}
@@ -389,103 +384,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* ============ JOURNEY PREVIEW CTA ============ */}
-      <section className="max-w-6xl mx-auto px-6 pb-20 md:pb-24 animate-fade-in-up">
-        <div
-          className="relative overflow-hidden rounded-3xl p-10 md:p-16 text-center"
-          style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
-        >
-          {/* Liquid blob decorations — same style as sidebar */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div
-              className="absolute animate-liquid-blob-1 opacity-30"
-              style={{
-                width: '80%',
-                height: '35%',
-                left: '-20%',
-                top: '-5%',
-                background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.35) 0%, oklch(var(--accent-600) / 0.12) 40%, transparent 70%)',
-                filter: 'blur(45px)',
-              }}
-            />
-            <div
-              className="absolute animate-liquid-blob-2 opacity-20"
-              style={{
-                width: '70%',
-                height: '30%',
-                right: '-15%',
-                bottom: '25%',
-                background: 'radial-gradient(ellipse at center, oklch(var(--primary-500) / 0.3) 0%, oklch(var(--primary-600) / 0.1) 40%, transparent 70%)',
-                filter: 'blur(50px)',
-              }}
-            />
-            <div
-              className="absolute animate-liquid-blob-3 opacity-15"
-              style={{
-                width: '60%',
-                height: '25%',
-                left: '5%',
-                bottom: '-5%',
-                background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.25) 0%, oklch(var(--secondary-500) / 0.08) 40%, transparent 70%)',
-                filter: 'blur(55px)',
-              }}
-            />
-          </div>
-
-          <div className="relative z-10">
-            <div className="flex items-center justify-center gap-2 mb-6 animate-gentle-float">
-              <div className="w-12 h-12 rounded-2xl bg-accent-500 flex items-center justify-center shadow-lg shadow-accent-500/20">
-                <i className="ri-map-2-line text-xl text-foreground-950" />
-              </div>
-            </div>
-            <h2 className="text-[28px] md:text-[36px] font-heading font-semibold text-white mb-4 tracking-tight">
-              Explore the complete learner journey
-            </h2>
-            <p className="text-[15px] text-white/40 max-w-md mx-auto leading-relaxed mb-10">
-              From induction to EPA results — 31 stages, 4 phases, and 12-18 months of guided apprenticeship excellence.
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <a
-                href="/onboarding"
-                className="inline-flex items-center gap-2 px-7 py-3 rounded-xl bg-accent-500 text-foreground-950 text-[14px] font-semibold hover:bg-accent-400 transition-all duration-300 whitespace-nowrap shadow-lg shadow-accent-500/20 hover:shadow-accent-500/30 hover:-translate-y-0.5"
-              >
-                <i className="ri-compass-3-line text-[15px]" />
-                View the Roadmap
-              </a>
-              <button
-                onClick={scrollToWorkspaces}
-                className="inline-flex items-center gap-2 px-7 py-3 rounded-xl border border-white/10 text-white/60 text-[14px] font-medium hover:bg-white/5 hover:text-white/80 hover:border-white/20 transition-all duration-300 whitespace-nowrap cursor-pointer"
-              >
-                <i className="ri-grid-line text-[15px]" />
-                Choose a workspace
-              </button>
-            </div>
-
-            {/* Phase dots preview */}
-            <div className="flex items-center justify-center gap-3 mt-12">
-              <div className="flex items-center gap-2 text-[11px] text-white/25">
-                <div className="w-2 h-2 rounded-full bg-accent-500" />
-                <span>Pre-Active</span>
-              </div>
-              <div className="w-4 h-px bg-white/10" />
-              <div className="flex items-center gap-2 text-[11px] text-white/25">
-                <div className="w-2 h-2 rounded-full bg-primary-400" />
-                <span>Active</span>
-              </div>
-              <div className="w-4 h-px bg-white/10" />
-              <div className="flex items-center gap-2 text-[11px] text-white/25">
-                <div className="w-2 h-2 rounded-full bg-secondary-400" />
-                <span>Gateway</span>
-              </div>
-              <div className="w-4 h-px bg-white/10" />
-              <div className="flex items-center gap-2 text-[11px] text-white/25">
-                <div className="w-2 h-2 rounded-full bg-accent-400" />
-                <span>EPA</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
 
       {/* ============ FOOTER ============ */}
       <footer className="border-t border-foreground-200 bg-background-100">

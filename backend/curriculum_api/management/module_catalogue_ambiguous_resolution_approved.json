@@ -1,0 +1,381 @@
+{
+  "instructions": "Fill selectedModuleCatalogueId with one of candidateModuleCatalogueIds after manual review. Leave blank to keep unresolved.",
+  "resolutions": [
+    {
+      "trainingPlanId": 61304,
+      "trainingPlanRowId": 61304,
+      "programmeId": "PROG-20260709071023831892",
+      "programmeName": "Test Programme",
+      "cohortId": "COHORT-20260709092958247944108",
+      "cohortName": "C1",
+      "groupId": "COHORT-20260709092958247944108-g222",
+      "groupName": "G222",
+      "moduleTitle": "Advanced Project and Logistics Management",
+      "existingModuleCatalogueId": "",
+      "existingLegacyReference": "",
+      "staleLegacyModuleId": "",
+      "invalidExplicitModuleId": "",
+      "candidateModuleCatalogueIds": [
+        "MOD-20260713091125709666",
+        "MOD-20260713091125799874"
+      ],
+      "candidateMetadata": [
+        {
+          "moduleCatalogueId": "MOD-20260713091125709666",
+          "title": "Advanced Project and Logistics Management",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709092958247944108",
+          "cohortName": "C1",
+          "groupIds": [
+            "GROUP-20260709092959517390113"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61299",
+          "authoringStatus": "published",
+          "weekCount": 16,
+          "componentCount": 16,
+          "liveSessionCount": 16,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.193287",
+          "updatedAt": "2026-07-13 09:11:27.193284",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        },
+        {
+          "moduleCatalogueId": "MOD-20260713091125799874",
+          "title": "Advanced Project and Logistics Management",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709093002532981126",
+          "cohortName": "C2",
+          "groupIds": [
+            "GROUP-20260709093003076735128"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61316",
+          "authoringStatus": "published",
+          "weekCount": 16,
+          "componentCount": 16,
+          "liveSessionCount": 16,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.422946",
+          "updatedAt": "2026-07-13 09:11:27.422943",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        }
+      ],
+      "candidateCount": 2,
+      "matchingStrategy": "normalised_title_programme_scoped",
+      "crossProgrammeCheck": "passed",
+      "confidence": "Medium",
+      "sourceReferences": {
+        "trainingPlanId": "61304",
+        "legacyModuleId": "",
+        "notesMeta": {
+          "program_id": "PROG-20260709071023831892",
+          "cohort_color": "#02d9c7",
+          "duration_months": "18",
+          "cohort_end_auto": "false",
+          "holiday_ids": "1090|1079|1080|1081|1082|1094|1083",
+          "cohort_id": "COHORT-20260709092958247944108",
+          "archived": "true",
+          "archived_at": "2026-07-13T09:18:24.521058"
+        }
+      },
+      "stage": "normalised_title_programme_scoped",
+      "reason": "Candidate score tie requires manual selection.",
+      "selectedModuleCatalogueId": "MOD-20260713091125709666"
+    },
+    {
+      "trainingPlanId": 61305,
+      "trainingPlanRowId": 61305,
+      "programmeId": "PROG-20260709071023831892",
+      "programmeName": "Test Programme",
+      "cohortId": "COHORT-20260709092958247944108",
+      "cohortName": "C1",
+      "groupId": "COHORT-20260709092958247944108-g222",
+      "groupName": "G222",
+      "moduleTitle": "1 Credit",
+      "existingModuleCatalogueId": "",
+      "existingLegacyReference": "",
+      "staleLegacyModuleId": "",
+      "invalidExplicitModuleId": "",
+      "candidateModuleCatalogueIds": [
+        "MOD-20260713091125399259",
+        "MOD-20260713091127351411"
+      ],
+      "candidateMetadata": [
+        {
+          "moduleCatalogueId": "MOD-20260713091125399259",
+          "title": "1 Credit",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709092958247944108",
+          "cohortName": "C1",
+          "groupIds": [
+            "GROUP-20260709092959517390113"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61298",
+          "authoringStatus": "published",
+          "weekCount": 13,
+          "componentCount": 13,
+          "liveSessionCount": 13,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.134450",
+          "updatedAt": "2026-07-13 09:11:27.134446",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        },
+        {
+          "moduleCatalogueId": "MOD-20260713091127351411",
+          "title": "1 Credit",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709093002532981126",
+          "cohortName": "C2",
+          "groupIds": [
+            "GROUP-20260709093003076735128"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61317",
+          "authoringStatus": "published",
+          "weekCount": 13,
+          "componentCount": 13,
+          "liveSessionCount": 13,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:28.879690",
+          "updatedAt": "2026-07-13 09:11:28.879687",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        }
+      ],
+      "candidateCount": 2,
+      "matchingStrategy": "normalised_title_programme_scoped",
+      "crossProgrammeCheck": "passed",
+      "confidence": "Medium",
+      "sourceReferences": {
+        "trainingPlanId": "61305",
+        "legacyModuleId": "",
+        "notesMeta": {
+          "program_id": "PROG-20260709071023831892",
+          "cohort_color": "#02d9c7",
+          "duration_months": "18",
+          "cohort_end_auto": "false",
+          "holiday_ids": "1090|1079|1080|1081|1082|1094|1083",
+          "cohort_id": "COHORT-20260709092958247944108",
+          "archived": "true",
+          "archived_at": "2026-07-13T09:18:24.521058"
+        }
+      },
+      "stage": "normalised_title_programme_scoped",
+      "reason": "Candidate score tie requires manual selection.",
+      "selectedModuleCatalogueId": "MOD-20260713091125399259"
+    },
+    {
+      "trainingPlanId": 61310,
+      "trainingPlanRowId": 61310,
+      "programmeId": "PROG-20260709071023831892",
+      "programmeName": "Test Programme",
+      "cohortId": "COHORT-20260709092958247944108",
+      "cohortName": "C1",
+      "groupId": "COHORT-20260709092958247944108-g222",
+      "groupName": "G222",
+      "moduleTitle": "Advanced Project and Logistics Management",
+      "existingModuleCatalogueId": "",
+      "existingLegacyReference": "",
+      "staleLegacyModuleId": "",
+      "invalidExplicitModuleId": "",
+      "candidateModuleCatalogueIds": [
+        "MOD-20260713091125709666",
+        "MOD-20260713091125799874"
+      ],
+      "candidateMetadata": [
+        {
+          "moduleCatalogueId": "MOD-20260713091125709666",
+          "title": "Advanced Project and Logistics Management",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709092958247944108",
+          "cohortName": "C1",
+          "groupIds": [
+            "GROUP-20260709092959517390113"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61299",
+          "authoringStatus": "published",
+          "weekCount": 16,
+          "componentCount": 16,
+          "liveSessionCount": 16,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.193287",
+          "updatedAt": "2026-07-13 09:11:27.193284",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        },
+        {
+          "moduleCatalogueId": "MOD-20260713091125799874",
+          "title": "Advanced Project and Logistics Management",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709093002532981126",
+          "cohortName": "C2",
+          "groupIds": [
+            "GROUP-20260709093003076735128"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61316",
+          "authoringStatus": "published",
+          "weekCount": 16,
+          "componentCount": 16,
+          "liveSessionCount": 16,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.422946",
+          "updatedAt": "2026-07-13 09:11:27.422943",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        }
+      ],
+      "candidateCount": 2,
+      "matchingStrategy": "normalised_title_programme_scoped",
+      "crossProgrammeCheck": "passed",
+      "confidence": "Medium",
+      "sourceReferences": {
+        "trainingPlanId": "61310",
+        "legacyModuleId": "",
+        "notesMeta": {
+          "program_id": "PROG-20260709071023831892",
+          "cohort_color": "#02d9c7",
+          "duration_months": "18",
+          "cohort_end_auto": "false",
+          "holiday_ids": "1090|1079|1080|1081|1082|1094|1083",
+          "cohort_id": "COHORT-20260709092958247944108",
+          "archived": "true",
+          "archived_at": "2026-07-13T09:18:24.521058"
+        }
+      },
+      "stage": "normalised_title_programme_scoped",
+      "reason": "Candidate score tie requires manual selection.",
+      "selectedModuleCatalogueId": "MOD-20260713091125709666"
+    },
+    {
+      "trainingPlanId": 61311,
+      "trainingPlanRowId": 61311,
+      "programmeId": "PROG-20260709071023831892",
+      "programmeName": "Test Programme",
+      "cohortId": "COHORT-20260709092958247944108",
+      "cohortName": "C1",
+      "groupId": "COHORT-20260709092958247944108-g222",
+      "groupName": "G222",
+      "moduleTitle": "1 Credit",
+      "existingModuleCatalogueId": "",
+      "existingLegacyReference": "",
+      "staleLegacyModuleId": "",
+      "invalidExplicitModuleId": "",
+      "candidateModuleCatalogueIds": [
+        "MOD-20260713091125399259",
+        "MOD-20260713091127351411"
+      ],
+      "candidateMetadata": [
+        {
+          "moduleCatalogueId": "MOD-20260713091125399259",
+          "title": "1 Credit",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709092958247944108",
+          "cohortName": "C1",
+          "groupIds": [
+            "GROUP-20260709092959517390113"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61298",
+          "authoringStatus": "published",
+          "weekCount": 13,
+          "componentCount": 13,
+          "liveSessionCount": 13,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:27.134450",
+          "updatedAt": "2026-07-13 09:11:27.134446",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        },
+        {
+          "moduleCatalogueId": "MOD-20260713091127351411",
+          "title": "1 Credit",
+          "programmeId": "PROG-20260709071023831892",
+          "programmeName": "Test Programme",
+          "cohortId": "COHORT-20260709093002532981126",
+          "cohortName": "C2",
+          "groupIds": [
+            "GROUP-20260709093003076735128"
+          ],
+          "groupName": "G222",
+          "sourceType": "training_plan",
+          "sourceId": "61317",
+          "authoringStatus": "published",
+          "weekCount": 13,
+          "componentCount": 13,
+          "liveSessionCount": 13,
+          "ksbMappingCount": 0,
+          "completionCriteriaPresent": true,
+          "advancedDetailsPresent": true,
+          "createdAt": "2026-07-13 09:11:28.879690",
+          "updatedAt": "2026-07-13 09:11:28.879687",
+          "isEmptyShell": false,
+          "emptyShell": false,
+          "referencedTrainingPlanRowIds": []
+        }
+      ],
+      "candidateCount": 2,
+      "matchingStrategy": "normalised_title_programme_scoped",
+      "crossProgrammeCheck": "passed",
+      "confidence": "Medium",
+      "sourceReferences": {
+        "trainingPlanId": "61311",
+        "legacyModuleId": "",
+        "notesMeta": {
+          "program_id": "PROG-20260709071023831892",
+          "cohort_color": "#02d9c7",
+          "duration_months": "18",
+          "cohort_end_auto": "false",
+          "holiday_ids": "1090|1079|1080|1081|1082|1094|1083",
+          "cohort_id": "COHORT-20260709092958247944108",
+          "archived": "true",
+          "archived_at": "2026-07-13T09:18:24.521058"
+        }
+      },
+      "stage": "normalised_title_programme_scoped",
+      "reason": "Candidate score tie requires manual selection.",
+      "selectedModuleCatalogueId": "MOD-20260713091125399259"
+    }
+  ]
+}

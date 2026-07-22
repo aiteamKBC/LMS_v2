@@ -1,10 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import type { LearnerDetail } from '@/api/learnerDetail';
-import { buildLearnerJourney, componentTypeMeta, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import type { LearnerDetail, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
+import { fetchQuiz, type Quiz } from '@/api/quizzes';
+import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+
+/** Resolve a stored (id-only) attempt question to display text using the fetched
+ * quiz. Free-text types carry chosenText; others resolve answer ids -> text. */
+function resolveQuestion(q: LearnerQuizQuestionResult, quiz: Quiz | null) {
+  const question = quiz?.questions.find((x) => x.id === q.questionId);
+  const questionText = question?.text ?? `Question ${q.questionId}`;
+  const byId = new Map<number, string>();
+  for (const a of question?.answers ?? []) byId.set(a.id, a.text ?? a.left ?? String(a.id));
+  const idsToText = (ids: number | number[] | null | undefined) => {
+    if (ids == null) return null;
+    const arr = Array.isArray(ids) ? ids : [ids];
+    const parts = arr.map((i) => byId.get(i)).filter(Boolean) as string[];
+    return parts.length ? parts.join(', ') : null;
+  };
+  const chosen = q.chosenText ?? idsToText(q.chosenAnswerId);
+  const correct = idsToText(q.correctAnswerId);
+  return { questionText, chosen, correct };
+}
 
 const learnerNav = roleNavMap.learner;
 
@@ -33,6 +52,11 @@ export function RealLearnerPlanView({
   learnerId?: string;
 }) {
   const journey = buildLearnerJourney(real);
+  // Component ids the learner has already completed (videos + generic components).
+  const completedIds = new Set<string>([
+    ...(real?.videoProgress || []).map((v) => v.componentId),
+    ...(real?.componentProgress || []).map((c) => c.componentId),
+  ]);
   const totalOtjh = real?.totalExpectedOtjh ?? 0;
   const totalWeeks = journey.reduce((n, m) => n + m.weeks.length, 0);
   const totalComponents = journey.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
@@ -95,7 +119,7 @@ export function RealLearnerPlanView({
         ) : (
           <div className="space-y-3">
             {journey.map((mod, i) => (
-              <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} />
+              <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} completedIds={completedIds} />
             ))}
           </div>
         )}
@@ -124,8 +148,8 @@ export function RealLearnerPlanView({
 /* ═══════════════════════════════════════════════════════
    MODULE SECTION — collapsible group of weeks
    ═══════════════════════════════════════════════════════ */
-function ModuleSection({ module, defaultOpen, kind, learnerId }: {
-  module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string;
+function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
+  module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string; completedIds: Set<string>;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultOpen);
   const weekCount = module.weeks.length;
@@ -169,7 +193,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId }: {
               <div className="absolute left-7 md:left-[34px] top-0 bottom-0 w-px bg-background-300" />
               <div className="space-y-2">
                 {module.weeks.map((w) => (
-                  <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} />
+                  <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} completedIds={completedIds} />
                 ))}
               </div>
             </div>
@@ -183,8 +207,8 @@ function ModuleSection({ module, defaultOpen, kind, learnerId }: {
 /* ═══════════════════════════════════════════════════════
    WEEK CARD — collapsible list of components
    ═══════════════════════════════════════════════════════ */
-function WeekCard({ week, module, kind, learnerId }: {
-  week: JourneyWeek; module: string; kind?: string; learnerId?: string;
+function WeekCard({ week, module, kind, learnerId, completedIds }: {
+  week: JourneyWeek; module: string; kind?: string; learnerId?: string; completedIds: Set<string>;
 }) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
@@ -233,6 +257,7 @@ function WeekCard({ week, module, kind, learnerId }: {
                     kind={kind}
                     learnerId={learnerId}
                     canStartQuiz={canStartQuiz}
+                    completed={!!c.componentId && completedIds.has(c.componentId)}
                     navigate={navigate}
                   />
                 ))}
@@ -248,27 +273,42 @@ function WeekCard({ week, module, kind, learnerId }: {
 /* ═══════════════════════════════════════════════════════
    COMPONENT ROW — with quiz start/retake + past-attempt breakdown
    ═══════════════════════════════════════════════════════ */
-function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, navigate }: {
+function ComponentRow({ component: c, module, week, kind, learnerId, canStartQuiz, completed, navigate }: {
   component: JourneyComponent;
   module: string;
   week: string;
   kind?: string;
   learnerId?: string;
   canStartQuiz: boolean;
+  completed?: boolean;
   navigate: NavigateFunction;
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [selectedAttempt, setSelectedAttempt] = useState<number | null>(null);
+  const [quiz, setQuiz] = useState<Quiz | null>(null);
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
 
-  const gradeOf = (a: typeof lastAttempt) =>
-    a ? (typeof a.grade === 'number' ? `${a.grade}%` : a.grade) : '';
+  // Grade is stored as a 0-1 decimal now; render as a whole percent.
+  const gradeOf = (a: LearnerQuizAttempt | null) => (a ? `${gradePercent(a.grade)}%` : '');
+  const scoreOf = (a: LearnerQuizAttempt | null) =>
+    a && a.achievedScore != null && a.totalScore != null ? `${a.achievedScore}/${a.totalScore}` : null;
   // Badge summarizes the most recent attempt.
   const gradeLabel = gradeOf(lastAttempt);
-  const scoreSummary = lastAttempt?.Score ?? null;
+  const scoreSummary = scoreOf(lastAttempt);
   const hasBreakdown = !!(lastAttempt?.questions && lastAttempt.questions.length > 0);
+
+  // When the breakdown is opened, fetch the quiz once so id-only stored answers
+  // can be resolved back to their text.
+  const quizId = c.quizMeta?.quizId;
+  useEffect(() => {
+    if (!showBreakdown || quiz || quizId == null) return;
+    let cancelled = false;
+    fetchQuiz(quizId).then((q) => { if (!cancelled) setQuiz(q); }).catch(() => { /* text just won't resolve */ });
+    return () => { cancelled = true; };
+  }, [showBreakdown, quiz, quizId]);
 
   // Which attempt's breakdown is shown when expanded (defaults to the latest).
   const viewIndex = selectedAttempt ?? attempts.length - 1;
@@ -321,6 +361,29 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
           </button>
         )}
+        {completed && !c.isQuiz && (
+          <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
+            <i className="ri-checkbox-circle-line text-[10px]" />Done
+          </span>
+        )}
+        {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
+          <button
+            onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
+            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer"
+          >
+            <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
+            {completed ? 'Rewatch' : 'Play'}
+          </button>
+        )}
+        {!c.isQuiz && c.type !== 'video' && c.componentId && canOpenComponent && (
+          <button
+            onClick={() => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
+            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
+          >
+            <i className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
+            {completed ? 'Review again' : 'Open'}
+          </button>
+        )}
       </div>
 
       {/* Past-attempt breakdown */}
@@ -348,32 +411,35 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             )}
             <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">
               Attempt {viewAttempt.attempt ?? viewIndex + 1} · {gradeOf(viewAttempt)}
-              {viewAttempt.Score && ` (${viewAttempt.Score})`}
+              {scoreOf(viewAttempt) && ` (${scoreOf(viewAttempt)})`}
               {viewAttempt.timeTaken && ` · ${viewAttempt.timeTaken}`}
               {' · '}{viewAttempt.submittedAt ? new Date(viewAttempt.submittedAt).toLocaleString() : ''}
             </p>
-            {(viewAttempt.questions || []).map((q, i) => (
-              <div key={q.questionId} className={`rounded-lg border p-2.5 ${q.correct ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50/50'}`}>
-                <div className="flex items-start gap-2">
-                  <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold mt-0.5 ${q.correct ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
-                    <i className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
-                  </span>
-                  <p className="text-xs font-medium text-foreground-800 flex-1">
-                    <span className="text-foreground-400">Q{i + 1}.</span> {q.questionText}
-                  </p>
-                </div>
-                <div className="pl-6 mt-1 space-y-0.5">
-                  <p className="text-[11px] text-foreground-600">
-                    <span className="text-foreground-400">Your answer: </span>{q.chosenAnswer || <span className="italic">No answer</span>}
-                  </p>
-                  {!q.correct && q.correctAnswer && (
-                    <p className="text-[11px] text-emerald-700">
-                      <span className="font-medium">Correct answer: </span>{q.correctAnswer}
+            {(viewAttempt.questions || []).map((q, i) => {
+              const r = resolveQuestion(q, quiz);
+              return (
+                <div key={q.questionId} className={`rounded-lg border p-2.5 ${q.correct ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50/50'}`}>
+                  <div className="flex items-start gap-2">
+                    <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold mt-0.5 ${q.correct ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                      <i className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
+                    </span>
+                    <p className="text-xs font-medium text-foreground-800 flex-1">
+                      <span className="text-foreground-400">Q{i + 1}.</span> {r.questionText}
                     </p>
-                  )}
+                  </div>
+                  <div className="pl-6 mt-1 space-y-0.5">
+                    <p className="text-[11px] text-foreground-600">
+                      <span className="text-foreground-400">Your answer: </span>{r.chosen || <span className="italic">No answer</span>}
+                    </p>
+                    {!q.correct && r.correct && (
+                      <p className="text-[11px] text-emerald-700">
+                        <span className="font-medium">Correct answer: </span>{r.correct}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

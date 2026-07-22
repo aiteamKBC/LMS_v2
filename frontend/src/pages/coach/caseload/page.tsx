@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
@@ -28,7 +29,11 @@ interface Learner {
   enrollmentStatus: EnrollmentStatus;
   riskFlags: string[];
   overallProgress: number;
+  overallProgressAvailable?: boolean;
   attendanceRate: number;
+  attendanceRateAvailable?: boolean;
+  componentsCompleted?: number;
+  componentsPlanned?: number;
   otjhCompleted: number;
   otjhTarget: number;
   otjhStatus?: string;
@@ -36,7 +41,9 @@ interface Learner {
   ksbTarget?: number;
   ksbStatus?: string;
   ksbProgress: number;
+  ksbProgressAvailable?: boolean;
   evidenceCount: number;
+  evidenceCountAvailable?: boolean;
   nextCoaching: string;
   nextReview: string;
   lastContact: string;
@@ -71,7 +78,11 @@ interface CaseloadApiLearner {
   enrollmentStatus: Exclude<EnrollmentStatus, 'all'>;
   riskFlags: string[];
   overallProgress: number;
+  overallProgressAvailable?: boolean;
   attendanceRate: number;
+  attendanceRateAvailable?: boolean;
+  componentsCompleted?: number;
+  componentsPlanned?: number;
   otjhCompleted: number;
   otjhTarget: number;
   otjhStatus?: string;
@@ -79,7 +90,9 @@ interface CaseloadApiLearner {
   ksbTarget?: number;
   ksbStatus?: string;
   ksbProgress: number;
+  ksbProgressAvailable?: boolean;
   evidenceCount: number;
+  evidenceCountAvailable?: boolean;
   nextCoaching: string;
   nextReview: string;
   lastContact: string;
@@ -118,12 +131,40 @@ const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
 const API_ENDPOINT = '/coach_api/coach/caseload';
+const COACH_RAG_ENDPOINT = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
+const COACH_RAG_OPTIONS = [
+  { value: '', label: EMPTY_VALUE },
+  { value: 'green', label: 'Green' },
+  { value: 'amber', label: 'Amber' },
+  { value: 'red', label: 'Red' },
+];
 
 function displayValue(value?: string | null): string {
   if (!value) return EMPTY_VALUE;
   const trimmed = value.trim();
   if (!trimmed || trimmed === 'â€”' || trimmed === '—') return EMPTY_VALUE;
   return trimmed;
+}
+
+function formatCoachRagValue(value?: string | null): string {
+  const normalized = (value || '').trim().toLowerCase();
+  if (normalized === 'green') return 'Green';
+  if (normalized === 'amber') return 'Amber';
+  if (normalized === 'red') return 'Red';
+  return EMPTY_VALUE;
+}
+
+function getCoachRagOptionValue(value?: string | null): string {
+  const normalized = (value || '').trim().toLowerCase();
+  return normalized === 'green' || normalized === 'amber' || normalized === 'red' ? normalized : '';
+}
+
+function getCoachRagDotClass(value?: string | null): string {
+  const normalized = displayValue(value).toLowerCase();
+  if (normalized === 'green') return 'bg-emerald-500';
+  if (normalized === 'amber') return 'bg-amber-500';
+  if (normalized === 'red') return 'bg-red-500';
+  return 'bg-foreground-300';
 }
 
 function normalizeLearner(learner: CaseloadApiLearner): Learner {
@@ -145,14 +186,14 @@ function normalizeLearner(learner: CaseloadApiLearner): Learner {
     lastReview: gatewayReviewDate,
     lastCoachingSession: plannedEndDate,
     lastSubmittedEvidence: displayValue(learner.lastSubmittedEvidence),
-    progressVariance: displayValue(learner.progressVariance || '0%'),
+    progressVariance: displayValue(learner.progressVariance),
     startDate,
     gatewayReviewDate,
     plannedEndDate,
-    coachName: displayValue(learner.coachName || DEFAULT_COACH_NAME),
-    coachEmail: displayValue(learner.coachEmail || DEFAULT_COACH_EMAIL),
+    coachName: displayValue(learner.coachName),
+    coachEmail: displayValue(learner.coachEmail),
     rawProgramStatus: displayValue(learner.rawProgramStatus),
-    coachRag: displayValue(learner.coachRag),
+    coachRag: formatCoachRagValue(learner.coachRag),
     otjhStatus: displayValue(learner.otjhStatus),
     ksbStatus: displayValue(learner.ksbStatus),
     email: learner.email || undefined,
@@ -178,7 +219,7 @@ function getProgramStatusStyle(value?: string) {
   if (normalized === 'withdrawn') {
     return { bg: 'bg-foreground-100 border-foreground-200/50', text: 'text-foreground-500' };
   }
-  if (normalized === 'break' || normalized === 'onbreak') {
+  if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') {
     return { bg: 'bg-amber-50 border-amber-200/50', text: 'text-amber-700' };
   }
   if (normalized === 'readytoenrol') {
@@ -194,7 +235,7 @@ function getProgramStatusKey(value?: string) {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
   if (normalized === 'active') return 'active';
   if (normalized === 'withdrawn') return 'withdrawn';
-  if (normalized === 'break' || normalized === 'onbreak') return 'break';
+  if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') return 'break';
   if (normalized === 'readytoenrol') return 'ready-to-enrol';
   return 'other';
 }
@@ -236,6 +277,9 @@ function getOtjhStatusMeta(value?: string) {
   if (normalized === 'needattention') {
     return { dot: 'bg-amber-500', text: 'text-amber-700' };
   }
+  if (normalized === 'atrisk') {
+    return { dot: 'bg-red-500', text: 'text-red-700' };
+  }
   return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
 }
 
@@ -264,6 +308,27 @@ function formatRatio(completed?: number, target?: number) {
     return EMPTY_VALUE;
   }
   return `${safeCompleted}/${safeTarget}`;
+}
+
+function formatHoursValue(value?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return EMPTY_VALUE;
+  }
+  return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(value);
+}
+
+function getComponentsTooltip(learner: Learner) {
+  if (!learner.attendanceRateAvailable || typeof learner.componentsCompleted !== 'number' || typeof learner.componentsPlanned !== 'number' || learner.componentsPlanned <= 0) {
+    return 'Components progress is not available.';
+  }
+  return `Components = completed components / planned components. ${learner.componentsCompleted}/${learner.componentsPlanned} = ${learner.attendanceRate}%`;
+}
+
+function getProgressTooltip(learner: Learner) {
+  if (!learner.overallProgressAvailable) {
+    return 'Progress is not available.';
+  }
+  return `Progress = completed OTJH hours / target hours. ${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h = ${learner.overallProgress}%`;
 }
 
 function sortCoachRagOptions(values: string[]) {
@@ -348,6 +413,9 @@ export default function CoachCaseload() {
   const [showProgressReport, setShowProgressReport] = useState(false);
   const [showEmployerDropdown, setShowEmployerDropdown] = useState(false);
   const [isTableDragging, setIsTableDragging] = useState(false);
+  const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
+  const [openCoachRagId, setOpenCoachRagId] = useState<string | null>(null);
+  const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
     isPointerDown: false,
@@ -503,6 +571,42 @@ export default function CoachCaseload() {
   const handleSummaryCardClick = (filter: SummaryFilter) => {
     setSummaryFilter(current => current === filter ? 'all' : filter);
     setCurrentPage(1);
+  };
+
+  const setLearnerCoachRag = (learnerId: string, coachRag: string | null | undefined) => {
+    setLearners(current =>
+      current.map(learner => (
+        learner.id === learnerId
+          ? { ...learner, coachRag: formatCoachRagValue(coachRag) }
+          : learner
+      )),
+    );
+  };
+
+  const handleCoachRagChange = async (learnerId: string, nextValue: string) => {
+    const previousValue = learners.find(learner => learner.id === learnerId)?.coachRag || EMPTY_VALUE;
+    setCoachRagSaveError(null);
+    setSavingCoachRagId(learnerId);
+    setLearnerCoachRag(learnerId, nextValue);
+
+    try {
+      const response = await fetch(COACH_RAG_ENDPOINT(learnerId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coachRag: nextValue || null }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.detail || `Request failed with status ${response.status}`);
+      }
+      setLearnerCoachRag(learnerId, payload.coachRag);
+    } catch (err) {
+      console.error('Unable to save coach RAG', err);
+      setLearnerCoachRag(learnerId, previousValue);
+      setCoachRagSaveError('Unable to save Coach RAG right now.');
+    } finally {
+      setSavingCoachRagId(current => (current === learnerId ? null : current));
+    }
   };
 
   const endTableDrag = () => {
@@ -716,6 +820,11 @@ export default function CoachCaseload() {
 
         {/* Data Table */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          {coachRagSaveError && (
+            <div className="border-b border-red-200/60 bg-red-50 px-4 py-2 text-[11px] font-medium text-red-700">
+              {coachRagSaveError}
+            </div>
+          )}
           {loading ? (
             <div className="py-12 text-center">
               <i className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></i>
@@ -813,9 +922,17 @@ export default function CoachCaseload() {
                             <OverflowRevealText text={learner.group} maxWidthClass="max-w-[175px]" />
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${coachRagStyle.bg} ${coachRagStyle.text} whitespace-nowrap`}>
-                              {displayValue(learner.coachRag)}
-                            </span>
+                            <CoachRagSelector
+                              value={learner.coachRag}
+                              learnerName={learner.name}
+                              isOpen={openCoachRagId === learner.id}
+                              saving={savingCoachRagId === learner.id}
+                              onOpenChange={(open) => setOpenCoachRagId(open ? learner.id : null)}
+                              onChange={(nextValue) => {
+                                setOpenCoachRagId(null);
+                                void handleCoachRagChange(learner.id, nextValue);
+                              }}
+                            />
                           </td>
                           <td className="px-2 py-2 text-center">
                             <span data-allow-selection="true" className={`cursor-text select-text text-[8px] font-semibold px-1.5 py-0.5 rounded-full border ${programStatusStyle.bg} ${programStatusStyle.text} whitespace-nowrap`}>
@@ -824,13 +941,27 @@ export default function CoachCaseload() {
                           </td>
                           <td className="px-2 py-2 text-center">
                             <div data-allow-selection="true" className="flex min-w-[96px] flex-col items-center gap-0.5 leading-none text-center">
-                              <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
-                                {learner.progressVariance}
-                              </span>
-                              <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
-                                <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
-                                {displayValue(learner.otjhStatus)}
-                              </span>
+                              {learner.overallProgressAvailable ? (
+                                <>
+                                  <span className="cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap text-foreground-800">
+                                    {`${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}h`}
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.otjhStatus ? otjhStatusMeta.text : 'text-foreground-500'}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${learner.otjhStatus ? otjhStatusMeta.dot : 'bg-foreground-300'}`}></span>
+                                    {learner.otjhStatus ? displayValue(learner.otjhStatus) : `${learner.overallProgress}% complete`}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className={`cursor-text select-text text-[10px] font-semibold tabular-nums whitespace-nowrap ${varianceTextClass}`}>
+                                    {learner.progressVariance}
+                                  </span>
+                                  <span className={`inline-flex items-center gap-1 cursor-text select-text text-[8px] font-medium whitespace-nowrap ${otjhStatusMeta.text}`}>
+                                    <span className={`h-1.5 w-1.5 rounded-full ${otjhStatusMeta.dot}`}></span>
+                                    {displayValue(learner.otjhStatus)}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center">
@@ -845,15 +976,30 @@ export default function CoachCaseload() {
                             </div>
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <span data-allow-selection="true" className={`cursor-text select-text text-[10px] font-semibold ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{learner.attendanceRate}%</span>
+                            {learner.attendanceRateAvailable ? (
+                              <div title={getComponentsTooltip(learner)} data-allow-selection="true" className="flex min-w-[72px] flex-col items-center gap-0.5 leading-none text-center cursor-help">
+                                <span className="cursor-text select-text text-[10px] font-semibold tabular-nums text-foreground-800 whitespace-nowrap">
+                                  {`${learner.componentsCompleted ?? 0}/${learner.componentsPlanned ?? 0}`}
+                                </span>
+                                <span className={`cursor-text select-text text-[8px] font-medium whitespace-nowrap ${learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'}`}>
+                                  {learner.attendanceRate}%
+                                </span>
+                              </div>
+                            ) : (
+                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-400">{EMPTY_VALUE}</span>
+                            )}
                           </td>
                           <td className="px-2 py-2 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <div className="w-8 bg-background-200 rounded-full h-1.5">
-                                <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
+                            {learner.overallProgressAvailable ? (
+                              <div title={getProgressTooltip(learner)} className="flex items-center justify-center gap-1 cursor-help">
+                                <div className="w-8 bg-background-200 rounded-full h-1.5">
+                                  <div className={`h-1.5 rounded-full ${learner.status === 'at-risk' ? 'bg-red-500' : learner.status === 'high' ? 'bg-accent-500' : 'bg-primary-500'}`} style={{ width: `${learner.overallProgress}%` }}></div>
+                                </div>
+                                <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-700 w-6 text-right">{learner.overallProgress}%</span>
                               </div>
-                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-700 w-6 text-right">{learner.overallProgress}%</span>
-                            </div>
+                            ) : (
+                              <span data-allow-selection="true" className="cursor-text select-text text-[10px] font-semibold text-foreground-400">{EMPTY_VALUE}</span>
+                            )}
                           </td>
                           <td className="px-2 py-2 text-center text-[10px] text-foreground-600 whitespace-nowrap">
                             <span data-allow-selection="true" className="cursor-text select-text">{learner.startDate}</span>
@@ -1327,7 +1473,7 @@ export default function CoachCaseload() {
                     <i className="ri-time-line text-primary-500"></i> Recent Activity Timeline
                   </h4>
                   <div className="space-y-3">
-                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the Aptem extraction table" />
+                    <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the learner record" />
                     <TimelineItem icon="ri-file-chart-line" color="primary" date={selectedLearner.gatewayReviewDate} title="Gateway Review" desc="Current gateway review date from the source table" />
                     <TimelineItem icon="ri-mail-line" color="secondary" date={selectedLearner.coachEmail || ownerEmail} title="Assigned Coach" desc={selectedLearner.coachName || ownerName} />
                     <TimelineItem icon="ri-folder-upload-line" color="accent" date={selectedLearner.progressVariance} title={`${selectedLearner.evidenceCount} Evidence Items`} desc={selectedLearner.status === 'at-risk' ? 'Variance is behind target - catch-up planning recommended' : 'Evidence volume looks healthy against current progress'} />
@@ -1433,6 +1579,149 @@ function MiniStatCard({ label, value, icon, color, active = false, onClick }: { 
   );
 }
 
+function CoachRagSelector({
+  value,
+  learnerName,
+  isOpen,
+  saving,
+  onOpenChange,
+  onChange,
+}: {
+  value?: string;
+  learnerName: string;
+  isOpen: boolean;
+  saving: boolean;
+  onOpenChange: (open: boolean) => void;
+  onChange: (value: string) => void;
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuRect, setMenuRect] = useState({ top: 0, left: 0, width: 96 });
+  const selectedValue = getCoachRagOptionValue(value);
+  const selectedLabel = formatCoachRagValue(value);
+  const selectedStyle = getCoachRagStyle(selectedLabel);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.max(112, rect.width + 24);
+      setMenuRect({
+        top: rect.bottom + 6,
+        left: Math.min(window.innerWidth - width - 8, Math.max(8, rect.left + rect.width / 2 - width / 2)),
+        width,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) {
+        return;
+      }
+      onOpenChange(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onOpenChange(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, onOpenChange]);
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        data-allow-selection="true"
+        disabled={saving}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-label={`Coach RAG for ${learnerName}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenChange(!isOpen);
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+        className={`inline-flex min-w-[76px] items-center justify-between gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold shadow-sm transition-smooth hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200 disabled:cursor-wait disabled:opacity-70 ${selectedStyle.bg} ${selectedStyle.text}`}
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <span className={`h-1.5 w-1.5 rounded-full ${getCoachRagDotClass(selectedLabel)}`}></span>
+          {selectedLabel}
+        </span>
+        <i className={`text-[11px] ${saving ? 'ri-loader-4-line animate-spin' : isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
+      </button>
+
+      {isOpen && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          role="listbox"
+          aria-label={`Select Coach RAG for ${learnerName}`}
+          className="fixed z-[1000] rounded-xl border border-foreground-200/70 bg-background-50 p-1 shadow-2xl ring-1 ring-foreground-950/5 animate-in fade-in zoom-in-95 duration-150"
+          style={{ top: menuRect.top, left: menuRect.left, minWidth: menuRect.width }}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          {COACH_RAG_OPTIONS.map(option => {
+            const optionLabel = formatCoachRagValue(option.label);
+            const optionStyle = getCoachRagStyle(optionLabel);
+            const isSelected = option.value === selectedValue;
+
+            return (
+              <button
+                key={option.value || 'empty'}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold transition-smooth ${
+                  isSelected
+                    ? `${optionStyle.bg} ${optionStyle.text}`
+                    : 'text-foreground-700 hover:bg-background-100'
+                }`}
+                onClick={() => {
+                  onChange(option.value);
+                  triggerRef.current?.focus();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${getCoachRagDotClass(optionLabel)}`}></span>
+                  {option.label}
+                </span>
+                {isSelected && <i className="ri-check-line text-[13px]"></i>}
+              </button>
+            );
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 function FilterDropdown({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
   const allLabelMap: Record<string, string> = {
     Status: 'All Status',
@@ -1501,12 +1790,13 @@ function ActivityRow({ icon, color, text, subtext }: { icon: string; color: stri
 
 function OverflowRevealText({ text, maxWidthClass = 'max-w-[240px]' }: { text: string; maxWidthClass?: string }) {
   return (
-    <div data-allow-selection="true" className={`group/overflow relative w-fit cursor-text ${maxWidthClass}`}>
-      <span className="block cursor-text truncate whitespace-nowrap select-text">{text}</span>
-      <div data-allow-selection="true" className="absolute left-0 top-full z-30 mt-1 hidden min-w-full max-w-[420px] cursor-text rounded-lg border border-foreground-200/80 bg-background-50 px-3 py-2 text-[11px] leading-relaxed text-foreground-700 shadow-xl group-hover/overflow:block select-text">
-        {text}
-      </div>
-    </div>
+    <span
+      data-allow-selection="true"
+      title={text}
+      className={`block cursor-text truncate whitespace-nowrap select-text ${maxWidthClass}`}
+    >
+      {text}
+    </span>
   );
 }
 

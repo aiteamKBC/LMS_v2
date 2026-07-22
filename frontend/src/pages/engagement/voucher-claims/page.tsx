@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
@@ -6,7 +6,12 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { VOUCHER_CLAIMS, ENGAGEMENT_LEARNERS, countByProgramme, filterByProgramme, type VoucherClaim, type ProgrammeFilterValue } from '@/mocks/engagement-data';
+import { ENGAGEMENT_LEARNERS, countByProgramme, filterByProgramme, type VoucherClaim, type ProgrammeFilterValue } from '@/mocks/engagement-data';
+import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
+import { ClaimCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
+import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
+
+const REVIEWER_NAME = 'Tom Harrington';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -29,15 +34,28 @@ interface FulfilFormState {
 export default function VoucherClaimsPage() {
   const navigate = useNavigate();
   const { success, warning } = useToast();
-  const [claims, setClaims] = useState<VoucherClaim[]>(VOUCHER_CLAIMS);
+  const [claims, setClaims] = useState<VoucherClaim[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'fulfilled'>('all');
   const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
   const [sortKey, setSortKey] = useState<SortKey>('points');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [reviewId, setReviewId] = useState<string | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   const [fulfilId, setFulfilId] = useState<string | null>(null);
   const [fulfilForm, setFulfilForm] = useState<FulfilFormState>({ useDefault: true, customDetail: '', instructions: '' });
+
+  // Load claims from the backend on mount (enriched with mocked learner data
+  // in the api layer, so the shape matches the old VOUCHER_CLAIMS mock).
+  useEffect(() => {
+    let cancelled = false;
+    fetchVoucherClaims()
+      .then(data => { if (!cancelled) setClaims(data); })
+      .catch(err => { if (!cancelled) warning('Could not load claims', err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [warning]);
 
   const programmeScoped = filterByProgramme(claims, programmeFilter);
   const programmeCounts = countByProgramme(claims);
@@ -67,14 +85,24 @@ export default function VoucherClaimsPage() {
     else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc'); }
   }
 
-  function approveClaim(claim: VoucherClaim) {
-    setClaims(prev => prev.map(c => c.id === claim.id ? { ...c, status: 'approved', reviewedBy: 'Tom Harrington', reviewedAt: 'Just now' } : c));
-    success(`Claim approved for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
+  async function approveClaim(claim: VoucherClaim) {
+    try {
+      const updated = await updateVoucherClaim(claim.id, { status: 'approved', reviewedBy: REVIEWER_NAME });
+      setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
+      success(`Claim approved for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
+    } catch (err: any) {
+      warning('Could not approve claim', err.message);
+    }
   }
 
-  function rejectClaim(claim: VoucherClaim) {
-    setClaims(prev => prev.map(c => c.id === claim.id ? { ...c, status: 'rejected', reviewedBy: 'Tom Harrington', reviewedAt: 'Just now' } : c));
-    warning(`Claim rejected for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
+  async function rejectClaim(claim: VoucherClaim) {
+    try {
+      const updated = await updateVoucherClaim(claim.id, { status: 'rejected', reviewedBy: REVIEWER_NAME });
+      setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
+      warning(`Claim rejected for ${claim.learner}`, `${claim.reward} · ${claim.points} pts`);
+    } catch (err: any) {
+      warning('Could not reject claim', err.message);
+    }
   }
 
   function openFulfilModal(claim: VoucherClaim) {
@@ -86,12 +114,21 @@ export default function VoucherClaimsPage() {
     setFulfilId(claim.id);
   }
 
-  function handleFulfil(claim: VoucherClaim) {
+  async function handleFulfil(claim: VoucherClaim) {
     const finalDetail = (fulfilForm.useDefault ? defaultDeliveryDetail(claim) : fulfilForm.customDetail).trim();
     const finalInstructions = claim.deliveryType === 'physical' ? (fulfilForm.instructions.trim() || null) : null;
-    setClaims(prev => prev.map(c => c.id === claim.id ? { ...c, status: 'fulfilled', deliveryDetail: finalDetail || c.deliveryDetail, deliveryInstructions: finalInstructions } : c));
-    setFulfilId(null);
-    success(`${claim.reward} marked as fulfilled for ${claim.learner}`, claim.deliveryType === 'digital' ? `Sent to ${finalDetail}` : `Delivered to ${finalDetail}`);
+    try {
+      const updated = await updateVoucherClaim(claim.id, {
+        status: 'fulfilled',
+        deliveryDetail: finalDetail || claim.deliveryDetail || '',
+        deliveryInstructions: finalInstructions,
+      });
+      setClaims(prev => prev.map(c => c.id === claim.id ? updated : c));
+      setFulfilId(null);
+      success(`${claim.reward} marked as fulfilled for ${claim.learner}`, claim.deliveryType === 'digital' ? `Sent to ${finalDetail}` : `Delivered to ${finalDetail}`);
+    } catch (err: any) {
+      warning('Could not fulfil claim', err.message);
+    }
   }
 
   const reviewClaim = claims.find(c => c.id === reviewId) ?? null;
@@ -165,7 +202,9 @@ export default function VoucherClaimsPage() {
           <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-1 rounded-full">{filtered.length} claims</span>
         </div>
 
-        {filtered.length === 0 && (
+        {loading && <ClaimCardSkeletonGrid />}
+
+        {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
             <i className="ri-search-line text-2xl text-foreground-300"></i>
             <p className="text-sm font-semibold text-foreground-700">No claims match this view</p>
@@ -173,7 +212,7 @@ export default function VoucherClaimsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(claim => (
             <div key={claim.id} className={`bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium hover:border-primary-200/50 transition-smooth ${claim.status === 'pending' ? 'bg-amber-50/20' : claim.status === 'rejected' ? 'bg-red-50/20' : ''}`}>
               <div className="flex items-center gap-3 mb-3">
@@ -301,12 +340,15 @@ export default function VoucherClaimsPage() {
               </button>
             )}
 
-            <button onClick={() => navigate(`/engagement/learner-engagement?learner=${reviewClaim.learnerId}`)} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
+            <button onClick={() => { setReviewId(null); setProfileId(reviewClaim.learnerId); }} className="w-full px-3 py-2 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
               View Full Engagement Profile
             </button>
           </div>
         )}
       </RightSlidePanel>
+
+      {/* FULL ENGAGEMENT PROFILE — opens in place, over the voucher page */}
+      <LearnerProfilePanel learnerId={profileId} onClose={() => setProfileId(null)} />
 
       {/* FULFILMENT FORM MODAL */}
       {fulfilClaim && (

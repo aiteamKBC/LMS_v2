@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { GeneratedReport } from '@/mocks/generated-reports';
+import type { GeneratedReport } from '../types';
 
 interface ReportGeneratorModalProps {
   report: GeneratedReport | null;
@@ -8,7 +8,7 @@ interface ReportGeneratorModalProps {
 
 function MiniChart({ chart }: { chart: GeneratedReport['sections'][0]['chart'] }) {
   if (!chart) return null;
-  const maxVal = Math.max(...chart.datasets.flatMap(d => d.values));
+  const maxVal = Math.max(1, ...chart.datasets.flatMap(d => d.values));
   return (
     <div className="space-y-4">
       {chart.datasets.map((ds, di) => (

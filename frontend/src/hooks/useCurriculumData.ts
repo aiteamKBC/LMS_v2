@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchCurriculumComponents, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
+import { fetchCurriculumComponents, fetchCurriculumHolidays, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
 
-export function useCurriculumData() {
+interface UseCurriculumDataOptions {
+  compact?: boolean;
+  includeComponents?: boolean;
+  includeHolidays?: boolean;
+  refreshModules?: boolean;
+}
+
+export function useCurriculumData({ compact = false, includeComponents = false, includeHolidays = false, refreshModules = false }: UseCurriculumDataOptions = {}) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -12,11 +19,18 @@ export function useCurriculumData() {
     requestIdRef.current = requestId;
     setLoading(true);
     try {
-      const [overview, components] = await Promise.all([
-        fetchCurriculumOverview(signal),
-        fetchCurriculumComponents(signal).catch(() => []),
+      const [overview, modules, components, holidays] = await Promise.all([
+        fetchCurriculumOverview(signal, { compact }),
+        refreshModules ? fetchCurriculumModules(signal).catch(() => []) : Promise.resolve([]),
+        includeComponents ? fetchCurriculumComponents(signal).catch(() => []) : Promise.resolve([]),
+        includeHolidays ? fetchCurriculumHolidays(signal).catch(() => []) : Promise.resolve([]),
       ]);
-      const result: CurriculumOverview = { ...overview, components };
+      const result: CurriculumOverview = {
+        ...overview,
+        modules: modules.length ? modules : overview.modules,
+        components: includeComponents ? components : overview.components,
+        holidays: includeHolidays ? holidays : overview.holidays,
+      };
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
       setData(result);
       setError(null);
@@ -28,7 +42,7 @@ export function useCurriculumData() {
     } finally {
       if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, []);
+  }, [compact, includeComponents, includeHolidays, refreshModules]);
 
   useEffect(() => {
     const controller = new AbortController();

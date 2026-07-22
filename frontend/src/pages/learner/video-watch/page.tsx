@@ -1,0 +1,620 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { roleNavMap } from '@/mocks/navigation';
+import { EmptyState } from '@/pages/users/components/ui';
+import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
+import { submitVideoProgress } from '@/api/videos';
+import { submitComponentProgress } from '@/api/components';
+import {
+  buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, isOpenableComponent, gradePercent, formatHoursMinutes,
+  type JourneyComponent,
+} from '@/utils/learnerJourney';
+import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
+import { rememberLearner } from '@/hooks/useMyLearner';
+
+const learnerNav = roleNavMap.learner;
+
+type Phase = 'consume' | 'reflect' | 'results';
+
+/** Normalised completion record for the results screen (video + component share these). */
+interface DoneRecord { timeTaken: string | null; ksbs: string[]; reportedTime: string; feedback: string }
+
+interface FoundContext {
+  component: JourneyComponent;
+  moduleTitle: string;
+  weekTitle: string;
+  weekComponents: JourneyComponent[];
+  weeks: { week: string; count: number; active: boolean }[];
+}
+
+/** Route a component to the right learner page (video and quiz keep their own routes). */
+function componentRoute(kind: string | undefined, id: string | undefined, c: JourneyComponent, module: string, week: string): string {
+  if (c.isQuiz && c.quizMeta?.quizId != null) {
+    return `/learner/quiz/${kind}/${id}/${c.quizMeta.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
+  }
+  const base = (c.type || '').toLowerCase() === 'video' ? 'video' : 'component';
+  return `/learner/${base}/${kind}/${id}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`;
+}
+
+/** Can this sidebar row be clicked (a quiz, or any other openable component)? */
+function isNavigableComponent(c: JourneyComponent): boolean {
+  return (c.isQuiz && c.quizMeta?.quizId != null) || isOpenableComponent(c);
+}
+
+/** Find the target component + its week/module context inside the built journey. */
+function locate(detail: LearnerDetail | null, componentId: string): FoundContext | null {
+  if (!detail) return null;
+  const journey = buildLearnerJourney(detail);
+  for (const mod of journey) {
+    for (const wk of mod.weeks) {
+      const target = wk.components.find((c) => c.componentId === componentId);
+      if (target) {
+        return {
+          component: target,
+          moduleTitle: mod.module,
+          weekTitle: wk.week,
+          weekComponents: wk.components,
+          weeks: mod.weeks.map((w) => ({ week: w.week, count: w.components.length, active: w.week === wk.week })),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export default function ComponentViewPage() {
+  const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
+
+  const [detail, setDetail] = useState<LearnerDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [phase, setPhase] = useState<Phase>('consume');
+  const [startedAt, setStartedAt] = useState<string | null>(null);
+  // Real playback state (video only), driven by the player.
+  const [realDuration, setRealDuration] = useState<number | null>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [unsupported, setUnsupported] = useState(false); // no player progress events → wall-clock
+  const [wallElapsed, setWallElapsed] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [record, setRecord] = useState<DoneRecord | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
+      setLoadError('Unknown learner.');
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    fetchLearnerDetail(kind as LearnerKind, id)
+      .then((d) => { if (!cancelled) setDetail(d); })
+      .catch((e) => { if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Could not load component'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [kind, id]);
+
+  const ctx = useMemo(() => (componentId ? locate(detail, componentId) : null), [detail, componentId]);
+  const component = ctx?.component ?? null;
+  const meta = component ? componentTypeMeta(component.title) : null;
+  const learnerKsbs: LearnerKsbItem[] = detail?.ksbs ?? [];
+
+  const contentKind = componentContentKind(component?.type);
+  const isVideo = contentKind === 'video';
+  const noun = componentNoun(component?.type);
+  const openable = component ? isOpenableComponent(component) : false;
+
+  const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
+  const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
+  const backHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+  const parsed = useMemo(() => (isVideo && component?.videoUrl ? parseVideoUrl(component.videoUrl) : null), [isVideo, component?.videoUrl]);
+  const pageTitle = meta?.detail || meta?.label || 'Activity';
+
+  // Non-video content has no player progress → run the wall-clock.
+  useEffect(() => { if (component && !isVideo) setUnsupported(true); }, [component, isVideo]);
+
+  const remaining = realDuration !== null ? Math.max(0, Math.round(realDuration - currentTime)) : null;
+  const elapsedSeconds = isVideo && !unsupported ? Math.round(currentTime) : wallElapsed;
+  // Planned time preset in the reflection window: always the component's
+  // authored expected_otjh (its OTJ hours) when set, so "the planned time"
+  // means the same thing for every component type in the training plan.
+  // Falls back to the real video length / authored duration only when no
+  // expected_otjh was set for this component.
+  const plannedTimeLabel = component?.expectedOtjh != null && component.expectedOtjh > 0
+    ? formatHoursMinutes(component.expectedOtjh)
+    : isVideo && realDuration !== null
+      ? formatClock(realDuration)
+      : component?.durationMinutes ? `${component.durationMinutes} min` : '';
+
+  // Stamp the start time once we're on an openable component.
+  useEffect(() => {
+    if (phase === 'consume' && openable && startedAt === null) setStartedAt(new Date().toISOString());
+  }, [phase, openable, startedAt]);
+
+  // Wall-clock counter (non-video, or an unsupported player).
+  useEffect(() => {
+    if (phase !== 'consume' || !unsupported) return;
+    timerRef.current = setInterval(() => setWallElapsed((s) => s + 1), 1000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [phase, unsupported]);
+
+  const finishConsuming = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setPhase('reflect');
+  };
+
+  const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
+    if (!component || !componentId || !kind || !id || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      if (isVideo) {
+        const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
+          week: weekTitle || null, module: moduleTitle || null,
+          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          videoTitle: meta?.detail || meta?.label || 'Video',
+          ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+        });
+        setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
+      } else {
+        const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
+          week: weekTitle || null, module: moduleTitle || null,
+          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          componentTitle: pageTitle, componentType: component.type || undefined,
+          ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+        });
+        setRecord({ timeTaken: res.record.timeTaken, ksbs: res.record.ksbs, reportedTime: res.record.reportedTime, feedback: res.record.feedback });
+      }
+      setPhase('results');
+    } catch (e) {
+      setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <WorkspaceShell
+      role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
+      pageTitle={pageTitle}
+      pageSubtitle={[moduleTitle, weekTitle].filter(Boolean).join(' · ')}
+      userName="Learner" userRole="Learner"
+    >
+      <div className="p-3 md:p-6 max-w-6xl mx-auto">
+        <button
+          onClick={() => navigate(backHref)}
+          className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-foreground-500 hover:text-foreground-800 transition-colors cursor-pointer"
+        >
+          <i className="ri-arrow-left-line" /> Back to training plan
+        </button>
+
+        {loading ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+        ) : loadError ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
+        ) : !component ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
+        ) : !openable ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
+        ) : isVideo && !parsed ? (
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
+        ) : phase === 'reflect' ? (
+          <div className="max-w-3xl mx-auto">
+            <ReflectionWindow
+              noun={noun}
+              plannedTimeLabel={plannedTimeLabel}
+              learnerKsbs={learnerKsbs}
+              elapsedSeconds={elapsedSeconds}
+              submitting={submitting}
+              submitError={submitError}
+              onSubmit={finalizeSubmit}
+            />
+          </div>
+        ) : phase === 'results' && record ? (
+          <div className="max-w-3xl mx-auto">
+            <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(backHref)} />
+          </div>
+        ) : (
+          /* ── consume phase: content + details + sidebar ── */
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
+            <div className="min-w-0">
+              <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
+                onDuration={(d) => setRealDuration((prev) => prev ?? d)}
+                onProgress={(t) => setCurrentTime(t)}
+                onEnded={finishConsuming}
+                onUnsupported={() => setUnsupported(true)}
+              />
+
+              {/* Title + timer + finish */}
+              <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <span className={`text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
+                    <i className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
+                  </span>
+                  <h1 className="mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight">{pageTitle}</h1>
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500">
+                    {isVideo && realDuration !== null ? (
+                      <span className="inline-flex items-center gap-1"><i className="ri-time-line" />{formatClock(realDuration)}</span>
+                    ) : component.durationMinutes != null && (
+                      <span className="inline-flex items-center gap-1"><i className="ri-time-line" />{component.durationMinutes} min</span>
+                    )}
+                    {component.expectedOtjh != null && component.expectedOtjh > 0 && (
+                      <span className="inline-flex items-center gap-1"><i className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
+                    )}
+                    {weekTitle && <span className="inline-flex items-center gap-1"><i className="ri-calendar-line" />{weekTitle}</span>}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  {remaining !== null ? (
+                    <div className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums ${
+                      remaining <= 10 ? 'bg-red-100 text-red-700' : 'bg-background-100 text-foreground-700'
+                    }`} title="Time remaining">
+                      <i className="ri-timer-line" /> {formatClock(remaining)}
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
+                      <i className="ri-timer-line" /> {formatClock(elapsedSeconds)}
+                    </div>
+                  )}
+                  <button
+                    onClick={finishConsuming}
+                    className="inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+                  >
+                    <i className="ri-check-line" /> {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
+                  </button>
+                </div>
+              </div>
+
+              {component.description && (
+                <div className="mt-4 rounded-xl border border-background-300 bg-white p-4">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Description</h2>
+                  <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.description}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Sidebar: week components + other weeks */}
+            <aside className="space-y-4 lg:sticky lg:top-4">
+              <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
+                <div className="px-4 py-3 border-b border-background-300">
+                  <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
+                  <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weekComponents.length ?? 0} components</p>
+                </div>
+                <ul className="divide-y divide-background-300">
+                  {(ctx?.weekComponents ?? []).map((c) => {
+                    const cm = componentTypeMeta(c.title);
+                    const isCurrent = !c.isQuiz && c.componentId === componentId;
+                    const clickable = isNavigableComponent(c) && !isCurrent;
+                    const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
+                    const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+                    return (
+                      <li key={c.componentId || c.title}>
+                        <button
+                          disabled={!clickable}
+                          onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
+                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
+                            isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                          }`}
+                        >
+                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
+                            <i className={`${cm.icon} text-[12px] ${cm.color}`} />
+                          </span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
+                            <span className={`block text-[13px] font-semibold leading-snug truncate ${isCurrent ? 'text-primary-700' : 'text-foreground-800'}`}>
+                              {cm.detail || cm.label}
+                            </span>
+                          </span>
+                          {c.isQuiz && lastAttempt && (
+                            <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                              lastAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {gradePercent(lastAttempt.grade)}%
+                            </span>
+                          )}
+                          {isCurrent ? (
+                            <i className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
+                          ) : clickable ? (
+                            <i className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
+              {(ctx?.weeks?.length ?? 0) > 1 && (
+                <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
+                  <div className="px-4 py-3 border-b border-background-300">
+                    <h2 className="text-sm font-heading font-bold text-foreground-800">{moduleTitle || 'Module'}</h2>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weeks.length} weeks</p>
+                  </div>
+                  <ul className="divide-y divide-background-300">
+                    {(ctx?.weeks ?? []).map((w) => (
+                      <li key={w.week}>
+                        <button
+                          onClick={() => navigate(backHref)}
+                          className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
+                            w.active ? 'bg-background-100' : 'hover:bg-background-50 cursor-pointer'
+                          }`}
+                        >
+                          <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
+                            <i className="ri-calendar-line text-[12px]" />
+                          </span>
+                          <span className="flex-1 min-w-0">
+                            <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>
+                              {w.week}
+                            </span>
+                            <span className="block text-[10px] text-foreground-400">{w.count} components</span>
+                          </span>
+                          {w.active && <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </aside>
+          </div>
+        )}
+      </div>
+    </WorkspaceShell>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   LINK CLASSIFICATION — authored URLs are free text (an
+   external listening page, a direct file, a Google Slides
+   link, …). Detect what we can actually embed/play inline
+   vs. what only supports a "open in new tab" fallback.
+   ═══════════════════════════════════════════════════════ */
+const AUDIO_FILE_RE = /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i;
+
+/** True when a URL points straight at a playable audio file (not a listening page). */
+function isDirectAudioUrl(url: string): boolean {
+  return AUDIO_FILE_RE.test(url);
+}
+
+/** Google Slides "/edit" or "/present" link -> its embeddable "/embed" form, else null. */
+function googleSlidesEmbedUrl(url: string): string | null {
+  const m = url.match(/docs\.google\.com\/presentation\/d\/([^/]+)/);
+  return m ? `https://docs.google.com/presentation/d/${m[1]}/embed` : null;
+}
+
+/** Google Docs "/edit" link -> its embeddable "/preview" form, else null. */
+function googleDocsEmbedUrl(url: string): string | null {
+  const m = url.match(/docs\.google\.com\/document\/d\/([^/]+)/);
+  return m ? `https://docs.google.com/document/d/${m[1]}/preview` : null;
+}
+
+/** Best-effort inline embed URL for a slide-deck/document link: native Google
+ * Slides/Docs embeds render directly; anything else (PowerPoint/Word files,
+ * a hosted PDF) is handed to Microsoft's Office viewer, which fetches and
+ * renders the file itself rather than sending the learner off-site. */
+function embeddableDocUrl(url: string): string {
+  return googleSlidesEmbedUrl(url) || googleDocsEmbedUrl(url)
+    || `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
+}
+
+/** Reading content authored through a plain textarea sometimes lands
+ * double-escaped: each authored line is a real `<div>…</div>` (the browser's
+ * contentEditable-style line wrapper), but its CONTENTS are HTML-escaped text
+ * ("&lt;h2&gt;Overview&lt;/h2&gt;") instead of real tags. Detect that shape,
+ * turn the real `<div>`/`<br>` line breaks into newlines, then decode the
+ * escaped entities — turning it into genuine HTML that renders formatted
+ * instead of showing literal "&lt;h2&gt;" tag text. */
+function normalizeReadingHtml(html: string): string {
+  const looksEscaped = /&lt;\/?[a-z][a-z0-9]*(&gt;|\s)/i.test(html);
+  if (!looksEscaped) return html;
+  const withBreaks = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div>\s*<div>/gi, '\n')
+    .replace(/<\/?div>/gi, '');
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = withBreaks;
+  return textarea.value;
+}
+
+/* ═══════════════════════════════════════════════════════
+   CONTENT RENDERER — one presentation per content kind.
+   ═══════════════════════════════════════════════════════ */
+function ComponentContent({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
+  component: JourneyComponent;
+  contentKind: ReturnType<typeof componentContentKind>;
+  parsed: ReturnType<typeof parseVideoUrl> | null;
+  title: string;
+  onDuration: (d: number) => void;
+  onProgress: (t: number) => void;
+  onEnded: () => void;
+  onUnsupported: () => void;
+}) {
+  if (contentKind === 'video' && parsed) {
+    return (
+      <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
+        <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onEnded={onEnded} onUnsupported={onUnsupported} />
+        </div>
+      </div>
+    );
+  }
+
+  if (contentKind === 'audio') {
+    const directAudio = component.audioUrl && isDirectAudioUrl(component.audioUrl);
+    return (
+      <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-violet-50 to-background-50 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="w-11 h-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><i className="ri-headphone-line text-xl" /></span>
+          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
+        </div>
+        {directAudio ? (
+          <audio controls preload="metadata" className="w-full" src={component.audioUrl!}>Your browser does not support audio playback.</audio>
+        ) : component.audioUrl ? (
+          <>
+            {/* Not a direct media file (e.g. a podcast listening page) — fetch
+                and display the page itself in the LMS rather than only linking
+                out. Some sites block embedding (X-Frame-Options), so the "open
+                in a new tab" link below is always shown, not just a fallback. */}
+            <div className="rounded-xl overflow-hidden border border-background-300 bg-white" style={{ aspectRatio: '16 / 9' }}>
+              <iframe title={title} src={component.audioUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" />
+            </div>
+            <p className="text-[11px] text-foreground-400 mt-2">If the player above stays blank, this site doesn&apos;t allow embedding — use the link below instead.</p>
+          </>
+        ) : (
+          <p className="text-sm text-foreground-500">No audio was set for this podcast. You can still record your reflection below.</p>
+        )}
+        {component.audioUrl && (
+          <a href={component.audioUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><i className="ri-external-link-line" />Open in a new tab</a>
+        )}
+      </div>
+    );
+  }
+
+  if (contentKind === 'reading') {
+    return (
+      <div className="rounded-2xl border border-background-300 bg-white p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><i className="ri-book-open-line text-xl" /></span>
+          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p></div>
+        </div>
+        {component.contentHtml ? (
+          // Reading content is coach-authored curriculum (trusted staff authors).
+          <div
+            className="max-w-none text-sm text-foreground-700 leading-relaxed [&_h2]:font-heading [&_h2]:font-bold [&_h2]:text-lg [&_h2]:text-foreground-900 [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:font-heading [&_h3]:font-semibold [&_h3]:text-base [&_h3]:text-foreground-900 [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1 [&_strong]:font-semibold [&_strong]:text-foreground-900 [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
+            dangerouslySetInnerHTML={{ __html: normalizeReadingHtml(component.contentHtml) }}
+          />
+        ) : component.resourceUrl ? (
+          <>
+            {/* Reading material stored as an external link/file — fetch and
+                show it inline via the same embeddable-doc viewer PowerPoint uses. */}
+            <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
+              <iframe title={title} src={embeddableDocUrl(component.resourceUrl)} className="w-full h-full" />
+            </div>
+            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><i className="ri-external-link-line" />Open in a new tab</a>
+          </>
+        ) : (
+          <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
+        )}
+        {component.audioUrl && (
+          <div className="mt-4 pt-4 border-t border-background-200">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>
+            <audio controls preload="metadata" className="w-full" src={component.audioUrl} />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (contentKind === 'slides') {
+    return (
+      <div className="rounded-2xl border border-background-300 bg-white p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <span className="w-11 h-11 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center"><i className="ri-slideshow-line text-xl" /></span>
+          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
+        </div>
+        {component.resourceUrl ? (
+          <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
+            <iframe title={title} src={embeddableDocUrl(component.resourceUrl)} className="w-full h-full" />
+          </div>
+        ) : (
+          <p className="text-sm text-foreground-500">{component.fileName ? <>Slide deck: <span className="font-semibold text-foreground-700">{component.fileName}</span>. </> : ''}Review your slide deck for this week, then record your reflection below.</p>
+        )}
+        {component.resourceUrl && (
+          <div className="mt-3 flex items-center gap-4">
+            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><i className="ri-external-link-line" />Open in a new tab</a>
+            {component.downloadAllowed && (
+              <a href={component.resourceUrl} download className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><i className="ri-download-line" />Download slides</a>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (contentKind === 'reflection') {
+    return (
+      <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-purple-50 to-background-50 p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-11 h-11 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center"><i className="ri-brain-line text-xl" /></span>
+          <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the prompt, then capture your reflection below.</p></div>
+        </div>
+        {component.reflectionPrompt && (
+          <div className="rounded-xl bg-white border border-purple-100 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-purple-500 mb-1">Reflection prompt</p>
+            <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.reflectionPrompt}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* resource / activity / evidence / live session / recording */
+  return (
+    <div className="rounded-2xl border border-background-300 bg-white p-6">
+      <div className="flex items-center gap-3 mb-3">
+        <span className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><i className="ri-task-line text-xl" /></span>
+        <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Complete this activity, then finish and reflect below.</p></div>
+      </div>
+      {component.reflectionPrompt && (
+        <div className="rounded-xl bg-background-50 border border-background-200 p-4 mb-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">What to do</p>
+          <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.reflectionPrompt}</p>
+        </div>
+      )}
+      {component.resourceUrl && (
+        <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 hover:text-emerald-700"><i className="ri-external-link-line" />Open resource</a>
+      )}
+    </div>
+  );
+}
+
+/* Results screen after a completion + reflection is saved. */
+function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; title: string; noun: string; onBack: () => void }) {
+  return (
+    <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium text-center">
+      <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-emerald-100">
+        <i className="ri-checkbox-circle-line text-emerald-600 text-2xl" />
+      </div>
+      <h1 className="text-lg font-heading font-bold text-foreground-900 mb-1">{noun.charAt(0).toUpperCase() + noun.slice(1)} complete!</h1>
+      <p className="text-sm text-foreground-400 mb-6">{title}</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6 text-left max-w-md mx-auto">
+        <StatTile icon="ri-timer-line" label="Time taken" value={record.timeTaken || '—'} />
+        <StatTile icon="ri-links-line" label="KSBs" value={String(record.ksbs?.length ?? 0)} />
+        <StatTile icon="ri-time-line" label="Reported" value={record.reportedTime || '—'} />
+      </div>
+
+      {record.feedback && (
+        <div className="text-left max-w-md mx-auto mb-6 rounded-xl border border-background-300 bg-white p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">Your reflection</p>
+          <p className="text-sm text-foreground-700">{record.feedback}</p>
+        </div>
+      )}
+
+      <button onClick={onBack} className="px-6 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer">
+        Back to Training Plan
+      </button>
+    </div>
+  );
+}
+
+function StatTile({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-background-300 bg-white px-3 py-2.5">
+      <div className="flex items-center gap-1.5 text-foreground-400 mb-0.5">
+        <i className={`${icon} text-xs`} />
+        <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
+      </div>
+      <p className="text-sm font-bold text-foreground-900 truncate">{value}</p>
+    </div>
+  );
+}
