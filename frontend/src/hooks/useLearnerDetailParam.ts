@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { fetchLearnerDetail, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
+import { fetchLearnerDetail, invalidateLearnerDetailCache, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
 
 /**
  * Shared real-vs-mock data hook for pages reachable both as a plain self-view
@@ -20,7 +20,10 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const refresh = useCallback(() => setRefreshTick((t) => t + 1), []);
+  const refresh = useCallback(() => {
+    if (isRealMode && id) invalidateLearnerDetailCache(kind as LearnerKind, id);
+    setRefreshTick((t) => t + 1);
+  }, [isRealMode, kind, id]);
 
   useEffect(() => {
     if (!isRealMode || !id) return;

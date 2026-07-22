@@ -42,20 +42,20 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
-      { id: 'learner-catchup', label: 'Catch-up', icon: 'ri-timer-line', href: '/learner/catchup' },
+      { id: 'learner-absence-report', label: 'Absence Report', icon: 'ri-file-warning-line', href: '/learner/report-absence' },
     ],
   },
 
-  // Monthly Progress
+  // My Progress
   {
     id: 'learner-group-monthly',
-    label: 'Monthly Progress',
+    label: 'My Progress',
     icon: 'ri-loop-left-line',
     href: '',
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
@@ -91,8 +91,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/learner/knowledge-base' },
-      { id: 'learner-messages', label: 'Messages', icon: 'ri-mail-line', href: '/learner/messages', badge: 2 },
-      { id: 'learner-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },
@@ -311,7 +309,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     children: [
       { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
       { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
-      { id: 'curriculum-component-builder', label: 'Component Builder', icon: 'ri-puzzle-line', href: '/curriculum/component-builder' },
       { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
     ],
   },
@@ -337,7 +334,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-coach-profiles', label: 'Coach Profiles', icon: 'ri-user-star-line', href: '/curriculum/staff-profiles?role=coach' },
       { id: 'curriculum-tutor-profiles', label: 'Tutor Profiles', icon: 'ri-presentation-line', href: '/curriculum/staff-profiles?role=tutor' },
       { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
-      { id: 'curriculum-mis-allocation', label: 'MIS Allocation', icon: 'ri-share-line', href: '/curriculum/mis-allocation' },
     ],
   },
   {
@@ -345,13 +341,14 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality & Publishing',
     icon: 'ri-shield-check-line',
     href: '',
+    comingSoon: true,
     children: [
-      { id: 'curriculum-version-control', label: 'Version Control', icon: 'ri-git-branch-line', href: '/curriculum/version-control' },
-      { id: 'curriculum-qa', label: 'Curriculum QA', icon: 'ri-shield-check-line', href: '/curriculum/qa' },
-      { id: 'curriculum-published', label: 'Published Curriculum', icon: 'ri-book-open-line', href: '/curriculum/published' },
+      { id: 'curriculum-version-control', label: 'Version Control', icon: 'ri-git-branch-line', href: '/curriculum/version-control', comingSoon: true },
+      { id: 'curriculum-qa', label: 'Curriculum QA', icon: 'ri-shield-check-line', href: '/curriculum/qa', comingSoon: true },
+      { id: 'curriculum-published', label: 'Published Curriculum', icon: 'ri-book-open-line', href: '/curriculum/published', comingSoon: true },
     ],
   },
-  { id: 'curriculum-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/curriculum/reports' },
+  { id: 'curriculum-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/curriculum/reports', comingSoon: true },
 ];
 
 // ============================================================================

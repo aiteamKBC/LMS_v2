@@ -165,6 +165,9 @@ class ActiveUser(models.Model):
     # Refreshed on every Active mirror sync.
     start_date = models.DateField(db_column="Start_date", null=True, blank=True)
     end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    # Maintained by a database trigger whenever End_date changes.
+    alert_notify_for_epa = models.DateField(db_column="Alert_notify_for_EPA", null=True, blank=True)
+    enter_epa = models.DateField(db_column="Enter_EPA", null=True, blank=True)
     gateway_review_date = models.DateField(db_column="Gateway_review_date", null=True, blank=True)
     minimum_hours = models.TextField(db_column="Minimum_hours", null=True, blank=True)
     maximum_hours = models.TextField(db_column="Maximum_hours", null=True, blank=True)
@@ -251,6 +254,9 @@ class UnactiveUser(models.Model):
     # (copied automatically by _archive_active_user's shared-field loop).
     start_date = models.DateField(db_column="Start_date", null=True, blank=True)
     end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    # Maintained by the same database trigger as the active mirror.
+    alert_notify_for_epa = models.DateField(db_column="Alert_notify_for_EPA", null=True, blank=True)
+    enter_epa = models.DateField(db_column="Enter_EPA", null=True, blank=True)
     gateway_review_date = models.DateField(db_column="Gateway_review_date", null=True, blank=True)
     coach_name = models.TextField(db_column="coach_name", null=True, blank=True)
     coach_email = models.TextField(db_column="coach_email", null=True, blank=True)

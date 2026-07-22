@@ -516,6 +516,7 @@ export interface CurriculumStaffProfile {
   assignedGroupIds?: string[];
   assignedModules?: Array<Pick<CurriculumModule, 'id' | 'moduleId' | 'moduleCatalogueId' | 'deliveryRowId' | 'name' | 'programmeId' | 'programme' | 'cohortId' | 'cohort' | 'groupId' | 'group' | 'startDate' | 'endDate' | 'status'>>;
   inProgressModules?: Array<Pick<CurriculumModule, 'id' | 'moduleId' | 'moduleCatalogueId' | 'deliveryRowId' | 'name' | 'programmeId' | 'programme' | 'cohortId' | 'cohort' | 'groupId' | 'group' | 'startDate' | 'endDate' | 'status'>>;
+  groupCount?: number;
   moduleCount?: number;
   inProgressCount?: number;
   notes?: string;
@@ -783,6 +784,7 @@ export type CurriculumStaffProfileInput = {
   status?: string;
   specialisms?: string[];
   assignedModuleIds?: string[];
+  assignedGroupIds?: string[];
   notes?: string;
 };
 

@@ -2,6 +2,7 @@ import json
 import logging
 import calendar
 import re
+import threading
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,7 @@ TRAINING_MODULE_CATALOGUE_COLUMN = 'module_catalogue_id'
 CANONICAL_MODULE_ID_PATTERN = re.compile(r'^MOD-[A-Z0-9][A-Z0-9_-]*$', re.I)
 CURRICULUM_CACHE_TTL_SECONDS = 300
 _CURRICULUM_CACHE = {}
+_CURRICULUM_CACHE_LOCK = threading.Lock()
 _TABLE_COLUMNS_CACHE = {}
 _AUTHORING_TABLES_READY = False
 _FREE_PROGRAMME_TABLES_READY = False
@@ -43,21 +45,23 @@ SUPPORTED_KSB_SOURCE_TYPES = {'standard', 'framework'}
 
 
 def invalidate_curriculum_cache():
-    _CURRICULUM_CACHE.clear()
+    with _CURRICULUM_CACHE_LOCK:
+        _CURRICULUM_CACHE.clear()
 
 
 def cached_curriculum_value(key, factory):
     now = datetime.now().timestamp()
-    entry = _CURRICULUM_CACHE.get(key)
-    if entry and entry['expires_at'] > now:
-        return entry['value']
+    with _CURRICULUM_CACHE_LOCK:
+        entry = _CURRICULUM_CACHE.get(key)
+        if entry and entry['expires_at'] > now:
+            return entry['value']
 
-    value = factory()
-    _CURRICULUM_CACHE[key] = {
-        'expires_at': now + CURRICULUM_CACHE_TTL_SECONDS,
-        'value': value,
-    }
-    return value
+        value = factory()
+        _CURRICULUM_CACHE[key] = {
+            'expires_at': now + CURRICULUM_CACHE_TTL_SECONDS,
+            'value': value,
+        }
+        return value
 
 
 def rows_as_dicts(cursor):
@@ -270,6 +274,7 @@ COMPONENT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024
 COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
+    'assignment': {'.doc', '.docx', '.pdf', '.ppt', '.pptx', '.xls', '.xlsx', '.csv', '.txt', '.zip'},
 }
 
 
@@ -323,6 +328,8 @@ def update_component_upload_settings(component_id, component_type, metadata):
         updates.update({'podcastSource': 'Device upload', 'podcastUrl': metadata['url']})
     if component_type == 'powerpoint':
         updates.update({'fileName': metadata['fileName'], 'presentationUrl': metadata['url']})
+    if component_type == 'assignment':
+        updates.update({'assignmentFileName': metadata['fileName'], 'assignmentFileUrl': metadata['url']})
     authoring_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], {
         **row,
         'settings': json_db_value({**settings_payload, **updates}),
@@ -1208,6 +1215,11 @@ STAFF_PROFILE_ASSIGNMENT_COLUMNS = {
     'tutor': 'Tutor_name',
 }
 
+STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS = {
+    'coach': 'assigned_group_ids',
+    'tutor': 'assigned_module_ids',
+}
+
 
 def ensure_staff_profile_tables():
     global _STAFF_PROFILE_TABLES_READY
@@ -1218,7 +1230,9 @@ def ensure_staff_profile_tables():
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
             cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
-        for table in STAFF_PROFILE_TABLES.values():
+        for role, table in STAFF_PROFILE_TABLES.items():
+            assignment_column = STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS[role]
+            stale_assignment_column = 'assigned_module_ids' if role == 'coach' else 'assigned_group_ids'
             cursor.execute(f'''
                 create table if not exists {table_name(table)} (
                     id varchar(128) primary key,
@@ -1228,8 +1242,7 @@ def ensure_staff_profile_tables():
                     job_title varchar(255) not null default '',
                     status varchar(32) not null default 'active',
                     specialisms {json_type},
-                    assigned_module_ids {json_type},
-                    assigned_group_ids {json_type},
+                    {assignment_column} {json_type},
                     notes text not null default '',
                     is_archived boolean not null default false,
                     created_at timestamp not null default {timestamp_default},
@@ -1238,8 +1251,8 @@ def ensure_staff_profile_tables():
             ''')
             if connection.vendor == 'postgresql':
                 cursor.execute(f'alter table {table_name(table)} add column if not exists specialisms {json_type}')
-                cursor.execute(f'alter table {table_name(table)} add column if not exists assigned_module_ids {json_type}')
-                cursor.execute(f'alter table {table_name(table)} add column if not exists assigned_group_ids {json_type}')
+                cursor.execute(f'alter table {table_name(table)} add column if not exists {assignment_column} {json_type}')
+                cursor.execute(f'alter table {table_name(table)} drop column if exists {stale_assignment_column}')
                 cursor.execute(f'create index if not exists curriculum_{table}_name_idx on {table_name(table)} (name)')
                 cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(table)} (status)')
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.coaches', None)
@@ -1391,11 +1404,11 @@ def assigned_modules_for_staff(name, role, modules, stored_ids=None, stored_grou
 def serialize_staff_profile(row, role, modules=None):
     row = row or {}
     name = staff_profile_name(row)
-    stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), [])
-    stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), [])
-    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, stored_group_ids)
+    stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), []) if role == 'tutor' else []
+    stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), []) if role == 'coach' else []
+    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, stored_group_ids) if role == 'tutor' else []
     active_modules = [module for module in assigned_modules if module.get('status') == 'in_progress']
-    return {
+    profile = {
         'id': row.get('id') or f'{role}-{slugify(name)}',
         'role': role,
         'name': name,
@@ -1404,18 +1417,26 @@ def serialize_staff_profile(row, role, modules=None):
         'jobTitle': row.get('job_title') or row.get('jobTitle') or row.get('role') or '',
         'status': row.get('status') or ('archived' if truthy(row.get('is_archived')) else 'active'),
         'specialisms': as_json_value(row.get('specialisms'), []),
-        'assignedModuleIds': [module.get('id') for module in assigned_modules if module.get('id')],
-        'assignedGroupIds': stored_group_ids,
-        'storedAssignedModuleIds': stored_ids,
-        'storedAssignedGroupIds': stored_group_ids,
-        'assignedModules': assigned_modules,
-        'inProgressModules': active_modules,
-        'moduleCount': len(assigned_modules),
-        'inProgressCount': len(active_modules),
         'notes': row.get('notes') or '',
         'isArchived': truthy(row.get('is_archived')),
         'updatedAt': format_date(row.get('updated_at')),
     }
+    if role == 'coach':
+        profile.update({
+            'assignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
+            'storedAssignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
+            'groupCount': len([item for item in stored_group_ids if clean_str(item)]),
+        })
+    else:
+        profile.update({
+            'assignedModuleIds': [module.get('id') for module in assigned_modules if module.get('id')],
+            'storedAssignedModuleIds': stored_ids,
+            'assignedModules': assigned_modules,
+            'inProgressModules': active_modules,
+            'moduleCount': len(assigned_modules),
+            'inProgressCount': len(active_modules),
+        })
+    return profile
 
 
 def build_staff_profiles(training_rows, profile_rows, role, modules=None):
@@ -2370,7 +2391,7 @@ def find_skills_england_standard(identifier):
 
 @require_GET
 def curriculum_standards(request):
-    standards = build_skills_england_standards()
+    standards = cached_curriculum_value('skills-england-standards', build_skills_england_standards)
     return JsonResponse({
         'schema': CURRICULUM_SCHEMA,
         'sourceTable': 'standard_ksbs',
@@ -3075,15 +3096,20 @@ def matches_curriculum_identifier(value, identifier):
 def curriculum_overview(request):
     visibility = curriculum_visibility(request)
     compact = request.GET.get('compact') in {'1', 'true', 'yes'}
-    if not compact:
-        sync_cohort_authoring_details_from_training()
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
-    return JsonResponse(cached_curriculum_value(cache_key, lambda: build_curriculum_payload(visibility, compact=compact)))
+
+    def build_overview():
+        if not compact:
+            sync_cohort_authoring_details_from_training()
+        return build_curriculum_payload(visibility, compact=compact)
+
+    return JsonResponse(cached_curriculum_value(cache_key, build_overview))
 
 
-def get_cached_payload(request):
+def get_cached_payload(request, compact=False):
     visibility = curriculum_visibility(request)
-    return cached_curriculum_value(f'overview:{visibility}', lambda: build_curriculum_payload(visibility))
+    cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
+    return cached_curriculum_value(cache_key, lambda: build_curriculum_payload(visibility, compact=compact))
 
 
 def find_programme(payload, identifier):
@@ -4151,6 +4177,13 @@ COMPONENT_SETTINGS_SCHEMA = {
         'submissionInstructions': '',
         'dueTiming': 'End of week',
         'markingRubric': '',
+        'uploadedFileName': '',
+        'uploadedFileUrl': '',
+        'uploadedFileSize': 0,
+        'uploadedFileContentType': '',
+        'uploadSource': '',
+        'assignmentFileName': '',
+        'assignmentFileUrl': '',
     },
     'checkpoint': {
         **BASE_COMPONENT_SETTINGS,
@@ -4247,8 +4280,6 @@ def validate_component_authoring_payload(component, path):
         errors.append({'path': f'{path}.settings.version', 'message': 'Version must use numbers such as 0.1 or 1.2.0.'})
     if bool_payload(component.get('reflectionRequired')) and not clean_str(settings.get('reflectionPrompt')):
         errors.append({'path': f'{path}.settings.reflectionPrompt', 'message': 'Reflection prompt is required when reflection is enabled.'})
-    if bool_payload(component.get('workplaceEvidenceRequired')) and not clean_str(settings.get('evidenceInstructions') or settings.get('evidenceRequired')):
-        errors.append({'path': f'{path}.settings.evidenceInstructions', 'message': 'Evidence instructions are required when workplace evidence is enabled.'})
     for key in settings.keys():
         if key not in allowed:
             errors.append({'path': f'{path}.settings.{key}', 'message': f'Unsupported setting "{key}" for {component_type}.'})
@@ -4935,11 +4966,7 @@ def save_component_builder_payload(payload, component_id=None):
         else bool_payload(payload.get('reflection_required')) if 'reflection_required' in payload
         else bool_payload(existing_row.get('reflection_required'))
     )
-    workplace_evidence_required = (
-        bool_payload(payload.get('workplaceEvidenceRequired')) if 'workplaceEvidenceRequired' in payload
-        else bool_payload(payload.get('workplace_evidence_required')) if 'workplace_evidence_required' in payload
-        else bool_payload(existing_row.get('workplace_evidence_required'))
-    )
+    workplace_evidence_required = False
     tutor_validation_required = (
         bool_payload(payload.get('tutorValidationRequired')) if 'tutorValidationRequired' in payload
         else bool_payload(payload.get('tutor_validation_required')) if 'tutor_validation_required' in payload
@@ -5727,7 +5754,7 @@ def save_module_authoring_structure(module_catalogue_id, payload):
                     'expected_otjh': component_expected_otjh(component),
                     'points': parse_int(component.get('points'), 0),
                     'reflection_required': bool_payload(component.get('reflectionRequired')),
-                    'workplace_evidence_required': bool_payload(component.get('workplaceEvidenceRequired')),
+                    'workplace_evidence_required': False,
                     'tutor_validation_required': bool_payload(component.get('tutorValidationRequired')),
                     'display_order': component_index,
                     'settings_json': json_db_value(component.get('settings') or {}),
@@ -5803,7 +5830,7 @@ def free_programme_component_payload(component, index):
         'expected_otjh': component_expected_otjh(component),
         'points': parse_int(component.get('points'), 0),
         'reflection_required': bool_payload(component.get('reflectionRequired') or component.get('reflection_required')),
-        'workplace_evidence_required': bool_payload(component.get('workplaceEvidenceRequired') or component.get('workplace_evidence_required')),
+        'workplace_evidence_required': False,
         'tutor_validation_required': bool_payload(component.get('tutorValidationRequired') or component.get('tutor_validation_required')),
         'display_order': parse_int(requested_display_order, index),
         'settings_json': json_db_value(component.get('settings') or {}),
@@ -6646,7 +6673,7 @@ def curriculum_component_upload(request, component_id):
 
     component_type = frontend_component_type(request.POST.get('componentType') or request.POST.get('type'))
     if component_type not in COMPONENT_UPLOAD_EXTENSIONS:
-        return json_error('Uploads are only supported for podcast and PowerPoint components.', status=400)
+        return json_error('Uploads are only supported for podcast, PowerPoint and assignment components.', status=400)
 
     module_catalogue_id = clean_str(request.POST.get('moduleCatalogueId') or request.POST.get('moduleId') or 'module')
     metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)
@@ -7192,7 +7219,7 @@ def curriculum_module_detail(request, identifier):
 
 @require_GET
 def curriculum_ksb_frameworks(request):
-    return curriculum_collection_response(get_cached_payload(request), 'ksbFrameworks')
+    return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbFrameworks')
 
 
 @csrf_exempt
@@ -7269,7 +7296,7 @@ def curriculum_ksb_framework_detail(request, identifier):
 
 @require_GET
 def curriculum_ksb_sets(request):
-    return curriculum_collection_response(get_cached_payload(request), 'ksbSets')
+    return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
 
 
 @require_GET
@@ -7544,6 +7571,12 @@ def create_curriculum_group(payload):
             'status': 'planned',
             'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
         }, [row], safe_authoring_module_rows())
+        sync_group_staff_profile_links(
+            group_id,
+            coach_name=payload.get('coach') or '',
+            tutor_name=payload.get('tutor') or '',
+            module_assignment_ids=training_row_module_assignment_ids(row, row.get(TRAINING_MODULE_CATALOGUE_COLUMN)),
+        )
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'group': row}, status=201)
 
@@ -7611,6 +7644,7 @@ def curriculum_group_detail(request, identifier):
             'group_color': payload.get('color') or group.get('color') or '',
         })
     updated_rows = update_training_rows(rows, updates)
+    previous_coach = group.get('coach') or rows[0].get('coach_name') if rows else ''
     persist_group_authoring_detail({
         **group,
         'name': payload.get('name') or group.get('name'),
@@ -7620,6 +7654,11 @@ def curriculum_group_detail(request, identifier):
         'endDate': payload.get('endDate') or group.get('endDate'),
         'schedule': clean_str(payload.get('weekDays') or group.get('schedule')),
     }, updated_rows or rows, safe_authoring_module_rows())
+    sync_group_staff_profile_links(
+        group.get('id') or identifier,
+        coach_name=payload.get('coach') if 'coach' in payload else group.get('coach'),
+        previous_coach_name=previous_coach,
+    )
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
 
@@ -7717,6 +7756,19 @@ def curriculum_group_modules(request, identifier):
                 'sourceId': clean_str(item.get('sourceId') or catalogue_id),
                 'importedFromTrainingPlanId': clean_str(item.get('importedFromTrainingPlanId') or ''),
             })
+            sync_group_staff_profile_links(
+                group['id'],
+                coach_name=item.get('coach') or group.get('coach') or '',
+                tutor_name=item.get('tutor') or group.get('tutor') or '',
+                module_assignment_ids=clean_assignment_ids([
+                    saved.get('id'),
+                    saved.get('moduleId'),
+                    saved.get('moduleCatalogueId'),
+                    saved.get('catalogueId'),
+                    saved.get('sourceId'),
+                    catalogue_id,
+                ]),
+            )
             created_modules.append(saved)
             existing_names.add(normalise(module_name))
             existing_catalogue_ids.add(catalogue_id)
@@ -7840,6 +7892,12 @@ def curriculum_group_modules(request, identifier):
                 row[TRAINING_MODULE_CATALOGUE_COLUMN] = canonical_catalogue_id
                 row['_meta'] = {**extract_notes_meta(row.get('notes')), TRAINING_MODULE_CATALOGUE_COLUMN: canonical_catalogue_id}
         created_rows.append(row)
+        sync_group_staff_profile_links(
+            group_id,
+            coach_name=item.get('coach') or group.get('coach') or '',
+            tutor_name=item.get('tutor') or group.get('tutor') or '',
+            module_assignment_ids=training_row_module_assignment_ids(row, canonical_catalogue_id),
+        )
         existing_names.add(normalise(module_name))
         if canonical_catalogue_id:
             existing_catalogue_ids.add(canonical_catalogue_id)
@@ -7947,6 +8005,7 @@ def update_staffing_assignment(identifier, payload):
     group, rows = find_training_rows_by_group(identifier)
     if not group or not rows:
         return json_error('Group not found for staffing assignment.', status=404)
+    previous_coach = group.get('coach') or rows[0].get('coach_name') if rows else ''
     updates = {
         'Tutor_name': payload.get('tutor'),
         'coach_name': payload.get('coach'),
@@ -7957,6 +8016,18 @@ def update_staffing_assignment(identifier, payload):
         'tutor': payload.get('tutor') if 'tutor' in payload else group.get('tutor'),
         'coach': payload.get('coach') if 'coach' in payload else group.get('coach'),
     }, updated_rows or rows, safe_authoring_module_rows())
+    next_tutor = payload.get('tutor') if 'tutor' in payload else group.get('tutor')
+    next_coach = payload.get('coach') if 'coach' in payload else group.get('coach')
+    module_assignment_ids = []
+    for row in updated_rows or rows:
+        module_assignment_ids.extend(training_row_module_assignment_ids(row, training_row_module_catalogue_id(row)))
+    sync_group_staff_profile_links(
+        group.get('id') or identifier,
+        coach_name=next_coach,
+        tutor_name=next_tutor,
+        module_assignment_ids=module_assignment_ids,
+        previous_coach_name=previous_coach,
+    )
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': identifier})
 
@@ -7964,16 +8035,8 @@ def update_staffing_assignment(identifier, payload):
 def staff_profile_payload(role, payload, existing=None):
     existing = existing or {}
     name = clean_str(payload.get('name') if 'name' in payload else existing.get('name'))
-    specialisms = payload.get('specialisms') if 'specialisms' in payload else existing.get('specialisms')
-    if isinstance(specialisms, str):
-        specialisms = [item.strip() for item in re.split(r'[,;]+', specialisms) if item.strip()]
-    assigned_module_ids = payload.get('assignedModuleIds') if 'assignedModuleIds' in payload else payload.get('assigned_module_ids') if 'assigned_module_ids' in payload else existing.get('assigned_module_ids')
-    if isinstance(assigned_module_ids, str):
-        assigned_module_ids = [item.strip() for item in re.split(r'[,;]+', assigned_module_ids) if item.strip()]
-    assigned_group_ids = payload.get('assignedGroupIds') if 'assignedGroupIds' in payload else payload.get('assigned_group_ids') if 'assigned_group_ids' in payload else existing.get('assigned_group_ids')
-    if isinstance(assigned_group_ids, str):
-        assigned_group_ids = [item.strip() for item in re.split(r'[,;]+', assigned_group_ids) if item.strip()]
-    return {
+    specialisms = staff_payload_list_value(payload.get('specialisms') if 'specialisms' in payload else existing.get('specialisms'))
+    profile = {
         'id': clean_str(existing.get('id') or payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name')),
         'name': name,
         'email': clean_str(payload.get('email') if 'email' in payload else existing.get('email')),
@@ -7984,12 +8047,44 @@ def staff_profile_payload(role, payload, existing=None):
             else existing.get('job_title')
         ),
         'status': clean_str(payload.get('status') if 'status' in payload else existing.get('status')) or 'active',
-        'specialisms': json_db_value(specialisms if isinstance(specialisms, list) else []),
-        'assigned_module_ids': json_db_value(assigned_module_ids if isinstance(assigned_module_ids, list) else []),
-        'assigned_group_ids': json_db_value(assigned_group_ids if isinstance(assigned_group_ids, list) else []),
+        'specialisms': json_db_value(specialisms),
         'notes': clean_str(payload.get('notes') if 'notes' in payload else existing.get('notes')),
         'is_archived': False,
     }
+    if role == 'coach':
+        assigned_group_ids = staff_payload_list_value(
+            payload.get('assignedGroupIds')
+            if 'assignedGroupIds' in payload
+            else payload.get('assigned_group_ids')
+            if 'assigned_group_ids' in payload
+            else existing.get('assigned_group_ids')
+        )
+        profile['assigned_group_ids'] = json_db_value(assigned_group_ids)
+    else:
+        assigned_module_ids = staff_payload_list_value(
+            payload.get('assignedModuleIds')
+            if 'assignedModuleIds' in payload
+            else payload.get('assigned_module_ids')
+            if 'assigned_module_ids' in payload
+            else existing.get('assigned_module_ids')
+        )
+        profile['assigned_module_ids'] = json_db_value(assigned_module_ids)
+    return profile
+
+
+def staff_payload_list_value(value):
+    if isinstance(value, list):
+        return [clean_str(item) for item in value if clean_str(item)]
+    if value is None:
+        return []
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith('[') or stripped.startswith('{'):
+            parsed = as_json_value(stripped, [])
+            return staff_payload_list_value(parsed)
+        return [item.strip() for item in re.split(r'[,;]+', stripped) if item.strip()]
+    parsed = as_json_value(value, [])
+    return staff_payload_list_value(parsed)
 
 
 def find_staff_profile_row(role, identifier, include_archived=True):
@@ -8017,6 +8112,89 @@ def staff_module_training_ids(assignment_ids, modules):
             if row_id:
                 training_ids.add(row_id)
     return training_ids
+
+
+def clean_assignment_ids(values):
+    seen = set()
+    result = []
+    for value in values or []:
+        text = clean_str(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
+def add_staff_profile_assignments(role, staff_name, column, assignment_ids):
+    staff_name = clean_str(staff_name)
+    if not staff_name or staff_assignment_key(staff_name) == 'unassigned':
+        return []
+    assignment_ids = clean_assignment_ids(assignment_ids)
+    if not assignment_ids:
+        return []
+    table = staff_profile_table(role)
+    if column not in column_names(table):
+        return []
+    row = find_staff_profile_row(role, staff_name)
+    if not row:
+        return []
+    existing = clean_assignment_ids(as_json_value(row.get(column), []))
+    next_values = clean_assignment_ids([*existing, *assignment_ids])
+    if next_values == existing:
+        return existing
+    update_rows(table, 'id = %s', [row.get('id')], {
+        column: json_db_value(next_values),
+        'updated_at': datetime.utcnow(),
+    })
+    return next_values
+
+
+def remove_staff_profile_assignments(role, staff_name, column, assignment_ids):
+    staff_name = clean_str(staff_name)
+    assignment_ids = set(clean_assignment_ids(assignment_ids))
+    if not staff_name or not assignment_ids or staff_assignment_key(staff_name) == 'unassigned':
+        return []
+    table = staff_profile_table(role)
+    if column not in column_names(table):
+        return []
+    row = find_staff_profile_row(role, staff_name)
+    if not row:
+        return []
+    existing = clean_assignment_ids(as_json_value(row.get(column), []))
+    next_values = [item for item in existing if item not in assignment_ids]
+    if next_values == existing:
+        return existing
+    update_rows(table, 'id = %s', [row.get('id')], {
+        column: json_db_value(next_values),
+        'updated_at': datetime.utcnow(),
+    })
+    return next_values
+
+
+def training_row_module_assignment_ids(row, catalogue_id=''):
+    row = row or {}
+    row_id = clean_str(row.get('id'))
+    values = []
+    if row_id:
+        values.extend([row_id, f'training-module-{row_id}'])
+    values.extend([
+        catalogue_id,
+        row.get(TRAINING_MODULE_CATALOGUE_COLUMN),
+        row.get('module_catalogue_id'),
+        row.get('moduleId'),
+        row.get('module_id'),
+    ])
+    return clean_assignment_ids(values)
+
+
+def sync_group_staff_profile_links(group_id, coach_name='', tutor_name='', module_assignment_ids=None, previous_coach_name=''):
+    group_id = clean_str(group_id)
+    if group_id:
+        if previous_coach_name and staff_assignment_key(previous_coach_name) != staff_assignment_key(coach_name):
+            remove_staff_profile_assignments('coach', previous_coach_name, 'assigned_group_ids', [group_id])
+        add_staff_profile_assignments('coach', coach_name, 'assigned_group_ids', [group_id])
+    add_staff_profile_assignments('tutor', tutor_name, 'assigned_module_ids', module_assignment_ids or [])
 
 
 def sync_staff_profile_module_assignments(role, staff_name, assigned_module_ids=None, previous_name='', clear_missing=False):
@@ -8055,6 +8233,43 @@ def sync_staff_profile_module_assignments(role, staff_name, assigned_module_ids=
     return changed
 
 
+def sync_staff_profile_group_assignments(staff_name, assigned_group_ids=None, previous_name='', clear_missing=False):
+    if not table_exists('Training_plan'):
+        return []
+    requested = set(clean_assignment_ids(assigned_group_ids or []))
+    previous_key = staff_assignment_key(previous_name)
+    staff_key = staff_assignment_key(staff_name)
+    training_rows = get_training_rows()
+    program_configs_by_id = program_config_by_id(get_program_config_rows())
+    changed = []
+
+    for row in training_rows:
+        programme = programme_identity(row, program_configs_by_id)
+        cohort = actual_cohort_identity(row, programme['name'])
+        group = actual_group_identity(row, cohort['id']) if cohort else None
+        group_id = clean_str((group or {}).get('id'))
+        current = clean_str(row.get('coach_name'))
+        current_key = staff_assignment_key(current)
+        next_value = None
+
+        if group_id and group_id in requested:
+            if current != staff_name:
+                next_value = staff_name
+        elif clear_missing and current_key in {previous_key, staff_key}:
+            next_value = ''
+        elif previous_key and previous_key != staff_key and current_key == previous_key:
+            next_value = staff_name
+
+        if next_value is None:
+            continue
+        update_training_rows([row], {'coach_name': next_value})
+        changed.append(clean_str(row.get('id')))
+
+    if changed:
+        sync_cohort_authoring_details_from_training()
+    return changed
+
+
 def current_staff_profile_payload(role, identifier):
     row = find_staff_profile_row(role, identifier)
     if not row:
@@ -8067,9 +8282,19 @@ def current_staff_profile_payload(role, identifier):
 @csrf_exempt
 def curriculum_staff_profile_collection(request, role):
     if request.method == 'GET':
-        payload = get_cached_payload(request)
-        key = STAFF_PROFILE_TABLES[role]
-        return curriculum_collection_response(payload, key)
+        include_archived = request.GET.get('include_archived') in {'1', 'true', 'yes'}
+
+        def build_profiles():
+            return [
+                serialize_staff_profile(row, role, [])
+                for row in get_staff_profile_rows(role, include_archived=include_archived)
+            ]
+
+        profiles = cached_curriculum_value(
+            f'staff-profiles:{role}:{"all" if include_archived else "active"}',
+            build_profiles,
+        )
+        return curriculum_results_response(profiles)
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
     payload = json_body(request)
@@ -8085,8 +8310,12 @@ def curriculum_staff_profile_collection(request, role):
         'id': clean_str(payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name'), existing_ids),
     })
     row = insert_row(table, profile_payload)
-    assignment_ids = as_json_value(profile_payload.get('assigned_module_ids'), [])
-    sync_staff_profile_module_assignments(role, row.get('name'), assignment_ids, clear_missing=False)
+    if role == 'tutor':
+        assignment_ids = as_json_value(profile_payload.get('assigned_module_ids'), [])
+        sync_staff_profile_module_assignments(role, row.get('name'), assignment_ids, clear_missing=False)
+    elif role == 'coach':
+        group_assignment_ids = as_json_value(profile_payload.get('assigned_group_ids'), [])
+        sync_staff_profile_group_assignments(row.get('name'), group_assignment_ids, clear_missing=False)
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'profile': current_staff_profile_payload(role, row.get('id'))}, status=201)
 
@@ -8109,7 +8338,10 @@ def curriculum_staff_profile_detail(request, role, identifier):
             'is_archived': True,
             'updated_at': datetime.utcnow(),
         })
-        sync_staff_profile_module_assignments(role, staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
+        if role == 'tutor':
+            sync_staff_profile_module_assignments(role, staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
+        elif role == 'coach':
+            sync_staff_profile_group_assignments(staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
         invalidate_curriculum_cache()
         return JsonResponse({'archived': True, 'id': row.get('id')})
 
@@ -8121,12 +8353,13 @@ def curriculum_staff_profile_detail(request, role, identifier):
 
     previous_name = staff_profile_name(row)
     assignment_provided = 'assignedModuleIds' in payload or 'assigned_module_ids' in payload
+    group_assignment_provided = 'assignedGroupIds' in payload or 'assigned_group_ids' in payload
     profile_payload = staff_profile_payload(role, payload, row)
     updated_rows = update_rows(table, 'id = %s', [row.get('id')], {
         **profile_payload,
         'updated_at': datetime.utcnow(),
     })
-    if assignment_provided:
+    if role == 'tutor' and assignment_provided:
         sync_staff_profile_module_assignments(
             role,
             profile_payload.get('name'),
@@ -8134,8 +8367,18 @@ def curriculum_staff_profile_detail(request, role, identifier):
             previous_name=previous_name,
             clear_missing=True,
         )
+    elif role == 'coach' and group_assignment_provided:
+        sync_staff_profile_group_assignments(
+            profile_payload.get('name'),
+            as_json_value(profile_payload.get('assigned_group_ids'), []),
+            previous_name=previous_name,
+            clear_missing=True,
+        )
     elif previous_name != profile_payload.get('name'):
-        sync_staff_profile_module_assignments(role, profile_payload.get('name'), None, previous_name=previous_name)
+        if role == 'tutor':
+            sync_staff_profile_module_assignments(role, profile_payload.get('name'), None, previous_name=previous_name)
+        elif role == 'coach':
+            sync_staff_profile_group_assignments(profile_payload.get('name'), None, previous_name=previous_name)
     invalidate_curriculum_cache()
     profile_id = (updated_rows[0] if updated_rows else row).get('id')
     return JsonResponse({'updated': True, 'profile': current_staff_profile_payload(role, profile_id)})
@@ -8143,7 +8386,21 @@ def curriculum_staff_profile_detail(request, role, identifier):
 
 @require_GET
 def curriculum_holidays(request):
-    return curriculum_collection_response(get_cached_payload(request), 'holidays')
+    visibility = curriculum_visibility(request)
+
+    def build_holidays():
+        rows = get_holiday_rows()
+        if visibility != 'all':
+            rows = [
+                item for item in rows
+                if not truthy(item.get('is_archived'))
+                and not truthy(item.get('archived'))
+                and not truthy(extract_notes_meta(item.get('notes')).get('archived'))
+            ]
+        return [serialize_holiday_row(item) for item in rows]
+
+    holidays = cached_curriculum_value(f'holidays:{visibility}', build_holidays)
+    return curriculum_results_response(holidays)
 
 
 @csrf_exempt

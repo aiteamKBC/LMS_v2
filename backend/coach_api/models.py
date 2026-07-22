@@ -83,10 +83,11 @@ class CoachAbsenceReport(models.Model):
         ordering = ["-session_date", "learner_name"]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(attendance_rate__isnull=True) | models.Q(attendance_rate__gte=0, attendance_rate__lte=100),
+                condition=models.Q(attendance_rate__isnull=True)
+                | (models.Q(attendance_rate__gte=0) & models.Q(attendance_rate__lte=100)),
                 name="coach_absence_attendance_0_100",
             ),
         ]
 
     def __str__(self):
-        return f"Absence for {self.learner_name} on {self.session_date}"
+        return f"{self.learner_name}: {self.session_title} ({self.status})"

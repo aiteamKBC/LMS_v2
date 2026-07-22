@@ -3,14 +3,14 @@ from datetime import date, datetime, timedelta, timezone
 
 from django.conf import settings
 from django.db import IntegrityError, connection, transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, F, Sum
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from . import ai
 from .helpers import json_body, json_error, require_fields
 from .models import (
-    Club, ClubMeeting, Event, FlashCard, FlashCardDeck, FlashCardView,
+    Club, ClubMeeting, Event, EventBooking, FlashCard, FlashCardDeck, FlashCardView,
     PointsGrant, PointsRule, Recognition, Reward, VoucherClaim,
 )
 from .services import grant_points
@@ -89,6 +89,19 @@ def event_to_dict(event):
     }
 
 
+def event_booking_to_dict(booking):
+    return {
+        'id': booking.id,
+        'eventId': booking.event_id,
+        'learnerId': booking.learner_id,
+        'learner': booking.learner_name,
+        'email': booking.learner_email,
+        'status': booking.status,
+        'bookedAt': booking.booked_at.isoformat(),
+        'cancelledAt': booking.cancelled_at.isoformat() if booking.cancelled_at else None,
+    }
+
+
 def meeting_to_dict(meeting):
     return {
         'id': meeting.id,
@@ -148,6 +161,9 @@ def rule_to_dict(rule):
 def grant_to_dict(grant):
     return {
         'id': grant.id,
+        'ruleId': grant.rule_id,
+        'rule': grant.rule.name,
+        'category': grant.rule.category,
         'learnerId': grant.learner_id,
         'learner': grant.learner_name,
         'points': grant.points,
@@ -218,6 +234,9 @@ def reward_detail(request, pk):
 def voucher_claims_collection(request):
     if request.method == 'GET':
         claims = VoucherClaim.objects.select_related('reward').all().order_by('-requested_at')
+        learner_id = request.GET.get('learnerId')
+        if learner_id:
+            claims = claims.filter(learner_id=learner_id)
         return JsonResponse({'claims': [claim_to_dict(c) for c in claims]})
 
     if request.method != 'POST':
@@ -231,19 +250,31 @@ def voucher_claims_collection(request):
     if missing:
         return json_error('Missing required fields.', fields=missing)
 
-    try:
-        reward = Reward.objects.get(pk=payload['rewardId'])
-    except Reward.DoesNotExist:
-        return json_error('Reward not found.', status=404)
+    learner_id = str(payload['learnerId'])
+    with transaction.atomic():
+        try:
+            reward = Reward.objects.select_for_update().get(pk=payload['rewardId'])
+        except Reward.DoesNotExist:
+            return json_error('Reward not found.', status=404)
 
-    claim = VoucherClaim.objects.create(
-        learner_id=payload['learnerId'],
-        learner_name=payload['learnerName'],
-        reward=reward,
-        points=reward.points,
-        delivery_type=reward.delivery_type,
-        delivery_method='Email' if reward.delivery_type == 'digital' else 'Post',
-    )
+        if not reward.active:
+            return json_error('This reward is not currently available.', status=400)
+        if reward.stock <= reward.total_claimed:
+            return json_error('This reward is out of stock.', status=400)
+
+        earned = PointsGrant.objects.filter(learner_id=learner_id).aggregate(total=Sum('points'))['total'] or 0
+        committed = VoucherClaim.objects.filter(learner_id=learner_id).exclude(status='rejected').aggregate(total=Sum('points'))['total'] or 0
+        if earned - committed < reward.points:
+            return json_error('You do not have enough available points for this reward.', status=400)
+
+        claim = VoucherClaim.objects.create(
+            learner_id=learner_id,
+            learner_name=payload['learnerName'],
+            reward=reward,
+            points=reward.points,
+            delivery_type=reward.delivery_type,
+            delivery_method='Email' if reward.delivery_type == 'digital' else 'Post',
+        )
     return JsonResponse({'created': True, 'claim': claim_to_dict(claim)}, status=201)
 
 
@@ -289,6 +320,9 @@ def voucher_claim_detail(request, pk):
 def recognitions_collection(request):
     if request.method == 'GET':
         recognitions = Recognition.objects.all().order_by('-awarded_at')
+        learner_id = request.GET.get('learnerId')
+        if learner_id:
+            recognitions = recognitions.filter(learner_id=learner_id)
         return JsonResponse({'recognitions': [recognition_to_dict(r) for r in recognitions]})
 
     if request.method != 'POST':
@@ -426,6 +460,77 @@ def event_detail(request, pk):
 
     event.save()
     return JsonResponse({'event': event_to_dict(event)})
+
+
+@csrf_exempt
+def event_bookings_collection(request):
+    if request.method == 'GET':
+        bookings = EventBooking.objects.select_related('event').order_by('-booked_at')
+        learner_id = request.GET.get('learnerId')
+        if learner_id:
+            bookings = bookings.filter(learner_id=learner_id)
+        return JsonResponse({'bookings': [event_booking_to_dict(booking) for booking in bookings]})
+
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+    missing = require_fields(payload, ['eventId', 'learnerId', 'learnerName'])
+    if missing:
+        return json_error('Missing required fields.', fields=missing)
+
+    with transaction.atomic():
+        try:
+            event = Event.objects.select_for_update().get(pk=payload['eventId'])
+        except Event.DoesNotExist:
+            return json_error('Event not found.', status=404)
+        if event.status == 'completed':
+            return json_error('Completed events cannot be booked.', status=400)
+
+        booking, created = EventBooking.objects.select_for_update().get_or_create(
+            event=event,
+            learner_id=str(payload['learnerId']),
+            defaults={
+                'learner_name': payload['learnerName'],
+                'learner_email': payload.get('learnerEmail', ''),
+            },
+        )
+        if not created and booking.status == 'booked':
+            return json_error('You have already booked this event.', status=409)
+        if not created:
+            booking.status = 'booked'
+            booking.learner_name = payload['learnerName']
+            booking.learner_email = payload.get('learnerEmail', booking.learner_email)
+            booking.booked_at = datetime.now(timezone.utc)
+            booking.cancelled_at = None
+            booking.save()
+        Event.objects.filter(pk=event.pk).update(attendees=F('attendees') + 1)
+        event.refresh_from_db()
+
+    return JsonResponse({'created': created, 'booking': event_booking_to_dict(booking), 'event': event_to_dict(event)}, status=201)
+
+
+@csrf_exempt
+def event_booking_detail(request, pk):
+    if request.method != 'DELETE':
+        return json_error('Method not allowed.', status=405)
+
+    with transaction.atomic():
+        try:
+            booking = EventBooking.objects.select_for_update().get(pk=pk)
+        except EventBooking.DoesNotExist:
+            return json_error('Event booking not found.', status=404)
+        if booking.status == 'cancelled':
+            return json_error('This booking is already cancelled.', status=409)
+        booking.status = 'cancelled'
+        booking.cancelled_at = datetime.now(timezone.utc)
+        booking.save(update_fields=['status', 'cancelled_at'])
+        Event.objects.filter(pk=booking.event_id, attendees__gt=0).update(attendees=F('attendees') - 1)
+        event = Event.objects.get(pk=booking.event_id)
+
+    return JsonResponse({'cancelled': True, 'booking': event_booking_to_dict(booking), 'event': event_to_dict(event)})
 
 
 @csrf_exempt
@@ -640,6 +745,17 @@ def points_rule_grants(request, rule_id):
         points=payload.get('points', rule.points),
     )
     return JsonResponse({'created': True, 'grant': grant_to_dict(grant)}, status=201)
+
+
+def points_grants_collection(request):
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+
+    grants = PointsGrant.objects.select_related('rule').order_by('-awarded_at')
+    learner_id = request.GET.get('learnerId')
+    if learner_id:
+        grants = grants.filter(learner_id=learner_id)
+    return JsonResponse({'grants': [grant_to_dict(grant) for grant in grants]})
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
 //    pages keep consuming the same full VoucherClaim shape as before.
 // ============================================================================
 
-import { ENGAGEMENT_LEARNERS, type RewardItem, type VoucherClaim, type Recognition } from '@/mocks/engagement-data';
+import type { RewardItem, VoucherClaim, Recognition } from '@/mocks/engagement-data';
 
 const BASE = '/engagement_api';
 
@@ -85,21 +85,18 @@ export async function updateReward(id: string, input: Partial<RewardInput>): Pro
 
 // ---- Voucher claims ------------------------------------------------------
 
-const LEARNER_BY_ID = new Map(ENGAGEMENT_LEARNERS.map(l => [l.id, l]));
-
-// Backend claim -> full VoucherClaim, enriched with the mocked learner's
-// display fields. Unknown learnerId (shouldn't happen with current test
-// data) falls back to safe blanks so the page still renders.
+// Backend claim -> VoucherClaim. Programme fields are not owned by the
+// Engagement schema, so they intentionally stay blank rather than being
+// filled with mock learner data.
 function toClaim(c: any): VoucherClaim {
-  const l = LEARNER_BY_ID.get(String(c.learnerId));
   return {
     id: String(c.id),
     learnerId: c.learnerId,
-    learner: c.learner ?? l?.name ?? c.learnerId,
-    avatarImg: l?.avatarImg,
-    programmeCode: l?.programmeCode ?? 'PCP',
-    programme: l?.programme ?? '',
-    cohort: l?.cohort ?? '',
+    learner: c.learner ?? c.learnerId,
+    avatarImg: undefined,
+    programmeCode: '',
+    programme: '',
+    cohort: '',
     rewardId: String(c.rewardId),
     reward: c.reward,
     points: c.points,
@@ -127,8 +124,9 @@ export interface VoucherClaimPatch {
   deliveryInstructions?: string | null;
 }
 
-export async function fetchVoucherClaims(): Promise<VoucherClaim[]> {
-  const data = await request<{ claims: any[] }>(`${BASE}/voucher-claims/`);
+export async function fetchVoucherClaims(learnerId?: string): Promise<VoucherClaim[]> {
+  const query = learnerId ? `?learnerId=${encodeURIComponent(learnerId)}` : '';
+  const data = await request<{ claims: any[] }>(`${BASE}/voucher-claims/${query}`);
   return data.claims.map(toClaim);
 }
 
@@ -157,8 +155,9 @@ function toRecognition(r: any): Recognition {
   return { ...r, id: String(r.id), awardedAt: formatDate(r.awardedAt) };
 }
 
-export async function fetchRecognitions(): Promise<Recognition[]> {
-  const data = await request<{ recognitions: any[] }>(`${BASE}/recognitions/`);
+export async function fetchRecognitions(learnerId?: string): Promise<Recognition[]> {
+  const query = learnerId ? `?learnerId=${encodeURIComponent(learnerId)}` : '';
+  const data = await request<{ recognitions: any[] }>(`${BASE}/recognitions/${query}`);
   return data.recognitions.map(toRecognition);
 }
 
@@ -258,6 +257,36 @@ export async function updateEvent(id: string, patch: Partial<EventInput>): Promi
 
 export async function deleteEvent(id: string): Promise<void> {
   await request(`${BASE}/events/${id}/`, { method: 'DELETE' });
+}
+
+export interface EventBooking {
+  id: string;
+  eventId: string;
+  learnerId: string;
+  learner: string;
+  email: string;
+  status: 'booked' | 'cancelled';
+  bookedAt: string;
+  cancelledAt?: string | null;
+}
+
+function toEventBooking(booking: any): EventBooking {
+  return { ...booking, id: String(booking.id), eventId: String(booking.eventId) };
+}
+
+export async function fetchEventBookings(learnerId: string): Promise<EventBooking[]> {
+  const data = await request<{ bookings: any[] }>(`${BASE}/event-bookings/?learnerId=${encodeURIComponent(learnerId)}`);
+  return data.bookings.map(toEventBooking);
+}
+
+export async function createEventBooking(input: { eventId: string; learnerId: string; learnerName: string; learnerEmail?: string }): Promise<{ booking: EventBooking; event: EngagementEvent }> {
+  const data = await request<{ booking: any; event: any }>(`${BASE}/event-bookings/`, { method: 'POST', body: JSON.stringify(input) });
+  return { booking: toEventBooking(data.booking), event: toEvent(data.event) };
+}
+
+export async function cancelEventBooking(id: string): Promise<{ booking: EventBooking; event: EngagementEvent }> {
+  const data = await request<{ booking: any; event: any }>(`${BASE}/event-bookings/${id}/`, { method: 'DELETE' });
+  return { booking: toEventBooking(data.booking), event: toEvent(data.event) };
 }
 
 // ---- Clubs + meetings ----------------------------------------------------
@@ -401,6 +430,9 @@ export interface EngagementPointsRule {
 // snapshot; avatar/programme are enriched from the mock on the page.
 export interface EngagementPointsGrant {
   id: string;
+  ruleId: string;
+  rule: string;
+  category: string;
   learnerId: string;
   learner: string;
   points: number;
@@ -432,7 +464,13 @@ function toRule(r: any): EngagementPointsRule {
 }
 
 function toGrant(g: any): EngagementPointsGrant {
-  return { id: String(g.id), learnerId: g.learnerId, learner: g.learner, points: g.points, awardedAt: formatDate(g.awardedAt) };
+  return { id: String(g.id), ruleId: String(g.ruleId), rule: g.rule ?? 'Points award', category: g.category ?? '', learnerId: g.learnerId, learner: g.learner, points: g.points, awardedAt: formatDate(g.awardedAt) };
+}
+
+export async function fetchPointsGrants(learnerId?: string): Promise<EngagementPointsGrant[]> {
+  const query = learnerId ? `?learnerId=${encodeURIComponent(learnerId)}` : '';
+  const data = await request<{ grants: any[] }>(`${BASE}/points-grants/${query}`);
+  return data.grants.map(toGrant);
 }
 
 export async function fetchPointsRules(): Promise<EngagementPointsRule[]> {

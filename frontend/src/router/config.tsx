@@ -111,7 +111,6 @@ const ModuleBuilder = lazy(() => import("../pages/curriculum/module-builder/page
 const KSBMapping = lazy(() => import("../pages/curriculum/ksb-mapping/page"));
 const CurriculumStandards = lazy(() => import("../pages/curriculum/standards/page"));
 const CurriculumWeekBuilder = lazy(() => import("../pages/curriculum/week-builder/page"));
-const ComponentBuilderPage = lazy(() => import("../pages/curriculum/component-builder/page"));
 const QuizXmlWorkspace = lazy(() => import("../pages/curriculum/quiz-xml/page"));
 const TestBanksPage = lazy(() => import("../pages/curriculum/test-banks/page"));
 const CheckpointsPage = lazy(() => import("../pages/curriculum/checkpoints/page"));
@@ -129,8 +128,6 @@ const TutorReportsPage = lazy(() => import("../pages/tutor/reports/page"));
 const ProgrammeDetailPage = lazy(() => import("../pages/curriculum/programme-detail/page"));
 const SessionCalendarPage = lazy(() => import("../pages/curriculum/session-calendar/page"));
 const IfateStandardPage = lazy(() => import("../pages/curriculum/ifate-standard/page"));
-const CurriculumMisAllocationPage = lazy(() => import("../pages/curriculum/mis-allocation/page"));
-const CurriculumReportsPage = lazy(() => import("../pages/curriculum/reports/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumQAPage = lazy(() => import("../pages/curriculum/curriculum-qa/page"));
 const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
@@ -201,8 +198,6 @@ const EmployerSupportRequests = lazy(() => import("@/pages/employer/support/page
 const CoachMessagesPage = lazy(() => import("../pages/coach/messages/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
-const CurriculumVersionControlPage = lazy(() => import("../pages/curriculum/version-control/page"));
-const CurriculumPublishedPage = lazy(() => import("../pages/curriculum/published/page"));
 const AuditorEvidencePage = lazy(() => import("../pages/auditor/evidence/page"));
 const AuditorTrailPage = lazy(() => import("../pages/auditor/trail/page"));
 const AuditorCompliancePage = lazy(() => import("../pages/auditor/compliance/page"));
@@ -295,8 +290,8 @@ import KSBsPage from "../pages/learner/ksbs/page";
 import EvidencePage from "../pages/learner/evidence/page";
 import QuizzesPage from "../pages/learner/quizzes/page";
 import MonthlyCyclePage from "../pages/learner/monthly-cycle/page";
-import MonthlyCoachingPage from "../pages/learner/monthly-coaching/page";
-import ProgressReviewsPage from "../pages/learner/progress-reviews/page";
+import MonthlyCoachingPage, { MonthlyCoachingListPage } from "../pages/learner/monthly-coaching/page";
+import ProgressReviewsPage, { ProgressReviewsListPage } from "../pages/learner/progress-reviews/page";
 import RewardsPage from "../pages/learner/rewards/page";
 import BadgeDetailPage from "../pages/learner/rewards/badge-detail/page";
 import ClubsPage from "../pages/learner/clubs/page";
@@ -352,7 +347,6 @@ import ModuleBuilder from "../pages/curriculum/module-builder/page";
 import KSBMapping from "../pages/curriculum/ksb-mapping/page";
 import CurriculumStandards from "../pages/curriculum/standards/page";
 import CurriculumWeekBuilder from "../pages/curriculum/week-builder/page";
-import ComponentBuilderPage from "../pages/curriculum/component-builder/page";
 import QuizXmlWorkspace from "../pages/curriculum/quiz-xml/page";
 import QuizEditPage from "../pages/curriculum/quiz-xml/edit/page";
 import QuestionBankPage from "../pages/curriculum/question-bank/page";
@@ -373,7 +367,6 @@ import CohortDetailPage from "../pages/curriculum/cohort-detail/page";
 import LearnerAllocationPage from "../pages/curriculum/learner-allocation/page";
 import SessionCalendarPage from "../pages/curriculum/session-calendar/page";
 import IfateStandardPage from "../pages/curriculum/ifate-standard/page";
-import CurriculumMisAllocationPage from "../pages/curriculum/mis-allocation/page";
 import CurriculumReportsPage from "../pages/curriculum/reports/page";
 import StaffProfilesPage from "../pages/curriculum/staff-profiles/page";
 import CommunicationPage from "../pages/communication/page";
@@ -708,10 +701,18 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-coaching",
+    element: <MonthlyCoachingListPage />,
+  },
+  {
+    path: "/learner/monthly-coaching/:sessionId",
     element: <MonthlyCoachingPage />,
   },
   {
     path: "/learner/progress-reviews",
+    element: <ProgressReviewsListPage />,
+  },
+  {
+    path: "/learner/progress-reviews/:reviewId",
     element: <ProgressReviewsPage />,
   },
   {
@@ -948,10 +949,6 @@ const routes: RouteObject[] = [
     element: <CurriculumWeekBuilder />,
   },
   {
-    path: "/curriculum/component-builder",
-    element: <ComponentBuilderPage />,
-  },
-  {
     path: "/curriculum/quiz-xml",
     element: <QuizXmlWorkspace />,
   },
@@ -1111,10 +1108,6 @@ const routes: RouteObject[] = [
   {
     path: "/communication",
     element: <CommunicationPage />,
-  },
-  {
-    path: "/curriculum/mis-allocation",
-    element: <CurriculumMisAllocationPage />,
   },
   {
     path: "/curriculum/reports",

@@ -5,6 +5,8 @@
 // reflection. POSTs to /learner_api/components/<componentId>/complete/.
 // ============================================================================
 
+import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+
 const BASE = '/learner_api/components';
 
 export interface ComponentProgressSubmission {
@@ -65,5 +67,8 @@ export function submitComponentProgress(
   return request<ComponentProgressResponse>(
     `${BASE}/${encodeURIComponent(componentId)}/complete/?kind=${kind}&learnerId=${learnerId}`,
     { method: 'POST', body: JSON.stringify(submission) },
-  );
+  ).then((result) => {
+    invalidateLearnerDetailCache(kind, learnerId);
+    return result;
+  });
 }

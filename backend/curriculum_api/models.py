@@ -199,7 +199,7 @@ class Coach(models.Model):
     job_title = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=32, default='active')
     specialisms = models.JSONField(default=list, blank=True)
-    assigned_module_ids = models.JSONField(default=list, blank=True)
+    assigned_group_ids = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True, default='')
     is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

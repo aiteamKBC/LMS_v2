@@ -124,9 +124,10 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
 export const MODULE_BUILDER_WIZARD_DRAFT_PREFIX = 'lms.module-builder.wizard-draft.';
 
 export function wizardDraftLocalIdFromKey(storageKey: string) {
-  return String(storageKey || '').startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)
-    ? String(storageKey).slice(MODULE_BUILDER_WIZARD_DRAFT_PREFIX.length)
-    : '';
+  const key = String(storageKey || '').trim();
+  return key.startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)
+    ? key.slice(MODULE_BUILDER_WIZARD_DRAFT_PREFIX.length)
+    : key;
 }
 
 export const emptyCompletionCriteria = (): CompletionCriteria => ({
@@ -483,6 +484,7 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
         ...component,
         moduleId,
         weekId,
+        workplaceEvidenceRequired: false,
         ksbMappings: normaliseKsbMappings(component.ksbMappings || []),
         settings: normaliseComponentSettings(component.type, component.settings || {}),
       })),
@@ -621,7 +623,7 @@ export interface ComponentUploadResult {
   };
 }
 
-export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint'; file: File }) {
+export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'assignment'; file: File }) {
   const form = new FormData();
   form.set('file', input.file);
   form.set('moduleCatalogueId', input.moduleCatalogueId);
