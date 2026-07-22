@@ -288,8 +288,8 @@ class FlashCardDeck(models.Model):
     ]
 
     title = models.CharField(max_length=255)
-    # curriculum."Training_plan".id — plain field, no FK (that table is owned
-    # by another schema/app), same rationale as learner_id elsewhere.
+    # Curriculum programme/module identifier. Plain field, no FK, matching the
+    # same rationale as learner_id elsewhere.
     programme_id = models.IntegerField(null=True, blank=True)
     programme = models.CharField(max_length=255, blank=True, default='')
     module = models.CharField(max_length=255, blank=True, default='')

@@ -168,17 +168,17 @@ interface AiGeneratorState {
   author: string;
 }
 
-interface TrainingPlanModuleOption {
+interface CurriculumModuleOption {
   value: string;
   label: string;
   programmeId: string;
-  trainingPlanId?: number;
   moduleId?: string;
+  moduleCatalogueId?: string;
 }
 
-interface TrainingPlanOptions {
+interface CurriculumModuleOptions {
   programmes: { value: string; label: string }[];
-  modulesByProgramme: Record<string, TrainingPlanModuleOption[]>;
+  modulesByProgramme: Record<string, CurriculumModuleOption[]>;
 }
 
 type WeekLoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -595,7 +595,7 @@ export default function QuizXmlWorkspacePage() {
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [gradeSettings, setGradeSettings] = useQuizGradeSettings();
-  const [trainingPlanOptions, setTrainingPlanOptions] = useState<TrainingPlanOptions>({ programmes: [], modulesByProgramme: {} });
+  const [trainingPlanOptions, setTrainingPlanOptions] = useState<CurriculumModuleOptions>({ programmes: [], modulesByProgramme: {} });
   const [formWeeks, setFormWeeks] = useState<WeekItem[]>([]);
   const [formWeeksState, setFormWeeksState] = useState<WeekLoadState>('idle');
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -670,7 +670,7 @@ export default function QuizXmlWorkspacePage() {
     const controller = new AbortController();
     fetch('/quiz_api/training-plan-options/', { signal: controller.signal })
       .then(response => response.ok ? response.json() : Promise.reject(new Error('Could not load training plan options')))
-      .then((data: TrainingPlanOptions) => setTrainingPlanOptions(data))
+      .then((data: CurriculumModuleOptions) => setTrainingPlanOptions(data))
       .catch(err => {
         if ((err as DOMException).name !== 'AbortError') setTrainingPlanOptions({ programmes: [], modulesByProgramme: {} });
       });

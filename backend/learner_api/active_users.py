@@ -152,10 +152,8 @@ def cohort_dates(programme, cohort):
 def _fetch_ksb_items(programme):
     """The KSBs for `programme`, from curriculum.ksb_profiles.ksb_items.
 
-    Matched the same tolerant way curriculum.modules() matches Training_plan to
-    modules: an exact programme_name match, or `programme`
-    prefixed with the profile's programme_name (Training_plan.Program sometimes
-    doubles the level suffix, e.g. 'ME L4 L4' for profile programme_name 'ME L4').
+    Matched tolerantly against curriculum modules: an exact programme_name
+    match, or `programme` prefixed with the profile's programme_name.
     """
     programme = _s(programme)
     if not programme:

@@ -10,6 +10,7 @@ import {
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
 import { useToast } from '@/hooks/useToast';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 type KsbType = 'K' | 'S' | 'B';
 
@@ -270,8 +271,6 @@ export function KsbFrameworkManager({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<KsbDraft | null>(null);
-  const [archiveTarget, setArchiveTarget] = useState<CurriculumKsbFramework | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [openSections, setOpenSections] = useState<Record<KsbType, boolean>>({ K: true, S: true, B: true });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -356,8 +355,17 @@ export function KsbFrameworkManager({
     setItems(prev => prev.filter(candidate => candidate.localId !== item.localId && !(candidate.type === item.type && cleanCode(candidate.code, candidate.type).startsWith(childPrefix))));
   };
 
-  const requestDeleteItem = (item: KsbDraft) => {
-    setDeleteTarget(item);
+  const requestDeleteItem = async (item: KsbDraft) => {
+    await showCurriculumConfirm({
+      title: 'Delete KSB?',
+      text: 'This will remove this KSB from the framework. If it is used in session mapping, related mappings may also be affected.',
+      icon: 'warning',
+      confirmButtonText: 'Delete KSB',
+      cancelButtonText: 'Cancel',
+      successTitle: 'KSB deleted',
+      successText: `${fullCode(item)} was removed from the draft framework.`,
+      onConfirm: () => removeItem(item),
+    });
   };
 
   const saveFramework = async () => {
@@ -397,19 +405,30 @@ export function KsbFrameworkManager({
     }
   };
 
-  const archiveFramework = async () => {
-    if (!archiveTarget) return;
+  const archiveFramework = async (target: CurriculumKsbFramework) => {
     setSaving(true);
     try {
-      await archiveCurriculumKsbFramework(archiveTarget.id);
-      success('Framework archived', 'Existing modules using it will keep their historical reference.');
-      setArchiveTarget(null);
+      await archiveCurriculumKsbFramework(target.id);
       onRefresh();
     } catch (err) {
       toastError('Unable to archive framework', err instanceof Error ? err.message : 'The framework could not be archived.');
+      throw err;
     } finally {
       setSaving(false);
     }
+  };
+
+  const requestArchiveFramework = async (framework: CurriculumKsbFramework) => {
+    await showCurriculumConfirm({
+      title: 'Archive framework?',
+      text: 'Archiving this framework hides it from new curriculum planning. Existing modules using it will keep their historical reference.',
+      icon: 'warning',
+      confirmButtonText: 'Archive Framework',
+      cancelButtonText: 'Cancel',
+      successTitle: 'Framework archived',
+      successText: 'Existing modules using it will keep their historical reference.',
+      onConfirm: () => archiveFramework(framework),
+    });
   };
 
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -487,7 +506,7 @@ export function KsbFrameworkManager({
               </button>
               <div className="mt-2 flex gap-1">
                 <button onClick={() => { setCreating(false); setSelectedId(framework.id); }} className="px-2 py-1 rounded-md border border-background-200 text-[10px] font-semibold hover:bg-background-100"><i className="ri-edit-line mr-1"></i>Edit</button>
-                <button onClick={() => setArchiveTarget(framework)} className="px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-600 text-[10px] font-semibold hover:bg-red-100"><i className="ri-archive-line mr-1"></i>Archive</button>
+                <button onClick={() => void requestArchiveFramework(framework)} className="px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-600 text-[10px] font-semibold hover:bg-red-100"><i className="ri-archive-line mr-1"></i>Archive</button>
               </div>
             </div>
             );
@@ -577,31 +596,12 @@ export function KsbFrameworkManager({
         <div className="sticky bottom-0 px-5 pr-40 py-3 border-t border-background-200 bg-background-50 flex items-center gap-3">
           <p className="text-xs font-semibold text-foreground-400 mr-auto">{items.length} required KSB codes</p>
           <div className="flex shrink-0 items-center gap-3">
-            {!creating && selectedFramework && <button onClick={() => setArchiveTarget(selectedFramework)} className="px-4 py-2 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50">Archive</button>}
+            {!creating && selectedFramework && <button onClick={() => void requestArchiveFramework(selectedFramework)} className="px-4 py-2 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50">Archive</button>}
             <button onClick={saveFramework} disabled={!canSave || saving} className="px-5 py-2.5 rounded-lg bg-primary-950 text-white text-xs font-bold hover:bg-primary-900 disabled:bg-foreground-300 disabled:cursor-not-allowed">{saving ? 'Saving...' : 'Save Framework'}</button>
           </div>
         </div>
       </section>
 
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="Delete KSB?"
-        body="This will remove this KSB from the framework. If it is used in session mapping, related mappings may also be affected."
-        confirmLabel="Delete KSB"
-        onCancel={() => setDeleteTarget(null)}
-        onConfirm={() => {
-          if (deleteTarget) removeItem(deleteTarget);
-          setDeleteTarget(null);
-        }}
-      />
-      <ConfirmDialog
-        open={!!archiveTarget}
-        title="Archive framework?"
-        body="Archiving this framework hides it from new curriculum planning. Existing modules using it will keep their historical reference."
-        confirmLabel="Archive Framework"
-        onCancel={() => setArchiveTarget(null)}
-        onConfirm={archiveFramework}
-      />
     </div>
   );
 }
@@ -748,27 +748,6 @@ function KsbRow({ item, errors, parent, onAddChild, onUpdate, onDelete }: {
         <div className="flex gap-1">
           {parent && <button onClick={onAddChild} className="h-10 px-3 rounded-lg bg-primary-950 text-white text-xs font-bold hover:bg-primary-900"><i className="ri-add-line mr-1"></i>Add point</button>}
           <button onClick={onDelete} className="h-10 w-10 rounded-lg text-red-500 hover:bg-red-50"><i className="ri-delete-bin-line"></i></button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ConfirmDialog({ open, title, body, confirmLabel, onCancel, onConfirm }: { open: boolean; title: string; body: string; confirmLabel: string; onCancel: () => void; onConfirm: () => void | Promise<void> }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4" onClick={onCancel}>
-      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-red-100 bg-red-50 text-red-500">
-          <i className="ri-delete-bin-line text-3xl"></i>
-        </div>
-        <div className="mt-4 space-y-2">
-          <h3 className="text-lg font-heading font-bold text-foreground-900">{title}</h3>
-          <p className="text-sm leading-relaxed text-foreground-600">{body}</p>
-          <div className="flex justify-center gap-2 pt-3">
-            <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-background-200 text-xs font-bold text-foreground-700 hover:bg-background-100">Cancel</button>
-            <button onClick={onConfirm} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700">{confirmLabel}</button>
-          </div>
         </div>
       </div>
     </div>
