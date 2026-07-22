@@ -23,7 +23,7 @@ interface BreadcrumbItem {
   isLink: boolean;
 }
 
-function buildBreadcrumbs(pathname: string, navItems: SidebarNavItem[], workspaceLabel: string, roleLabel: string): BreadcrumbItem[] {
+function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNavItem[], workspaceLabel: string, roleLabel: string): BreadcrumbItem[] {
   const crumbs: BreadcrumbItem[] = [];
 
   // Always start with workspace root if applicable
@@ -40,13 +40,26 @@ function buildBreadcrumbs(pathname: string, navItems: SidebarNavItem[], workspac
     // pathname.startsWith('' + '/') would otherwise match every route.
     let matched: SidebarNavItem | undefined;
     let matchedParent: SidebarNavItem | undefined;
+    const current = `${pathname}${search}`;
     for (const item of navItems) {
-      if (item.href && (pathname === item.href || pathname.startsWith(item.href + '/'))) {
+      if (item.href && item.href.includes('?') && item.href === current) {
         matched = item;
         break;
       }
       if (item.children) {
-        const child = item.children.find(c => c.href && (pathname === c.href || pathname.startsWith(c.href + '/')));
+        const queryChild = item.children.find(c => c.href && c.href.includes('?') && c.href === current);
+        if (queryChild) {
+          matched = queryChild;
+          matchedParent = item;
+          break;
+        }
+      }
+      if (item.href && !item.href.includes('?') && (pathname === item.href || pathname.startsWith(item.href + '/'))) {
+        matched = item;
+        break;
+      }
+      if (item.children) {
+        const child = item.children.find(c => c.href && !c.href.includes('?') && (pathname === c.href || pathname.startsWith(c.href + '/')));
         if (child) {
           matched = child;
           matchedParent = item;
@@ -123,7 +136,7 @@ export function WorkspaceShell({
     setMobileSidebarOpen(false);
   }, [location.pathname]);
 
-  const breadcrumbs = buildBreadcrumbs(location.pathname, navItems, defaultWorkspaceLabel, roleLabel);
+  const breadcrumbs = buildBreadcrumbs(location.pathname, location.search, navItems, defaultWorkspaceLabel, roleLabel);
 
   const handleToggleMobileSidebar = () => {
     setMobileSidebarOpen(prev => !prev);

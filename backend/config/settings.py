@@ -233,6 +233,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR
 
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
