@@ -93,8 +93,8 @@ export default function DocumentsTab({ data }: CaseFileTabProps) {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <DetailCard title="Start Date" value={data.startDate || '--'} detail="Coach caseload snapshot." icon="ri-play-circle-line" />
-            <DetailCard title="Last Session" value={data.attendance?.lastSession || '--'} detail={data.attendance?.lastSessionDate ? `Recorded ${formatDisplayDate(data.attendance.lastSessionDate)}` : 'No attendance session date returned.'} icon="ri-calendar-event-line" />
-            <DetailCard title="Last Submission" value={data.evidence?.lastSubmission || '--'} detail={data.evidence?.lastSubmissionIso ? `Recorded ${formatDisplayDate(data.evidence.lastSubmissionIso)}` : 'No evidence submission timestamp returned.'} icon="ri-folder-upload-line" />
+            <DetailCard title="Last Session" value={data.attendance?.lastSession || '--'} detail={data.attendance?.lastSessionDate ? `Recorded ${formatDisplayDate(data.attendance.lastSessionDate)}` : '--'} icon="ri-calendar-event-line" />
+            <DetailCard title="Last Submission" value={data.evidence?.lastSubmission || '--'} detail={data.evidence?.lastSubmissionIso ? `Recorded ${formatDisplayDate(data.evidence.lastSubmissionIso)}` : '--'} icon="ri-folder-upload-line" />
             <DetailCard title="Planned End" value={data.plannedEndDate || '--'} detail="Expected programme end from the coach snapshot." icon="ri-flag-2-line" />
           </div>
         </div>
@@ -123,8 +123,8 @@ function buildRecords(data: CaseFileTabProps['data']): LiveRecordRow[] {
     {
       id: 'learner-profile',
       title: 'Learner profile record',
-      detail: `${data.programme} for ${data.displayName}`,
-      meta: `Learner ID ${data.learnerId} - ${data.email || 'No email returned'}`,
+      detail: `${data.programme || '--'} for ${data.displayName}`,
+      meta: `Learner ID ${data.learnerId} - ${data.email || '--'}`,
       status: data.detail || data.snapshot ? 'available' : 'unavailable',
     },
     {
@@ -139,8 +139,8 @@ function buildRecords(data: CaseFileTabProps['data']): LiveRecordRow[] {
       title: 'Attendance snapshot',
       detail: data.attendance?.hasAttendance
         ? `${data.attendance.attendance ?? '--'}% attendance across ${data.attendance.sessions ?? 0} session(s)`
-        : 'No live attendance record returned yet.',
-      meta: data.attendance?.lastSessionDate ? `Last session ${formatDisplayDate(data.attendance.lastSessionDate)}` : 'No last session timestamp returned.',
+        : '--',
+      meta: data.attendance?.lastSessionDate ? `Last session ${formatDisplayDate(data.attendance.lastSessionDate)}` : '--',
       status: data.attendance?.hasAttendance ? 'available' : 'unavailable',
     },
     {
@@ -148,15 +148,15 @@ function buildRecords(data: CaseFileTabProps['data']): LiveRecordRow[] {
       title: 'Evidence review snapshot',
       detail: data.evidence
         ? `${data.evidence.pendingEvidence} pending, ${data.evidence.acceptedEvidence} accepted, ${data.evidence.referredEvidence} referred`
-        : 'No live marking-queue item returned for this learner.',
-      meta: data.evidence?.lastSubmission || 'No latest submission label returned.',
+        : '--',
+      meta: data.evidence?.lastSubmission || '--',
       status: data.evidence ? 'available' : 'unavailable',
     },
     {
       id: 'quiz-history',
       title: 'Assessment transcript',
       detail: `${data.detail?.quizAttempts.length || 0} quiz attempt(s) returned`,
-      meta: latestQuiz ? `Latest: ${latestQuiz.quizName} on ${formatDisplayDate(latestQuiz.submittedAt)}` : 'No quiz attempt timestamps returned.',
+      meta: latestQuiz ? `Latest: ${latestQuiz.quizName} on ${formatDisplayDate(latestQuiz.submittedAt)}` : '--',
       status: (data.detail?.quizAttempts.length || 0) > 0 ? 'available' : 'unavailable',
     },
   ];

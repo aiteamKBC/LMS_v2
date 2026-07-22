@@ -668,6 +668,14 @@ function SoonDot() {
   );
 }
 
+function NavBadge({ count }: { count: number }) {
+  return (
+    <span className="bg-accent-500/90 text-foreground-950 text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center leading-none animate-pulse-slow">
+      {count}
+    </span>
+  );
+}
+
 function MobileSidebarBottomLink({ href, icon, label, isActive }: {
   href: string;
   icon: string;
@@ -686,14 +694,6 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
       </span>
       <span className="flex-1 whitespace-nowrap">{label}</span>
     </Link>
-  );
-}
-
-function NavBadge({ count }: { count: number }) {
-  return (
-    <span className="bg-accent-500/90 text-foreground-950 text-[8px] font-bold min-w-[14px] h-3.5 px-0.5 rounded-full flex items-center justify-center leading-none animate-pulse-slow">
-      {count}
-    </span>
   );
 }
 

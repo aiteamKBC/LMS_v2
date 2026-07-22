@@ -41,7 +41,7 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
             <DetailCard
               title="Last Session"
               value={attendance.lastSession || '--'}
-              detail={attendance.lastSessionDate ? `Recorded ${formatDisplayDate(attendance.lastSessionDate)}` : 'No session date returned'}
+              detail={attendance.lastSessionDate ? `Recorded ${formatDisplayDate(attendance.lastSessionDate)}` : '--'}
               icon="ri-calendar-event-line"
             />
             <DetailCard
@@ -53,7 +53,7 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
             <DetailCard
               title="Programme Cohort"
               value={attendance.cohort || '--'}
-              detail={attendance.group ? `Group ${attendance.group}` : 'No group returned'}
+              detail={attendance.group ? `Group ${attendance.group}` : '--'}
               icon="ri-group-line"
             />
           </div>

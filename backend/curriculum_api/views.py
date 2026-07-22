@@ -1491,15 +1491,17 @@ def profile_module_summary(module):
     }
 
 
-def assigned_modules_for_staff(name, role, modules, stored_ids=None):
+def assigned_modules_for_staff(name, role, modules, stored_ids=None, stored_group_ids=None):
     key = staff_assignment_key(name)
     stored_ids = [clean_str(item) for item in (stored_ids or []) if clean_str(item)]
+    stored_group_ids = {clean_str(item) for item in (stored_group_ids or []) if clean_str(item)}
     assigned = []
     for module in modules:
         module_staff = module.get('coach') if role == 'coach' else module.get('tutor')
         matched_by_staff = key and staff_assignment_key(module_staff) == key
         matched_by_stored_id = any(module_matches_staff_assignment(module, item) for item in stored_ids)
-        if matched_by_staff or matched_by_stored_id:
+        matched_by_group_id = clean_str(module.get('groupId')) in stored_group_ids
+        if matched_by_staff or matched_by_stored_id or matched_by_group_id:
             assigned.append(profile_module_summary(module))
     assigned.sort(key=lambda item: (item.get('startDate') or '', item.get('programme') or '', item.get('name') or ''))
     return assigned
@@ -1510,7 +1512,7 @@ def serialize_staff_profile(row, role, modules=None):
     name = staff_profile_name(row)
     stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), []) if role == 'tutor' else []
     stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), []) if role == 'coach' else []
-    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids) if role == 'tutor' else []
+    assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, stored_group_ids) if role == 'tutor' else []
     active_modules = [module for module in assigned_modules if module.get('status') == 'in_progress']
     profile = {
         'id': row.get('id') or f'{role}-{slugify(name)}',
@@ -1528,6 +1530,7 @@ def serialize_staff_profile(row, role, modules=None):
     if role == 'coach':
         profile.update({
             'assignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
+            'storedAssignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
             'groupCount': len([item for item in stored_group_ids if clean_str(item)]),
         })
     else:
