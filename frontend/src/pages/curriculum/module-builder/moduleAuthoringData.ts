@@ -689,7 +689,7 @@ export interface ComponentUploadResult {
   };
 }
 
-export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'assignment'; file: File }) {
+export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment'; file: File }) {
   const form = new FormData();
   form.set('file', input.file);
   form.set('moduleCatalogueId', input.moduleCatalogueId);
