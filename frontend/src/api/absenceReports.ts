@@ -22,9 +22,22 @@ export interface LearnerAbsenceReport {
   updatedAt: string;
 }
 
-interface AbsenceReportList {
+export interface MissedAttendanceSession {
+  id: string;
+  sessionId: string;
+  title: string;
+  sessionType: string;
+  dateIso: string;
+  startTime: string;
+  endTime: string;
+  coach: string;
+  module: string;
+}
+
+export interface AbsenceReportData {
   count: number;
   results: LearnerAbsenceReport[];
+  missedSessions: MissedAttendanceSession[];
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -44,15 +57,14 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export async function fetchAbsenceReports(kind: LearnerKind, learnerId: string): Promise<LearnerAbsenceReport[]> {
+export async function fetchAbsenceReports(kind: LearnerKind, learnerId: string): Promise<AbsenceReportData> {
   let response: Response;
   try {
     response = await fetch(`${BASE}/${kind}/${learnerId}/`);
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
-  const data = await parseResponse<AbsenceReportList>(response);
-  return data.results;
+  return parseResponse<AbsenceReportData>(response);
 }
 
 export async function submitAbsenceReport(
