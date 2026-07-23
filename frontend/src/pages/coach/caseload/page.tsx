@@ -125,7 +125,7 @@ interface CaseloadApiResponse {
 }
 
 const coachNav = roleNavMap.coach;
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 8;
 const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
@@ -404,6 +404,7 @@ export default function CoachCaseload() {
   const [groupFilter, setGroupFilter] = useState('all');
   const [programStatusFilter, setProgramStatusFilter] = useState('all');
   const [coachRagFilter, setCoachRagFilter] = useState('all');
+  const [employerFilter, setEmployerFilter] = useState('all');
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
   const [selectedMetricDetail, setSelectedMetricDetail] = useState<{ learner: Learner; metric: LearnerMetric } | null>(null);
@@ -415,6 +416,7 @@ export default function CoachCaseload() {
   const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
   const [openCoachRagId, setOpenCoachRagId] = useState<string | null>(null);
   const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
     isPointerDown: false,
@@ -493,6 +495,13 @@ export default function CoachCaseload() {
     [learners],
   );
 
+  const employerOptions = useMemo(
+    () => [...new Set(learners.map((learner) => displayValue(learner.employer)))]
+      .sort((left, right) => left.localeCompare(right))
+      .map((employer) => ({ value: employer, label: employer })),
+    [learners],
+  );
+
   const summaryCounts = useMemo(
     () => ({
       total: learners.length,
@@ -528,6 +537,7 @@ export default function CoachCaseload() {
     list = applySummaryFilter(list);
     if (programStatusFilter !== 'all') list = list.filter(l => displayValue(l.rawProgramStatus) === programStatusFilter);
     if (coachRagFilter !== 'all') list = list.filter(l => displayValue(l.coachRag) === coachRagFilter);
+    if (employerFilter !== 'all') list = list.filter(l => displayValue(l.employer) === employerFilter);
     if (cohortFilter !== 'all') list = list.filter(l => l.cohortId === cohortFilter);
     if (groupFilter !== 'all') list = list.filter(l => l.group === groupFilter);
     if (search) {
@@ -552,7 +562,7 @@ export default function CoachCaseload() {
       return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number);
     });
     return list;
-  }, [learners, applySummaryFilter, programStatusFilter, coachRagFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
+  }, [learners, applySummaryFilter, programStatusFilter, coachRagFilter, employerFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -716,6 +726,185 @@ export default function CoachCaseload() {
     'high': { bg: 'bg-accent-50 border-accent-200/50', text: 'text-accent-700', label: 'High Performer' },
     'new-starter': { bg: 'bg-primary-50 border-primary-200/50', text: 'text-primary-700', label: 'New Starter' },
   };
+
+  return (
+    <WorkspaceShell
+      role="coach"
+      roleLabel={coachNav.label}
+      navItems={coachNav.items}
+      workspaceLabel={coachNav.workspaceLabel}
+      pageTitle="My Learners"
+      pageSubtitle="Monitor progress and open complete learner profiles"
+      userName={ownerName}
+      userRole="Progress Coach"
+    >
+      <main className="min-h-screen bg-[#f7f6fb] p-3 md:p-5">
+        <div className="w-full space-y-3">
+          <section
+            className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
+            style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
+          >
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="mb-2.5 flex items-center gap-2 text-[11px] text-white/55">
+                  <span>Coach Workspace</span>
+                  <i className="ri-arrow-right-s-line"></i>
+                  <span className="font-semibold text-white">My Learners</span>
+                </div>
+                <h1 className="text-3xl font-heading font-bold tracking-[-0.03em] text-white">My Learners</h1>
+                <p className="mt-1.5 max-w-xl text-[13px] leading-5 text-white/70">
+                  Monitor learner progress, identify who needs support, and access complete learner profiles.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-stretch gap-2 xl:flex-nowrap">
+                <HeaderMetric icon="ri-group-line" label="Total Learners" value={summaryCounts.total} tone="primary" />
+                <HeaderMetric icon="ri-user-follow-line" label="Active" value={summaryCounts.active} tone="emerald" />
+                <HeaderMetric icon="ri-error-warning-line" label="Need Attention" value={summaryCounts.needAttention} tone="amber" />
+                <HeaderMetric icon="ri-alarm-warning-line" label="At Risk" value={summaryCounts.atRisk} tone="red" />
+                <button
+                  type="button"
+                  onClick={() => downloadLearnersCsv(filtered)}
+                  className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50"
+                >
+                  <i className="ri-download-2-line"></i>
+                  Export Learners
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="flex gap-2 overflow-x-auto rounded-2xl border border-foreground-200/55 bg-white p-3 shadow-sm scrollbar-hide">
+            <CaseloadStatusTab label="All Learners" count={summaryCounts.total} active={summaryFilter === 'all'} onClick={() => handleSummaryCardClick('all')} />
+            <CaseloadStatusTab label="Active" count={summaryCounts.active} active={summaryFilter === 'active'} onClick={() => handleSummaryCardClick('active')} />
+            <CaseloadStatusTab label="On Track" count={summaryCounts.onTrack} active={summaryFilter === 'on-track'} onClick={() => handleSummaryCardClick('on-track')} />
+            <CaseloadStatusTab label="Need Attention" count={summaryCounts.needAttention} active={summaryFilter === 'need-attention'} onClick={() => handleSummaryCardClick('need-attention')} />
+            <CaseloadStatusTab label="At Risk" count={summaryCounts.atRisk} active={summaryFilter === 'at-risk'} onClick={() => handleSummaryCardClick('at-risk')} />
+            <CaseloadStatusTab label="On Break" count={summaryCounts.break} active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
+            <CaseloadStatusTab label="Completed" count={learners.filter((learner) => displayValue(learner.rawProgramStatus).toLowerCase() === 'completed').length} active={false} onClick={() => undefined} />
+          </section>
+
+          <section className="rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
+            <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+              <div className="relative w-full xl:max-w-[360px]">
+                <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => { setSearch(event.target.value); setCurrentPage(1); }}
+                  placeholder="Search by learner name or email..."
+                  className="h-10 w-full rounded-xl border border-foreground-200 bg-background-100/70 pl-10 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300 focus:bg-white focus:ring-2 focus:ring-primary-100"
+                />
+              </div>
+              <div className="flex flex-1 flex-wrap items-center gap-2">
+                <CaseloadMenuSelect
+                  value={sortKey}
+                  onChange={(value) => {
+                    const next = value as 'name' | 'progress' | 'attendance' | 'ksb' | 'otjh';
+                    setSortKey(next);
+                    setSortDir(next === 'name' ? 'asc' : 'desc');
+                  }}
+                  options={[
+                    { value: 'name', label: 'Learner Name' },
+                    { value: 'progress', label: 'Overall Progress' },
+                    { value: 'otjh', label: 'OTJH' },
+                    { value: 'ksb', label: 'KSB' },
+                    { value: 'attendance', label: 'Attendance' },
+                  ]}
+                  minWidth="min-w-[164px]"
+                  icon="ri-sort-asc"
+                />
+                <FilterDropdown label="Cohort" value={cohortFilter} onChange={(value) => { setCohortFilter(value); setCurrentPage(1); }} options={cohortOptions} />
+                <FilterDropdown label="Group" value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupOptions} />
+                <FilterDropdown label="Programme" value={programStatusFilter} onChange={(value) => { setProgramStatusFilter(value); setCurrentPage(1); }} options={programStatusOptions} />
+                <FilterDropdown label="Employer" value={employerFilter} onChange={(value) => { setEmployerFilter(value); setCurrentPage(1); }} options={employerOptions} />
+                <FilterDropdown label="Learner Status" value={coachRagFilter} onChange={(value) => { setCoachRagFilter(value); setCurrentPage(1); }} options={coachRagOptions} />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearch('');
+                    setCohortFilter('all');
+                    setGroupFilter('all');
+                    setProgramStatusFilter('all');
+                    setCoachRagFilter('all');
+                    setEmployerFilter('all');
+                    setSummaryFilter('all');
+                    setCurrentPage(1);
+                  }}
+                  className="h-10 rounded-xl px-3 text-[11px] font-semibold text-foreground-400 transition hover:bg-background-100 hover:text-foreground-700"
+                >
+                  Clear Filters
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-foreground-100 px-4 py-3">
+              <div className="inline-flex rounded-xl bg-background-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('cards')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${viewMode === 'cards' ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-400'}`}
+                >
+                  <i className="ri-layout-grid-line"></i> Card View
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('table')}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${viewMode === 'table' ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-400'}`}
+                >
+                  <i className="ri-table-line"></i> Table View
+                </button>
+              </div>
+              <span className="text-[11px] text-foreground-400">{filtered.length} learners</span>
+            </div>
+
+            {coachRagSaveError && <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-[11px] text-red-700">{coachRagSaveError}</div>}
+
+            {loading ? (
+              <div className="py-20 text-center">
+                <i className="ri-loader-4-line mb-2 block animate-spin text-3xl text-primary-500"></i>
+                <p className="text-sm text-foreground-400">Loading learners...</p>
+              </div>
+            ) : error ? (
+              <div className="py-20 text-center text-sm text-red-600">{error}</div>
+            ) : filtered.length === 0 ? (
+              <div className="py-20 text-center">
+                <i className="ri-user-search-line mb-2 block text-3xl text-foreground-300"></i>
+                <p className="text-sm text-foreground-400">No learners match your filters.</p>
+              </div>
+            ) : viewMode === 'cards' ? (
+              <div className="grid items-stretch gap-3 p-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {paginated.map((learner) => (
+                  <ReferenceLearnerCard
+                    key={learner.id}
+                    learner={learner}
+                    onOpen={() => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
+                  />
+                ))}
+              </div>
+            ) : (
+              <ReferenceLearnerTable
+                learners={paginated}
+                onOpen={(learner) => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
+              />
+            )}
+
+            {!loading && !error && filtered.length > 0 && (
+              <ReferencePagination
+                page={safePage}
+                totalPages={totalPages}
+                total={filtered.length}
+                pageSize={PAGE_SIZE}
+                onPage={setCurrentPage}
+              />
+            )}
+          </section>
+        </div>
+      </main>
+    </WorkspaceShell>
+  );
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Learner Overview" pageSubtitle="Complete caseload with filters by cohort, group, and live status data" userName={ownerName} userRole="Progress Coach">
@@ -1512,6 +1701,163 @@ export default function CoachCaseload() {
 
 /* Sub-components */
 
+function HeaderMetric({ icon, label, value, tone }: { icon: string; label: string; value: number; tone: 'primary' | 'emerald' | 'amber' | 'red' }) {
+  const styles = {
+    primary: 'bg-primary-50 text-primary-600',
+    emerald: 'bg-emerald-50 text-emerald-600',
+    amber: 'bg-amber-50 text-amber-600',
+    red: 'bg-red-50 text-red-600',
+  };
+  return (
+    <div className="flex min-h-[54px] min-w-[110px] items-center gap-2.5 rounded-xl border border-white/10 bg-white/10 px-3 py-2 backdrop-blur-sm">
+      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles[tone]}`}><i className={icon}></i></span>
+      <div>
+        <p className="whitespace-nowrap text-[9px] font-semibold text-white/60">{label}</p>
+        <p className="text-base font-bold text-white">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function CaseloadStatusTab({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-[11px] font-semibold transition ${
+        active ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-500 hover:border-primary-200 hover:text-primary-700'
+      }`}
+    >
+      {label}
+      <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${active ? 'bg-white/20 text-white' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
+    </button>
+  );
+}
+
+function ReferenceLearnerCard({ learner, onOpen }: { learner: Learner; onOpen: () => void }) {
+  const statusStyle = getProgramStatusStyle(learner.rawProgramStatus);
+  const rag = displayValue(learner.coachRag);
+  const ragDot = getCoachRagDotClass(rag);
+
+  return (
+    <article className="flex h-full overflow-hidden rounded-2xl border border-foreground-200/70 bg-white transition hover:border-primary-200 hover:shadow-[0_12px_28px_rgba(60,30,110,0.08)]">
+      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex flex-1 flex-col p-4">
+        <div className="flex items-start gap-3">
+          <input type="checkbox" aria-label={`Select ${learner.name}`} className="mt-3 h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600" />
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-secondary-100 text-[11px] font-bold text-primary-800 ring-2 ring-white shadow-sm">
+            {learner.initials}
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-[13px] font-bold text-foreground-950">{learner.name}</h2>
+              <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${statusStyle.bg} ${statusStyle.text}`}>{displayValue(learner.rawProgramStatus)}</span>
+            </div>
+            <p className="mt-0.5 truncate text-[10px] text-foreground-400">{learner.email || learner.employer}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="Expand learner card"><i className="ri-arrow-down-s-line"></i></button>
+            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="More options"><i className="ri-more-2-fill"></i></button>
+          </div>
+        </div>
+
+        <div className="mt-3 space-y-1.5 text-[10px]">
+          {displayValue(learner.employer) !== EMPTY_VALUE && (
+            <p className="truncate font-semibold text-foreground-700"><i className="ri-building-4-line mr-1.5 text-foreground-300"></i>{displayValue(learner.employer)}</p>
+          )}
+          <p className="truncate text-foreground-400">{displayValue(learner.cohortName)} <span className="mx-1.5">·</span> {displayValue(learner.group)}</p>
+        </div>
+
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <CardMetric value={`${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}`} label="OTJH" />
+          <CardMetric value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : '--'} label="Attendance" />
+          <CardMetric value={formatRatio(learner.ksbCompleted, learner.ksbTarget)} label="KSB" />
+        </div>
+      </div>
+
+      <footer className="flex h-11 shrink-0 items-center justify-between border-t border-foreground-100 bg-background-100/35 px-4">
+        <div className="flex min-w-0 items-center gap-2 text-[9px] text-foreground-500">
+          <span className={`h-2 w-2 rounded-full ${ragDot}`}></span>
+          <span className="font-semibold">{rag}</span>
+          {learner.riskFlags[0] && <span className="truncate text-foreground-300">{learner.riskFlags[0]}</span>}
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="hidden items-center gap-1 text-[9px] text-foreground-400 sm:flex">
+            <i className="ri-calendar-line"></i>
+            Gateway: <strong className="font-semibold text-foreground-600">{learner.gatewayReviewDate}</strong>
+          </span>
+          <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 transition hover:bg-primary-100">
+            <i className="ri-profile-line"></i> Profile
+          </button>
+        </div>
+      </footer>
+      </div>
+    </article>
+  );
+}
+
+function CardMetric({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="rounded-xl bg-background-100/75 px-2 py-2.5 text-center">
+      <p className="text-[14px] font-bold text-primary-700">{value}</p>
+      <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
+    </div>
+  );
+}
+
+function ReferenceLearnerTable({ learners, onOpen }: { learners: Learner[]; onOpen: (learner: Learner) => void }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[980px] text-left">
+        <thead className="border-b border-foreground-100 bg-background-100/55 text-[9px] uppercase tracking-wider text-foreground-400">
+          <tr><th className="px-4 py-3">Learner</th><th>Cohort / Group</th><th>Status</th><th>OTJH</th><th>KSB</th><th>Progress</th><th>Gateway</th><th></th></tr>
+        </thead>
+        <tbody className="divide-y divide-foreground-100">
+          {learners.map((learner) => (
+            <tr key={learner.id} className="text-[11px] text-foreground-600 hover:bg-primary-50/25">
+              <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-[9px] font-bold text-primary-700">{learner.initials}</span><div><p className="font-bold text-foreground-900">{learner.name}</p><p className="text-[9px] text-foreground-400">{learner.email || learner.employer}</p></div></div></td>
+              <td><p>{learner.cohortName}</p><p className="text-[9px] text-foreground-400">{learner.group}</p></td>
+              <td><span className={`rounded-full border px-2 py-1 text-[9px] ${getProgramStatusStyle(learner.rawProgramStatus).bg} ${getProgramStatusStyle(learner.rawProgramStatus).text}`}>{displayValue(learner.rawProgramStatus)}</span></td>
+              <td className="font-semibold">{formatHoursValue(learner.otjhCompleted)}/{formatHoursValue(learner.otjhTarget)}h</td>
+              <td className="font-semibold">{formatRatio(learner.ksbCompleted, learner.ksbTarget)}</td>
+              <td className="font-semibold">{learner.overallProgressAvailable ? `${learner.overallProgress}%` : '--'}</td>
+              <td>{learner.gatewayReviewDate}</td>
+              <td className="pr-4 text-right"><button type="button" onClick={() => onOpen(learner)} className="rounded-lg bg-primary-50 px-3 py-1.5 font-bold text-primary-700">Profile</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReferencePagination({ page, totalPages, total, pageSize, onPage }: { page: number; totalPages: number; total: number; pageSize: number; onPage: (page: number) => void }) {
+  const pages = Array.from({ length: totalPages }, (_, index) => index + 1);
+  return (
+    <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 px-4 py-3 sm:flex-row">
+      <p className="text-[10px] text-foreground-400">Showing <strong className="text-foreground-700">{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)}</strong> of {total} learners</p>
+      <div className="flex items-center gap-1">
+        <button type="button" disabled={page === 1} onClick={() => onPage(page - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><i className="ri-arrow-left-s-line"></i></button>
+        {pages.slice(Math.max(0, page - 3), Math.max(5, page + 2)).map((item) => <button type="button" key={item} onClick={() => onPage(item)} className={`h-8 min-w-8 rounded-lg px-2 text-[10px] font-bold ${item === page ? 'bg-primary-600 text-white' : 'text-foreground-500 hover:bg-background-100'}`}>{item}</button>)}
+        <button type="button" disabled={page === totalPages} onClick={() => onPage(page + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><i className="ri-arrow-right-s-line"></i></button>
+      </div>
+      <p className="text-[10px] text-foreground-400">Page {page} of {totalPages}</p>
+    </div>
+  );
+}
+
+function downloadLearnersCsv(learners: Learner[]) {
+  const header = ['Name', 'Email', 'Employer', 'Cohort', 'Group', 'Status', 'Coach RAG', 'Progress'];
+  const rows = learners.map((learner) => [learner.name, learner.email || '', learner.employer, learner.cohortName, learner.group, displayValue(learner.rawProgramStatus), displayValue(learner.coachRag), `${learner.overallProgress}%`]);
+  const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'coach-learners.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function getMetricCopy(metric: LearnerMetric) {
   switch (metric) {
     case 'otjh':
@@ -1859,18 +2205,96 @@ function FilterDropdown({ label, value, onChange, options }: { label: string; va
   };
   const allLabel = allLabelMap[label] || `All ${label}`;
   return (
-    <div className="relative">
-      <select
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        className="appearance-none pl-2.5 pr-7 py-1.5 bg-background-100 border border-foreground-200 rounded-lg text-[11px] font-medium text-foreground-700 cursor-pointer focus:outline-none focus:border-primary-300"
+    <CaseloadMenuSelect
+      value={value}
+      onChange={onChange}
+      options={[{ value: 'all', label: allLabel }, ...options]}
+      minWidth={label === 'Programme' || label === 'Learner Status' ? 'min-w-[150px]' : 'min-w-[132px]'}
+    />
+  );
+}
+
+function CaseloadMenuSelect({
+  value,
+  onChange,
+  options,
+  minWidth = 'min-w-[132px]',
+  icon,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+  minWidth?: string;
+  icon?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className={`relative ${minWidth}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`flex h-10 w-full items-center gap-2 rounded-xl border bg-white px-3.5 text-left text-[11px] font-semibold shadow-sm transition ${
+          open
+            ? 'border-primary-400 text-foreground-900 ring-2 ring-primary-100'
+            : 'border-foreground-200 text-foreground-600 hover:border-primary-300'
+        }`}
       >
-        <option value="all">{allLabel}</option>
-        {options.map(o => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
-      <i className="ri-arrow-down-s-line absolute right-1.5 top-1/2 -translate-y-1/2 text-foreground-400 text-[10px] pointer-events-none"></i>
+        {icon && <i className={`${icon} text-[12px] text-foreground-400`}></i>}
+        <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
+        <i className={`ri-arrow-down-s-line text-[13px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-0 top-[calc(100%+6px)] z-[80] max-h-64 w-max min-w-full overflow-y-auto rounded-xl border border-foreground-200 bg-white p-1.5 shadow-[0_18px_45px_rgba(28,12,58,0.16)]"
+        >
+          {options.map((option) => {
+            const active = option.value === value;
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                key={option.value}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-3 whitespace-nowrap rounded-lg px-3 py-2 text-left text-[11px] transition ${
+                  active
+                    ? 'bg-primary-50 font-bold text-primary-700'
+                    : 'font-medium text-foreground-600 hover:bg-background-100 hover:text-foreground-900'
+                }`}
+              >
+                <span className="flex-1">{option.label}</span>
+                {active && <i className="ri-check-line text-[13px]"></i>}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
