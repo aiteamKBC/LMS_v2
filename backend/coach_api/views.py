@@ -227,6 +227,14 @@ def parse_schedule_date(value):
     if not text or text.lower() in {"null", "not yet", "()"}:
         return None
 
+    iso_match = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    if iso_match:
+        year, month, day = iso_match.groups()
+        try:
+            return date(int(year), int(month), int(day))
+        except ValueError:
+            return None
+
     match = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", text)
     if not match:
         return None
@@ -1060,6 +1068,399 @@ def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
+    }
+
+
+def parse_month_bounds(value: str | None) -> tuple[date, date, str, str]:
+    text = clean_text(value)
+    today = date.today()
+    year = today.year
+    month = today.month
+    match = re.match(r"^(\d{4})-(\d{2})$", text)
+    if match:
+        candidate_year = int(match.group(1))
+        candidate_month = int(match.group(2))
+        if 1 <= candidate_month <= 12:
+            year = candidate_year
+            month = candidate_month
+
+    start_date = date(year, month, 1)
+    next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
+    end_date = next_month - timedelta(days=1)
+    return start_date, end_date, start_date.strftime("%B %Y"), f"{year:04d}-{month:02d}"
+
+
+def date_only(value) -> date | None:
+    parsed = parse_date_value(value)
+    if isinstance(parsed, datetime):
+        return parsed.date()
+    return parsed if isinstance(parsed, date) else None
+
+
+def entry_activity_date(entry: dict) -> date | None:
+    for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt"):
+        parsed = date_only(entry.get(field))
+        if parsed:
+            return parsed
+    return None
+
+
+def entry_is_between(entry: dict, start_date: date, end_date: date) -> bool:
+    entry_date = entry_activity_date(entry)
+    return bool(entry_date and start_date <= entry_date <= end_date)
+
+
+def reported_minutes(value) -> float:
+    text = clean_text(value)
+    if not text:
+        return 0.0
+    if ":" in text:
+        parts = text.split(":")
+        try:
+            minutes = float(parts[0])
+            seconds = float(parts[1]) if len(parts) > 1 else 0.0
+            return max(0.0, minutes + seconds / 60.0)
+        except (ValueError, IndexError):
+            return 0.0
+
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if not match:
+        return 0.0
+    amount = float(match.group(0))
+    lower_text = text.lower()
+    return amount * 60 if "hour" in lower_text or "hr" in lower_text else amount
+
+
+def format_hours_number(hours: float) -> str:
+    rounded = round(hours, 1)
+    return str(int(rounded)) if rounded == int(rounded) else str(rounded)
+
+
+def monthly_activity_identity(entry: dict, index: int) -> str:
+    entry_date = entry_activity_date(entry)
+    date_key = entry_date.isoformat() if entry_date else ""
+    key_parts = [
+        clean_text(entry.get("kind")),
+        clean_text(entry.get("quizId")),
+        clean_text(entry.get("componentId")),
+        clean_text(entry.get("attempt")),
+        date_key,
+        clean_text(entry.get("title") or entry.get("action") or entry.get("quizName")),
+    ]
+    key = "|".join(part for part in key_parts if part)
+    return key or f"activity:{index}"
+
+
+def monthly_activity_dedupe_identity(entry: dict, index: int) -> str:
+    entry_date = entry_activity_date(entry)
+    date_key = entry_date.isoformat() if entry_date else ""
+    key_parts = [
+        clean_text(entry.get("kind")),
+        clean_text(entry.get("quizId")),
+        clean_text(entry.get("componentId")),
+        date_key,
+    ]
+    key = "|".join(part for part in key_parts if part)
+    if key:
+        return key
+    return monthly_activity_identity(entry, index)
+
+
+def monthly_learning_type(entry: dict) -> str:
+    kind = clean_text(entry.get("kind")).lower()
+    component_type = clean_text(entry.get("componentType") or entry.get("type")).replace("-", " ")
+    if kind == "quiz":
+        return "Quiz"
+    if kind == "video":
+        return "Video"
+    if component_type:
+        return component_type.title()
+    if kind == "component":
+        return "Component"
+    return clean_text(entry.get("action")) or "Activity"
+
+
+def monthly_learning_title(entry: dict) -> str:
+    return (
+        clean_text(entry.get("title"))
+        or clean_text(entry.get("quizName"))
+        or clean_text(entry.get("componentTitle"))
+        or monthly_learning_type(entry)
+    )
+
+
+def monthly_learning_detail(entry: dict) -> str:
+    detail = clean_text(entry.get("detail"))
+    if detail:
+        return detail
+
+    reported_time = clean_text(entry.get("reportedTime"))
+    grade = entry.get("grade")
+    achieved = entry.get("achievedScore")
+    total = entry.get("totalScore")
+    if achieved not in (None, "") and total not in (None, ""):
+        return f"Score {achieved}/{total}"
+    if grade not in (None, ""):
+        return f"Grade {round(to_number(grade) * 100)}%"
+    if reported_time:
+        return reported_time
+    return clean_text(entry.get("module") or entry.get("week")) or "--"
+
+
+def monthly_learning_tone(entry: dict) -> str:
+    kind = clean_text(entry.get("kind")).lower()
+    if is_evidence_entry(entry):
+        return "emerald"
+    if kind == "quiz":
+        return "amber"
+    if kind == "video":
+        return "red"
+    return "primary"
+
+
+def monthly_status_label(status: str) -> str:
+    value = clean_text(status).lower()
+    if value == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
+        return "Needs schedule"
+    if value == CoachCalendarEvent.STATUS_IN_PROGRESS:
+        return "In progress"
+    return value.replace("-", " ").title() if value else "--"
+
+
+def monthly_event_display_date(event: dict) -> date | None:
+    return date_only(event.get("scheduledDate") or event.get("date") or event.get("targetDate"))
+
+
+def monthly_event_matches_learner(event: dict, learner: dict) -> bool:
+    event_learner_id = clean_text(event.get("learnerId"))
+    learner_id = clean_text(learner.get("id"))
+    if event_learner_id and learner_id and event_learner_id == learner_id:
+        return True
+
+    event_email = normalize_email(event.get("email"))
+    learner_email = normalize_email(learner.get("email"))
+    return bool(event_email and learner_email and event_email == learner_email)
+
+
+def monthly_event_type_label(event: dict) -> str:
+    source = clean_text(event.get("source")).lower()
+    if source == "mcr":
+        return "MCM"
+    if source == "progress-review":
+        return "PR"
+    if source == CATCH_UP_EVENT_TYPE:
+        return "Catch-up"
+    return clean_text(event.get("title")) or "Session"
+
+
+def monthly_event_tone(event: dict) -> str:
+    status = clean_text(event.get("status")).lower()
+    if status == CoachCalendarEvent.STATUS_COMPLETED:
+        return "emerald"
+    if status == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
+        return "amber"
+    if status == CoachCalendarEvent.STATUS_CANCELLED:
+        return "red"
+    return "primary"
+
+
+def build_monthly_activity_item(
+    *,
+    item_id: str,
+    item_date: date,
+    item_type: str,
+    title: str,
+    detail: str,
+    tone: str,
+    source: str,
+) -> dict:
+    return {
+        "id": item_id,
+        "date": item_date.isoformat(),
+        "type": item_type,
+        "title": title,
+        "detail": detail,
+        "tone": tone,
+        "source": source,
+    }
+
+
+def build_monthly_activity_learner(
+    row: ActiveUser | SimpleNamespace,
+    learner: dict,
+    events: list[dict],
+    start_date: date,
+    end_date: date,
+) -> dict:
+    progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
+    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    monthly_progress = [entry for entry in progress_entries if entry_is_between(entry, start_date, end_date)]
+    monthly_feed = [entry for entry in activity_entries if entry_is_between(entry, start_date, end_date)]
+    learner_events = [
+        event
+        for event in events
+        if monthly_event_matches_learner(event, learner)
+        and clean_text(event.get("status")).lower() != CoachCalendarEvent.STATUS_CANCELLED
+    ]
+
+    monthly_hours = round(sum(reported_minutes(entry.get("reportedTime")) for entry in monthly_progress) / 60, 1)
+    quizzes = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "quiz")
+    videos = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "video")
+    components = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "component")
+    reflections = sum(1 for entry in monthly_progress if clean_text(entry.get("feedback")))
+    evidence_keys = {
+        monthly_activity_dedupe_identity(entry, index)
+        for index, entry in enumerate([*monthly_progress, *monthly_feed])
+        if is_evidence_entry(entry)
+    }
+    monthly_ksb_codes = completed_ksb_codes(monthly_progress, [])
+
+    event_sources = [clean_text(event.get("source")).lower() for event in learner_events]
+    mcm_count = event_sources.count("mcr")
+    review_count = event_sources.count("progress-review")
+    catchup_count = event_sources.count(CATCH_UP_EVENT_TYPE)
+    needs_schedule_count = sum(
+        1 for event in learner_events if clean_text(event.get("status")).lower() == CoachCalendarEvent.STATUS_NOT_SCHEDULED
+    )
+    booked_count = sum(
+        1
+        for event in learner_events
+        if clean_text(event.get("status")).lower()
+        in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS, CoachCalendarEvent.STATUS_COMPLETED, "confirmed"}
+    )
+
+    activities: list[dict] = []
+    seen_activity_keys: set[str] = set()
+
+    for index, event in enumerate(learner_events):
+        event_date = monthly_event_display_date(event)
+        if not event_date:
+            continue
+        activity_key = f"event:{clean_text(event.get('eventKey') or event.get('id')) or index}"
+        seen_activity_keys.add(activity_key)
+        activities.append(
+            build_monthly_activity_item(
+                item_id=activity_key,
+                item_date=event_date,
+                item_type=monthly_event_type_label(event),
+                title=clean_text(event.get("title")) or monthly_event_type_label(event),
+                detail=f"{monthly_status_label(clean_text(event.get('status')))} - {clean_text(event.get('timeLabel')) or 'Time TBC'}",
+                tone=monthly_event_tone(event),
+                source="calendar",
+            )
+        )
+
+    for index, entry in enumerate(monthly_feed):
+        activity_key = f"feed:{monthly_activity_identity(entry, index)}"
+        seen_activity_keys.add(f"learning:{monthly_activity_dedupe_identity(entry, index)}")
+        entry_date = entry_activity_date(entry)
+        if not entry_date:
+            continue
+        activities.append(
+            build_monthly_activity_item(
+                item_id=activity_key,
+                item_date=entry_date,
+                item_type=monthly_learning_type(entry),
+                title=monthly_learning_title(entry),
+                detail=monthly_learning_detail(entry),
+                tone=monthly_learning_tone(entry),
+                source="activity-feed",
+            )
+        )
+
+    for index, entry in enumerate(monthly_progress):
+        identity = monthly_activity_identity(entry, index)
+        dedupe_key = f"learning:{monthly_activity_dedupe_identity(entry, index)}"
+        if dedupe_key in seen_activity_keys:
+            continue
+        seen_activity_keys.add(dedupe_key)
+        entry_date = entry_activity_date(entry)
+        if not entry_date:
+            continue
+        activities.append(
+            build_monthly_activity_item(
+                item_id=f"progress:{identity}",
+                item_date=entry_date,
+                item_type=monthly_learning_type(entry),
+                title=monthly_learning_title(entry),
+                detail=monthly_learning_detail(entry),
+                tone=monthly_learning_tone(entry),
+                source="training-plan-progress",
+            )
+        )
+
+    activities.sort(key=lambda item: (item["date"], item["title"]), reverse=True)
+
+    needs_action: list[str] = []
+    if not monthly_progress:
+        needs_action.append("No learning activity this month")
+    if mcm_count == 0:
+        needs_action.append("Need MCM schedule")
+    if review_count == 0:
+        needs_action.append("Need PR schedule")
+    if not evidence_keys:
+        needs_action.append("No evidence this month")
+    if monthly_hours <= 0:
+        needs_action.append("No OTJH logged")
+    if needs_schedule_count:
+        needs_action.append(f"{needs_schedule_count} session{'s' if needs_schedule_count != 1 else ''} need schedule")
+
+    otjh_status = clean_text(learner.get("otjhStatus")).lower()
+    if otjh_status == "at risk" or len(needs_action) >= 3:
+        monthly_status = "at-risk"
+    elif needs_action:
+        monthly_status = "need-attention"
+    else:
+        monthly_status = "on-track"
+
+    last_activity = activities[0] if activities else None
+    monthly_target_hours = round(max(to_number(learner.get("otjhTarget")) / 12, 1), 1)
+
+    return {
+        "id": learner["id"],
+        "name": learner["name"],
+        "initials": learner["initials"],
+        "email": learner.get("email"),
+        "cohortName": learner.get("cohortName") or "--",
+        "group": learner.get("group") or "--",
+        "programme": clean_text(getattr(row, "programme", "")) or learner.get("cohortName") or "--",
+        "status": monthly_status,
+        "otjhStatus": learner.get("otjhStatus") or "--",
+        "lastActivityDate": last_activity["date"] if last_activity else None,
+        "lastActivityLabel": last_activity["title"] if last_activity else "--",
+        "learning": {
+            "total": len(monthly_progress),
+            "quizzes": quizzes,
+            "videos": videos,
+            "components": components,
+            "reflections": reflections,
+        },
+        "coaching": {
+            "total": len(learner_events),
+            "booked": booked_count,
+            "needsSchedule": needs_schedule_count,
+            "mcm": mcm_count,
+            "progressReviews": review_count,
+            "catchups": catchup_count,
+        },
+        "evidence": {
+            "submitted": len(evidence_keys),
+            "latestDate": next((item["date"] for item in activities if item["type"].lower() == "evidence"), None),
+        },
+        "ksb": {
+            "touched": len(monthly_ksb_codes),
+            "codes": sorted(monthly_ksb_codes),
+        },
+        "otjh": {
+            "monthlyHours": monthly_hours,
+            "monthlyHoursLabel": f"{format_hours_number(monthly_hours)}h",
+            "monthlyTarget": monthly_target_hours,
+            "progress": percentage(monthly_hours, monthly_target_hours),
+            "completed": learner.get("otjhCompleted") or 0,
+            "target": learner.get("otjhTarget") or 0,
+        },
+        "needsAction": needs_action[:5],
+        "activities": activities,
     }
 
 
@@ -2891,6 +3292,8 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         filtered_events = []
         for event in events:
             event_date = parse_schedule_date(event["date"])
+            if not event_date:
+                continue
             if start_date and event_date < start_date:
                 continue
             if end_date and event_date > end_date:
@@ -3442,6 +3845,73 @@ def coach_timetable(request):
             "summary": timetable_payload["summary"],
             "events": timetable_payload["events"],
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
+        }
+    )
+
+
+@require_GET
+def coach_monthly_activity(request):
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
+
+    try:
+        rows = fetch_active_user_caseload_rows(owner_email)
+        timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
+        events = timetable_payload.get("events", [])
+        active_pairs = [
+            (row, learner)
+            for row in rows
+            for learner in [serialize_active_user_learner(row)]
+            if learner.get("enrollmentStatus") == "active"
+        ]
+        learners = [
+            build_monthly_activity_learner(row, learner, events, start_date, end_date)
+            for row, learner in active_pairs
+        ]
+    except Exception as exc:
+        return JsonResponse(
+            {"detail": "Unable to load monthly activity data.", "error": str(exc)},
+            status=500,
+        )
+
+    owner_name = next(
+        (clean_text(getattr(row, "coach_name", "")) for row, _learner in active_pairs if clean_text(getattr(row, "coach_name", ""))),
+        timetable_payload.get("owner_name") or "Med Maher",
+    )
+    on_track = sum(1 for learner in learners if learner["status"] == "on-track")
+    need_attention = sum(1 for learner in learners if learner["status"] == "need-attention")
+    at_risk = sum(1 for learner in learners if learner["status"] == "at-risk")
+    all_ksb_codes = {
+        code
+        for learner in learners
+        for code in learner["ksb"].get("codes", [])
+    }
+
+    return JsonResponse(
+        {
+            "owner": {"name": owner_name, "email": owner_email},
+            "month": month_key,
+            "monthLabel": month_label,
+            "dateRange": {"start": start_date.isoformat(), "end": end_date.isoformat()},
+            "summary": {
+                "activeLearners": len(learners),
+                "timelineItems": sum(len(learner["activities"]) for learner in learners),
+                "learningActivities": sum(learner["learning"]["total"] for learner in learners),
+                "quizzes": sum(learner["learning"]["quizzes"] for learner in learners),
+                "videos": sum(learner["learning"]["videos"] for learner in learners),
+                "components": sum(learner["learning"]["components"] for learner in learners),
+                "coachingSessions": sum(learner["coaching"]["total"] for learner in learners),
+                "bookedSessions": sum(learner["coaching"]["booked"] for learner in learners),
+                "needsSchedule": sum(learner["coaching"]["needsSchedule"] for learner in learners),
+                "evidence": sum(learner["evidence"]["submitted"] for learner in learners),
+                "ksbTouched": len(all_ksb_codes),
+                "otjhHours": round(sum(learner["otjh"]["monthlyHours"] for learner in learners), 1),
+                "needsAction": sum(1 for learner in learners if learner["needsAction"]),
+                "onTrack": on_track,
+                "needAttention": need_attention,
+                "atRisk": at_risk,
+            },
+            "learners": learners,
         }
     )
 

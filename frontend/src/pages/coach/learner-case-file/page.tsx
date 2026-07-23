@@ -163,14 +163,19 @@ export default function LearnerCaseFile() {
       </div>
 
       <div className="min-h-screen bg-background-100/70 pb-10">
-        <div className="px-4 md:px-8 py-5 space-y-5">
+        <div className="px-4 py-5 md:px-8">
+          <div className="space-y-5">
           {error && data && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] text-amber-800 shadow-sm">
               {error}
             </div>
           )}
 
-          <section className="relative overflow-hidden rounded-3xl border border-foreground-200/70 bg-background-50 shadow-[0_14px_36px_rgba(15,23,42,0.06)]">
+          <section className="relative overflow-hidden rounded-3xl border border-white/10 bg-[linear-gradient(135deg,#070112_0%,#130329_48%,#2a0756_100%)] text-white shadow-[0_24px_60px_rgba(7,1,18,0.22)] ring-1 ring-foreground-950/5">
+            <div className="pointer-events-none absolute -left-16 top-8 h-56 w-56 rounded-full bg-primary-500/20 blur-3xl" aria-hidden="true"></div>
+            <div className="pointer-events-none absolute -right-14 -top-20 h-64 w-64 rounded-full bg-secondary-400/10 blur-3xl" aria-hidden="true"></div>
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10" aria-hidden="true"></div>
+
             <div className="relative p-5 md:p-6">
               <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center">
@@ -180,7 +185,7 @@ export default function LearnerCaseFile() {
 
                   <div className="min-w-0 text-center md:text-left">
                     <div className="flex flex-col items-center gap-2 md:flex-row md:items-center">
-                      <h1 className="text-2xl font-heading font-bold tracking-tight text-foreground-950 md:text-3xl">
+                      <h1 className="text-2xl font-heading font-bold tracking-tight text-white md:text-3xl">
                         {pageTitle}
                       </h1>
                       <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusBadgeClass(data)}`}>
@@ -191,32 +196,32 @@ export default function LearnerCaseFile() {
 
                     <div className="mt-2 flex flex-wrap items-center justify-center gap-2 md:justify-start">
                       {data?.programme && (
-                        <span className="text-sm font-semibold text-foreground-700">{data.programme}</span>
+                        <span className="text-sm font-semibold text-white/90">{data.programme}</span>
                       )}
                     </div>
 
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[12px] text-foreground-500 md:justify-start">
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[12px] text-white/70 md:justify-start">
                       {data?.cohort && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-group-line text-foreground-400"></i>
+                          <i className="ri-group-line text-white/50"></i>
                           Cohort {data.cohort}
                         </span>
                       )}
                       {data?.group && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-team-line text-foreground-400"></i>
+                          <i className="ri-team-line text-white/50"></i>
                           Group {data.group}
                         </span>
                       )}
                       {data?.startDate && data.startDate !== '--' && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-calendar-line text-foreground-400"></i>
+                          <i className="ri-calendar-line text-white/50"></i>
                           Started {data.startDate}
                         </span>
                       )}
                       {data?.email && (
                         <span className="inline-flex min-w-0 items-center gap-1">
-                          <i className="ri-mail-line text-foreground-400"></i>
+                          <i className="ri-mail-line text-white/50"></i>
                           <span className="truncate">{data.email}</span>
                         </span>
                       )}
@@ -232,23 +237,20 @@ export default function LearnerCaseFile() {
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-col gap-3 border-t border-background-200 pt-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center gap-1 overflow-x-auto rounded-2xl border border-background-200 bg-background-100/65 p-1 scrollbar-hide">
+              <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/10 bg-white/10 p-1 shadow-inner scrollbar-hide">
                   {TABS.map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
                       className={`relative px-3.5 py-2.5 rounded-xl text-[12px] font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                         activeTab === tab.id
-                          ? 'bg-background-50 text-foreground-950 shadow-sm ring-1 ring-background-200'
-                          : 'text-foreground-500 hover:bg-background-50/75 hover:text-foreground-900'
+                          ? 'bg-white text-[#140427] shadow-sm ring-1 ring-white/30'
+                          : 'text-white/70 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      <i className={`${tab.icon} text-sm ${activeTab === tab.id ? 'text-primary-600' : 'text-foreground-500'}`}></i>
+                      <i className={`${tab.icon} text-sm ${activeTab === tab.id ? 'text-primary-700' : 'text-white/60'}`}></i>
                       {tab.label}
-                      {activeTab === tab.id && (
-                        <span className="absolute inset-x-4 bottom-1 h-0.5 rounded-full bg-primary-600"></span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -257,7 +259,7 @@ export default function LearnerCaseFile() {
                   {data?.kind && (
                     <button
                       onClick={handleOpenTrainingPlan}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-4 py-2.5 text-[13px] font-semibold text-foreground-800 shadow-sm transition-all hover:bg-background-100"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-full border border-white/20 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-950 shadow-sm transition-all hover:bg-white/90"
                     >
                       <i className="ri-route-line text-sm"></i> View Plan
                     </button>
@@ -379,6 +381,7 @@ export default function LearnerCaseFile() {
           </div>
         </div>
       </div>
+      </div>
 
       <style>{`
         .scrollbar-hide::-webkit-scrollbar { display: none; }
@@ -400,21 +403,21 @@ function SignalCard({
   tone: 'primary' | 'emerald' | 'amber' | 'accent';
 }) {
   const toneMap = {
-    primary: 'bg-background-100 text-primary-600 border-background-200',
-    emerald: 'bg-background-100 text-emerald-600 border-background-200',
-    amber: 'bg-background-100 text-amber-600 border-background-200',
-    accent: 'bg-background-100 text-foreground-600 border-background-200',
+    primary: 'bg-primary-500/20 text-primary-100 border-primary-300/30',
+    emerald: 'bg-emerald-500/20 text-emerald-100 border-emerald-300/30',
+    amber: 'bg-amber-500/20 text-amber-100 border-amber-300/30',
+    accent: 'bg-white/10 text-white border-white/20',
   } as const;
 
   return (
-    <div className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-[0_8px_18px_rgba(15,23,42,0.035)]">
+    <div className="rounded-2xl border border-white/10 bg-white/10 p-3 shadow-[0_14px_32px_rgba(0,0,0,0.12)] backdrop-blur-md">
       <div className="flex items-center gap-2">
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${toneMap[tone]}`}>
           <i className={`${icon} text-sm`}></i>
         </span>
         <div className="min-w-0">
-          <p className="whitespace-nowrap text-[9px] font-bold text-foreground-400">{label}</p>
-          <p className="whitespace-nowrap text-sm font-heading font-bold text-foreground-950">{value}</p>
+          <p className="whitespace-nowrap text-[9px] font-bold text-white/60">{label}</p>
+          <p className="whitespace-nowrap text-sm font-heading font-bold text-white">{value}</p>
         </div>
       </div>
     </div>
@@ -459,9 +462,6 @@ function ProgressRing({ progress, initials }: { progress: number | null; initial
       </svg>
       <div className="relative z-10 flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-background-200 bg-background-100 shadow-sm ring-4 ring-background-50">
         <span className="text-3xl font-bold text-foreground-900 font-heading">{initials}</span>
-      </div>
-      <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-20 px-2 py-0.5 rounded-full bg-background-50 border border-background-200 shadow-sm text-[10px] font-bold text-foreground-700 whitespace-nowrap">
-        {progress === null ? 'No progress yet' : `${safeProgress}% progress`}
       </div>
     </>
   );
