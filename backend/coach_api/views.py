@@ -1883,6 +1883,20 @@ def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
     absent = sum(1 for row in rows if normalize_attendance_detail_status(row.get("attendance_status")) == "absent")
     late = sum(1 for row in rows if to_int(row.get("minutes_late")) > 0)
     catchup = sum(1 for row in rows if is_truthy_value(row.get("catchup_completed")))
+    absence_reasons: dict[str, int] = {}
+    authorised_absent = 0
+    unauthorised_absent = 0
+    for row in rows:
+        if normalize_attendance_detail_status(row.get("attendance_status")) != "absent":
+            continue
+        reason = clean_text(row.get("absence_reason"))
+        if reason and reason.lower() not in {"--", "none", "n/a", "no reason", "no reason provided"}:
+            authorised_absent += 1
+            label = reason[:80]
+        else:
+            unauthorised_absent += 1
+            label = "No Reason Provided"
+        absence_reasons[label] = absence_reasons.get(label, 0) + 1
     last_session_date = None
     for row in rows:
         parsed_date = parse_date_value(row.get("session_date"))
@@ -1906,6 +1920,9 @@ def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
         "absent": absent,
         "late": late,
         "catchup": catchup,
+        "authorisedAbsent": authorised_absent,
+        "unauthorisedAbsent": unauthorised_absent,
+        "absenceReasons": absence_reasons,
         "risk": attendance_risk_from_rate(attendance_rate),
         "lastSessionDate": format_iso_date(last_session_date),
         "lastSession": format_date(last_session_date),
@@ -1933,6 +1950,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
     status_column = first_existing_column(columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
     minutes_late_column = first_existing_column(columns, "minutes_late", "late", "lateness")
     catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
+    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
 
     if not status_column or not any([learner_id_column, learner_email_column]):
         return empty
@@ -1945,6 +1963,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
         "attendance_status": status_column,
         "minutes_late": minutes_late_column,
         "catchup_completed": catchup_column,
+        "absence_reason": reason_column,
     }
     select_columns = [
         f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}" if column else f"null as {quote_sql_identifier(alias)}"
@@ -3649,6 +3668,9 @@ def serialize_attendance_learner(
         "absent": absent if sessions else None,
         "late": attendance_metrics.get("late", 0) if attendance_metrics else None,
         "catchup": max(catchup_count, attendance_metrics.get("catchup", 0) if attendance_metrics else 0),
+        "authorisedAbsent": attendance_metrics.get("authorisedAbsent", 0) if attendance_metrics else None,
+        "unauthorisedAbsent": attendance_metrics.get("unauthorisedAbsent", 0) if attendance_metrics else None,
+        "absenceReasons": attendance_metrics.get("absenceReasons", {}) if attendance_metrics else {},
         "risk": risk,
         "employer": learner["employer"],
         "overallProgress": learner["overallProgress"],
@@ -3688,6 +3710,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     session_date_column = first_existing_column(columns, "session_date", "date")
     start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
     end_time_column = first_existing_column(columns, "session_end_time", "end_time", "end")
+    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
     status_column = first_existing_column(
         columns,
         "attendance_status",
@@ -3715,6 +3738,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
         "session_end_time": end_time_column,
         "attendance_status": status_column,
         "reason": reason_column,
+        "catchup_completed": catchup_column,
     }
     for alias, column in selected_aliases.items():
         if column:
@@ -3767,6 +3791,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
             "endTime": format_time_value(row.get("session_end_time")) or "--",
             "status": normalize_attendance_detail_status(row.get("attendance_status")),
             "reason": clean_text(row.get("reason")) or "--",
+            "catchupCompleted": is_truthy_value(row.get("catchup_completed")),
         }
         for row in rows
     ]
@@ -4062,6 +4087,10 @@ def coach_attendance(request):
         if (record.scheduled_date or record.target_date) < today
     ]
     stored_catchups = sum(learner["catchup"] or 0 for learner in metric_learners)
+    absence_reasons: dict[str, int] = {}
+    for learner in metric_learners:
+        for reason, count in (learner.get("absenceReasons") or {}).items():
+            absence_reasons[reason] = absence_reasons.get(reason, 0) + to_int(count)
 
     summary = {
         "totalLearners": len(attendance_learners),
@@ -4080,6 +4109,7 @@ def coach_attendance(request):
         "catchupsPending": max(len(pending_catchups), stored_catchups),
         "scheduledCatchups": len(scheduled_catchups),
         "overdueCatchups": len(overdue_catchups),
+        "absenceReasons": absence_reasons,
     }
 
     owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"

@@ -106,7 +106,6 @@ export const coachNavItems: SidebarNavItem[] = [
     label: 'My Learners',
     icon: 'ri-group-line',
     href: '/coach/caseload',
-    badge: 24,
   },
   {
     id: 'coach-group-attendance',
@@ -115,7 +114,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
-      { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports', badge: 3 },
+      { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
     ],
   },
   {
@@ -133,9 +132,9 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-calendar-schedule-line',
     href: '',
     children: [
-      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable', badge: 20 },
-      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings', badge: 8 },
-      { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews', badge: 6 },
+      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
+      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
       { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
     ],
   },
@@ -155,7 +154,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-building-2-line',
     href: '',
     children: [
-      { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions', badge: 2 },
+      { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions' },
     ],
   },
   { id: 'coach-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/coach/reports' },
