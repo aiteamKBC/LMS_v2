@@ -393,15 +393,12 @@ export default function CoachAttendance() {
     [trendData],
   );
   const attendanceDistribution = useMemo(() => {
-    const available = filteredData.filter((learner) => learner.attendance !== null);
     return [
-      { label: '95%+', value: available.filter((learner) => (learner.attendance || 0) >= 95).length, color: 'bg-emerald-500' },
-      { label: '85–94%', value: available.filter((learner) => (learner.attendance || 0) >= 85 && (learner.attendance || 0) < 95).length, color: 'bg-lime-600' },
-      { label: '70–84%', value: available.filter((learner) => (learner.attendance || 0) >= 70 && (learner.attendance || 0) < 85).length, color: 'bg-amber-500' },
-      { label: 'Below 70%', value: available.filter((learner) => (learner.attendance || 0) < 70).length, color: 'bg-red-500' },
-      { label: 'No Data', value: filteredData.filter((learner) => learner.attendance === null).length, color: 'bg-slate-400' },
+      { label: 'On Track (90%+)', value: summary.onTrack, color: 'bg-emerald-500' },
+      { label: 'At Risk (<80%)', value: summary.atRisk, color: 'bg-red-500' },
+      { label: 'Needs Attention (80–89%)', value: summary.needsAttention, color: 'bg-amber-500' },
     ];
-  }, [filteredData]);
+  }, [summary.onTrack, summary.atRisk, summary.needsAttention]);
   const absenceReasonEntries = useMemo(
     () => Object.entries(summary.absenceReasons || {}).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]),
     [summary.absenceReasons],
