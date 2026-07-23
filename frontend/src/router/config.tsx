@@ -319,6 +319,7 @@ import CurriculumDashboard from "../pages/workspace/curriculum/page";
 import CoachCaseload from "../pages/coach/caseload/page";
 import CoachCaseFiles from "../pages/coach/case-files/page";
 import CoachAttendance from "../pages/coach/attendance/page";
+import CoachAttendanceProfile from "../pages/coach/attendance-profile/page";
 import CoachAbsenceReports from "../pages/coach/absence-reports/page";
 import CoachCatchupQueue from "../pages/coach/catchup-queue/page";
 import CoachMarkingQueue from "../pages/coach/marking-queue/page";
@@ -816,6 +817,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/attendance",
     element: <CoachAttendance />,
+  },
+  {
+    path: "/coach/attendance/:learnerId",
+    element: <CoachAttendanceProfile />,
   },
   {
     path: "/coach/absence-reports",

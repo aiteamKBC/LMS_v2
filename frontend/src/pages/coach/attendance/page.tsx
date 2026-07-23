@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import SparklineChart from '@/components/feature/SparklineChart';
 import { roleNavMap } from '@/mocks/navigation';
 import TrendChart from './components/TrendChart';
-import RiskPieChart from './components/RiskPieChart';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 const MISSING_VALUE = '--';
+const ABSENCE_REASON_COLORS = ['#8b5cf6', '#ef4444', '#94a3b8', '#c4b5fd', '#d97706', '#a78bfa'];
 
 type RiskTone = 'red' | 'amber' | 'green' | null;
 type TrendView = 'week' | 'month' | 'year';
 type AttendanceKpi = 'average' | 'on-track' | 'at-risk' | 'needs-attention' | 'catchups';
 type AttendanceDetailFilter = 'all' | 'present' | 'absent';
+type AttendanceRiskFilter = 'all' | 'green' | 'amber' | 'red' | 'break' | 'unknown';
 
 interface AttendanceLearner {
   id: string;
@@ -33,6 +35,9 @@ interface AttendanceLearner {
   absent: number | null;
   late: number | null;
   catchup: number | null;
+  authorisedAbsent?: number | null;
+  unauthorisedAbsent?: number | null;
+  absenceReasons?: Record<string, number>;
   risk: RiskTone;
   employer: string;
   overallProgress: number;
@@ -74,6 +79,7 @@ interface AttendanceSummary {
   catchupsPending: number | null;
   scheduledCatchups: number | null;
   overdueCatchups: number | null;
+  absenceReasons?: Record<string, number>;
 }
 
 interface AttendanceApiResponse {
@@ -214,6 +220,31 @@ function getAttendanceBar(value?: number | null): string {
   return 'bg-red-500';
 }
 
+function exportAttendanceCsv(rows: AttendanceLearner[]) {
+  const headers = ['Learner', 'Email', 'Programme', 'Cohort', 'Group', 'Attendance', 'Present', 'Absent', 'Catch-up', 'Risk', 'Last Session'];
+  const values = rows.map((row) => [
+    row.learner,
+    row.email || '',
+    row.programme,
+    row.cohort,
+    row.group,
+    row.attendance ?? '',
+    row.present ?? '',
+    row.absent ?? '',
+    row.catchup ?? '',
+    getDisplayRiskLabel(row),
+    row.lastSession,
+  ]);
+  const escape = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+  const csv = [headers, ...values].map((row) => row.map(escape).join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'learner-attendance.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function FilterDropdown({ value, onChange, options, allLabel }: { value: string; onChange: (v: string) => void; options: string[]; allLabel: string }) {
   return (
     <div className="relative">
@@ -241,15 +272,15 @@ function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { ico
   };
 
   return (
-    <button type="button" onClick={onClick} className={`bg-background-50 rounded-xl border p-4 flex flex-col gap-2 text-left hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-primary-300/40 transition-smooth cursor-pointer ${borderMap[tone]}`}>
+    <button type="button" onClick={onClick} className={`flex min-h-[92px] flex-col gap-1.5 rounded-xl border bg-white p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer ${borderMap[tone]}`}>
       <div className="flex items-center justify-between">
-        <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${toneMap[tone]}`}>
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneMap[tone]}`}>
           <i className={`${icon} text-sm`}></i>
         </span>
         {hint && <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${toneMap[tone]}`}>{hint}</span>}
       </div>
       <div>
-        <p className={`text-2xl font-heading font-bold ${tone === 'primary' ? 'text-foreground-900' : tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : 'text-amber-600'}`}>{value}</p>
+        <p className={`text-xl font-heading font-bold ${tone === 'primary' ? 'text-foreground-900' : tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : 'text-amber-600'}`}>{value}</p>
         <p className="text-[10px] text-foreground-400">{label}</p>
       </div>
     </button>
@@ -257,6 +288,7 @@ function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { ico
 }
 
 export default function CoachAttendance() {
+  const navigate = useNavigate();
 
   const [learners, setLearners] = useState<AttendanceLearner[]>([]);
   const [summary, setSummary] = useState<AttendanceSummary>(EMPTY_SUMMARY);
@@ -266,14 +298,15 @@ export default function CoachAttendance() {
   const [cohortFilter, setCohortFilter] = useState('all');
   const [programmeFilter, setProgrammeFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
+  const [employerFilter, setEmployerFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [trendView, setTrendView] = useState<TrendView>('week');
-  const [trendCount, setTrendCount] = useState(12);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(8);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   const [selectedKpi, setSelectedKpi] = useState<AttendanceKpi | null>(null);
+  const [riskFilter, setRiskFilter] = useState<AttendanceRiskFilter>('all');
   const [selectedAttendanceLearner, setSelectedAttendanceLearner] = useState<AttendanceLearner | null>(null);
   const [attendanceDetailFilter, setAttendanceDetailFilter] = useState<AttendanceDetailFilter>('all');
   const [attendanceDetails, setAttendanceDetails] = useState<AttendanceSessionDetail[]>([]);
@@ -317,13 +350,17 @@ export default function CoachAttendance() {
 
   const cohorts = useMemo(() => [...new Set(learners.map(l => l.cohort).filter(Boolean))].sort(), [learners]);
   const programmes = useMemo(() => [...new Set(learners.map(l => l.programme).filter(Boolean))].sort(), [learners]);
-  const groups = useMemo(() => [...new Set(learners.map(l => l.group).filter(Boolean))].sort(), [learners]);
+  const employers = useMemo(() => [...new Set(learners.map(l => l.employer).filter(Boolean))].sort(), [learners]);
 
   const filteredData = useMemo(() => {
     let data = learners;
     if (cohortFilter !== 'all') data = data.filter(l => l.cohort === cohortFilter);
     if (programmeFilter !== 'all') data = data.filter(l => l.programme === programmeFilter);
     if (groupFilter !== 'all') data = data.filter(l => l.group === groupFilter);
+    if (employerFilter !== 'all') data = data.filter(l => l.employer === employerFilter);
+    if (riskFilter === 'break') data = data.filter(l => l.isOnBreak);
+    else if (riskFilter === 'unknown') data = data.filter(l => !l.isOnBreak && l.risk === null);
+    else if (riskFilter !== 'all') data = data.filter(l => !l.isOnBreak && l.risk === riskFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       data = data.filter(l => [l.learner, l.initials, l.email || '', l.employer, l.programme, l.cohort, l.group].some(value => value.toLowerCase().includes(q)));
@@ -337,26 +374,50 @@ export default function CoachAttendance() {
       });
     }
     return data;
-  }, [learners, cohortFilter, programmeFilter, groupFilter, searchQuery, dateFrom, dateTo]);
+  }, [learners, cohortFilter, programmeFilter, groupFilter, employerFilter, riskFilter, searchQuery, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const trendData = useMemo(() => {
     const base = trends[trendView] || [];
-    return base.slice(-Math.min(trendCount, base.length));
-  }, [trends, trendView, trendCount]);
+    return base.slice(-Math.min(12, base.length));
+  }, [trends, trendView]);
 
   const attendanceTrendValues = useMemo(() => {
     const values = trendData.map(point => Math.max(0, 100 - point.value));
     return values.length ? values : [summary.averageAttendance || 0];
   }, [trendData, summary.averageAttendance]);
+  const attendanceTrendData = useMemo(
+    () => trendData.map((point) => ({ ...point, value: Math.max(0, 100 - point.value) })),
+    [trendData],
+  );
+  const attendanceDistribution = useMemo(() => {
+    return [
+      { label: 'On Track (90%+)', value: summary.onTrack, color: 'bg-emerald-500' },
+      { label: 'At Risk (<80%)', value: summary.atRisk, color: 'bg-red-500' },
+      { label: 'Needs Attention (80–89%)', value: summary.needsAttention, color: 'bg-amber-500' },
+    ];
+  }, [summary.onTrack, summary.atRisk, summary.needsAttention]);
+  const absenceReasonEntries = useMemo(
+    () => Object.entries(summary.absenceReasons || {}).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]),
+    [summary.absenceReasons],
+  );
+  const absenceReasonGradient = useMemo(() => {
+    const total = absenceReasonEntries.reduce((sum, [, count]) => sum + count, 0);
+    if (!total) return 'conic-gradient(#e5e7eb 0 100%)';
+    let cursor = 0;
+    const stops = absenceReasonEntries.map(([, count], index) => {
+      const start = cursor;
+      cursor += (count / total) * 100;
+      return `${ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length]} ${start}% ${cursor}%`;
+    });
+    return `conic-gradient(${stops.join(', ')})`;
+  }, [absenceReasonEntries]);
 
   const trendUp = attendanceTrendValues.length >= 2 && attendanceTrendValues[attendanceTrendValues.length - 1] >= attendanceTrendValues[0];
   const knownLearnerCount = summary.learnersWithAttendance;
-  const trendMax = Math.max(30, Math.min(100, Math.ceil((Math.max(...trendData.map(point => point.value), 0) + 5) / 10) * 10));
-  const maxCount = trendView === 'week' ? Math.max(1, trends.week.length || 52) : trendView === 'month' ? Math.max(1, trends.month.length || 12) : Math.max(1, trends.year.length || 4);
-  const countLabel = trendView === 'week' ? 'Weeks' : trendView === 'month' ? 'Months' : 'Years';
+  const atRiskLearners = filteredData.filter((learner) => learner.risk === 'red' && !learner.isOnBreak).slice(0, 5);
   const kpiLearners = selectedKpi === 'average'
     ? learners.filter(learner => learner.hasAttendance)
     : selectedKpi === 'on-track'
@@ -427,6 +488,8 @@ export default function CoachAttendance() {
     setCohortFilter('all');
     setProgrammeFilter('all');
     setGroupFilter('all');
+    setEmployerFilter('all');
+    setRiskFilter('all');
     setSearchQuery('');
     setDateFrom('');
     setDateTo('');
@@ -435,32 +498,38 @@ export default function CoachAttendance() {
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance Dashboard" pageSubtitle="Attendance overview from KBC attendance records" userName="Med Maher" userRole="Progress Coach">
-      <div className="p-4 md:p-6 space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8">
-            <div className="flex flex-col lg:flex-row items-start lg:items-center gap-5">
-              <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-                <i className="ri-calendar-2-line text-white text-2xl"></i>
-              </span>
-              <div className="flex-1">
-                <h2 className="text-lg font-heading font-bold text-white mb-1">Attendance Dashboard</h2>
-                <p className="text-[13px] text-white/80 leading-relaxed">
-                  Average attendance: <strong>{formatPercent(summary.averageAttendance)}</strong> across {summary.activeLearners ?? summary.totalLearners} active learners
-                  {(summary.onBreakLearners || 0) > 0 ? ` + ${summary.onBreakLearners} on break` : ''} ({summary.learnersWithAttendance} with attendance records) in {summary.cohortCount} cohorts.
-                  {' '}{summary.totalPresent} present out of {summary.totalSessions} sessions, {summary.totalAbsent} absences.
-                  {' '}{summary.atRisk} at risk, {summary.needsAttention} need attention, {summary.onTrack} on track.
-                </p>
+      <div className="min-h-screen space-y-4 bg-[#f7f6fb] p-3 md:p-5">
+        <section
+          className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
+          style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
+        >
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
+                <span>Coach Workspace</span>
+                <i className="ri-arrow-right-s-line"></i>
+                <span className="font-semibold text-white">Attendance</span>
               </div>
+              <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Learner Attendance</h1>
+              <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
+                Monitor attendance, identify absence patterns, and support learners who require intervention.
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() => exportAttendanceCsv(filteredData)}
+              className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
+            >
+              <i className="ri-download-2-line"></i>
+              Export Attendance Report
+            </button>
           </div>
-        </div>
+        </section>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-          <button type="button" onClick={() => setSelectedKpi('average')} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 flex flex-col gap-2 text-left hover:border-primary-300/40 hover:shadow-md hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-primary-300/40 transition-smooth cursor-pointer">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <button type="button" onClick={() => setSelectedKpi('average')} className="flex min-h-[92px] flex-col gap-1.5 rounded-xl border border-foreground-200/60 bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-primary-300/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer">
             <div className="flex items-center justify-between">
-              <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-100">
                 <i className="ri-bar-chart-line text-primary-600 text-sm"></i>
               </span>
               <div className="w-20 h-8">
@@ -468,7 +537,7 @@ export default function CoachAttendance() {
               </div>
             </div>
             <div>
-              <p className="text-2xl font-heading font-bold text-foreground-900">{formatPercent(summary.averageAttendance)}</p>
+              <p className="text-xl font-heading font-bold text-foreground-900">{formatPercent(summary.averageAttendance)}</p>
               <p className="text-[10px] text-foreground-400">Average Attendance</p>
               <div className="flex items-center gap-1 mt-1">
                 <i className={`${trendUp ? 'ri-arrow-up-line text-emerald-500' : 'ri-arrow-down-line text-red-500'} text-[10px]`}></i>
@@ -482,127 +551,192 @@ export default function CoachAttendance() {
           <StatCard icon="ri-timer-line" label="Catch-ups Pending" value={formatCount(summary.catchupsPending)} hint={summary.overdueCatchups === null ? MISSING_VALUE : `${summary.overdueCatchups} overdue`} tone="amber" onClick={() => setSelectedKpi('catchups')} />
         </div>
 
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="flex-1 min-w-0 bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-            <div className="p-5">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-                    <i className="ri-line-chart-line text-accent-600 text-sm"></i>
-                  </span>
-                  <div>
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Absence Trend</h3>
-                    <p className="text-[10px] text-foreground-400">Absence rate from kbc_attendance over time</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2 bg-background-100 rounded-lg p-1">
-                    {(['week', 'month', 'year'] as TrendView[]).map(view => (
-                      <button key={view} onClick={() => setTrendView(view)} className={`px-3 py-1 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${trendView === view ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                        {view === 'week' ? 'Week' : view === 'month' ? 'Month' : 'Year'}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-foreground-400">Show</span>
-                    <input type="number" min={1} max={maxCount} value={trendCount} onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      if (val >= 1 && val <= maxCount) setTrendCount(val);
-                    }} className="w-12 px-2 py-1 bg-background-100 border border-foreground-200 rounded-md text-[11px] text-center text-foreground-700 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50" />
-                    <span className="text-[10px] text-foreground-400">{countLabel}</span>
-                  </div>
-                </div>
-              </div>
-
-              {trendData.length ? (
-                <TrendChart data={trendData} height={260} color="red" yAxisMax={trendMax} yAxisMin={0} />
-              ) : (
-                <div className="h-[260px] flex items-center justify-center text-sm text-foreground-400">No attendance trend records yet.</div>
-              )}
-            </div>
+        <section className="space-y-3 rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
+          <div className="flex gap-2 overflow-x-auto scrollbar-hide">
+            {([
+              ['all', 'All Learners', summary.totalLearners, 'ri-group-line'],
+              ['green', 'On Track', summary.onTrack, 'ri-check-line'],
+              ['amber', 'Needs Attention', summary.needsAttention, 'ri-alert-line'],
+              ['red', 'At Risk', summary.atRisk, 'ri-error-warning-line'],
+              ['break', 'On Break', summary.onBreakLearners || 0, 'ri-moon-line'],
+              ['unknown', 'No Data', summary.unknown, 'ri-question-line'],
+            ] as [AttendanceRiskFilter, string, number, string][]).map(([value, label, count, icon]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => { setRiskFilter(value); setCurrentPage(1); }}
+                className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-semibold transition ${
+                  riskFilter === value
+                    ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
+                    : 'border-foreground-200 bg-white text-foreground-600 hover:border-primary-200 hover:text-primary-700'
+                }`}
+              >
+                <i className={icon}></i>
+                {label}
+                <span className={`rounded-full px-1.5 py-0.5 text-[8px] ${riskFilter === value ? 'bg-white/20' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
+              </button>
+            ))}
           </div>
 
-          <div className="lg:w-[280px] shrink-0 bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-            <div className="p-5 flex flex-col items-center h-full">
-              <div className="flex items-center gap-2.5 mb-4 self-start">
-                <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                  <i className="ri-pie-chart-line text-red-600 text-sm"></i>
-                </span>
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Risk Distribution</h3>
-                  <p className="text-[10px] text-foreground-400">{knownLearnerCount} matched learners</p>
-                </div>
-              </div>
-              {knownLearnerCount ? (
-                <RiskPieChart
-                  slices={[
-                    { label: 'On Track', value: summary.onTrack, color: '#10b981', bgColor: 'bg-emerald-100', textColor: 'text-emerald-700' },
-                    { label: 'Needs Attention', value: summary.needsAttention, color: '#f59e0b', bgColor: 'bg-amber-100', textColor: 'text-amber-700' },
-                    { label: 'At Risk', value: summary.atRisk, color: '#ef4444', bgColor: 'bg-red-100', textColor: 'text-red-700' },
-                  ]}
-                  total={knownLearnerCount}
-                  size={180}
-                  innerRadius={48}
-                />
-              ) : (
-                <div className="flex-1 flex items-center justify-center text-sm text-foreground-400">No matched attendance records.</div>
-              )}
+          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
+            <div className="relative min-w-0 flex-1">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+              <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search by learner, email, programme or employer..." className="h-10 w-full rounded-xl border border-foreground-200 bg-background-50 pl-9 pr-3 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100" />
             </div>
-          </div>
-        </div>
-
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-            <div className="relative flex-1 w-full">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-              <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search learners, programmes, cohorts..." className="w-full pl-9 pr-3 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50" />
-              {searchQuery && (
-                <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 cursor-pointer">
-                  <i className="ri-close-line text-xs"></i>
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex flex-wrap items-center gap-2">
               <FilterDropdown allLabel="All Cohorts" value={cohortFilter} onChange={(v) => { setCohortFilter(v); setCurrentPage(1); }} options={cohorts} />
               <FilterDropdown allLabel="All Programmes" value={programmeFilter} onChange={(v) => { setProgrammeFilter(v); setCurrentPage(1); }} options={programmes} />
-              <FilterDropdown allLabel="All Groups" value={groupFilter} onChange={(v) => { setGroupFilter(v); setCurrentPage(1); }} options={groups} />
-              <div className="flex items-center gap-1">
-                <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="px-2 py-2 bg-background-100 border border-foreground-200 rounded-lg text-[10px] text-foreground-700 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 w-[115px]" />
-                <span className="text-[10px] text-foreground-400">to</span>
-                <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="px-2 py-2 bg-background-100 border border-foreground-200 rounded-lg text-[10px] text-foreground-700 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 w-[115px]" />
-              </div>
-              {(cohortFilter !== 'all' || programmeFilter !== 'all' || groupFilter !== 'all' || dateFrom || dateTo || searchQuery) && (
-                <button onClick={resetFilters} className="px-2 py-2 rounded-lg text-[11px] text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-close-line mr-1"></i>Clear
-                </button>
+              <FilterDropdown allLabel="All Employers" value={employerFilter} onChange={(v) => { setEmployerFilter(v); setCurrentPage(1); }} options={employers} />
+              <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
+              <span className="text-[10px] text-foreground-400">to</span>
+              <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
+              {(cohortFilter !== 'all' || programmeFilter !== 'all' || groupFilter !== 'all' || employerFilter !== 'all' || riskFilter !== 'all' || dateFrom || dateTo || searchQuery) && (
+                <button onClick={resetFilters} className="h-10 rounded-xl px-3 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-foreground-800">Clear Filters</button>
               )}
             </div>
           </div>
+        </section>
+
+        <div className="flex items-center gap-2 text-[11px] font-semibold text-foreground-700">
+          <i className="ri-arrow-down-s-line"></i>
+          Attendance Analytics
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-heading font-semibold text-foreground-900">Average Attendance Trend</h3>
+              <select value={trendView} onChange={(event) => setTrendView(event.target.value as TrendView)} className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[10px] font-semibold text-foreground-600 focus:border-primary-300 focus:outline-none">
+                <option value="week">Weekly</option>
+                <option value="month">Monthly</option>
+                <option value="year">Yearly</option>
+              </select>
+            </div>
+            {attendanceTrendData.length ? (
+              <TrendChart data={attendanceTrendData} height={245} color="primary" yAxisMax={100} yAxisMin={0} />
+            ) : (
+              <div className="flex h-[245px] items-center justify-center text-[11px] text-foreground-400">No attendance trend records yet.</div>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+            <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Distribution</h3>
+            <div className="mt-6 flex h-[220px] items-end justify-around gap-3 border-b border-l border-dashed border-foreground-200 px-4">
+              {attendanceDistribution.map((bucket) => {
+                const maxValue = Math.max(...attendanceDistribution.map((item) => item.value), 1);
+                const height = bucket.value ? Math.max(12, (bucket.value / maxValue) * 165) : 4;
+                return (
+                  <div key={bucket.label} className="flex h-full flex-1 flex-col items-center justify-end">
+                    <span className="mb-1 text-[9px] font-semibold text-foreground-500">{bucket.value}</span>
+                    <div className={`w-full max-w-[46px] rounded-t-md ${bucket.color}`} style={{ height }}></div>
+                    <span className="mt-2 whitespace-nowrap text-[8px] text-foreground-400">{bucket.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+            <h3 className="text-sm font-heading font-semibold text-foreground-900">Absence Reasons</h3>
+            <div className="mt-5 flex min-h-[230px] flex-col items-center justify-center">
+              <div className="relative h-36 w-36 rounded-full" style={{ background: absenceReasonGradient }}>
+                <div className="absolute inset-[28px] flex items-center justify-center rounded-full bg-white">
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-foreground-900">{summary.totalAbsent}</p>
+                    <p className="text-[8px] uppercase tracking-wide text-foreground-400">Absences</p>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 flex max-w-xl flex-wrap justify-center gap-x-4 gap-y-2">
+                {absenceReasonEntries.length ? absenceReasonEntries.map(([reason, count], index) => (
+                  <span key={reason} className="inline-flex items-center gap-1.5 text-[9px] text-foreground-500">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length] }}></span>
+                    {reason}: {count}
+                  </span>
+                )) : (
+                  <span className="text-[10px] text-foreground-400">No recorded absence reasons.</span>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                  <i className="ri-alarm-warning-line"></i>
+                </span>
+                <div>
+                  <h3 className="text-sm font-heading font-semibold text-foreground-900">At-Risk Learners</h3>
+                  <p className="text-[10px] text-foreground-400">{atRiskLearners.length} matching the current filters</p>
+                </div>
+              </div>
+              <button type="button" onClick={() => { setRiskFilter('red'); setCurrentPage(1); }} className="text-[10px] font-semibold text-primary-700 hover:text-primary-800">View All</button>
+            </div>
+            <div className="mt-4 max-h-[230px] space-y-2 overflow-y-auto pr-1">
+              {atRiskLearners.length ? atRiskLearners.map((learner) => (
+                <div key={learner.id} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50/60 p-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-red-600 ring-1 ring-red-100">{learner.initials}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-bold text-foreground-900">{learner.learner}</p>
+                    <p className="mt-0.5 text-[9px] text-red-600">
+                      {formatPercent(learner.attendance)} attendance
+                      {learner.consecutiveMissed ? ` · ${learner.consecutiveMissed} consecutive absence${learner.consecutiveMissed === 1 ? '' : 's'}` : ''}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-red-200 bg-white px-2 py-1 text-[8px] font-semibold text-red-600">At Risk</span>
+                </div>
+              )) : (
+                <div className="flex min-h-[150px] items-center justify-center rounded-xl border border-dashed border-foreground-200 text-[11px] text-foreground-400">
+                  No at-risk learners match the current filters.
+                </div>
+              )}
+            </div>
+          </section>
         </div>
 
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-foreground-100 px-3 py-2">
+            <div className="flex rounded-xl bg-background-100 p-1">
+              <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[10px] font-semibold text-primary-700 shadow-sm">
+                <i className="ri-table-line"></i> Table View
+              </span>
+            </div>
+            <label className="flex items-center gap-2 text-[10px] text-foreground-500">
+              Rows:
+              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="rounded-lg border border-foreground-200 bg-white px-2 py-1.5 text-[10px] text-foreground-700 focus:outline-none">
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </label>
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
+            <table className="min-w-[1180px] w-full text-left">
               <thead>
                 <tr className="border-b border-foreground-200/60">
-                  <th className="pl-4 pr-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Learner</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Attendance</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Present/Absent</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Catch-up</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Risk</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Last Session</th>
-                  <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Consecutive Absences</th>
+                  <th className="w-12 px-4 py-3"><input type="checkbox" aria-label="Select all learners" className="h-3.5 w-3.5 accent-primary-600" /></th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Learner</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Attendance</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Present / Absent</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Authorised / Unauthorised</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Catch-up</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Consecutive Absences</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Last Session</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
                 {loading && (
                   <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
+                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
                   </tr>
                 )}
                 {!loading && error && (
                   <tr>
-                    <td colSpan={7} className="py-16 text-center">
+                    <td colSpan={8} className="py-16 text-center">
                       <div className="inline-flex flex-col items-center gap-2 text-red-600">
                         <i className="ri-error-warning-line text-2xl"></i>
                         <span className="text-sm font-semibold">Unable to load live attendance data.</span>
@@ -613,82 +747,74 @@ export default function CoachAttendance() {
                 )}
                 {!loading && !error && paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
+                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
                   </tr>
                 )}
                 {!loading && !error && paginatedData.map(row => {
+                  const rowPadding = 'py-3.5';
                   return (
                     <tr key={row.id} className="transition-smooth hover:bg-background-100/50">
-                      <td className="pl-4 pr-3 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ring-1.5 ${getAvatarClasses(row.risk)}`}>
-                            <span className="text-[11px] font-bold">{row.initials}</span>
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <p className="text-[12px] font-semibold text-foreground-900 truncate">{row.learner}</p>
-                              {row.isOnBreak && <span className="shrink-0 text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/70">On Break</span>}
+                      <td className={`px-4 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-3.5 w-3.5 accent-primary-600" /></td>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="flex min-w-[270px] items-center gap-3">
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
+                            <span className="text-[10px] font-bold">{row.initials}</span>
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[11px] font-bold text-foreground-900 hover:text-primary-700">{row.learner}</button>
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
                             </div>
-                            <p className="text-[10px] text-foreground-400 truncate">{displayText(row.employer)}</p>
-                            <p className="text-[10px] text-foreground-300 truncate">{displayText(row.cohort)}</p>
+                            <p className="truncate text-[9px] text-foreground-400">{displayText(row.email)}</p>
+                            <p className="mt-1 truncate text-[8px] text-foreground-400">{displayText(row.cohort)} <span className="mx-1.5">·</span> {displayText(row.programme)}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 text-center">
+                      <td className={`px-3 ${rowPadding}`}>
                         {row.attendance === null ? (
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <div className="flex items-center justify-center gap-1.5">
-                            <div className="w-12 h-1.5 rounded-full bg-background-200">
+                          <div className="min-w-[105px]">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[13px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
+                            </div>
+                            <div className="mt-1.5 h-1.5 w-full rounded-full bg-background-200">
                               <div className={`h-full rounded-full ${getAttendanceBar(row.attendance)}`} style={{ width: `${row.attendance}%` }}></div>
                             </div>
-                            <span className={`text-[11px] font-semibold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-center">
+                      <td className={`px-3 ${rowPadding}`}>
                         {row.present === null || row.absent === null ? (
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <span className="inline-flex items-center justify-center gap-0.5 text-[11px]">
-                            <button
-                              type="button"
-                              onClick={() => openAttendanceDetails(row, 'present')}
-                              className="rounded-md px-1.5 py-0.5 font-semibold text-emerald-600 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-200 cursor-pointer"
-                              title="View present sessions"
-                            >
-                              {row.present}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openAttendanceDetails(row, 'all')}
-                              className="rounded-md px-0.5 py-0.5 text-foreground-300 hover:bg-background-100 hover:text-foreground-500 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer"
-                              title="View all attendance sessions"
-                            >
-                              /
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openAttendanceDetails(row, 'absent')}
-                              className="rounded-md px-1.5 py-0.5 font-semibold text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 cursor-pointer"
-                              title="View absent sessions"
-                            >
-                              {row.absent}
-                            </button>
-                          </span>
+                          <div className="space-y-0.5 text-[9px]">
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="block text-foreground-600 hover:text-emerald-600">Present: <strong>{row.present}</strong></button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="block text-foreground-600 hover:text-red-600">Absent: <strong>{row.absent}</strong></button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="block text-foreground-400 hover:text-primary-600">Total: {row.sessions ?? (row.present + row.absent)}</button>
+                          </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-center"><span className="text-[11px] text-foreground-300">{formatCount(row.catchup)}</span></td>
-                      <td className="px-3 py-2.5 text-center">
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="space-y-0.5 text-[9px] text-foreground-600">
+                          <p>Authorised: <strong>{formatCount(row.authorisedAbsent)}</strong></p>
+                          <p>Unauthorised: <strong className={(row.unauthorisedAbsent || 0) > 0 ? 'text-red-600' : ''}>{formatCount(row.unauthorisedAbsent)}</strong></p>
+                        </div>
                       </td>
-                      <td className="px-3 py-2.5 text-center"><span className="text-[11px] text-foreground-500">{displayText(row.lastSession)}</span></td>
-                      <td className="px-3 py-2.5 text-center">
-                        {row.consecutiveMissed ? (
-                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${row.consecutiveMissed >= 3 ? 'bg-red-100 text-red-700' : row.consecutiveMissed >= 2 ? 'bg-amber-100 text-amber-700' : 'bg-foreground-100 text-foreground-600'}`}>{row.consecutiveMissed}</span>
-                        ) : (
-                          <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
-                        )}
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="space-y-0.5 text-[9px] text-foreground-600">
+                          <p>Recorded: <strong>{formatCount(row.catchup)}</strong></p>
+                          <p className="text-foreground-400">Next: {displayText(row.nextSession)}</p>
+                        </div>
+                      </td>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <p className={`text-[10px] font-semibold ${(row.consecutiveMissed || 0) >= 2 ? 'text-red-600' : 'text-foreground-700'}`}>Current: {formatCount(row.consecutiveMissed)}</p>
+                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1 text-[8px] text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
+                      </td>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <p className="text-[10px] font-semibold text-foreground-700">{displayText(row.lastSession)}</p>
+                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-1 text-[8px] font-semibold text-primary-600 hover:text-primary-700">View attendance profile</button>
                       </td>
                     </tr>
                   );
@@ -704,13 +830,6 @@ export default function CoachAttendance() {
               <span>Page {currentPage} of {totalPages}</span>
             </div>
             <div className="flex items-center gap-2">
-              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="px-2 py-1 bg-background-100 border border-foreground-200 rounded-lg text-[11px] text-foreground-700 cursor-pointer focus:outline-none">
-                <option value={5}>5</option>
-                <option value={8}>8</option>
-                <option value={10}>10</option>
-                <option value={15}>15</option>
-                <option value={20}>20</option>
-              </select>
               <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-skip-back-line"></i></button>
               <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-arrow-left-s-line"></i></button>
               <div className="flex items-center gap-1">

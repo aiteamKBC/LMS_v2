@@ -3,11 +3,6 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import OverviewTab from './components/OverviewTab';
-import AttendanceTab from './components/AttendanceTab';
-import OTJHTab from './components/OTJHTab';
-import KSBsTab from './components/KSBsTab';
-import EvidenceTab from './components/EvidenceTab';
 import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
@@ -24,16 +19,15 @@ const coachNav = roleNavMap.coach;
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
+  { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
+  { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
-  { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
-  { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
-  { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
-  { id: 'activity', label: 'Activity', icon: 'ri-history-line' },
-  { id: 'network', label: 'Network', icon: 'ri-user-heart-line' },
-  { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
+  { id: 'reviews', label: 'Reviews & Meetings', icon: 'ri-calendar-todo-line' },
+  { id: 'support', label: 'Support Plans', icon: 'ri-shield-heart-line' },
+  { id: 'timeline', label: 'Timeline & Audit', icon: 'ri-history-line' },
 ] as const;
 
-type TabId = typeof TABS[number]['id'];
+type TabId = typeof TABS[number]['id'] | 'coach-notes';
 type LocationState = {
   learnerId?: string;
   learnerName?: string;
@@ -103,25 +97,124 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
-        return <OverviewTab data={data} />;
+        return <ReferenceOverviewContent data={data} />;
+      case 'programme':
+        return <ReferenceProgrammeContent data={data} />;
+      case 'progress':
+        return <ReferenceProgressContent data={data} />;
       case 'attendance':
-        return <AttendanceTab data={data} />;
-      case 'otjh':
-        return <OTJHTab data={data} />;
-      case 'ksbs':
-        return <KSBsTab data={data} />;
-      case 'evidence':
-        return <EvidenceTab data={data} />;
-      case 'activity':
-        return <ActivityTab data={data} />;
-      case 'network':
-        return <NetworkTab data={data} />;
-      case 'documents':
+        return <ReferenceAttendanceContent data={data} />;
+      case 'reviews':
+        return <ReferenceReviewsContent data={data} />;
+      case 'coach-notes':
         return <DocumentsTab data={data} />;
+      case 'support':
+        return <NetworkTab data={data} />;
+      case 'timeline':
+        return <ActivityTab data={data} />;
       default:
-        return <OverviewTab data={data} />;
+        return <ReferenceOverviewContent data={data} />;
     }
   };
+
+  const expectedProgress = data?.overallProgress !== null && data?.overallProgress !== undefined
+    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot.progressVariance)))
+    : null;
+  return (
+    <WorkspaceShell
+      role="coach"
+      roleLabel={coachNav.label}
+      navItems={coachNav.items}
+      workspaceLabel={coachNav.workspaceLabel}
+      pageTitle={pageTitle}
+      pageSubtitle={pageSubtitle}
+      userName={data?.coachName || '--'}
+      userRole="Progress Coach"
+    >
+      <main className="min-h-screen bg-[#f7f6fb] p-4 md:p-6">
+        <div className="w-full space-y-4">
+          <button
+            type="button"
+            onClick={() => navigate('/coach/caseload')}
+            className="inline-flex items-center gap-2 text-[11px] font-semibold text-foreground-400 transition hover:text-primary-700"
+          >
+            <i className="ri-arrow-left-line"></i>
+            My Learners
+            <span className="text-foreground-300">/</span>
+            <span className="text-foreground-700">{pageTitle}</span>
+          </button>
+
+          {error && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-800">{error}</div>
+          )}
+
+          <section className="overflow-hidden rounded-2xl border border-primary-800/15 bg-white shadow-[0_12px_34px_rgba(48,24,90,0.1)]">
+            <div
+              className="px-5 py-6 text-white md:px-7"
+              style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
+            >
+              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-center gap-4">
+                  <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 border-white/30 bg-white/15 text-lg font-bold shadow-lg">
+                    {data?.initials || '--'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h1 className="text-2xl font-heading font-bold text-white">{pageTitle}</h1>
+                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-white/75">
+                      {data?.email && <span className="inline-flex items-center gap-1.5"><i className="ri-mail-line"></i>{data.email}</span>}
+                      {data?.detail?.phone && <span className="inline-flex items-center gap-1.5"><i className="ri-phone-line"></i>{data.detail.phone}</span>}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
+                    <i className="ri-calendar-line"></i> Schedule
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 divide-x divide-y divide-foreground-100 sm:grid-cols-4 xl:grid-cols-7 xl:divide-y-0">
+              <ProfileTopStat label="Overall" value={formatPercent(data?.overallProgress ?? null)} tone="primary" />
+              <ProfileTopStat label="Expected" value={formatPercent(expectedProgress)} tone="muted" />
+              <ProfileTopStat label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} tone="primary" />
+              <ProfileTopStat label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
+              <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone="emerald" dot />
+              <ProfileTopStat label="Gateway" value={data?.gatewayReviewDate || '--'} tone="primary" />
+              <ProfileTopStat label="Next Session" value={data?.snapshot?.nextCoaching || '--'} tone="muted" />
+            </div>
+          </section>
+
+          <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-sm">
+            <div className="overflow-x-auto border-b border-foreground-100 scrollbar-hide">
+              <div className="flex min-w-max px-2">
+                {TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`relative flex items-center gap-1.5 px-4 py-3.5 text-[10px] font-semibold transition ${
+                      activeTab === tab.id ? 'text-primary-700' : 'text-foreground-400 hover:text-foreground-700'
+                    }`}
+                  >
+                    <i className={tab.icon}></i>
+                    {tab.label}
+                    {activeTab === tab.id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary-600"></span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="bg-background-100/30 p-4 md:p-5">
+              {renderTab()}
+            </div>
+          </section>
+        </div>
+      </main>
+    </WorkspaceShell>
+  );
 
   return (
     <WorkspaceShell
@@ -388,6 +481,265 @@ export default function LearnerCaseFile() {
         .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
     </WorkspaceShell>
+  );
+}
+
+function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
+  const activities = data.activityItems.slice(0, 6);
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ReferencePanel title="Programme" icon="ri-graduation-cap-line" tone="primary">
+          <ProfileInfo label="Qualification" value={data.programme} />
+          <ProfileInfo label="Cohort" value={data.cohort} />
+          <ProfileInfo label="Group" value={data.group} />
+          <ProfileInfo label="Start Date" value={data.startDate} />
+          <ProfileInfo label="Gateway Date" value={data.gatewayReviewDate} />
+        </ReferencePanel>
+        <ReferencePanel title="Progress Summary" icon="ri-line-chart-line" tone="emerald">
+          <ProfileProgress label="Overall Progress" value={data.overallProgress} color="bg-primary-600" />
+          <ProfileProgress label="KSB Progress" value={data.ksbProgress} color="bg-emerald-500" />
+          <ProfileProgress label="Attendance" value={data.attendanceRate} color="bg-amber-500" />
+          <div className="mt-3 flex items-center justify-between border-t border-foreground-100 pt-3 text-[10px]">
+            <span className="text-foreground-400">Evidence records</span>
+            <strong className="text-foreground-800">{data.evidenceCount ?? '--'}</strong>
+          </div>
+        </ReferencePanel>
+        <ReferencePanel title="Alerts & Actions" icon="ri-alarm-warning-line" tone="red">
+          {risks.length === 0 ? (
+            <p className="flex items-center gap-2 text-[11px] font-medium text-emerald-600"><i className="ri-checkbox-circle-line"></i>No risk factors identified</p>
+          ) : risks.map((risk) => (
+            <div key={risk.label} className="mb-2 rounded-xl border border-amber-100 bg-amber-50/60 p-3">
+              <p className="text-[11px] font-bold text-amber-800">{risk.label}</p>
+              <p className="mt-0.5 text-[10px] text-amber-700">{risk.detail}</p>
+            </div>
+          ))}
+        </ReferencePanel>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
+          {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
+            <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-primary-600"><i className="ri-history-line text-xs"></i></span>
+              <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail}</p></div>
+              <span className="text-[9px] text-foreground-300">{item.date}</span>
+            </div>
+          ))}
+        </ReferencePanel>
+        <ReferencePanel title="Outstanding Tasks" icon="ri-checkbox-line" tone="muted">
+          <ProfileEmpty text="No outstanding task data is available for this learner." />
+        </ReferencePanel>
+      </div>
+      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
+        {data.snapshot?.nextCoaching && data.snapshot.nextCoaching !== '--' ? (
+          <div className="max-w-lg rounded-xl border border-primary-100 bg-primary-50/40 p-3">
+            <p className="text-[11px] font-bold text-foreground-800">Next coaching session</p>
+            <p className="mt-1 text-[10px] text-primary-700">{data.snapshot.nextCoaching}</p>
+          </div>
+        ) : <ProfileEmpty text="No upcoming coaching session is recorded." />}
+      </ReferencePanel>
+    </div>
+  );
+}
+
+function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const contacts = buildContacts(data);
+  return (
+    <div className="space-y-5">
+      <ReferencePanel title="Programme Details" icon="ri-graduation-cap-line" tone="primary">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <ProfileInfo label="Programme" value={data.programme} />
+          <ProfileInfo label="Cohort" value={data.cohort} />
+          <ProfileInfo label="Group" value={data.group} />
+          <ProfileInfo label="Employer" value={data.employer} />
+          <ProfileInfo label="Start Date" value={data.startDate} />
+          <ProfileInfo label="Planned Gateway" value={data.gatewayReviewDate} />
+          <ProfileInfo label="Planned End" value={data.plannedEndDate} />
+          <ProfileInfo label="Status" value={data.programStatus} />
+        </div>
+      </ReferencePanel>
+      <ReferencePanel title="Employer Information" icon="ri-building-line" tone="primary">
+        <div className="grid gap-5 lg:grid-cols-2">
+          <div className="rounded-xl bg-background-100/70 p-4">
+            <ProfileInfo label="Organisation" value={data.employer} />
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <ProfileInfo label="Employer Email" value={data.employerEmail} />
+              <ProfileInfo label="Employer Phone" value={data.employerPhone} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            {contacts.length === 0 ? <ProfileEmpty text="No employer contacts are available." /> : contacts.map((contact) => (
+              <div key={`${contact.role}-${contact.name}`} className="rounded-xl bg-background-100/70 p-4">
+                <p className="text-[11px] font-bold text-foreground-800">{contact.name}</p>
+                <p className="text-[10px] text-foreground-400">{contact.role}</p>
+                {contact.meta && <p className="mt-1 text-[10px] text-primary-600">{contact.meta}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      </ReferencePanel>
+    </div>
+  );
+}
+
+function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const completed = data.otjhCompleted ?? 0;
+  const target = data.otjhTarget ?? 0;
+  const remaining = Math.max(0, target - completed);
+  const otjhPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : null;
+  const ksbs = data.detail?.ksbs || [];
+  const touched = new Set(data.touchedKsbCodes);
+  const groups = ['K', 'S', 'B'].map((prefix) => ({ prefix, items: ksbs.filter((item) => item.code.toUpperCase().startsWith(prefix)) }));
+  return (
+    <div className="space-y-5">
+      <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <BigMetric value={formatFraction(data.otjhCompleted, null).replace('/--', '')} label="Hours Logged" tone="primary" />
+          <BigMetric value={formatFraction(data.otjhTarget, null).replace('/--', '')} label="Target Hours" tone="muted" />
+          <BigMetric value={String(remaining)} label="Hours Remaining" tone="red" />
+        </div>
+        <ProfileProgress label="OTJH Progress" value={otjhPercent} color="bg-primary-600" />
+      </ReferencePanel>
+      <ReferencePanel title="Components Progress" icon="ri-pie-chart-line" tone="primary">
+        <div className="grid gap-6 sm:grid-cols-3">
+          <ProfileRing label="Overall" value={data.overallProgress} color="#5b35d5" />
+          <ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" />
+          <ProfileRing label="Attendance" value={data.attendanceRate} color="#f59e0b" />
+        </div>
+      </ReferencePanel>
+      <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
+        {ksbs.length === 0 ? <ProfileEmpty text="No KSB framework data is available." /> : (
+          <div className="grid gap-4 lg:grid-cols-3">
+            {groups.map((group) => (
+              <div key={group.prefix} className="rounded-xl bg-background-100/65 p-3">
+                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary-700">{group.prefix === 'K' ? 'Knowledge' : group.prefix === 'S' ? 'Skills' : 'Behaviours'}</h4>
+                {group.items.length === 0 ? <ProfileEmpty text="No items." /> : group.items.map((item) => (
+                  <div key={item.code} className="border-b border-foreground-100 py-2 last:border-0">
+                    <div className="flex items-start gap-2"><span className="text-[9px] font-bold text-foreground-400">{item.code}</span><p className="flex-1 text-[10px] text-foreground-700">{item.description}</p></div>
+                    <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[8px] font-semibold ${touched.has(item.code) ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>{touched.has(item.code) ? 'Evidence linked' : 'Not evidenced'}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </ReferencePanel>
+    </div>
+  );
+}
+
+function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const attendance = data.attendance;
+  if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
+  const sessions = attendance.sessions || 0;
+  const percentage = (value: number | null) => sessions > 0 && value !== null ? Math.round((value / sessions) * 100) : 0;
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <BigMetric value={formatPercent(attendance.attendance)} label="Attendance Rate" tone="primary" />
+        <BigMetric value={String(attendance.sessions ?? '--')} label="Total Sessions" tone="muted" />
+        <BigMetric value={String(attendance.present ?? '--')} label="Attended" tone="emerald" />
+        <BigMetric value={String(attendance.absent ?? '--')} label="Absent" tone="red" />
+        <BigMetric value={String(attendance.late ?? '--')} label="Late" tone="amber" />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ReferencePanel title="Attendance Breakdown" icon="ri-bar-chart-line" tone="primary">
+          <ProfileProgress label={`Attended (${attendance.present ?? 0})`} value={percentage(attendance.present)} color="bg-emerald-500" />
+          <ProfileProgress label={`Late (${attendance.late ?? 0})`} value={percentage(attendance.late)} color="bg-amber-500" />
+          <ProfileProgress label={`Absent (${attendance.absent ?? 0})`} value={percentage(attendance.absent)} color="bg-red-500" />
+          <ProfileProgress label={`Catch-up (${attendance.catchup ?? 0})`} value={percentage(attendance.catchup)} color="bg-slate-400" />
+        </ReferencePanel>
+        <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
+          {(attendance.absent || 0) > 0 ? <div className="rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-[12px] font-bold text-red-700">{attendance.absent} session(s) missed</p><p className="mt-1 text-[10px] text-red-500">Monitoring may be required.</p></div> : <p className="text-[11px] text-emerald-600">No missed sessions recorded.</p>}
+        </ReferencePanel>
+      </div>
+      <ReferencePanel title="Session History" icon="ri-table-line" tone="primary"><ProfileEmpty text="Session-by-session history is not exposed by the current attendance endpoint." /></ReferencePanel>
+    </div>
+  );
+}
+
+function ReferenceReviewsContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const reviews = data.activityItems.filter((item) => /review|coaching|session|meeting/i.test(`${item.event} ${item.detail}`));
+  return (
+    <div className="space-y-5">
+      <ReferencePanel title="Progress Reviews" icon="ri-file-chart-line" tone="primary">
+        {reviews.length === 0 ? <ProfileEmpty text="No review records are available." /> : reviews.map((review, index) => (
+          <div key={review.id} className="border-b border-foreground-100 py-3 last:border-0">
+            <div className="flex items-center gap-2"><p className="text-[11px] font-bold text-foreground-800">{review.event}</p>{index === 0 && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[8px] font-semibold text-primary-700">Latest</span>}<span className="ml-auto text-[9px] text-foreground-300">{review.date}</span></div>
+            <p className="mt-1 text-[10px] text-foreground-500">{review.detail}</p>
+          </div>
+        ))}
+      </ReferencePanel>
+      <ReferencePanel title="Monthly Coach Meetings" icon="ri-calendar-todo-line" tone="primary">
+        {reviews.length === 0 ? <ProfileEmpty text="No coaching meeting data is available." /> : reviews.map((meeting) => (
+          <div key={`meeting-${meeting.id}`} className="flex gap-3 border-b border-foreground-100 py-4 last:border-0">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><i className="ri-checkbox-circle-line"></i></span>
+            <div><p className="text-[11px] font-bold text-foreground-800">{meeting.event} <span className="ml-2 text-[9px] font-normal text-foreground-300">{meeting.date}</span></p><p className="mt-1 text-[10px] text-foreground-500">{meeting.detail}</p></div>
+          </div>
+        ))}
+      </ReferencePanel>
+    </div>
+  );
+}
+
+function ReferencePanel({ title, icon, tone, children }: { title: string; icon: string; tone: 'primary' | 'emerald' | 'red' | 'muted'; children: React.ReactNode }) {
+  const toneClass = { primary: 'bg-primary-50 text-primary-600', emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', muted: 'bg-background-100 text-foreground-500' }[tone];
+  return <section className="rounded-2xl border border-foreground-200/60 bg-white p-5"><h3 className="mb-4 flex items-center gap-2 text-[12px] font-bold text-foreground-900"><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneClass}`}><i className={icon}></i></span>{title}</h3>{children}</section>;
+}
+
+function ProfileInfo({ label, value }: { label: string; value?: string | null }) {
+  return <div><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-[11px] font-bold text-foreground-800">{value && value !== '--' ? value : '--'}</p></div>;
+}
+
+function ProfileProgress({ label, value, color }: { label: string; value: number | null; color: string }) {
+  return <div className="mb-3 last:mb-0"><div className="mb-1 flex justify-between text-[10px]"><span className="text-foreground-400">{label}</span><strong>{value === null ? '--' : `${Math.round(value)}%`}</strong></div><div className="h-2 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${color}`} style={{ width: `${value || 0}%` }}></div></div></div>;
+}
+
+function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
+  const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
+  return <div className="rounded-2xl border border-foreground-100 bg-background-100/55 p-4 text-center"><p className={`text-2xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p></div>;
+}
+
+function ProfileRing({ label, value, color }: { label: string; value: number | null; color: string }) {
+  const percent = Math.max(0, Math.min(100, value || 0));
+  return <div className="text-center"><div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full" style={{ background: `conic-gradient(${color} ${percent * 3.6}deg, #eceaf2 0deg)` }}><div className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-[16px] font-bold" style={{ color }}>{value === null ? '--' : `${Math.round(value)}%`}</div></div><p className="mt-2 text-[10px] font-semibold text-foreground-700">{label}</p></div>;
+}
+
+function ProfileEmpty({ text }: { text: string }) {
+  return <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100/45 px-4 py-6 text-center text-[10px] text-foreground-400">{text}</div>;
+}
+
+function parseProfileVariance(value?: string | null) {
+  const match = String(value || '').match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
+function ProfileTopStat({
+  label,
+  value,
+  tone,
+  dot = false,
+}: {
+  label: string;
+  value: string;
+  tone: 'primary' | 'emerald' | 'red' | 'muted';
+  dot?: boolean;
+}) {
+  const toneClass = {
+    primary: 'text-primary-700',
+    emerald: 'text-emerald-600',
+    red: 'text-red-600',
+    muted: 'text-foreground-500',
+  }[tone];
+  return (
+    <div className="min-w-0 px-3 py-4 text-center">
+      <p className={`truncate text-[14px] font-bold ${toneClass}`}>
+        {dot && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500"></span>}
+        {value}
+      </p>
+      <p className="mt-1 text-[8px] font-semibold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
+    </div>
   );
 }
 
