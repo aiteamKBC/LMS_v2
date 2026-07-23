@@ -94,9 +94,9 @@ export interface CurriculumComponent {
   weekTitle?: string;
   duration: number;
   expectedOtjh?: number;
-  reflectionRequired: boolean;
-  workplaceEvidenceRequired: boolean;
-  tutorValidationRequired: boolean;
+  reflectionRequired?: boolean;
+  workplaceEvidenceRequired?: boolean;
+  tutorValidationRequired?: boolean;
   ksbRefs: string[];
   ksbMappings?: Array<{
     id: string;
@@ -115,19 +115,7 @@ export interface CurriculumComponent {
   quizQuestions?: number | null;
   hasResources: boolean;
   description?: string;
-  expectedOtjh?: number;
   points?: number;
-  reflectionRequired?: boolean;
-  workplaceEvidenceRequired?: boolean;
-  tutorValidationRequired?: boolean;
-  ksbMappings?: Array<{
-    id: string;
-    ksbId: string;
-    code: string;
-    description: string;
-    type: 'main' | 'secondary' | 'practice' | string;
-  }>;
-  settings?: Record<string, string | number | boolean | string[]>;
   settings?: Record<string, unknown>;
 }
 
@@ -478,18 +466,11 @@ export interface CurriculumSession {
   moduleId?: string;
   moduleCatalogueId?: string;
   weekId?: string;
-  trainingPlanId: number;
   deliveryRowId?: number | string;
-  programmeId?: string;
-  cohortId?: string;
-  groupId?: string;
   // Temporary compatibility: prefer moduleCatalogueId when present.
-  moduleId?: string;
-  moduleCatalogueId?: string;
   deliveryModuleId?: string;
   legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
-  weekId?: string;
   componentId?: string;
   title: string;
   type: string;

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from django.db import DatabaseError, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -30,6 +30,7 @@ EVIDENCE_STORAGE = FileSystemStorage(
     location=Path(settings.BASE_DIR) / "media" / "absence-evidence",
     base_url="/media/absence-evidence/",
 )
+ATTENDANCE_TABLE = '"Coach"."learner_attendance_details"'
 
 
 def _error(message, status=400):
@@ -39,6 +40,53 @@ def _error(message, status=400):
 def _source_learner(kind, learner_id):
     model = CommercialUser if kind == "commercial" else EnrolmentUser if kind == "apprenticeship" else None
     return model.objects.filter(pk=learner_id).first() if model else None
+
+
+def _fetch_missed_sessions(learner, learner_id):
+    """Return this learner's sessions that are marked absent in attendance."""
+    learner_email = str(getattr(learner, "email", "") or "").strip()
+    select_sql = f"""
+        SELECT session_id, session_title, session_type, session_date,
+               session_start_time, session_end_time, coach_name, module_title
+        FROM {ATTENDANCE_TABLE}
+        WHERE {{learner_filter}}
+          AND lower(trim(attendance_status::text)) IN
+              ('0', 'false', 'no', 'n', 'absent', 'missed',
+               'did not attend', 'non-attendance')
+        ORDER BY session_date DESC, session_start_time DESC, id DESC
+    """
+
+    with connection.cursor() as cursor:
+        rows = []
+        if learner_email:
+            cursor.execute(
+                select_sql.format(
+                    learner_filter="lower(trim(learner_email)) = lower(trim(%s))"
+                ),
+                [learner_email],
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            cursor.execute(
+                select_sql.format(learner_filter="learner_id = %s"),
+                [learner_id],
+            )
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "id": f"{row[0]}-{row[3].isoformat()}",
+            "sessionId": row[0],
+            "title": row[1],
+            "sessionType": row[2] or "",
+            "dateIso": row[3].isoformat(),
+            "startTime": row[4].strftime("%H:%M") if row[4] else "",
+            "endTime": row[5].strftime("%H:%M") if row[5] else "",
+            "coach": row[6] or "",
+            "module": row[7] or "",
+        }
+        for row in rows
+    ]
 
 
 def _serialize(report):
@@ -79,9 +127,14 @@ def learner_absence_reports(request, kind, learner_id):
         try:
             reports = CoachAbsenceReport.objects.filter(learner_id=learner_id).order_by("-created_at")
             results = [_serialize(report) for report in reports]
+            missed_sessions = _fetch_missed_sessions(learner, learner_id)
         except DatabaseError as exc:
             return _error(f"Could not load absence reports: {exc}", 502)
-        return JsonResponse({"count": len(results), "results": results})
+        return JsonResponse({
+            "count": len(results),
+            "results": results,
+            "missedSessions": missed_sessions,
+        })
 
     if request.method != "POST":
         return _error("Method not allowed.", 405)

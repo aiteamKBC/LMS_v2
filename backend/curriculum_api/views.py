@@ -2038,6 +2038,46 @@ def detail_is_archived(detail):
     return clean_str((detail or {}).get('status')).lower() == 'archived'
 
 
+def active_learner_delivery_counts():
+    """Count live learners by their programme/cohort/group delivery labels.
+
+    ``Learner.Active_users`` is the canonical live-learner mirror. Curriculum
+    relationships currently carry the same labels rather than learner foreign
+    keys, so comparison is deliberately case/whitespace insensitive. Missing
+    learner infrastructure is treated as an empty data source (for example in
+    local SQLite tests or a curriculum-only deployment).
+    """
+    if connection.vendor != 'postgresql':
+        return {}, {}
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("select to_regclass(%s)", ['\"Learner\".\"Active_users\"'])
+            if not cursor.fetchone()[0]:
+                return {}, {}
+            cursor.execute(
+                'select "Programme", "Cohort", "Group", count(*) '
+                'from "Learner"."Active_users" '
+                'group by "Programme", "Cohort", "Group"'
+            )
+            rows = cursor.fetchall()
+    except Exception as exc:
+        logger.warning('Could not count active learners for curriculum delivery: %s', exc)
+        return {}, {}
+
+    cohort_counts = Counter()
+    group_counts = Counter()
+    for programme_name, cohort_name, group_name, learner_count in rows:
+        programme_key = normalise(programme_name)
+        cohort_key = normalise(cohort_name)
+        group_key = normalise(group_name)
+        count = parse_int(learner_count, 0)
+        if programme_key and cohort_key:
+            cohort_counts[(programme_key, cohort_key)] += count
+        if programme_key and cohort_key and group_key:
+            group_counts[(programme_key, cohort_key, group_key)] += count
+    return dict(cohort_counts), dict(group_counts)
+
+
 def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False):
     """Build the cohort/group overview directly from the normalized tables.
 
@@ -2048,6 +2088,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
     the normalized tables are the only source of truth.
     """
     module_rows = safe_authoring_module_rows()
+    cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()
     modules_by_group = defaultdict(list)
     modules_by_cohort = defaultdict(list)
     for module in module_rows:
@@ -2084,7 +2125,10 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
                 infer_duration_months(detail.get('startDate'), detail.get('endDate'), 0),
             ),
             'status': detail.get('status') or 'planned',
-            'learners': 0,
+            'learners': cohort_learner_counts.get((
+                normalise(detail.get('programmeName')),
+                normalise(detail.get('cohortName')),
+            ), 0),
             'groups': [clean_str(value) for value in (detail.get('groupIds') or []) if clean_str(value)],
             'modules': module_names(cohort_modules),
             'sessions': session_total(cohort_modules),
@@ -2112,7 +2156,11 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'cohort': clean_str(detail.get('cohort')),
             'programmeId': clean_str(detail.get('programmeId')),
             'programme': clean_str(detail.get('programme')),
-            'learners': 0,
+            'learners': group_learner_counts.get((
+                normalise(detail.get('programme')),
+                normalise(detail.get('cohort')),
+                normalise(detail.get('name')),
+            ), 0),
             'coach': detail.get('coach') or 'Unassigned',
             'tutor': detail.get('tutor') or 'Unassigned',
             'startDate': format_date(detail.get('startDate')),
@@ -2136,7 +2184,11 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'cohort': clean_str(first_module.get('cohort_name')),
             'programmeId': clean_str(first_module.get('programme_id')),
             'programme': clean_str(first_module.get('programme_name')),
-            'learners': 0,
+            'learners': group_learner_counts.get((
+                normalise(first_module.get('programme_name')),
+                normalise(first_module.get('cohort_name')),
+                normalise(first_module.get('group_name')),
+            ), 0),
             'coach': clean_str(first_module.get('coach_name')) or 'Unassigned',
             'tutor': clean_str(first_module.get('tutor_name')) or 'Unassigned',
             'startDate': format_date(first_module.get('start_date')),
@@ -7408,8 +7460,34 @@ def curriculum_programme_tree_detail(request, identifier):
             or clean_str(programme_identity(row, configs_by_id)['name']) == clean_str(programme.get('name'))
         )
     ]
-    cohorts, groups = build_cohorts_and_groups(programme_training_rows, curriculum_rows['program_configs'])
+    # ``build_cohorts_and_groups`` intentionally reads the normalized tables as
+    # its source of truth and therefore returns rows for every programme.  A
+    # detail response must scope those rows again; otherwise opening one
+    # programme can expose unrelated cohorts/groups and inflate every UI count.
+    all_cohorts, all_groups = build_cohorts_and_groups(
+        programme_training_rows,
+        curriculum_rows['program_configs'],
+        include_archived=visibility == 'all',
+    )
+    programme_ids = [value for value in unique([
+        programme.get('id'),
+        programme.get('sourceId'),
+        f'program-{slugify(programme.get("sourceId"))}',
+    ]) if clean_str(value)]
+    programme_names = [value for value in unique([programme.get('name')]) if clean_str(value)]
+
+    def belongs_to_selected_programme(item):
+        return (
+            any(matches_curriculum_identifier(item.get('programmeId'), candidate) for candidate in programme_ids)
+            or any(matches_curriculum_identifier(item.get('programme'), candidate) for candidate in programme_names)
+        )
+
+    cohorts = [cohort for cohort in all_cohorts if belongs_to_selected_programme(cohort)]
     cohort_ids = {cohort['id'] for cohort in cohorts}
+    groups = [
+        group for group in all_groups
+        if group.get('cohortId') in cohort_ids and belongs_to_selected_programme(group)
+    ]
     group_ids = {group['id'] for group in groups}
 
     modules = build_modules(

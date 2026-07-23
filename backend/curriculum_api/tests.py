@@ -211,6 +211,27 @@ class CurriculumPersistenceTests(TestCase):
         self.assertNotEqual(self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')['status'], 'archived')
         self.assertNotEqual(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')['status'], 'archived')
 
+    def test_programme_detail_only_returns_the_selected_programme_tree(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        other = self.tree_payload(
+            programme_id='PROG-OTHER',
+            cohort_id='COHORT-OTHER-1',
+            group_id='GROUP-OTHER-1',
+            module_id='MOD-OTHER-1',
+        )
+        other['programme']['name'] = 'Other Programme'
+        other['programme']['standard'] = 'Other Standard'
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', other)
+
+        response = self.client.get('/curriculum_api/curriculum/programmes/PROG-DATA/detail/?include_archived=true')
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = response.json()
+
+        self.assertEqual([item['id'] for item in payload['flat']['cohorts']], ['COHORT-DATA-1'])
+        self.assertEqual([item['id'] for item in payload['flat']['groups']], ['GROUP-DATA-1'])
+        self.assertEqual([item['id'] for item in payload['cohorts']], ['COHORT-DATA-1'])
+        self.assertEqual([item['id'] for item in payload['cohorts'][0]['groups']], ['GROUP-DATA-1'])
+
     def test_post_add_module_does_not_detach_existing_modules(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
         response = self.post_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/modules/', {
