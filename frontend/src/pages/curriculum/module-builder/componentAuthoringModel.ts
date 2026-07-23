@@ -341,10 +341,37 @@ export function getDefaultComponentSettings(type: ModuleComponentType): Componen
   return { ...getComponentDefinition(type).defaultSettings };
 }
 
+// Keys the Week Builder's component editor writes that the Module Builder's own
+// (now largely superseded) editor never had. Since the Module Builder now
+// renders imported weeks with the Week Builder's editor, these must survive
+// normalisation on every update — otherwise the editor reads its own keys back
+// as empty (missing embed code, uploaded files, assigned groups, checkpoint
+// flag, etc.). They're allowed on every type: the group selector and quiz
+// checkpoint controls apply broadly, and carrying an unused key costs nothing.
+const WEEK_BUILDER_SHARED_KEYS = [
+  'selectedGroupKeys',        // assigned-groups multi-select (all component types)
+  'selectedGroupNames',
+  'podcastEmbedCode',         // podcast "Embed" source snippet
+  'powerpointSource',         // PowerPoint source toggle (External Link vs Uploaded file)
+  'quizAssessmentType',       // quiz/checkpoint flag stored on the component
+  'quizProgramme',
+  'quizModule',
+  'quizWeekId',
+  'quizDuration',
+  'quizStatus',
+  'assignmentContent',        // assignment written brief (Week Builder key)
+  'uploadedFileName',         // reading/assignment uploaded-file metadata
+  'uploadedFileUrl',
+  'uploadedFileSize',
+  'uploadedFileContentType',
+  'uploadSource',
+] as const;
+
 export function allowedSettingKeysForType(type: ModuleComponentType) {
   const definition = getComponentDefinition(type);
   return new Set([
     ...Object.keys(definition.defaultSettings),
+    ...WEEK_BUILDER_SHARED_KEYS,
     'legacySettings',
     'legacySourceType',
     'legacyUnsupportedSource',
@@ -363,22 +390,34 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
     }
   }
   const source: ComponentSettings = { ...storedLegacy, ...settings };
+  // The Week Builder editor (now the live editor in the Module Builder too) and
+  // the older Module Builder vocabulary use different keys for the same data. We
+  // keep BOTH populated and never drop the Week Builder key, so the editor reads
+  // its keys back intact while learner-facing/backend consumers still find the
+  // Module Builder key. For the two keys that clash on VALUE (readingSource,
+  // podcastSource) the Week Builder value is canonical, since it's the only
+  // editor rendering these now — we translate the old Module values forward.
   if (type === 'podcast') {
     if (!source.embedCode && source.podcastEmbedCode) source.embedCode = source.podcastEmbedCode;
+    if (!source.podcastEmbedCode && source.embedCode) source.podcastEmbedCode = source.embedCode;
     if (!source.shortcode && source.podcastShortcode) source.shortcode = source.podcastShortcode;
-    if (source.podcastSource === 'Audio File') source.podcastSource = 'Device upload';
-    if (source.podcastSource === 'External Link') source.podcastSource = 'External URL';
-    if (source.podcastSource === 'Device upload' && !source.podcastUrl && source.uploadedFileUrl) source.podcastUrl = source.uploadedFileUrl;
+    if (source.podcastSource === 'Device upload') source.podcastSource = 'Audio File';
+    if (source.podcastSource === 'External URL') source.podcastSource = 'External Link';
+    if (source.podcastSource === 'Audio File' && !source.podcastUrl && source.uploadedFileUrl) source.podcastUrl = source.uploadedFileUrl;
   }
   if (type === 'reading') {
-    if (source.readingSource === 'Text') source.readingSource = 'Written in LMS';
-    if (source.readingSource === 'File') source.readingSource = 'LMS resource';
-    if (source.readingSource === 'LMS resource' && !source.resourceUrl && source.uploadedFileUrl) source.resourceUrl = source.uploadedFileUrl;
+    if (source.readingSource === 'Written in LMS') source.readingSource = 'Text';
+    if (source.readingSource === 'LMS resource') source.readingSource = 'File';
+    if (!source.resourceUrl && source.uploadedFileUrl) source.resourceUrl = source.uploadedFileUrl;
+    if (!source.uploadedFileUrl && source.resourceUrl) source.uploadedFileUrl = source.resourceUrl;
   }
   if (type === 'assignment') {
     if (!source.assignmentBrief && source.assignmentContent) source.assignmentBrief = source.assignmentContent;
+    if (!source.assignmentContent && source.assignmentBrief) source.assignmentContent = source.assignmentBrief;
     if (!source.assignmentFileName && source.uploadedFileName) source.assignmentFileName = source.uploadedFileName;
+    if (!source.uploadedFileName && source.assignmentFileName) source.uploadedFileName = source.assignmentFileName;
     if (!source.assignmentFileUrl && source.uploadedFileUrl) source.assignmentFileUrl = source.uploadedFileUrl;
+    if (!source.uploadedFileUrl && source.assignmentFileUrl) source.uploadedFileUrl = source.assignmentFileUrl;
   }
   const defaults = getDefaultComponentSettings(type);
   const allowed = allowedSettingKeysForType(type);
