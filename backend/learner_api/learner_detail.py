@@ -9,6 +9,7 @@ mirror (present only while the learner is Active) into one response shaped by
 mappers.to_learner_detail, then annotates each saved component with its
 authored expected_otjh (curriculum.components) and a
 programme-wide total.
+authored expected_otjh (curriculum.components) and a programme-wide total.
 """
 import json
 import logging
@@ -133,6 +134,8 @@ def _otjh_by_legacy_title(components):
                 "SELECT id, module_catalogue_id, title, week_number FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY module_catalogue_id, week_number, display_order",
+                "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
+                "WHERE module_catalogue_id = ANY(%s)",
                 [list(module_ids.values())],
             )
             weeks_by_title = {}   # (cat_id, title)       -> week_id
@@ -149,6 +152,9 @@ def _otjh_by_legacy_title(components):
                 "WHERE week_id = ANY(%s) "
                 "ORDER BY week_id, display_order",
                 [list(set(weeks_by_title.values()))],
+                "SELECT week_id, type, title, expected_otjh FROM curriculum.components "
+                "WHERE week_id = ANY(%s)",
+                [list(set(week_ids.values()))],
             )
             # Per week: exact display-title -> otjh, and ordered otjh-lists per humanised type.
             otjh_by_exact = {}                 # (week_id, display_title) -> otjh
@@ -599,16 +605,23 @@ def learner_detail(request, kind, pk):
     detail["otjhStatus"] = otjh_status
     if active is not None:
         try:
-            active.planned_hours = planned
-            active.completed_hours = completed
-            active.target_hours = target_str
-            active.progress_hours = progress_hours_str
-            active.progress_variance = variance_str
-            active.otjh_status = otjh_status
-            active.save(update_fields=[
-                "planned_hours", "completed_hours",
-                "target_hours", "progress_hours", "progress_variance", "otjh_status",
-            ])
+            calculated = {
+                "planned_hours": planned,
+                "completed_hours": completed,
+                "target_hours": target_str,
+                "progress_hours": progress_hours_str,
+                "progress_variance": variance_str,
+                "otjh_status": otjh_status,
+            }
+            changed_fields = []
+            for field, value in calculated.items():
+                if getattr(active, field) != value:
+                    setattr(active, field, value)
+                    changed_fields.append(field)
+            # This endpoint is read on almost every learner page. Avoid a
+            # remote database UPDATE when all calculated values are unchanged.
+            if changed_fields:
+                active.save(update_fields=changed_fields)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 

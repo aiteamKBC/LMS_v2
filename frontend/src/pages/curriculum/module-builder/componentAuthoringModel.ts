@@ -2,7 +2,6 @@ export type ModuleStatus = 'draft' | 'review' | 'published' | string;
 export type KsbMappingType = 'main' | 'secondary' | 'possible';
 export type ModuleComponentType =
   | 'live-session'
-  | 'recording-placeholder'
   | 'video'
   | 'podcast'
   | 'reading'
@@ -44,14 +43,13 @@ export interface ComponentAuthoringDefinition {
 }
 
 export const MEDIA_SOURCE_TYPES = ['HTML (MP4)', 'YouTube', 'Vimeo', 'External Link', 'Embed'] as const;
-export const PODCAST_SOURCE_TYPES = ['External URL', 'LMS resource', 'Device upload'] as const;
+export const PODCAST_SOURCE_TYPES = ['External URL', 'LMS resource', 'Device upload', 'Embed', 'Shortcode'] as const;
 export const READING_SOURCE_TYPES = ['Written in LMS', 'URL', 'LMS resource'] as const;
 export const CONTENT_STATUSES = ['Draft', 'Ready for QA', 'Needs changes', 'Approved'] as const;
 
 function advancedDefaults(type: ModuleComponentType): ComponentSettings {
   const completionRules: Partial<Record<ModuleComponentType, string>> = {
     'live-session': 'Attend or watch recording',
-    'recording-placeholder': 'Mark complete after watching',
     video: 'Watch video and mark complete',
     podcast: 'Listen and mark complete',
     reading: 'Read the material and confirm completion',
@@ -96,23 +94,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: [],
     requiredSettings: [],
     capabilities: ['ksb-mapping', 'reflection', 'evidence', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('live-session'), sessionPurpose: '', selectedGroupKeys: [], selectedGroupNames: [], liveSessionUrl: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true },
-  },
-  {
-    type: 'recording-placeholder',
-    label: 'Recording Placeholder',
-    icon: 'ri-play-circle-line',
-    group: 'Live & recorded',
-    tone: 'slate',
-    defaultOtjh: 2,
-    defaultPoints: 10,
-    reflectionDefault: false,
-    workplaceEvidenceDefault: false,
-    tutorValidationDefault: false,
-    supportedSources: ['MIS allocation', 'External link'],
-    requiredSettings: [],
-    capabilities: ['media', 'preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('recording-placeholder'), source: 'MIS allocation', selectedGroupKeys: [], selectedGroupNames: [], recordingPurpose: '', recordingUrl: '', expectedAvailability: 'After live session', captionsExpected: false },
+    defaultSettings: { ...advancedDefaults('live-session'), sessionPurpose: '', sessionDate: '', sessionTime: '', selectedGroupKeys: [], selectedGroupNames: [], liveSessionUrl: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true },
   },
   {
     type: 'video',
@@ -162,7 +144,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: PODCAST_SOURCE_TYPES,
     requiredSettings: [],
     capabilities: ['media', 'preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
+    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', embedCode: '', shortcode: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
   },
   {
     type: 'reading',
@@ -335,6 +317,11 @@ const definitions: ComponentAuthoringDefinition[] = [
 ];
 
 export const componentAuthoringDefinitions = Object.freeze(definitions);
+// Only the component types the week builder itself offers are addable here —
+// keeps the module builder's "Add component" picker in lockstep with the
+// week builder's palette. The others (reflection/checkpoint/monthly-ksb-quiz/
+// coaching-preparation) stay defined (existing data may still use them) but
+// hidden from the picker.
 const hiddenComponentTypes = new Set<ModuleComponentType>([
   'reflection',
   'checkpoint',
@@ -366,12 +353,40 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
 }
 
 export function normaliseComponentSettings(type: ModuleComponentType, settings: ComponentSettings = {}): ComponentSettings {
+  let storedLegacy: ComponentSettings = {};
+  if (typeof settings.legacySettings === 'string') {
+    try {
+      const parsed = JSON.parse(settings.legacySettings);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) storedLegacy = parsed as ComponentSettings;
+    } catch {
+      storedLegacy = {};
+    }
+  }
+  const source: ComponentSettings = { ...storedLegacy, ...settings };
+  if (type === 'podcast') {
+    if (!source.embedCode && source.podcastEmbedCode) source.embedCode = source.podcastEmbedCode;
+    if (!source.shortcode && source.podcastShortcode) source.shortcode = source.podcastShortcode;
+    if (source.podcastSource === 'Audio File') source.podcastSource = 'Device upload';
+    if (source.podcastSource === 'External Link') source.podcastSource = 'External URL';
+    if (source.podcastSource === 'Device upload' && !source.podcastUrl && source.uploadedFileUrl) source.podcastUrl = source.uploadedFileUrl;
+  }
+  if (type === 'reading') {
+    if (source.readingSource === 'Text') source.readingSource = 'Written in LMS';
+    if (source.readingSource === 'File') source.readingSource = 'LMS resource';
+    if (source.readingSource === 'LMS resource' && !source.resourceUrl && source.uploadedFileUrl) source.resourceUrl = source.uploadedFileUrl;
+  }
+  if (type === 'assignment') {
+    if (!source.assignmentBrief && source.assignmentContent) source.assignmentBrief = source.assignmentContent;
+    if (!source.assignmentFileName && source.uploadedFileName) source.assignmentFileName = source.uploadedFileName;
+    if (!source.assignmentFileUrl && source.uploadedFileUrl) source.assignmentFileUrl = source.uploadedFileUrl;
+  }
   const defaults = getDefaultComponentSettings(type);
   const allowed = allowedSettingKeysForType(type);
   const next: ComponentSettings = { ...defaults };
   const legacySettings: Record<string, ComponentSettingValue> = {};
-  Object.entries(settings).forEach(([key, value]) => {
+  Object.entries(source).forEach(([key, value]) => {
     if (value === null || value === undefined) return;
+    if (key === 'legacySettings') return;
     if (allowed.has(key)) {
       next[key] = value;
     } else if (['string', 'number', 'boolean'].includes(typeof value) || Array.isArray(value)) {
@@ -379,7 +394,7 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
     }
   });
   if (Object.keys(legacySettings).length) next.legacySettings = JSON.stringify(legacySettings);
-  if (type === 'video' && (settings.sourceType === 'Shortcode' || settings.provider === 'Shortcode')) {
+  if (type === 'video' && (source.sourceType === 'Shortcode' || source.provider === 'Shortcode')) {
     next.legacySourceType = 'Shortcode';
     next.legacyUnsupportedSource = true;
   }
@@ -471,17 +486,14 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
     if (sourceType !== 'Embed' && status !== 'Draft' && !url) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Video URL is required before QA or approval.' });
   }
 
-  if (component.type === 'recording-placeholder') {
-    const url = String(settings.recordingUrl || '').trim();
-    if (url && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.recordingUrl`, message: 'Enter a valid recording URL.' });
-    if (status !== 'Draft' && !url) issues.push({ path: `${pathPrefix}.settings.recordingUrl`, message: 'Recording URL is required before QA or approval.' });
-  }
-
   if (component.type === 'podcast') {
+    const sourceType = String(settings.podcastSource || 'External URL');
     const url = String(settings.podcastUrl || '').trim();
+    const embedCode = String(settings.embedCode || '').trim();
     const progress = Number(settings.requiredProgressPercentage || 0);
     if (!Number.isFinite(progress) || progress < 0 || progress > 100) issues.push({ path: `${pathPrefix}.settings.requiredProgressPercentage`, message: 'Required progress must be between 0 and 100.' });
-    if (url && !isResourceUrl(url)) issues.push({ path: `${pathPrefix}.settings.podcastUrl`, message: 'Enter a valid podcast URL.' });
+    if (!['Embed', 'Shortcode'].includes(sourceType) && url && !isResourceUrl(url)) issues.push({ path: `${pathPrefix}.settings.podcastUrl`, message: 'Enter a valid podcast URL.' });
+    if (status !== 'Draft' && sourceType === 'Embed' && !embedCode) issues.push({ path: `${pathPrefix}.settings.embedCode`, message: 'Embed content is required before QA or approval.' });
   }
 
   if (component.type === 'reading') {

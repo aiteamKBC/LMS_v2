@@ -306,7 +306,7 @@ export default function CoachKsbImpact() {
         </div>
 
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
+          <div className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_minmax(90px,0.65fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
             <span>Learner</span>
             <span className="text-center">Knowledge</span>
             <span className="text-center">Skills</span>
@@ -314,8 +314,6 @@ export default function CoachKsbImpact() {
             <span className="text-center">Validated</span>
             <span className="text-center">Overall</span>
             <span className="text-center">Evidenced</span>
-            <span className="text-center">Applied</span>
-            <span className="text-center">Trend</span>
             <span className="text-center">Action</span>
           </div>
 
@@ -341,7 +339,7 @@ export default function CoachKsbImpact() {
           {!loading && !error && filteredRows.length > 0 && (
             <div className="divide-y divide-background-200/30">
               {filteredRows.map(row => (
-                <div key={row.id} className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_repeat(2,minmax(90px,0.65fr))_minmax(80px,0.5fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
+                <div key={row.id} className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(90px,0.75fr)_minmax(90px,0.65fr)_minmax(80px,0.5fr)] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
                     <div className="min-w-0">
@@ -355,10 +353,6 @@ export default function CoachKsbImpact() {
                   <span className="text-[11px] text-foreground-500 text-center">{formatKsbRatio(row.completed, row.target)}</span>
                   <span className={`text-[13px] font-bold text-center ${getMetricTone(row.overall)}`}>{row.overall}%</span>
                   <span className="text-[11px] font-semibold text-center text-foreground-400">{row.evidenceCountAvailable ? row.evidenceCount : MISSING_VALUE}</span>
-                  <span className="text-[11px] font-semibold text-center text-foreground-400">{MISSING_VALUE}</span>
-                  <div className="flex justify-center">
-                    <span className="text-[11px] font-semibold text-foreground-400">{MISSING_VALUE}</span>
-                  </div>
                   <div className="text-center">
                     <button onClick={() => setSelectedRowId(row.id)} className="px-2 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">View</button>
                   </div>

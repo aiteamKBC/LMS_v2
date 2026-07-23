@@ -29,4 +29,5 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:
-    urlpatterns += static('/media/', document_root=settings.BASE_DIR / 'media')
+    urlpatterns += static('/media/absence-evidence/', document_root=settings.BASE_DIR / 'media' / 'absence-evidence')
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

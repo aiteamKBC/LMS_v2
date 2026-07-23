@@ -17,6 +17,7 @@ import type {
   CurriculumStaffProfile,
   CurriculumKsbCoverageResponse,
   CurriculumKsbCoverageStatus,
+  CurriculumKsbSet,
   CurriculumStandard,
 } from '@/lib/curriculumApi';
 import {
@@ -87,7 +88,7 @@ type KsbEvidenceItem = {
   groups?: string[];
   weight: number;
 };
-type ModuleKsbMappingSummary = { ksb: string; weight: number; count?: number; evidence?: KsbEvidenceItem[]; source?: 'authoring' | 'fallback' };
+type ModuleKsbMappingSummary = { ksb: string; weight: number; count?: number; evidence?: KsbEvidenceItem[]; source?: 'authoring' | 'fallback'; sourceType?: string; sourceId?: string };
 type KsbHeatmapRow = {
   id?: string;
   ksb: string;
@@ -801,6 +802,8 @@ type KsbRollupItem = {
   count: number;
   evidence: KsbEvidenceItem[];
   source: 'authoring' | 'fallback';
+  sourceType?: string;
+  sourceId?: string;
 };
 
 function uniqueCleanValues(values: unknown[]) {
@@ -825,19 +828,54 @@ function ksbKey(code: string) {
   return formatKsbCode(code);
 }
 
+function normaliseKsbSourceType(sourceType?: string, sourceId?: string) {
+  const explicit = normalise(sourceType);
+  if (explicit) return explicit;
+  const id = clean(sourceId).toLowerCase();
+  if (id.startsWith('standard:')) return 'standard';
+  if (id) return 'framework';
+  return '';
+}
+
+function normaliseKsbSourceId(sourceId?: string) {
+  return normalise(clean(sourceId).replace(/^(profile|framework|standard):/i, ''));
+}
+
+function ksbRollupIdentity(value: { code?: string; ksb?: string; sourceType?: string; sourceId?: string }) {
+  const code = ksbKey(value.code || value.ksb || '');
+  if (!code) return '';
+  return [normaliseKsbSourceType(value.sourceType, value.sourceId), normaliseKsbSourceId(value.sourceId), code].join('|');
+}
+
+function ksbSetSourceIdForProgrammeDetail(set?: CurriculumKsbSet) {
+  if (!set) return '';
+  const key = set.frameworkId || (set.profileId ? `ksb-${set.profileId}` : '') || set.programmeId || set.programmeName || set.standard;
+  return clean(key);
+}
+
 function clampCoverageWeight(value: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
   return Math.max(0, Math.min(100, Math.round(parsed * 100) / 100));
 }
 
-function addKsbRollupMapping(rollup: Map<string, KsbRollupItem>, mapping: Pick<KsbMapping, 'code' | 'description' | 'weight'>, evidence: KsbEvidenceItem) {
-  const key = ksbKey(mapping.code);
+function addKsbRollupMapping(rollup: Map<string, KsbRollupItem>, mapping: Pick<KsbMapping, 'code' | 'description' | 'weight' | 'sourceType' | 'sourceId'>, evidence: KsbEvidenceItem) {
+  const code = ksbKey(mapping.code);
+  const key = ksbRollupIdentity(mapping);
   if (!key) return;
-  const current = rollup.get(key) || { ksb: key, title: clean(mapping.description, key), weight: 0, count: 0, evidence: [], source: 'authoring' as const };
+  const current = rollup.get(key) || {
+    ksb: code,
+    title: clean(mapping.description, code),
+    weight: 0,
+    count: 0,
+    evidence: [],
+    source: 'authoring' as const,
+    sourceType: mapping.sourceType,
+    sourceId: mapping.sourceId,
+  };
   rollup.set(key, {
     ...current,
-    title: current.title === key ? clean(mapping.description, key) : current.title,
+    title: current.title === code ? clean(mapping.description, code) : current.title,
     weight: current.weight + Number(mapping.weight || 0),
     count: current.count + 1,
     evidence: [...current.evidence, evidence],
@@ -1347,7 +1385,15 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       version: '1.0',
       status: moduleStatus(liveModule.status),
       ksbTags,
-      ksbMapping: ksbRollup.map(item => ({ ksb: item.ksb, weight: item.weight, count: item.count, evidence: item.evidence, source: item.source })),
+      ksbMapping: ksbRollup.map(item => ({
+        ksb: item.ksb,
+        weight: item.weight,
+        count: item.count,
+        evidence: item.evidence,
+        source: item.source,
+        sourceType: item.sourceType,
+        sourceId: item.sourceId,
+      })),
       weeksData,
     };
   });
@@ -1445,24 +1491,32 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   const emptyCoverage = moduleNames.reduce<Record<string, number | null>>((coverage, label) => ({ ...coverage, [label]: null }), {});
   const emptyCounts = moduleNames.reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: 0 }), {});
   const emptyEvidence = moduleNames.reduce<Record<string, KsbEvidenceItem[]>>((evidence, label) => ({ ...evidence, [label]: [] }), {});
-  const ksbDefinitions = new Map<string, { code: string; title: string; modules: string[] }>();
+  const ksbSetSourceId = ksbSetSourceIdForProgrammeDetail(ksbSet);
+  const ksbDefinitions = new Map<string, { code: string; title: string; modules: string[]; sourceType?: string; sourceId?: string }>();
   ksbEntries.forEach(entry => {
     const code = ksbKey(entry.code);
     if (!code) return;
-    ksbDefinitions.set(code, {
+    const sourceType = ksbSetSourceId ? 'framework' : '';
+    const sourceId = ksbSetSourceId;
+    const key = ksbRollupIdentity({ code, sourceType, sourceId });
+    ksbDefinitions.set(key, {
       code,
       title: entry.title || entry.description || code,
       modules: entry.modules || [],
+      sourceType,
+      sourceId,
     });
   });
   modules.forEach(module => {
     module.ksbMapping.forEach(mapping => {
       const code = ksbKey(mapping.ksb);
-      if (!code || ksbDefinitions.has(code)) return;
-      ksbDefinitions.set(code, { code, title: code, modules: [] });
+      const key = ksbRollupIdentity(mapping);
+      if (!code || ksbDefinitions.has(key)) return;
+      ksbDefinitions.set(key, { code, title: code, modules: [], sourceType: mapping.sourceType, sourceId: mapping.sourceId });
     });
   });
   const ksbHeatmap = [...ksbDefinitions.values()].sort((left, right) => sortKsbCodes(left.code, right.code)).map(definition => {
+    const definitionKey = ksbRollupIdentity({ ksb: definition.code, sourceType: definition.sourceType, sourceId: definition.sourceId });
     const coverage = definition.modules.reduce<Record<string, number | null>>((currentCoverage, moduleName) => {
       const label = moduleLabelByName.get(normalise(moduleName));
       return label ? { ...currentCoverage, [label]: 100 } : currentCoverage;
@@ -1471,7 +1525,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const evidence = { ...emptyEvidence };
     modules.forEach((module, index) => {
       const label = moduleNames[index];
-      const mapped = module.ksbMapping.find(item => ksbKey(item.ksb) === definition.code);
+      const mapped = module.ksbMapping.find(item => ksbRollupIdentity(item) === definitionKey);
       if (!mapped) return;
       if (mapped.source !== 'fallback') {
         coverage[label] = Math.max(Number(coverage[label] || 0), clampCoverageWeight(mapped.weight));
@@ -1490,6 +1544,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       evidence,
       totalOccurrences,
       totalWeight,
+      sourceType: definition.sourceType,
+      sourceId: definition.sourceId,
       missing: totalOccurrences === 0,
     };
   });
@@ -2138,15 +2194,15 @@ export default function ProgrammeDetailPage() {
             {/* KSB Groups */}
             <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">KSB Groups</h3>
-              <p className="text-[12px] text-foreground-400 mb-3">Main and secondary KSBs covered at programme level.</p>
+              <p className="text-[12px] text-foreground-400 mb-3">Hard and soft KSBs covered at programme level.</p>
               <div className="mb-4">
-                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Main ({PROGRAMME.mainKsbs.length})</h4>
+                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Hard ({PROGRAMME.mainKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
                   <KsbGroupedTags codes={PROGRAMME.mainKsbs} />
                 </div>
               </div>
               <div>
-                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Secondary ({PROGRAMME.secondaryKsbs.length})</h4>
+                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Soft ({PROGRAMME.secondaryKsbs.length})</h4>
                 <div className="flex items-center gap-2 flex-wrap">
                   <KsbGroupedTags codes={PROGRAMME.secondaryKsbs} />
                 </div>
@@ -3205,6 +3261,14 @@ function componentTypeLabel(type: string) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function ksbClassificationLabel(value?: string) {
+  const classification = clean(value).toLowerCase();
+  if (classification === 'main') return 'Hard';
+  if (classification === 'secondary') return 'Soft';
+  if (classification === 'possible') return 'Possible';
+  return clean(value, 'Soft');
+}
+
 function componentTypeTone(type: string) {
   const key = normalise(type);
   if (key.includes('live')) return 'bg-primary-100 text-primary-700';
@@ -3867,7 +3931,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
                           <div key={`${item.module}-${item.week}-${item.component}-${index}`} className="rounded-lg border border-background-200 bg-background-100 px-3 py-2">
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase text-primary-700">{item.scope}</span>
-                              {item.classification && <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold capitalize text-foreground-600">{item.classification}</span>}
+                              {item.classification && <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(item.classification)}</span>}
                               <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{item.weight > 0 ? `${item.weight}%` : 'No weight'}</span>
                             </div>
                             <p className="mt-2 text-[11px] font-semibold text-foreground-900">→ {item.component || item.componentType || 'Component not set'}</p>

@@ -112,7 +112,7 @@ const KSBMapping = lazy(() => import("../pages/curriculum/ksb-mapping/page"));
 const CurriculumStandards = lazy(() => import("../pages/curriculum/standards/page"));
 const CurriculumWeekBuilder = lazy(() => import("../pages/curriculum/week-builder/page"));
 const QuizXmlWorkspace = lazy(() => import("../pages/curriculum/quiz-xml/page"));
-const TestBanksPage = lazy(() => import("../pages/curriculum/test-banks/page"));
+const ManualQuizPage = lazy(() => import("../pages/curriculum/quiz-xml/manual/page"));
 const CheckpointsPage = lazy(() => import("../pages/curriculum/checkpoints/page"));
 const TutorSessionsPage = lazy(() => import("../pages/tutor/sessions/page"));
 const TutorEvidenceReview = lazy(() => import("../pages/tutor/evidence-review/page"));
@@ -290,7 +290,7 @@ import KSBsPage from "../pages/learner/ksbs/page";
 import EvidencePage from "../pages/learner/evidence/page";
 import QuizzesPage from "../pages/learner/quizzes/page";
 import MonthlyCyclePage from "../pages/learner/monthly-cycle/page";
-import MonthlyCoachingPage from "../pages/learner/monthly-coaching/page";
+import MonthlyCoachingPage, { MonthlyCoachingListPage } from "../pages/learner/monthly-coaching/page";
 import ProgressReviewsPage, { ProgressReviewsListPage } from "../pages/learner/progress-reviews/page";
 import RewardsPage from "../pages/learner/rewards/page";
 import BadgeDetailPage from "../pages/learner/rewards/badge-detail/page";
@@ -348,6 +348,7 @@ import KSBMapping from "../pages/curriculum/ksb-mapping/page";
 import CurriculumStandards from "../pages/curriculum/standards/page";
 import CurriculumWeekBuilder from "../pages/curriculum/week-builder/page";
 import QuizXmlWorkspace from "../pages/curriculum/quiz-xml/page";
+import ManualQuizPage from "../pages/curriculum/quiz-xml/manual/page";
 import QuizEditPage from "../pages/curriculum/quiz-xml/edit/page";
 import QuestionBankPage from "../pages/curriculum/question-bank/page";
 import CheckpointsPage from "../pages/curriculum/checkpoints/page";
@@ -701,6 +702,10 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/monthly-coaching",
+    element: <MonthlyCoachingListPage />,
+  },
+  {
+    path: "/learner/monthly-coaching/:sessionId",
     element: <MonthlyCoachingPage />,
   },
   {
@@ -947,6 +952,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quiz-xml",
     element: <QuizXmlWorkspace />,
+  },
+  {
+    path: "/curriculum/quiz-xml/manual",
+    element: <ManualQuizPage />,
   },
   {
     path: "/curriculum/question-bank",

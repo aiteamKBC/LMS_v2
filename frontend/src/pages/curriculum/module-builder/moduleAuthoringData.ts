@@ -82,6 +82,7 @@ export interface ModuleCatalogueItem {
   group?: string;
   title: string;
   description: string;
+  color?: string;
   status: ModuleStatus;
   authoringStatus?: ModuleStatus;
   sourceType?: string;
@@ -89,6 +90,9 @@ export interface ModuleCatalogueItem {
   importedFromTrainingPlanId?: string;
   deliveryStatus?: string;
   deliveryMetadata?: Record<string, string>;
+  ksbProfileSourceId?: string;
+  tutor?: string;
+  coach?: string;
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
@@ -272,6 +276,7 @@ export async function createNewModule(input: { programme: string; title: string;
         completionCriteria: draft.completionCriteria,
         advancedDetails: draft.advancedDetails,
         moduleKsbMappings: draft.moduleKsbMappings,
+        ksbProfileSourceId: draft.ksbProfileSourceId || '',
         background: draft.background,
         epaRequirements: draft.epaRequirements,
         qualificationOutcomes: draft.qualificationOutcomes,
@@ -344,9 +349,7 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
 
 export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
   try {
-    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`, {
-      timeoutMs: 8000,
-    }));
+    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`));
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404) return null;
@@ -404,6 +407,36 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
   const id = `module-${catalogueId}`;
   const title = cleanUserFacingText(module.name) || `Module ${catalogueId}`;
   const description = cleanUserFacingText(module.notes || '');
+  const tutor = String(module.tutor || '').trim();
+  const coach = String(module.coach || '').trim();
+  const weekStructure = (module.weekStructure || []).map((week, index): ModuleWeek => {
+    const weekId = String(week.id || makeAuthoringId('WEEK'));
+    return {
+      id: weekId,
+      moduleId: catalogueId,
+      weekNumber: week.weekNumber || index + 1,
+      title: week.title || `Week ${index + 1}`,
+      summary: '',
+      learningOutcomes: [],
+      components: (week.components || []).map((component, componentIndex): ModuleComponent => ({
+        id: String(component.id || makeAuthoringId('COMP')),
+        sourceId: component.id,
+        moduleId: catalogueId,
+        weekId,
+        type: component.type as ModuleComponentType,
+        title: component.title || `Component ${componentIndex + 1}`,
+        description: '',
+        expectedOtjh: Number(component.expectedOtjh ?? component.duration ?? 0) || 0,
+        points: 0,
+        reflectionRequired: Boolean(component.reflectionRequired),
+        workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
+        tutorValidationRequired: Boolean(component.tutorValidationRequired),
+        ksbMappings: (component.ksbMappings || []) as KsbMapping[],
+        settings: normaliseComponentSettings(component.type as ModuleComponentType, (component.settings || {}) as ComponentSettings),
+      })),
+      ksbMappings: [],
+    };
+  });
   return recalculateModule({
     id,
     catalogueId,
@@ -413,10 +446,21 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     description,
     status: module.status || 'draft',
     authoringStatus: module.authoringStatus || module.status || 'draft',
-    sourceType: module.sourceType,
-    sourceId: module.sourceId ? String(module.sourceId) : undefined,
-    importedFromTrainingPlanId: module.importedFromTrainingPlanId,
+    sourceType: undefined,
+    sourceId: undefined,
+    importedFromTrainingPlanId: undefined,
     deliveryStatus: module.deliveryStatus,
+    ksbProfileSourceId: '',
+    tutor,
+    coach,
+    deliveryMetadata: {
+      tutor,
+      coach,
+      cohortId: module.cohortId || '',
+      cohort: module.cohort || '',
+      groupId: module.groupId || '',
+      group: module.group || '',
+    },
     sessionsNumber: module.sessionsNumber || module.weeks || module.sessionNames?.length || 0,
     startDate: module.startDate || '',
     endDate: module.endDate || '',
@@ -439,7 +483,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     background: '',
     epaRequirements: [],
     qualificationOutcomes: [],
-    weekStructure: [],
+    weekStructure,
     sourceModule: module,
   });
 }
@@ -471,21 +515,26 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
 
 export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueItem {
   const moduleId = String(module.catalogueId || module.id);
-  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || []);
+  const fallbackKsbSource = moduleKsbSourceMetadata(module.ksbProfileSourceId);
+  const moduleKsbMappings = normaliseKsbMappings(module.moduleKsbMappings || [], fallbackKsbSource);
+  const completionCriteria = {
+    ...emptyCompletionCriteria(),
+    ...(module.completionCriteria || {}),
+  };
   const normalisedWeeks = module.weekStructure.map((week, index) => {
     const weekId = String(week.id || makeAuthoringId('WEEK'));
     return {
       ...week,
       id: weekId,
       moduleId,
-      ksbMappings: normaliseKsbMappings(week.ksbMappings || []),
+      ksbMappings: normaliseKsbMappings(week.ksbMappings || [], fallbackKsbSource),
       weekNumber: index + 1,
       components: (week.components || []).map(component => ({
         ...component,
         moduleId,
         weekId,
         workplaceEvidenceRequired: false,
-        ksbMappings: normaliseKsbMappings(component.ksbMappings || []),
+        ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
         settings: normaliseComponentSettings(component.type, component.settings || {}),
       })),
     };
@@ -497,10 +546,11 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   normalisedWeeks.forEach(week => week.ksbMappings.forEach(mapping => componentKsbCodes.add(mapping.code)));
   const totalOtjh = allComponents.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
   const totalPoints = allComponents.reduce((total, component) => total + Number(component.points || 0), 0);
-  const quality = calculateQualityScore({ ...module, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
+  const quality = calculateQualityScore({ ...module, completionCriteria, totalOtjh, ksbCount: componentKsbCodes.size, moduleKsbMappings, weekStructure: normalisedWeeks });
 
   return {
     ...module,
+    completionCriteria,
     weeks: module.weekStructure.length,
     totalOtjh,
     declaredTotalOtjh: module.declaredTotalOtjh,
@@ -517,13 +567,29 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   };
 }
 
-function normaliseKsbMappings(mappings: KsbMapping[]) {
-  return mappings.map(mapping => ({
-    ...mapping,
-    type: normaliseKsbMappingType(mapping.type || mapping.classification),
-    classification: normaliseKsbMappingType(mapping.classification || mapping.type),
-    weight: clampKsbWeight(mapping.weight ?? defaultKsbWeight(mapping.type)),
-  }));
+function normaliseKsbMappings(mappings: KsbMapping[], fallbackSource?: Pick<KsbMapping, 'sourceType' | 'sourceId'>) {
+  return mappings.map(mapping => {
+    const type = normaliseKsbMappingType(mapping.type || mapping.classification);
+    const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+    const weight = clampKsbWeight(mapping.weight);
+    return {
+      ...mapping,
+      sourceType: mapping.sourceType || fallbackSource?.sourceType,
+      sourceId: mapping.sourceId || fallbackSource?.sourceId,
+      type,
+      classification,
+      weight: weight > 0 ? weight : defaultKsbWeight(classification),
+    };
+  });
+}
+
+function moduleKsbSourceMetadata(sourceId?: string) {
+  const id = String(sourceId || '').trim();
+  if (!id) return undefined;
+  return {
+    sourceType: id.startsWith('standard:') ? 'standard' : 'framework',
+    sourceId: id,
+  };
 }
 
 function defaultKsbWeight(type: KsbMappingType) {
@@ -604,7 +670,7 @@ export async function saveModuleStructure(moduleCatalogueId: string, payload: Mo
   return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
-    timeoutMs: 45000,
+    timeoutMs: 90000,
   }));
 }
 
@@ -623,7 +689,7 @@ export interface ComponentUploadResult {
   };
 }
 
-export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'assignment'; file: File }) {
+export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment'; file: File }) {
   const form = new FormData();
   form.set('file', input.file);
   form.set('moduleCatalogueId', input.moduleCatalogueId);
@@ -690,7 +756,11 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
       let message = `Curriculum API returned ${response.status} for ${path}`;
       try {
         const payload = await response.json();
-        if (payload?.error) message = payload.error;
+        const validation = Array.isArray(payload?.validationErrors)
+          ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
+          : '';
+        if (validation) message = validation;
+        else if (payload?.error) message = payload.error;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
@@ -704,6 +774,119 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
     throw err;
   } finally {
     if (timeout) window.clearTimeout(timeout);
+  }
+}
+
+function componentAdvancedDefaults(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
+  const completionRules: Partial<Record<ModuleComponentType, string>> = {
+    'live-session': 'Attend or watch recording',
+    'recording-placeholder': 'Mark complete after watching',
+    video: 'Watch video and mark complete',
+    podcast: 'Listen and mark complete',
+    reading: 'Read the material and confirm completion',
+    powerpoint: 'Review slide deck',
+    quiz: 'Submit',
+    'monthly-ksb-quiz': 'Submit monthly KSB quiz',
+    reflection: 'Submit reflection',
+    'workplace-evidence': 'Upload + describe',
+    assignment: 'Submit assignment',
+    checkpoint: 'Complete checkpoint',
+    'coaching-preparation': 'Complete coaching preparation',
+  };
+  const evidenceRequired: Partial<Record<ModuleComponentType, string>> = {
+    'live-session': 'Attendance or recording completion',
+    quiz: 'Quiz result',
+    'monthly-ksb-quiz': 'Quiz result',
+    checkpoint: 'Quiz result',
+    reflection: 'Reflection + signature',
+    'workplace-evidence': 'File + 100-word description',
+    assignment: 'Submission file',
+    'coaching-preparation': 'Preparation notes',
+  };
+  const reflectionPrompt =
+    type === 'workplace-evidence'
+      ? 'What workplace evidence have you uploaded, and which KSBs does it demonstrate?'
+      : ['quiz', 'monthly-ksb-quiz', 'checkpoint'].includes(type)
+        ? 'Which questions or topics do you need to revisit after this activity?'
+        : 'What did you learn? How will you apply this at work? Which KSBs did this develop?';
+
+  return {
+    completionRule: completionRules[type] || 'Mark complete',
+    evidenceRequired: evidenceRequired[type] || '-',
+    reflectionPrompt,
+    contentStatus: 'Draft',
+    version: '0.1',
+  };
+}
+
+// Retained from the pre-registry authoring implementation for reference and
+// backwards-compatible migration work. Runtime defaults come from
+// componentAuthoringModel.getDefaultComponentSettings above.
+export function getLegacyDefaultComponentSettings(type: ModuleComponentType): Record<string, string | number | boolean | string[]> {
+  switch (type) {
+    case 'live-session':
+      return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };
+    case 'recording-placeholder':
+      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session', captionsExpected: false };
+    case 'video':
+      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, captionsAvailable: false, learningBrief: '', postWatchTask: '' };
+    case 'podcast':
+      return { ...componentAdvancedDefaults(type), podcastSource: 'External URL', podcastUrl: '', durationMinutes: 20, listeningFocus: '', podcastReflectionQuestion: '' };
+    case 'reading':
+      return {
+        ...componentAdvancedDefaults(type),
+        difficulty: 'Standard',
+        requirement: 'Required',
+        readingSource: 'Written in LMS',
+        resourceUrl: '',
+        readingContent: '',
+        mainLearningOutcomes: '',
+        ksbEvidenceNotes: '',
+        focusSections: '',
+        learnerInstruction: '',
+        keyPointCount: '0',
+        keyPoints: '',
+        glossaryTerms: '',
+        estimatedReadingTime: 20,
+        otjhRationale: '',
+        audioEnabled: false,
+        audioUrl: '',
+        reflectionQuestionCount: '0 qs',
+        readingReflectionPrompts: '',
+        readingEvidenceRequired: '',
+        completionRuleCount: '3 rules',
+        completionConfirmationRequired: true,
+        linkedActivity: '',
+        coachingPrompt: '',
+        requiredReading: true,
+      };
+    case 'powerpoint':
+      return { ...componentAdvancedDefaults(type), fileName: '', slideRange: '', speakerNotes: '', downloadAllowed: true };
+    case 'quiz':
+      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 10, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, questionsPlaceholder: '', completionFeedback: '' };
+    case 'monthly-ksb-quiz':
+      return { ...componentAdvancedDefaults(type), buildMode: 'manual', numberOfQuestions: 12, passMarkPercentage: 70, attemptsAllowed: 2, affectsKsbProgression: true, monthFocus: '' };
+    case 'reflection':
+      return { ...componentAdvancedDefaults(type), minimumWordCount: 250, learnerGuidance: '', tutorReviewGuidance: '' };
+    case 'workplace-evidence':
+      return { ...componentAdvancedDefaults(type), evidenceInstructions: '', acceptedEvidenceTypes: 'Document, image, video, witness statement', assessmentChecklist: '', minimumDescriptionWords: 100 };
+    case 'assignment':
+      return { ...componentAdvancedDefaults(type), assignmentBrief: '', submissionInstructions: '', dueTiming: 'End of week', markingRubric: '' };
+    case 'checkpoint':
+      return { ...componentAdvancedDefaults(type), checkpointTitle: '', checkpointQuestions: '', progressReviewLinked: true, monthlyCoachingReviewLinked: true };
+    case 'coaching-preparation':
+      return { ...componentAdvancedDefaults(type), preparationPrompt: '', evidenceToBring: '', coachDiscussionPoints: '', coachingReviewLinked: true };
+    default:
+      return componentAdvancedDefaults(type);
+  }
+}
+
+function readStore<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
   }
 }
 

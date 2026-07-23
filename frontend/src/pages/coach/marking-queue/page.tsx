@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
+const MARKING_DATA_COMING_SOON = true;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
 const MISSING_VALUE = '--';
 
@@ -220,10 +221,19 @@ export default function CoachMarkingQueue() {
             <span className="text-center">Action</span>
           </div>
           <div className="divide-y divide-background-200/30">
-            {loading && (
+            {MARKING_DATA_COMING_SOON ? (
+              <div className="px-4 py-20 text-center">
+                <div className="flex flex-col items-center gap-3">
+                  <span className="w-12 h-12 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center">
+                    <i className="ri-time-line text-xl"></i>
+                  </span>
+                  <p className="text-sm font-semibold text-foreground-600">Coming Soon</p>
+                </div>
+              </div>
+            ) : loading && (
               <div className="px-4 py-14 text-center text-sm text-foreground-400">Loading live marking queue...</div>
             )}
-            {!loading && error && (
+            {!MARKING_DATA_COMING_SOON && !loading && error && (
               <div className="px-4 py-14 text-center">
                 <div className="inline-flex flex-col items-center gap-2 text-red-600">
                   <i className="ri-error-warning-line text-2xl"></i>
@@ -232,12 +242,12 @@ export default function CoachMarkingQueue() {
                 </div>
               </div>
             )}
-            {!loading && !error && filtered.length === 0 && (
+            {!MARKING_DATA_COMING_SOON && !loading && !error && filtered.length === 0 && (
               <div className="px-4 py-14 text-center text-sm text-foreground-400">
                 No learners match this filter.
               </div>
             )}
-            {!loading && !error && filtered.map(item => (
+            {!MARKING_DATA_COMING_SOON && !loading && !error && filtered.map(item => (
               <div key={`${item.id}-${item.email}`} className="grid grid-cols-[1.5fr_1.5fr_0.7fr_0.7fr_0.7fr_0.9fr_0.7fr_0.7fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${item.isOverdue ? 'bg-red-100 text-red-700' : 'bg-primary-100 text-primary-700'}`}>{item.initials}</div>
@@ -263,9 +273,11 @@ export default function CoachMarkingQueue() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 text-[11px] text-foreground-400">
-          Fields not available in the current source table are treated as {MISSING_VALUE}: module, title, type, due date, and word count.
-        </div>
+        {!MARKING_DATA_COMING_SOON && (
+          <div className="rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 text-[11px] text-foreground-400">
+            Fields not available in the current source table are treated as {MISSING_VALUE}: module, title, type, due date, and word count.
+          </div>
+        )}
       </div>
 
       {selectedItem && (

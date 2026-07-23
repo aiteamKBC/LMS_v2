@@ -47,7 +47,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
               <DetailCard
                 title="Last Submission"
                 value={evidence.lastSubmission || '--'}
-                detail={evidence.lastSubmissionIso ? `Recorded ${formatDisplayDate(evidence.lastSubmissionIso)}` : 'No ISO timestamp returned'}
+                detail={evidence.lastSubmissionIso ? `Recorded ${formatDisplayDate(evidence.lastSubmissionIso)}` : '--'}
                 icon="ri-calendar-event-line"
               />
               <DetailCard
@@ -59,7 +59,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
               <DetailCard
                 title="Programme Group"
                 value={evidence.group || '--'}
-                detail={evidence.programme || 'No programme label returned'}
+                detail={evidence.programme || '--'}
                 icon="ri-group-line"
               />
               <DetailCard

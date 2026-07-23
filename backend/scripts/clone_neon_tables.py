@@ -11,13 +11,8 @@ DEFAULT_SOURCE_SCHEMA = 'public'
 DEFAULT_TARGET_SCHEMA = 'curriculum'
 TABLES = [
     'ksb_profiles',
-    'Modules',
-    'Training_plan',
     'holidays',
     'programmes',
-    'tutor_profiles',
-    'Tutors_Modules',
-    'coach_profiles',
 ]
 
 

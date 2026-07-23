@@ -1596,6 +1596,22 @@ table tbody td:last-child {
 
 .rich-text-surface {
   word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* Pasted/typed HTML can carry fixed widths, long unbroken tokens, or deep
+   nesting — clamp every descendant so it can never force this box (and the
+   layout around it) wider than its container. */
+.rich-text-surface * {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
+}
+
+.rich-text-surface pre {
+  white-space: pre-wrap;
 }
 
 .rich-text-surface:focus {
@@ -1676,6 +1692,7 @@ table tbody td:last-child {
 
 .rich-text-surface table {
   width: 100%;
+  table-layout: fixed;
   margin: 12px 0;
   border-collapse: collapse;
 }

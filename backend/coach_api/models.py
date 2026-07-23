@@ -47,31 +47,40 @@ class CoachCalendarEvent(models.Model):
 
 
 class CoachAbsenceReport(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_DECLINED = "declined"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_DECLINED, "Declined"),
+    ]
+
     owner_email = models.EmailField(max_length=255, db_index=True)
-    owner_name = models.CharField(max_length=255)
+    owner_name = models.CharField(max_length=255, blank=True)
     learner_id = models.IntegerField(db_index=True)
     learner_name = models.CharField(max_length=255)
-    learner_email = models.EmailField(max_length=255)
+    learner_email = models.EmailField(max_length=255, blank=True)
     session_title = models.CharField(max_length=255)
     session_date = models.DateField(db_index=True)
     session_time = models.TimeField(null=True, blank=True)
-    reason_category = models.CharField(max_length=64)
+    reason_category = models.CharField(max_length=64, blank=True)
     reason = models.TextField()
-    reported_by = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, default="Pending", db_index=True)
+    reported_by = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
     evidence_provided = models.BooleanField(default=False)
-    coach_note = models.TextField(blank=True)
-    attendance_rate = models.PositiveSmallIntegerField(null=True, blank=True)
-    evidence_image_url = models.URLField(max_length=1000, blank=True)
-    evidence_kind = models.CharField(max_length=20, blank=True)
+    evidence_kind = models.CharField(max_length=20, default="none")
     evidence_text = models.TextField(blank=True)
+    evidence_image_url = models.URLField(max_length=1000, blank=True)
     previous_absences = models.PositiveIntegerField(default=0)
+    attendance_rate = models.PositiveSmallIntegerField(null=True, blank=True)
+    coach_note = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = 'Coach"."coach_absence_report'
-        ordering = ["-created_at"]
+        ordering = ["-session_date", "learner_name"]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(attendance_rate__isnull=True)

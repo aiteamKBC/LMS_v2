@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, calendar, components, curriculum, learner_detail, quizzes, videos, views
+from . import absence_reports, attendance, calendar, components, curriculum, learner_detail, quizzes, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -9,6 +9,7 @@ urlpatterns = [
     path("commercial-users/", views.commercial_users, name="commercial-users"),
     path("commercial-users/<int:pk>/", views.commercial_user_detail, name="commercial-user-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
+    path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder
     path("curriculum/programmes/", curriculum.programmes, name="curriculum-programmes"),

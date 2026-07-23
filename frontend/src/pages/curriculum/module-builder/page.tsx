@@ -38,6 +38,8 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
 } from './moduleAuthoringData';
+import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel, type GroupOption, type WeekComponentUploader, type WeekScope } from '@/pages/curriculum/week-builder/page';
+import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 import {
   CONTENT_STATUSES,
   MEDIA_SOURCE_TYPES,
@@ -49,6 +51,11 @@ import {
   validateComponentAuthoring,
   validateModuleAuthoringStructure,
 } from './componentAuthoringModel';
+import { RichTextDraft } from './RichTextEditor';
+
+// Course structure accordion: whether expanding a week collapses the others.
+// false = classic single-open accordion (the current default look/feel).
+const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
 type Selection =
   | { kind: 'week'; weekId: string }
@@ -59,10 +66,7 @@ type KsbTarget =
   | { scope: 'week'; weekId: string }
   | { scope: 'component'; weekId: string; componentId: string };
 
-type DragState =
-  | { type: 'week'; weekId: string }
-  | { type: 'component'; weekId: string; componentId: string }
-  | null;
+type DragState = { type: 'week'; weekId: string } | null;
 
 type NewModuleInput = {
   programme: string;
@@ -95,6 +99,11 @@ type ModuleDeliveryUsage = {
 
 type ModuleBuilderListItem = ModuleCatalogueItem & {
   deliveryUsages?: ModuleDeliveryUsage[];
+};
+
+type ProgrammeKsbMapState = {
+  programmeName: string;
+  modules: ModuleBuilderListItem[];
 };
 
 type QuizPackageSummary = {
@@ -135,6 +144,8 @@ const statusFilters = [
   { key: 'draft', label: 'Draft' },
   { key: 'review', label: 'In Review' },
 ];
+
+const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
 
 function wait(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -179,7 +190,7 @@ export default function ModuleBuilder() {
   const [programmeFilter, setProgrammeFilter] = useState<string>('All');
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
-  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
+  const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [creatingQuickModule, setCreatingQuickModule] = useState(false);
@@ -197,14 +208,16 @@ export default function ModuleBuilder() {
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [templatePickerWeekId, setTemplatePickerWeekId] = useState<string | null>(null);
+  const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
+  const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
+  const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
   const [dragState, setDragState] = useState<DragState>(null);
   const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
   const [quizzesLoading, setQuizzesLoading] = useState(false);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
-  const [standardsRequested, setStandardsRequested] = useState(false);
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -220,6 +233,26 @@ export default function ModuleBuilder() {
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
   const liveCurriculumProgrammes = curriculumProgrammes;
 
+  // Reuse of the week-builder component editor needs group options, rule-driven
+  // points and a scope — sourced the same way the week builder does.
+  const [componentGroupOptions, setComponentGroupOptions] = useState<GroupOption[]>([]);
+  const [componentPointsByType, setComponentPointsByType] = useState<Partial<Record<ModuleComponentType, number>>>({});
+  useEffect(() => {
+    let active = true;
+    fetchComponentPointsDefaults().then(map => { if (active) setComponentPointsByType(map); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
+    loadCurriculumScope().then(({ groups }) => {
+      if (!active) return;
+      const scoped = groups.filter(group => norm(group.programmeId) === norm(workingModule?.programmeId) || norm(group.programme) === norm(workingModule?.programmeName));
+      setComponentGroupOptions((scoped.length ? scoped : groups).map(group => ({ key: group.id, name: group.name, cohort: group.cohort })));
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [workingModule?.programmeId, workingModule?.programmeName]);
+
   const catalogueModules = useMemo(() => {
     void storageVersion;
     const remoteModules = modules.map(module => curriculumModuleToCatalogue(module));
@@ -229,15 +262,13 @@ export default function ModuleBuilder() {
 
   const programmeOptions = useMemo(() => {
     const byName = new Map<string, string>();
-    const addName = (value: unknown) => {
-      const name = String(value || '').trim();
+    curriculumProgrammes.forEach(programme => {
+      const name = String(programme.name || programme.sourceId || programme.id || '').trim();
       if (!name) return;
       byName.set(normaliseDeepLinkValue(name) || name.toLowerCase(), name);
-    };
-    curriculumProgrammes.forEach(programme => addName(programme.name));
-    catalogueModules.forEach(module => addName(module.programmeName));
+    });
     return ['All', ...Array.from(byName.values()).sort((a, b) => a.localeCompare(b))];
-  }, [catalogueModules, curriculumProgrammes]);
+  }, [curriculumProgrammes]);
 
   const programmeLookup = useMemo(() => {
     const lookup = new Map<string, { id: string; name: string }>();
@@ -269,19 +300,45 @@ export default function ModuleBuilder() {
   }, [programmeLookup]);
 
   const initialKsbSourceId = useMemo(() => {
-    const standard = standardForModule(standards, workingModule, curriculumProgrammes);
-    if (standard) return ksbStandardSourceId(standard);
+    const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
+    if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
     const ksbSet = ksbSetForModule(ksbSets, workingModule, curriculumProgrammes);
-    return ksbSet ? ksbSetSourceId(ksbSet) : '';
+    if (ksbSet) return ksbSetSourceId(ksbSet);
+    const standard = standardForModule(standards, workingModule, curriculumProgrammes);
+    return standard ? ksbStandardSourceId(standard) : '';
   }, [curriculumProgrammes, ksbSets, standards, workingModule]);
 
   const ksbSourceLabels = useMemo(() => ksbSourceLabelMap(standards, ksbSets), [ksbSets, standards]);
+
+  const ksbProfileOptions = useMemo(() => (
+    ksbSourceOptions(ksbSets, standards)
+  ), [ksbSets, standards]);
+  const workspaceKsbProfileValue = useMemo(() => {
+    const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
+    if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
+    const matchingProfile = ksbSetForModule(ksbSets, workingModule, curriculumProgrammes);
+    if (matchingProfile) return ksbSetSourceId(matchingProfile);
+    const matchingStandard = standardForModule(standards, workingModule, curriculumProgrammes);
+    return matchingStandard ? ksbStandardSourceId(matchingStandard) : '';
+  }, [curriculumProgrammes, ksbSets, standards, workingModule]);
+
+  // Scope + module-scoped uploader passed to the shared week-builder editor.
+  const weekScopeForModule = useMemo<WeekScope>(() => ({
+    courseType: 'paid',
+    programmeId: workingModule?.programmeId || '',
+    programmeName: workingModule?.programmeName || '',
+    moduleName: workingModule?.title || '',
+  }), [workingModule?.programmeId, workingModule?.programmeName, workingModule?.title]);
+  const uploadComponentForModule = useCallback<WeekComponentUploader>(
+    (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
+    [workingModule?.catalogueId],
+  );
 
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (statusFilter !== 'all' && module.status !== statusFilter) return false;
-    if (programmeFilter !== 'All' && module.programmeName !== programmeFilter) return false;
+    if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
     return true;
   });
 
@@ -327,7 +384,6 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
       setSelection(next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null);
-      setExpandedWeeks(new Set(next.weekStructure.map(week => week.id)));
       setSettingsOpen(openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
@@ -359,6 +415,30 @@ export default function ModuleBuilder() {
     }
   }, [workingModule]);
 
+  const openProgrammeKsbMap = useCallback(async () => {
+    if (programmeFilter === 'All' || programmeKsbLoading) return;
+    const programmeModules = catalogueModules.filter(module => moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes));
+    if (!programmeModules.length) return;
+    setProgrammeKsbLoading(true);
+    setActionMessage(null);
+    try {
+      const loadedModules = await Promise.all(programmeModules.map(async module => {
+        const structureId = moduleStructureIdentifier(module);
+        if (!structureId) return module;
+        try {
+          const remote = await loadModuleStructure(structureId);
+          return remote ? mergeKsbStructureForReview(module, remote) : module;
+        } catch (err) {
+          console.warn('Unable to load full module structure for programme KSB map.', err);
+          return module;
+        }
+      }));
+      setProgrammeKsbMap({ programmeName: programmeFilter, modules: loadedModules });
+    } finally {
+      setProgrammeKsbLoading(false);
+    }
+  }, [catalogueModules, curriculumProgrammes, programmeFilter, programmeKsbLoading]);
+
   useEffect(() => {
     const controller = new AbortController();
     setQuizzesLoading(true);
@@ -380,9 +460,7 @@ export default function ModuleBuilder() {
   }, []);
 
   useEffect(() => {
-    if (!ksbTarget || standards.length || standardsRequested || standardsLoading) return;
     const controller = new AbortController();
-    setStandardsRequested(true);
     setStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
       .then(result => setStandards(result))
@@ -395,7 +473,7 @@ export default function ModuleBuilder() {
         if (!controller.signal.aborted) setStandardsLoading(false);
       });
     return () => controller.abort();
-  }, [ksbTarget, standards.length, standardsLoading, standardsRequested]);
+  }, []);
 
   useEffect(() => {
     if (!saving || !saveStartedAt) {
@@ -458,7 +536,6 @@ export default function ModuleBuilder() {
           savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
           setWorkingModule(nextModule);
           setSelection(nextModule.weekStructure[0] ? { kind: 'week', weekId: nextModule.weekStructure[0].id } : null);
-          setExpandedWeeks(new Set(nextModule.weekStructure.map(week => week.id)));
           setSettingsOpen(false);
           await finishLoadingProgress(setOpeningModuleComplete);
         }).catch(err => {
@@ -509,7 +586,7 @@ export default function ModuleBuilder() {
     savedModuleSnapshotRef.current = moduleSnapshot(fallback);
     setWorkingModule(fallback);
     setSelection(fallback.weekStructure[0] ? { kind: 'week', weekId: fallback.weekStructure[0].id } : null);
-    setExpandedWeeks(new Set(fallback.weekStructure.map(week => week.id)));
+    setExpandedWeekIds(new Set(fallback.weekStructure.map(week => week.id)));
     setSettingsOpen(false);
     setNoticeAlert({
       title: 'Opened from Curriculum Studio',
@@ -522,6 +599,29 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, []);
+
+  // Import a saved week template as a NEW week in this module: copy the week's
+  // fields + components, regenerating ids so they're independent of the source.
+  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate) => {
+    updateWorkingModule(module => {
+      const shell = createEmptyWeek(module.id, module.weekStructure.length + 1);
+      const newWeek: ModuleWeek = {
+        ...shell,
+        title: template.title || shell.title,
+        summary: template.summary || '',
+        learningOutcomes: template.learningOutcomes || [],
+        ksbMappings: (template.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+        components: (template.components || []).map(component => ({
+          ...component,
+          id: makeAuthoringId('component'),
+          weekId: shell.id,
+          ksbMappings: (component.ksbMappings || []).map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
+        })),
+      };
+      return { ...module, weekStructure: [...module.weekStructure, newWeek] };
+    });
+    setWeekTemplateImportOpen(false);
+  }, [updateWorkingModule]);
 
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
@@ -544,39 +644,12 @@ export default function ModuleBuilder() {
 
         await wait(550);
         updateWorkingModule(module => removeWeekFromModule(module, weekId));
-        setExpandedWeeks(current => {
-          const next = new Set(current);
-          next.delete(weekId);
-          return next;
-        });
         setDragState(null);
         if (lessonPickerWeekId === weekId) setLessonPickerWeekId(null);
         if (templatePickerWeekId === weekId) setTemplatePickerWeekId(null);
         if (selection?.weekId === weekId) {
           setSelection(nextSelectedWeek ? { kind: 'week', weekId: nextSelectedWeek.id } : null);
         }
-      },
-    });
-  };
-
-  const confirmDeleteComponent = async (weekId: string, componentId: string) => {
-    const component = workingModule?.weekStructure.find(week => week.id === weekId)?.components.find(item => item.id === componentId);
-    const title = component?.title || 'this component';
-
-    await showBuilderDeleteSwal({
-      title: 'Delete component?',
-      message: `${title} will be removed from this week.`,
-      confirmButtonText: 'Delete component',
-      processingText: 'Deleting component...',
-      successTitle: 'Component deleted',
-      successText: `${title} was removed successfully.`,
-      onConfirm: async () => {
-        await wait(550);
-        updateWorkingModule(module => ({
-          ...module,
-          weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components: week.components.filter(componentItem => componentItem.id !== componentId) } : week)),
-        }));
-        setSelection({ kind: 'week', weekId });
       },
     });
   };
@@ -596,7 +669,14 @@ export default function ModuleBuilder() {
     setSaveStartedAt(Date.now());
     setActionMessage(null);
     setSaveSuccess(null);
-    const moduleToSave = recalculateModule(normaliseComponentTitles(workingModule));
+    const normalisedModule = normaliseComponentTitles(workingModule);
+    const selectedKsbSourceId = cleanKsbSourceId(normalisedModule.ksbProfileSourceId);
+    const moduleToSave = recalculateModule({
+      ...normalisedModule,
+      ksbProfileSourceId: selectedKsbSourceId && ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes)
+        ? selectedKsbSourceId
+        : '',
+    });
     try {
       setWorkingModule(moduleToSave);
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave);
@@ -611,10 +691,31 @@ export default function ModuleBuilder() {
       setActionMessage(null);
       if (wizardDraftLocalIdRef.current) {
         try {
-          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
+          const syncKey = `${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`;
+          const syncPayload = {
             savedAt: new Date().toISOString(),
             module: saved,
+          };
+          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
+            ...syncPayload,
           }));
+          const syncMessage = {
+            action: 'module-builder:saved',
+            closeEmbedded: closeAfterSave,
+            key: syncKey,
+            draftId: wizardDraftLocalIdRef.current,
+            structureId: saved.catalogueId,
+            payload: syncPayload,
+          };
+          window.dispatchEvent(new CustomEvent(MODULE_BUILDER_SYNC_CHANNEL, { detail: syncMessage }));
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage(syncMessage, window.location.origin);
+          }
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel(MODULE_BUILDER_SYNC_CHANNEL);
+            channel.postMessage(syncMessage);
+            channel.close();
+          }
         } catch (err) {
           console.warn('Unable to sync saved module back to Curriculum Studio wizard.', err);
         }
@@ -643,7 +744,7 @@ export default function ModuleBuilder() {
         setSaveStartedAt(null);
       }
     }
-  }, [reload, workingModule]);
+  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule]);
 
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
@@ -759,7 +860,6 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
       setWorkingModule(nextModule);
       setSelection(null);
-      setExpandedWeeks(new Set());
       setSettingsOpen(false);
       setPreviewOpen(false);
       setLessonPickerWeekId(null);
@@ -794,7 +894,6 @@ export default function ModuleBuilder() {
     try {
       const restored = recalculateModule(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem);
       setWorkingModule(restored);
-      setExpandedWeeks(new Set(restored.weekStructure.map(week => week.id)));
       return restored;
     } catch {
       return workingModule;
@@ -860,6 +959,18 @@ export default function ModuleBuilder() {
   const requestSelectionChange = useCallback((nextSelection: Selection) => {
     applySelectionSafely(nextSelection);
   }, [applySelectionSafely]);
+
+  // Whichever week is selected (directly, or via one of its components) is
+  // always expanded in the Course structure accordion — this is the single
+  // source of "make sure the active week's parts are visible."
+  useEffect(() => {
+    const weekId = selection?.weekId;
+    if (!weekId) return;
+    setExpandedWeekIds(prev => {
+      if (prev.has(weekId) && (ALLOW_MULTIPLE_EXPANDED_WEEKS || prev.size === 1)) return prev;
+      return ALLOW_MULTIPLE_EXPANDED_WEEKS ? new Set([...prev, weekId]) : new Set([weekId]);
+    });
+  }, [selection?.weekId]);
 
   useEffect(() => {
     if (!hasUnsavedWorkingModuleChanges) return;
@@ -945,9 +1056,17 @@ export default function ModuleBuilder() {
               void requestDirtyNavigation(() => {
                 updateWorkingModule(module => {
                   const programmeIdentity = resolveProgrammeIdentity(programmeName, module.programmeId);
-                  return { ...module, programmeName: programmeIdentity.programmeName, programmeId: programmeIdentity.programmeId };
+                  const nextModule = { ...module, programmeName: programmeIdentity.programmeName, programmeId: programmeIdentity.programmeId };
+                  const nextProfile = ksbSetForModule(ksbSets, nextModule, curriculumProgrammes);
+                  return { ...nextModule, ksbProfileSourceId: nextProfile ? ksbSetSourceId(nextProfile) : '' };
                 });
               });
+            }}
+            ksbProfileOptions={ksbProfileOptions}
+            ksbProfileValue={workspaceKsbProfileValue}
+            standardsLoading={standardsLoading}
+            onKsbProfileChange={sourceId => {
+              updateWorkingModule(module => ({ ...module, ksbProfileSourceId: cleanKsbSourceId(sourceId) }));
             }}
             onStatusChange={handleStatusChange}
           />
@@ -962,67 +1081,42 @@ export default function ModuleBuilder() {
             />
           )}
 
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[300px_minmax(0,1fr)_290px] 2xl:grid-cols-[320px_minmax(760px,1fr)_310px]">
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)_290px] 2xl:grid-cols-[420px_minmax(560px,1fr)_310px]">
             <CourseStructure
               module={workingModule}
               selection={selection}
-              expandedWeeks={expandedWeeks}
               dragState={dragState}
               onDragState={setDragState}
-              onToggleWeek={weekId => {
-                setExpandedWeeks(current => {
-                  const next = new Set(current);
-                  next.has(weekId) ? next.delete(weekId) : next.add(weekId);
-                  return next;
-                });
-              }}
               onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
               onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
+              onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
-                setExpandedWeeks(current => new Set([...current, week.id]));
                 setSelection({ kind: 'week', weekId: week.id });
               }}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
-              onOpenAddComponent={weekId => setLessonPickerWeekId(weekId)}
-              onDeleteComponent={(weekId, componentId) => {
-                void confirmDeleteComponent(weekId, componentId);
-              }}
-              onDuplicateComponent={(weekId, componentId) => {
-                const week = workingModule.weekStructure.find(item => item.id === weekId);
-                const component = week?.components.find(item => item.id === componentId);
-                if (!component) return;
-                const duplicate = cloneComponentForWeek(component, weekId, `${componentDisplayTitle(component.title)} copy`);
-                updateWorkingModule(module => ({
-                  ...module,
-                  weekStructure: module.weekStructure.map(item => (item.id === weekId ? { ...item, components: [...item.components, duplicate] } : item)),
-                }));
-                setSelection({ kind: 'component', weekId, componentId: duplicate.id });
-              }}
-              onDropReorder={(targetWeekId, targetComponentId) => {
+              onDropReorder={targetWeekId => {
                 if (!dragState) return;
-                if (dragState.type === 'week') {
-                  updateWorkingModule(module => ({ ...module, weekStructure: moveById(module.weekStructure, dragState.weekId, targetWeekId) }));
-                } else {
-                  updateWorkingModule(module => ({ ...module, weekStructure: moveComponent(module.weekStructure, dragState, targetWeekId, targetComponentId) }));
-                }
+                updateWorkingModule(module => ({ ...module, weekStructure: moveById(module.weekStructure, dragState.weekId, targetWeekId) }));
                 setDragState(null);
               }}
+              onComponentsChange={(weekId, components) => updateWorkingModule(module => ({
+                ...module,
+                weekStructure: module.weekStructure.map(week => (week.id === weekId ? { ...week, components } : week)),
+              }))}
+              pointsByType={componentPointsByType}
+              expandedWeekIds={expandedWeekIds}
+              onExpandedWeekIdsChange={setExpandedWeekIds}
+              allowMultipleExpanded={ALLOW_MULTIPLE_EXPANDED_WEEKS}
             />
 
             <div className="min-w-0">
               {selectedComponent && selectedWeek ? (
-                <ComponentEditor
+                <WeekComponentEditor
                   component={selectedComponent}
-                  module={workingModule}
-                  week={selectedWeek}
-                  availableModules={catalogueModules}
-                  liveProgrammes={liveCurriculumProgrammes}
-                  quizzes={quizPackages}
-                  quizzesLoading={quizzesLoading}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
@@ -1030,34 +1124,20 @@ export default function ModuleBuilder() {
                       components: week.components.map(component => component.id === selectedComponent.id ? { ...component, ...updates } : component),
                     } : week),
                   }))}
-                  onSettingChange={(key, value) => updateWorkingModule(module => ({
-                    ...module,
-                    weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
-                      ...week,
-                      components: week.components.map(component => component.id === selectedComponent.id ? { ...component, settings: { ...component.settings, [key]: value } } : component),
-                    } : week),
-                  }))}
-                  onAddKsb={() => setKsbTarget({ scope: 'component', weekId: selectedWeek.id, componentId: selectedComponent.id })}
-                  onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'component', weekId: selectedWeek.id, componentId: selectedComponent.id }, mappingId))}
+                  onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
+                  groupOptions={componentGroupOptions}
+                  rulePoints={componentPointsByType[selectedComponent.type]}
+                  weekScope={weekScopeForModule}
+                  uploadResource={uploadComponentForModule}
                 />
               ) : selectedWeek ? (
-                <WeekEditor
+                <ModuleWeekPanel
                   week={selectedWeek}
-                  ksbSourceLabels={ksbSourceLabels}
-                  dragState={dragState}
-                  onDragState={setDragState}
-                  onSelectComponent={componentId => { void requestSelectionChange({ kind: 'component', weekId: selectedWeek.id, componentId }); }}
-                  onDropReorder={targetComponentId => {
-                    if (!dragState || dragState.type !== 'component') return;
-                    updateWorkingModule(module => ({ ...module, weekStructure: moveComponent(module.weekStructure, dragState, selectedWeek.id, targetComponentId) }));
-                    setDragState(null);
-                  }}
                   onChange={updates => updateWorkingModule(module => ({
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
                   }))}
                   onApplyTemplate={() => setTemplatePickerWeekId(selectedWeek.id)}
-                  onOpenSessionKsbMapping={() => setSessionKsbMappingOpen(true)}
                   onAddLesson={() => {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
@@ -1115,12 +1195,7 @@ export default function ModuleBuilder() {
           <SessionKsbMappingModal
             module={workingModule}
             sourceLabels={ksbSourceLabels}
-            saving={saving}
-            saved={!hasUnsavedWorkingModuleChanges}
             onClose={() => setSessionKsbMappingOpen(false)}
-            onSave={persistWorkingModule}
-            onAddKsb={target => setKsbTarget(target)}
-            onRemoveKsb={(target, mappingId) => updateWorkingModule(module => removeKsbMapping(module, target, mappingId))}
           />
         )}
         {lessonPickerWeekId && (
@@ -1136,7 +1211,6 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
               }));
               setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
-              setExpandedWeeks(current => new Set([...current, week.id]));
               setLessonPickerWeekId(null);
             }}
           />
@@ -1158,9 +1232,15 @@ export default function ModuleBuilder() {
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...template] } : item),
               }));
               setSelection({ kind: 'component', weekId: week.id, componentId: template[template.length - 1].id });
-              setExpandedWeeks(current => new Set([...current, week.id]));
               setTemplatePickerWeekId(null);
             }}
+          />
+        )}
+        {weekTemplateImportOpen && workingModule && (
+          <WeekTemplateImportModal
+            scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
+            onClose={() => setWeekTemplateImportOpen(false)}
+            onImport={importWeekTemplateAsNewWeek}
           />
         )}
         {openingModule && (
@@ -1181,12 +1261,13 @@ export default function ModuleBuilder() {
         )}
         {creatingQuickModule && <CreatingModuleAlert complete={creatingQuickModuleComplete} />}
         {ksbTarget && (
-          <KsbSelectorModal
-            standards={standards}
-            standardsLoading={standardsLoading || (!standardsRequested && !standards.length)}
+            <KsbSelectorModal
+              standards={standards}
+            standardsLoading={standardsLoading && !standards.length}
             ksbSets={ksbSets}
             ksbSetsLoading={ksbSetsLoading}
-            initialSourceId={initialKsbSourceId}
+            initialSourceId={workspaceKsbProfileValue}
+            lockedSourceId={workspaceKsbProfileValue}
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
@@ -1229,8 +1310,11 @@ export default function ModuleBuilder() {
         </div>
 
         {error && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            Curriculum API error: {error}. Start the Django backend on port 8000 and refresh.
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
+            <span>Unable to refresh modules: {error}</span>
+            <button type="button" onClick={() => reload()} className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-1.5 font-bold text-red-700 hover:bg-red-100">
+              Retry
+            </button>
           </div>
         )}
         {actionMessage && !deletingModuleId && (
@@ -1247,6 +1331,15 @@ export default function ModuleBuilder() {
           <select value={programmeFilter} onChange={event => setProgrammeFilter(event.target.value)} className="px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
             {programmeOptions.map(option => <option key={option}>{option}</option>)}
           </select>
+          <button
+            type="button"
+            onClick={() => { void openProgrammeKsbMap(); }}
+            disabled={programmeFilter === 'All' || programmeKsbLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <i className={programmeKsbLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></i>
+            {programmeKsbLoading ? 'Loading KSBs...' : 'Review programme KSBs'}
+          </button>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
             {statusFilters.map(filter => (
               <button key={filter.key} onClick={() => setStatusFilter(filter.key)} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${statusFilter === filter.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
@@ -1273,7 +1366,7 @@ export default function ModuleBuilder() {
           <div className="flex flex-col gap-2 border-b border-background-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-[12px] font-bold text-foreground-900">Module catalogue</p>
-              <p className="text-[11px] text-foreground-500">One master module per programme. Delivery usage is shown only as context.</p>
+              <p className="text-[11px] text-foreground-500">Modules are scoped by programme, cohort and group, so matching titles can carry different KSB mappings.</p>
             </div>
             <span className="rounded-full bg-background-100 px-3 py-1 text-[11px] font-semibold text-foreground-600">
               {filtered.length} shown
@@ -1320,12 +1413,23 @@ export default function ModuleBuilder() {
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
             sourceLabels={ksbSourceLabels}
+            ksbSets={ksbSets}
+            standards={standards}
+            programmes={curriculumProgrammes}
             onClose={() => setKsbMapModule(null)}
             onBuild={() => {
               const module = ksbMapDisplayModule;
               setKsbMapModule(null);
               void openModule(module);
             }}
+          />
+        )}
+        {programmeKsbMap && (
+          <ProgrammeKsbMapModal
+            programmeName={programmeKsbMap.programmeName}
+            modules={programmeKsbMap.modules}
+            sourceLabels={ksbSourceLabels}
+            onClose={() => setProgrammeKsbMap(null)}
           />
         )}
         {creatingQuickModule && <CreatingModuleAlert complete={creatingQuickModuleComplete} />}
@@ -1401,13 +1505,17 @@ function SaveStatusPanel({ saving, elapsedSeconds, success, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, saving, saved, onBack, onProgrammeChange, onStatusChange }: {
+function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, standardsLoading, saving, saved, onBack, onProgrammeChange, onKsbProfileChange, onStatusChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
+  ksbProfileOptions: Array<{ id: string; label: string }>;
+  ksbProfileValue: string;
+  standardsLoading: boolean;
   saving: boolean;
   saved: boolean;
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
+  onKsbProfileChange: (sourceId: string) => void;
   onStatusChange: (status: string) => void;
 }) {
   const moduleMetrics = [
@@ -1457,12 +1565,20 @@ function WorkspaceHeader({ module, programmeOptions, saving, saved, onBack, onPr
       </div>
 
       <div className="mt-4 grid gap-3 border-t border-background-200 pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-        <div className="grid min-w-0 grid-cols-1 gap-2 sm:max-w-xs">
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:max-w-xl sm:grid-cols-2">
           <label className="block min-w-0">
             <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Programme</span>
             <select value={module.programmeName} onChange={event => onProgrammeChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
               {programmeOptions.map(option => <option key={option}>{option}</option>)}
               {!programmeOptions.includes(module.programmeName) && <option>{module.programmeName}</option>}
+            </select>
+          </label>
+          <label className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
+            <select value={ksbProfileValue} onChange={event => onKsbProfileChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
+              <option value="">{standardsLoading ? 'Loading standards...' : 'No source selected'}</option>
+              {ksbProfileOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              {ksbProfileValue && !ksbProfileOptions.some(option => option.id === ksbProfileValue) && <option value={ksbProfileValue}>{ksbProfileValue.replace(/^(profile|standard):/, '')}</option>}
             </select>
           </label>
         </div>
@@ -1535,23 +1651,41 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
   );
 }
 
-function CourseStructure({ module, selection, expandedWeeks, dragState, onDragState, onToggleWeek, onSelectWeek, onSelectComponent, onAddWeek, onDeleteWeek, onOpenAddComponent, onDeleteComponent, onDuplicateComponent, onDropReorder }: {
+// Course structure: a week navigator whose rows double as an accordion —
+// expanding a week renders its parts timeline (the shared WeekComponentRail,
+// nested variant) indented underneath, so the week list and "the week, in
+// order" view are one nested panel instead of two side-by-side ones.
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDropReorder, onComponentsChange, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
-  expandedWeeks: Set<string>;
   dragState: DragState;
   onDragState: (state: DragState) => void;
-  onToggleWeek: (weekId: string) => void;
   onSelectWeek: (weekId: string) => void;
   onSelectComponent: (weekId: string, componentId: string) => void;
   onAddWeek: () => void;
+  onAddWeekFromTemplate: () => void;
   onDeleteWeek: (weekId: string) => void;
-  onOpenAddComponent: (weekId: string) => void;
-  onDeleteComponent: (weekId: string, componentId: string) => void;
-  onDuplicateComponent: (weekId: string, componentId: string) => void;
-  onDropReorder: (targetWeekId: string, targetComponentId?: string) => void;
+  onDropReorder: (targetWeekId: string) => void;
+  onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
+  pointsByType: Partial<Record<ModuleComponentType, number>>;
+  expandedWeekIds: Set<string>;
+  onExpandedWeekIdsChange: (next: Set<string>) => void;
+  allowMultipleExpanded?: boolean;
 }) {
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
+
+  const toggleExpanded = (weekId: string) => {
+    const next = new Set(expandedWeekIds);
+    if (next.has(weekId)) {
+      next.delete(weekId);
+    } else if (allowMultipleExpanded) {
+      next.add(weekId);
+    } else {
+      next.clear();
+      next.add(weekId);
+    }
+    onExpandedWeekIdsChange(next);
+  };
 
   return (
     <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
@@ -1559,12 +1693,18 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
-            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, components and order</p>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, in order</p>
           </div>
-          <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
-            <i className="ri-add-line"></i>
-            Week
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button onClick={onAddWeekFromTemplate} title="Add a week from a saved template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+              <i className="ri-import-line"></i>
+              Template
+            </button>
+            <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
+              <i className="ri-add-line"></i>
+              Week
+            </button>
+          </div>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
@@ -1575,38 +1715,44 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
           <div className="h-full rounded-full bg-primary-500" style={{ width: `${Math.min(100, Math.max(0, module.qualityScore))}%` }} />
         </div>
       </div>
-      <div className="space-y-1.5 max-h-[calc(100vh-300px)] overflow-y-auto p-2.5">
-        {module.weekStructure.map(week => {
-          const expanded = expandedWeeks.has(week.id);
+      <div className="space-y-2 max-h-[calc(100vh-220px)] overflow-y-auto p-2.5">
+        {module.weekStructure.map((week, index) => {
           const selected = selection?.kind === 'week' && selection.weekId === week.id;
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
+          const active = selected || selectedChild;
+          const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
+          const expanded = expandedWeekIds.has(week.id);
+          const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
           return (
             <div
               key={week.id}
-              draggable
-              onDragStart={event => {
-                event.dataTransfer.effectAllowed = 'move';
-                onDragState({ type: 'week', weekId: week.id });
-              }}
-              onDragEnd={() => onDragState(null)}
-              onDragOver={event => event.preventDefault()}
-              onDrop={event => {
-                event.preventDefault();
-                onDropReorder(week.id);
-              }}
-              className={`overflow-visible rounded-xl border transition-smooth ${selected || selectedChild ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
+              className={`overflow-visible rounded-xl border transition-smooth ${dragging ? 'border-primary-300 bg-background-50 shadow-lg ring-2 ring-primary-200' : active ? 'border-primary-300 bg-primary-50/70 shadow-sm shadow-primary-100/60' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
             >
-              <div className="flex items-center gap-1.5 p-2">
-                <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-                <button onClick={() => onToggleWeek(week.id)} className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background-50 text-foreground-500 hover:bg-background-100">
+              <div
+                draggable
+                onDragStart={event => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  onDragState({ type: 'week', weekId: week.id });
+                }}
+                onDragEnd={() => onDragState(null)}
+                onDragOver={event => event.preventDefault()}
+                onDrop={event => {
+                  event.preventDefault();
+                  onDropReorder(week.id);
+                }}
+                className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
+              >
+                <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><i className="ri-draggable"></i></button>
+                <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
                   <i className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></i>
                 </button>
+                <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
                     <span>{week.components.length} components</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
-                    <span>{week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0).toFixed(1)}h</span>
+                    <span>{totalOtjh.toFixed(1)}h</span>
                   </p>
                 </button>
                 <button
@@ -1616,7 +1762,7 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                     event.stopPropagation();
                     onDeleteWeek(week.id);
                   }}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-red-500 transition-smooth hover:bg-red-50 hover:text-red-700"
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover/week:opacity-100"
                   title="Delete week"
                   aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
                 >
@@ -1624,42 +1770,16 @@ function CourseStructure({ module, selection, expandedWeeks, dragState, onDragSt
                 </button>
               </div>
               {expanded && (
-                <div className="space-y-1 px-2 pb-2">
-                  {week.components.map(component => (
-                    <ComponentTreeRow
-                      key={component.id}
-                      week={week}
-                      component={component}
-                      selected={selection?.kind === 'component' && selection.componentId === component.id}
-                      dragging={dragState?.type === 'component' && dragState.componentId === component.id}
-                      onSelect={() => onSelectComponent(week.id, component.id)}
-                      onDelete={() => onDeleteComponent(week.id, component.id)}
-                      onDuplicate={() => onDuplicateComponent(week.id, component.id)}
-                      onDragStart={() => onDragState({ type: 'component', weekId: week.id, componentId: component.id })}
-                      onDrop={() => onDropReorder(week.id, component.id)}
-                      onDragEnd={() => onDragState(null)}
-                    />
-                  ))}
-                  <div className="relative">
-                    {dragState?.type === 'component' && (
-                      <div
-                        onDragOver={event => event.preventDefault()}
-                        onDrop={event => {
-                          event.preventDefault();
-                          onDropReorder(week.id);
-                        }}
-                        className="mb-2 rounded-lg border border-dashed border-primary-300 bg-primary-50 px-3 py-2 text-center text-[11px] font-semibold text-primary-700"
-                      >
-                        Drop here to move to the end
-                      </div>
-                    )}
-                    <button
-                      onClick={() => onOpenAddComponent(week.id)}
-                      className="w-full rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-2 text-left text-[12px] font-semibold text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
-                    >
-                      <i className="ri-add-line mr-1.5"></i>Add component
-                    </button>
-                  </div>
+                <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
+                  <WeekComponentRail
+                    weekId={week.id}
+                    components={week.components}
+                    selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
+                    onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
+                    onChange={next => onComponentsChange(week.id, next)}
+                    pointsByType={pointsByType}
+                    variant="nested"
+                  />
                 </div>
               )}
             </div>
@@ -1805,58 +1925,6 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
   );
 }
 
-function ComponentTreeRow({ week, component, selected, dragging, onSelect, onDelete, onDuplicate, onDragStart, onDrop, onDragEnd }: {
-  week: ModuleWeek;
-  component: ModuleComponent;
-  selected: boolean;
-  dragging: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
-  onDuplicate: () => void;
-  onDragStart: () => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
-}) {
-  const meta = componentTypes.find(item => item.type === component.type);
-  const tone = componentToneClasses(meta?.tone);
-  return (
-    <div
-      draggable
-      onDragStart={event => {
-        event.stopPropagation();
-        event.dataTransfer.effectAllowed = 'move';
-        onDragStart();
-      }}
-      onDragEnd={event => {
-        event.stopPropagation();
-        onDragEnd();
-      }}
-      onDragOver={event => {
-        event.preventDefault();
-        event.stopPropagation();
-      }}
-      onDrop={event => {
-        event.preventDefault();
-        event.stopPropagation();
-        onDrop();
-      }}
-      className={`group grid min-h-8 grid-cols-[14px_22px_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-1.5 py-1 transition-smooth ${selected ? 'border-primary-300 bg-primary-100/70' : dragging ? 'border-primary-200 bg-primary-50' : 'border-background-200 bg-background-100/70 hover:border-primary-200 hover:bg-background-50'}`}
-    >
-      <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-      <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${tone.soft} ${tone.text}`}>
-        <i className={`${meta?.icon || 'ri-file-line'} text-xs`}></i>
-      </span>
-      <button onClick={onSelect} className="min-w-0 flex-1 text-left" title={readableComponentTitle(component.title)}>
-        <p className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] font-semibold text-foreground-800">{readableComponentTitle(component.title)}</p>
-      </button>
-      <span className="flex items-center gap-1">
-        <button onClick={onDuplicate} className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-foreground-500 hover:bg-background-200 group-hover:flex" title="Duplicate"><i className="ri-file-copy-line text-xs"></i></button>
-        <button onClick={onDelete} className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-red-500 hover:bg-red-50 group-hover:flex" title="Delete"><i className="ri-delete-bin-line text-xs"></i></button>
-      </span>
-    </div>
-  );
-}
-
 function CreatingModuleAlert({ complete }: { complete: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
@@ -1970,40 +2038,41 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
   );
 }
 
-function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReorder, onSelectComponent, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson }: {
+// Merge note: the former WeekEditor signature was left incomplete when its
+// replacement, ModuleWeekPanel, was introduced:
+// function WeekEditor({ week, ksbSourceLabels, dragState, onDragState,
+//   onDropReorder, onSelectComponent, onChange, onApplyTemplate, onAddLesson })
+// The per-week panel, shown when a week is selected but no component is.
+// The parts timeline itself now lives inline under the week's row in
+// CourseStructure's accordion (WeekComponentRail, variant="nested") — this
+// panel just keeps the week-level header actions (Apply template, Session
+// KSB Mapping, bulk Add component) and the summary/KSB-coverage inspector.
+function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson }: {
   week: ModuleWeek;
-  ksbSourceLabels: Record<string, string>;
-  dragState: DragState;
-  onDragState: (state: DragState) => void;
-  onDropReorder: (targetComponentId?: string) => void;
-  onSelectComponent: (componentId: string) => void;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onApplyTemplate: () => void;
-  onOpenSessionKsbMapping: () => void;
+  onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
-  const totalPoints = week.components.reduce((total, component) => total + Number(component.points || 0), 0);
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
-      <div className="grid gap-3 border-b border-background-200 bg-background-50 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
+    <section className="space-y-4">
+      <div className="grid gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3 shadow-sm lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center lg:px-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex rounded-full bg-primary-100 px-2.5 py-1 text-[10px] font-bold text-primary-700">Week {week.weekNumber}</span>
             <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{totalOtjh.toFixed(1)}h OTJH</span>
           </div>
-          <h3 className="mt-1.5 truncate text-lg font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h3>
+          <div className="mt-1.5">
+            <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <i className="ri-sparkling-2-line"></i>
             Apply template
-          </button>
-          <button onClick={onOpenSessionKsbMapping} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-50">
-            <i className="ri-node-tree"></i>
-            Session KSB Mapping
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <i className="ri-add-line"></i>
@@ -2012,91 +2081,14 @@ function WeekEditor({ week, ksbSourceLabels, dragState, onDragState, onDropReord
         </div>
       </div>
 
-      <div className="space-y-3 p-4 lg:p-5">
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_240px]">
-          <TextInput label="Week title" value={week.title} onChange={value => onChange({ title: value })} />
-          <div className="grid grid-cols-2 gap-2">
-            <MiniMetric label="Points" value={String(totalPoints)} />
-            <MiniMetric label="KSB mappings" value={String(uniqueMappings([...week.ksbMappings, ...week.components.flatMap(item => item.ksbMappings)]).length)} />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 rounded-xl border border-background-200 bg-background-100/35 p-3 2xl:grid-cols-2">
-          <TextArea label="Week summary" value={week.summary} onChange={value => onChange({ summary: value })} rows={3} />
-          <TextArea label="Learning outcomes" value={week.learningOutcomes.join('\n')} onChange={value => onChange({ learningOutcomes: value.split('\n').map(item => item.trim()).filter(Boolean) })} rows={3} />
-        </div>
-        <div className="rounded-xl border border-background-200 bg-background-100/35 p-3">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <h4 className="text-[11px] font-bold uppercase text-foreground-500">Components in this week</h4>
-            </div>
-            <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{week.components.length} components</span>
-          </div>
-          <div className="space-y-2">
-            {week.components.map((component, index) => {
-              const meta = componentTypes.find(item => item.type === component.type);
-              const tone = componentToneClasses(meta?.tone);
-              const isDragging = dragState?.type === 'component' && dragState.componentId === component.id;
-              return (
-                <div
-                  key={component.id}
-                  draggable
-                  onDragStart={(event: DragEvent<HTMLDivElement>) => {
-                    event.stopPropagation();
-                    event.dataTransfer.effectAllowed = 'move';
-                    onDragState({ type: 'component', weekId: week.id, componentId: component.id });
-                  }}
-                  onDragEnd={event => {
-                    event.stopPropagation();
-                    onDragState(null);
-                  }}
-                  onDragOver={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onDrop={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onDropReorder(component.id);
-                  }}
-                  className={`grid grid-cols-[20px_28px_minmax(0,1fr)_auto_20px] items-center gap-2.5 rounded-lg border px-3 py-2 transition-smooth ${isDragging ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
-                >
-                  <span className="cursor-grab text-foreground-300"><i className="ri-draggable"></i></span>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-                    <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
-                  </span>
-                  <button onClick={() => onSelectComponent(component.id)} className="min-w-0 text-left" title={readableComponentTitle(component.title)}>
-                    <p className="truncate text-[12px] font-semibold leading-snug text-foreground-900">{readableComponentTitle(component.title)}</p>
-                    <p className="mt-0.5 text-[9px] text-foreground-400">Order {index + 1} · {meta?.label || 'Component'}</p>
-                    <ComponentKsbChips mappings={component.ksbMappings} sourceLabels={ksbSourceLabels} />
-                  </button>
-                  <div className="hidden items-center gap-2 sm:flex">
-                    <ReadOnlyMetricChip label="OTJH" value={Number(component.expectedOtjh || 0).toFixed(1)} suffix="h" tone="emerald" />
-                    <ReadOnlyMetricChip label="Points" value={String(component.points || 0)} suffix="pts" tone="amber" />
-                  </div>
-                  <i className="ri-arrow-right-s-line text-foreground-300"></i>
-                </div>
-              );
-            })}
-            {dragState?.type === 'component' && (
-              <div
-                onDragOver={event => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onDrop={event => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onDropReorder();
-                }}
-                className="rounded-xl border border-dashed border-primary-300 bg-primary-50 px-3 py-3 text-center text-[11px] font-semibold text-primary-700"
-              >
-                Drop here to move to the end of this week
-              </div>
-            )}
-            {!week.components.length && <EmptyState text="No components in this week yet." />}
-          </div>
-        </div>
-      </div>
+      <WeekOverviewPanel
+        components={week.components}
+        ksbMappings={week.ksbMappings}
+        summary={week.summary}
+        learningOutcomes={week.learningOutcomes}
+        onChangeSummary={value => onChange({ summary: value })}
+        onChangeLearningOutcomes={value => onChange({ learningOutcomes: value })}
+      />
     </section>
   );
 }
@@ -2336,77 +2328,6 @@ function TypeSpecificFields({
     );
   }
 
-  if (component.type === 'recording-placeholder') {
-    const groupOptions = liveSessionGroupOptions(module);
-    const selectedGroupKeys = getStringArray('selectedGroupKeys');
-    const selectedGroupSet = new Set(selectedGroupKeys);
-    const updateSelectedGroups = (nextKeys: string[]) => {
-      const nextSet = new Set(nextKeys);
-      onSettingChange('selectedGroupKeys', nextKeys);
-      onSettingChange('selectedGroupNames', groupOptions.filter(option => nextSet.has(option.key)).map(option => option.group));
-    };
-    const toggleGroup = (key: string) => {
-      const nextSet = new Set(selectedGroupKeys);
-      if (nextSet.has(key)) nextSet.delete(key);
-      else nextSet.add(key);
-      updateSelectedGroups(groupOptions.map(option => option.key).filter(optionKey => nextSet.has(optionKey)));
-    };
-    return (
-      <EditorBlock title="Recording placeholder">
-        <p className="rounded-lg bg-background-50 border border-background-200 px-3 py-2 text-[11px] font-medium text-foreground-500">Recording files are attached later after cohort allocation. This placeholder reserves the component space and completion rule.</p>
-        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Assigned groups</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{selectedGroupKeys.length} of {groupOptions.length} selected</p>
-            </div>
-            {!!groupOptions.length && (
-              <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => updateSelectedGroups(groupOptions.map(option => option.key))} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
-                  Select all
-                </button>
-                <button type="button" onClick={() => updateSelectedGroups([])} className="h-7 rounded-md bg-background-100 px-2 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-200">
-                  Clear
-                </button>
-              </div>
-            )}
-          </div>
-          {groupOptions.length ? (
-            <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-              {groupOptions.map(option => (
-                <label key={option.key} className={`flex min-h-10 items-start gap-2 rounded-lg border px-3 py-2 transition-smooth ${selectedGroupSet.has(option.key) ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-100/50 text-foreground-700 hover:border-primary-200'}`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedGroupSet.has(option.key)}
-                    onChange={() => toggleGroup(option.key)}
-                    className="mt-0.5 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-[12px] font-bold">{option.group}</span>
-                    {option.cohort && <span className="mt-0.5 block truncate text-[10px] font-semibold opacity-70">{option.cohort}</span>}
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-center text-[11px] font-semibold text-foreground-500">
-              No delivery groups are linked to this module yet.
-            </p>
-          )}
-        </div>
-        {!!selectedGroupKeys.length && (
-          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-            <div className="mb-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Recording link</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
-            </div>
-            <TextInput label="Recording URL" value={getString('recordingUrl')} onChange={value => onSettingChange('recordingUrl', value)} error={fieldError('settings.recordingUrl')} />
-          </div>
-        )}
-      </EditorBlock>
-    );
-  }
-
   if (component.type === 'video') {
     const sourceType = normaliseVideoSourceType(getString('sourceType') || getString('provider'));
     const updateSourceType = (value: string) => {
@@ -2448,7 +2369,13 @@ function TypeSpecificFields({
       <EditorBlock title="Podcast source">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_minmax(0,1fr)]">
           <SelectInput label="Source type" value={sourceType} options={PODCAST_SOURCE_TYPES} onChange={value => onSettingChange('podcastSource', value)} />
-          <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          {sourceType === 'Embed' ? (
+            <TextArea label="Embed code" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={4} error={fieldError('settings.embedCode')} />
+          ) : sourceType === 'Shortcode' ? (
+            <TextInput label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} />
+          ) : (
+            <TextInput label={sourceType === 'Device upload' ? 'Uploaded audio URL' : 'Podcast URL'} value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} error={fieldError('settings.podcastUrl')} />
+          )}
         </div>
         <ComponentResourceUpload
           label="Upload podcast audio"
@@ -2941,229 +2868,6 @@ function findModuleForDeliveryPath(
   }) || null;
 }
 
-type RichTextMode = 'design' | 'html';
-
-function RichTextDraft({ label, value, onChange, rows = 9, compact = false }: { label: string; value: string; onChange: (value: string) => void; rows?: number; compact?: boolean }) {
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const [mode, setMode] = useState<RichTextMode>('design');
-  const [fullscreen, setFullscreen] = useState(false);
-  const lastHtmlRef = useRef(value || '');
-  const placeholder = compact
-    ? 'Briefly introduce what the learner will read.'
-    : 'Use headings, short paragraphs, bold key terms, and bullet lists. You can paste prepared HTML here.';
-  const plainText = htmlToPlainText(value);
-  const wordCount = plainText ? plainText.split(/\s+/).filter(Boolean).length : 0;
-  const minHeight = compact ? 'min-h-[220px]' : 'min-h-[360px]';
-
-  useEffect(() => {
-    if (mode !== 'design') return;
-    const editor = editorRef.current;
-    if (!editor || document.activeElement === editor || value === lastHtmlRef.current) return;
-    editor.innerHTML = value || '';
-    lastHtmlRef.current = value || '';
-  }, [mode, value]);
-
-  const commitHtml = useCallback((html: string) => {
-    lastHtmlRef.current = html;
-    onChange(html);
-  }, [onChange]);
-
-  const syncFromEditor = useCallback(() => {
-    const html = editorRef.current?.innerHTML || '';
-    commitHtml(html);
-  }, [commitHtml]);
-
-  const focusEditor = () => {
-    if (mode !== 'design') return;
-    editorRef.current?.focus();
-  };
-
-  const runCommand = (command: string, commandValue?: string) => {
-    if (mode !== 'design') return;
-    focusEditor();
-    document.execCommand(command, false, commandValue);
-    syncFromEditor();
-  };
-
-  const insertHtml = (html: string) => {
-    if (mode !== 'design') return;
-    focusEditor();
-    document.execCommand('insertHTML', false, html);
-    syncFromEditor();
-  };
-
-  const addLink = () => {
-    const url = window.prompt('Enter link URL');
-    if (!url) return;
-    runCommand('createLink', url);
-  };
-
-  const addImage = () => {
-    const url = window.prompt('Enter image URL');
-    if (!url) return;
-    insertHtml(`<img src="${escapeAttribute(url)}" alt="" style="max-width:100%;height:auto;" />`);
-  };
-
-  const addVideo = () => {
-    const url = window.prompt('Enter video URL');
-    if (!url) return;
-    insertHtml(`<video controls src="${escapeAttribute(url)}" style="max-width:100%;height:auto;"></video>`);
-  };
-
-  const pasteAsHtml = (event: React.ClipboardEvent<HTMLDivElement>) => {
-    const html = event.clipboardData.getData('text/html');
-    if (!html) return;
-    event.preventDefault();
-    insertHtml(html);
-  };
-
-  const shellClass = fullscreen
-    ? 'fixed inset-4 z-[80] flex flex-col rounded-xl border border-foreground-200 bg-background-50 shadow-2xl'
-    : 'mt-1 overflow-hidden rounded-lg border border-foreground-200/60 bg-background-50';
-
-  return (
-    <div className="block">
-      <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase text-foreground-400">{label}</span>
-        <div className="flex items-center gap-1 rounded-lg bg-background-100 p-0.5">
-          <button type="button" onClick={() => setMode('design')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'design' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>Design</button>
-          <button type="button" onClick={() => setMode('html')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'html' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>HTML</button>
-        </div>
-      </div>
-      <div className={shellClass}>
-        <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-2 text-[11px] text-foreground-600">
-          <RichSelect title="Block style" disabled={mode !== 'design'} defaultValue="P" onChange={tag => runCommand('formatBlock', tag)}>
-            <option value="P">Paragraph</option>
-            <option value="H1">Heading 1</option>
-            <option value="H2">Heading 2</option>
-            <option value="H3">Heading 3</option>
-            <option value="BLOCKQUOTE">Quote</option>
-          </RichSelect>
-          <RichSelect title="Font" disabled={mode !== 'design'} defaultValue="" onChange={font => font && runCommand('fontName', font)}>
-            <option value="">System Font</option>
-            <option value="Arial">Arial</option>
-            <option value="Georgia">Georgia</option>
-            <option value="Times New Roman">Times</option>
-            <option value="Courier New">Courier</option>
-          </RichSelect>
-          <RichSelect title="Size" disabled={mode !== 'design'} defaultValue="3" onChange={size => runCommand('fontSize', size)}>
-            <option value="2">13px</option>
-            <option value="3">16px</option>
-            <option value="4">18px</option>
-            <option value="5">24px</option>
-            <option value="6">32px</option>
-          </RichSelect>
-          <RichToolbarDivider />
-          <RichTool icon="ri-arrow-go-back-line" label="Undo" disabled={mode !== 'design'} onClick={() => runCommand('undo')} />
-          <RichTool icon="ri-arrow-go-forward-line" label="Redo" disabled={mode !== 'design'} onClick={() => runCommand('redo')} />
-          <RichToolbarDivider />
-          <RichTool icon="ri-bold" label="Bold" disabled={mode !== 'design'} onClick={() => runCommand('bold')} />
-          <RichTool icon="ri-italic" label="Italic" disabled={mode !== 'design'} onClick={() => runCommand('italic')} />
-          <RichTool icon="ri-underline" label="Underline" disabled={mode !== 'design'} onClick={() => runCommand('underline')} />
-          <RichTool icon="ri-strikethrough" label="Strikethrough" disabled={mode !== 'design'} onClick={() => runCommand('strikeThrough')} />
-          <label title="Text color" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-font-color text-base"></i>
-            <input type="color" className="sr-only" onChange={event => runCommand('foreColor', event.target.value)} />
-          </label>
-          <label title="Highlight" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-mark-pen-line text-base"></i>
-            <input type="color" className="sr-only" onChange={event => runCommand('hiliteColor', event.target.value)} />
-          </label>
-          <RichToolbarDivider />
-          <RichTool icon="ri-link" label="Link" disabled={mode !== 'design'} onClick={addLink} />
-          <RichTool icon="ri-image-line" label="Image" disabled={mode !== 'design'} onClick={addImage} />
-          <RichTool icon="ri-video-line" label="Video" disabled={mode !== 'design'} onClick={addVideo} />
-          <RichTool icon="ri-separator" label="Divider" disabled={mode !== 'design'} onClick={() => insertHtml('<hr />')} />
-          <RichToolbarDivider />
-          <RichTool icon="ri-align-left" label="Align left" disabled={mode !== 'design'} onClick={() => runCommand('justifyLeft')} />
-          <RichTool icon="ri-align-center" label="Align center" disabled={mode !== 'design'} onClick={() => runCommand('justifyCenter')} />
-          <RichTool icon="ri-align-right" label="Align right" disabled={mode !== 'design'} onClick={() => runCommand('justifyRight')} />
-          <RichTool icon="ri-list-unordered" label="Bullet list" disabled={mode !== 'design'} onClick={() => runCommand('insertUnorderedList')} />
-          <RichTool icon="ri-list-ordered" label="Numbered list" disabled={mode !== 'design'} onClick={() => runCommand('insertOrderedList')} />
-          <RichTool icon="ri-indent-increase" label="Indent" disabled={mode !== 'design'} onClick={() => runCommand('indent')} />
-          <RichTool icon="ri-indent-decrease" label="Outdent" disabled={mode !== 'design'} onClick={() => runCommand('outdent')} />
-          <RichTool icon="ri-format-clear" label="Clear formatting" disabled={mode !== 'design'} onClick={() => runCommand('removeFormat')} />
-          <RichTool icon={fullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(open => !open)} />
-          <span className="ml-auto rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{wordCount} words</span>
-        </div>
-        {mode === 'design' ? (
-          <div className="relative">
-            {!plainText && (
-              <span className="pointer-events-none absolute left-4 top-4 text-[13px] text-foreground-300">{placeholder}</span>
-            )}
-            <div
-              ref={editorRef}
-              contentEditable
-              suppressContentEditableWarning
-              onInput={syncFromEditor}
-              onBlur={syncFromEditor}
-              onPaste={pasteAsHtml}
-              className={`rich-text-surface ${minHeight} max-h-[70vh] overflow-y-auto bg-background-50 px-4 py-4 text-[14px] leading-relaxed text-foreground-900 outline-none`}
-              dangerouslySetInnerHTML={{ __html: value || '' }}
-            />
-          </div>
-        ) : (
-          <textarea
-            value={value}
-            onChange={event => commitHtml(event.target.value)}
-            rows={rows}
-            className={`${minHeight} max-h-[70vh] w-full resize-y bg-[#0f172a] px-4 py-3 font-mono text-[12px] leading-relaxed text-[#e2e8f0] outline-none`}
-            placeholder="<h2>Section heading</h2><p>Paste prepared HTML here...</p>"
-          />
-        )}
-        <div className="border-t border-background-200 bg-background-100/70 px-3 py-1.5 text-[10px] font-semibold text-foreground-400">
-          {mode === 'design' ? 'p' : 'HTML source'}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RichTool({ icon, label, onClick, disabled = false }: { icon: string; label: string; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      title={label}
-      disabled={disabled}
-      onMouseDown={event => event.preventDefault()}
-      onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-700 transition-smooth hover:bg-background-200 hover:text-foreground-950 disabled:pointer-events-none disabled:opacity-35"
-    >
-      <i className={`${icon} text-base`}></i>
-    </button>
-  );
-}
-
-function RichSelect({ title, defaultValue, onChange, disabled, children }: { title: string; defaultValue: string; onChange: (value: string) => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <select
-      title={title}
-      defaultValue={defaultValue}
-      disabled={disabled}
-      onMouseDown={event => event.stopPropagation()}
-      onChange={event => onChange(event.target.value)}
-      className="h-8 rounded-md border border-transparent bg-background-50 px-2 text-[12px] font-semibold text-foreground-700 outline-none hover:border-background-200 disabled:opacity-40"
-    >
-      {children}
-    </select>
-  );
-}
-
-function RichToolbarDivider() {
-  return <span className="mx-1 h-6 w-px bg-background-200" />;
-}
-
-function htmlToPlainText(html: string) {
-  if (!html) return '';
-  if (typeof document === 'undefined') return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-  const element = document.createElement('div');
-  element.innerHTML = html;
-  return (element.textContent || element.innerText || '').trim();
-}
-
-function escapeAttribute(value: string) {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
   module: ModuleCatalogueItem;
@@ -3407,21 +3111,21 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
   );
 }
 
-function SessionKsbMappingModal({ module, sourceLabels, saving, saved, onClose, onSave, onAddKsb, onRemoveKsb }: {
+function SessionKsbMappingModal({ module, sourceLabels, onClose }: {
   module: ModuleCatalogueItem;
   sourceLabels: Record<string, string>;
-  saving: boolean;
-  saved: boolean;
   onClose: () => void;
-  onSave: () => void | Promise<ModuleCatalogueItem | null | undefined>;
-  onAddKsb: (target: KsbTarget) => void;
-  onRemoveKsb: (target: KsbTarget, mappingId: string) => void;
 }) {
   const components = module.weekStructure.flatMap(week => week.components.map(component => ({ week, component })));
-  const uniqueMappedCount = uniqueMappings(components.flatMap(item => item.component.ksbMappings)).length;
-  const occurrenceCount = components.reduce((total, item) => total + item.component.ksbMappings.length, 0);
-  const saveButtonIcon = saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-save-3-line';
-  const saveButtonLabel = saving ? 'Saving...' : saved ? 'Saved' : 'Save';
+  const moduleMappings = uniqueMappings([
+    ...module.moduleKsbMappings,
+    ...module.weekStructure.flatMap(week => week.ksbMappings),
+    ...components.flatMap(item => item.component.ksbMappings),
+  ]);
+  const uniqueMappedCount = moduleMappings.length;
+  const occurrenceCount = module.moduleKsbMappings.length
+    + module.weekStructure.reduce((total, week) => total + week.ksbMappings.length, 0)
+    + components.reduce((total, item) => total + item.component.ksbMappings.length, 0);
 
   return (
     <div className="fixed inset-0 z-[75] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -3429,7 +3133,7 @@ function SessionKsbMappingModal({ module, sourceLabels, saving, saved, onClose, 
         <div className="flex flex-col gap-3 bg-primary-950 px-5 py-4 text-white lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Trace</p>
-            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Session KSB Mapping</h3>
+            <h3 className="mt-0.5 text-base font-heading font-bold text-white">Review Module KSBs</h3>
             <p className="mt-1 line-clamp-1 text-[12px] font-semibold text-white/70">{module.title}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -3443,53 +3147,27 @@ function SessionKsbMappingModal({ module, sourceLabels, saving, saved, onClose, 
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {module.weekStructure.length ? (
+          {moduleMappings.length ? (
             <div className="space-y-4">
+              {!!module.moduleKsbMappings.length && (
+                <ReviewKsbBand title="Module-level KSBs" mappings={uniqueMappings(module.moduleKsbMappings)} sourceLabels={sourceLabels} />
+              )}
               {module.weekStructure.map(week => (
-                <section key={week.id} className="overflow-hidden rounded-2xl border border-background-200 bg-background-50">
-                  <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase text-primary-600">Week {week.weekNumber}</p>
-                      <h4 className="text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h4>
-                    </div>
-                    <span className="w-fit rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
-                  </div>
-                  <div className="divide-y divide-background-200">
-                    {week.components.map(component => (
-                      <SessionKsbMappingRow
-                        key={component.id}
-                        module={module}
-                        week={week}
-                        component={component}
-                        sourceLabels={sourceLabels}
-                        onAddKsb={() => onAddKsb({ scope: 'component', weekId: week.id, componentId: component.id })}
-                        onRemoveKsb={mappingId => onRemoveKsb({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId)}
-                      />
-                    ))}
-                    {!week.components.length && (
-                      <div className="px-4 py-6">
-                        <EmptyState text="No components in this week yet." />
-                      </div>
-                    )}
-                  </div>
-                </section>
+                <ReviewKsbWeekSection key={week.id} week={week} sourceLabels={sourceLabels} />
               ))}
             </div>
           ) : (
-            <EmptyState text="No weeks have been added to this module yet." />
+            <EmptyState text="No KSBs are mapped to this module yet." />
           )}
         </div>
 
         <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[11px] font-semibold text-foreground-500">
-            Changes update the same component KSB mappings used by the main editor.
+            Read-only review of module, week, and component KSB coverage.
           </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
               Done
-            </button>
-            <button type="button" onClick={() => { void onSave(); }} disabled={saving} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-smooth disabled:opacity-70 ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
-              <i className={saveButtonIcon}></i>{saveButtonLabel}
             </button>
           </div>
         </div>
@@ -3505,6 +3183,205 @@ function MetricPill({ label, value }: { label: string; value: string }) {
       <span>{value}</span>
     </span>
   );
+}
+
+function ReviewKsbWeekSection({ week, sourceLabels }: { week: ModuleWeek; sourceLabels: Record<string, string> }) {
+  const componentMappings = week.components.flatMap(component => component.ksbMappings);
+  const weekMappedKsbs = uniqueMappings([...week.ksbMappings, ...componentMappings]);
+  return (
+    <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50">
+      <div className="flex flex-col gap-2 border-b border-background-200 bg-background-100/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[10px] font-bold uppercase text-primary-600">Week {week.weekNumber}</p>
+          <h4 className="text-sm font-heading font-bold text-foreground-950">{week.title || `Week ${week.weekNumber}`}</h4>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{week.components.length} components</span>
+          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{weekMappedKsbs.length} KSBs</span>
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
+        {!!week.ksbMappings.length && (
+          <ReviewKsbBand title="Week-level KSBs" mappings={uniqueMappings(week.ksbMappings)} sourceLabels={sourceLabels} />
+        )}
+        {week.components.map(component => (
+          <ReviewKsbComponentRow key={component.id} week={week} component={component} sourceLabels={sourceLabels} />
+        ))}
+        {!week.ksbMappings.length && !week.components.length && (
+          <EmptyState text="No KSBs or components in this week yet." />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReviewKsbComponentRow({ week, component, sourceLabels }: { week: ModuleWeek; component: ModuleComponent; sourceLabels: Record<string, string> }) {
+  const meta = componentTypes.find(item => item.type === component.type);
+  const tone = componentToneClasses(meta?.tone);
+  const mappings = uniqueMappings(component.ksbMappings);
+  return (
+    <article className="rounded-xl border border-background-200 bg-background-100/35 p-3">
+      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
+            <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
+            <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">Week {week.weekNumber} - {meta?.label || component.type}</p>
+          </div>
+        </div>
+        <span className="w-fit rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{mappings.length} KSB{mappings.length === 1 ? '' : 's'}</span>
+      </div>
+      {mappings.length ? (
+        <div className="grid gap-2 lg:grid-cols-3">
+          {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
+            <ReviewKsbKindColumn
+              key={kind}
+              kind={kind}
+              mappings={mappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
+              sourceLabels={sourceLabels}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">No KSBs mapped to this component.</p>
+      )}
+    </article>
+  );
+}
+
+function ReviewKsbBand({ title, mappings, sourceLabels }: { title: string; mappings: KsbMapping[]; sourceLabels: Record<string, string> }) {
+  return (
+    <div className="rounded-xl border border-primary-100 bg-primary-50/50 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase text-primary-700">{title}</p>
+        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-primary-700">{mappings.length}</span>
+      </div>
+      <div className="grid gap-2 lg:grid-cols-3">
+        {(['knowledge', 'skill', 'behaviour'] as const).map(kind => (
+          <ReviewKsbKindColumn
+            key={kind}
+            kind={kind}
+            mappings={mappings.filter(mapping => sessionKsbKind(mapping.code) === kind)}
+            sourceLabels={sourceLabels}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewKsbKindColumn({ kind, mappings, sourceLabels }: {
+  kind: 'knowledge' | 'skill' | 'behaviour';
+  mappings: KsbMapping[];
+  sourceLabels: Record<string, string>;
+}) {
+  const labels = {
+    knowledge: 'Knowledge',
+    skill: 'Skills',
+    behaviour: 'Behaviours',
+  };
+  return (
+    <div className="min-w-0 rounded-lg border border-background-200 bg-background-50 p-2">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">{labels[kind]}</p>
+        <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{mappings.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {mappings.map(mapping => <ReviewKsbChip key={mapping.id} mapping={mapping} sourceLabels={sourceLabels} />)}
+        {!mappings.length && <p className="text-[10px] font-semibold text-foreground-300">None</p>}
+      </div>
+    </div>
+  );
+}
+
+function ReviewKsbChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceLabels: Record<string, string> }) {
+  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
+  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  return (
+    <div title={mapping.description || mapping.code} className={`rounded-md border px-2 py-1.5 ${ksbCodeChipClass(mapping.code)}`}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] font-extrabold text-foreground-950">{mapping.code}</span>
+        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{ksbClassificationLabel(classification)}</span>
+        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
+      </div>
+      {mapping.description && <p className="mt-1 line-clamp-2 text-[10px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
+      {sourceLabel && <p className="mt-1 truncate text-[9px] font-bold text-foreground-400">{sourceLabel}</p>}
+    </div>
+  );
+}
+
+function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
+  kind: 'knowledge' | 'skill' | 'behaviour';
+  mappings: KsbMapping[];
+  module: ModuleCatalogueItem;
+  sourceLabels: Record<string, string>;
+}) {
+  const labels = {
+    knowledge: 'Knowledge',
+    skill: 'Skills',
+    behaviour: 'Behaviours',
+  };
+  return (
+    <section className="min-w-0 rounded-2xl border border-background-200 bg-background-100/35 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-bold uppercase text-foreground-600">{labels[kind]}</p>
+        <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{mappings.length}</span>
+      </div>
+      <div className="space-y-2">
+        {mappings.map(mapping => (
+          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} sourceLabels={sourceLabels} />
+        ))}
+        {!mappings.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
+      </div>
+    </section>
+  );
+}
+
+function SessionKsbReadableCard({ mapping, module, sourceLabels }: { mapping: KsbMapping; module: ModuleCatalogueItem; sourceLabels: Record<string, string> }) {
+  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
+  const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const placements = ksbMappingPlacements(module, mapping);
+  return (
+    <article
+      title={`${mapping.description || mapping.code}${sourceLabel ? ` - ${sourceLabel}` : ''}`}
+      className={`rounded-xl border p-3 ${ksbCodeChipClass(mapping.code)}`}
+    >
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[12px] font-extrabold text-foreground-950">{mapping.code}</span>
+        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbClassificationLabel(classification)}</span>
+        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
+        {sourceLabel && <span className="max-w-full truncate rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{sourceLabel}</span>}
+      </div>
+      {mapping.description && <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
+      <div className="mt-2 flex flex-wrap gap-1">
+        {placements.slice(0, 4).map(placement => (
+          <span key={placement} className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{placement}</span>
+        ))}
+        {placements.length > 4 && <span className="rounded-full bg-white/70 px-2 py-0.5 text-[9px] font-bold text-foreground-500">+{placements.length - 4} more</span>}
+      </div>
+    </article>
+  );
+}
+
+function ksbMappingPlacements(module: ModuleCatalogueItem, mapping: KsbMapping) {
+  const code = String(mapping.code || '').trim().toUpperCase();
+  const placements: string[] = [];
+  if (module.moduleKsbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) {
+    placements.push('Module level');
+  }
+  module.weekStructure.forEach(week => {
+    if (week.ksbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) {
+      placements.push(`Week ${week.weekNumber}`);
+    }
+    week.components.forEach(component => {
+      if (!component.ksbMappings.some(item => String(item.code || '').trim().toUpperCase() === code)) return;
+      const meta = componentTypes.find(item => item.type === component.type);
+      placements.push(`Week ${week.weekNumber} - ${readableComponentTitle(component.title) || meta?.label || 'Component'}`);
+    });
+  });
+  return [...new Set(placements)];
 }
 
 function SessionKsbMappingRow({ module, week, component, sourceLabels, onAddKsb, onRemoveKsb }: {
@@ -3596,7 +3473,7 @@ function SessionKsbChip({ mapping, sourceLabels, onRemove }: { mapping: KsbMappi
       className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
     >
       <span>{mapping.code}</span>
-      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold capitalize">{classification}</span>
+      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{ksbClassificationLabel(classification)}</span>
       <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{clampKsbWeight(mapping.weight)}%</span>
       <span className="max-w-[90px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
       <button type="button" onClick={onRemove} className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-red-500 transition-smooth hover:bg-red-50" aria-label={`Remove ${mapping.code}`}>
@@ -3624,12 +3501,13 @@ function componentGroupLabels(module: ModuleCatalogueItem, component: ModuleComp
   return [...new Set(labels)];
 }
 
-function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, onClose, onAddMany }: {
+function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading, initialSourceId, lockedSourceId, onClose, onAddMany }: {
   standards: CurriculumStandard[];
   standardsLoading: boolean;
   ksbSets: CurriculumKsbSet[];
   ksbSetsLoading: boolean;
   initialSourceId: string;
+  lockedSourceId?: string;
   onClose: () => void;
   onAddMany: (items: Array<{ option: KsbOption; weight: number; classification: KsbMappingType }>) => void;
 }) {
@@ -3637,8 +3515,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const [classificationsByKsbId, setClassificationsByKsbId] = useState<Record<string, KsbMappingType>>({});
   const [selectedKsbIds, setSelectedKsbIds] = useState<Set<string>>(new Set());
   const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId);
-  const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>(initialSourceId.startsWith('profile:') ? 'profile' : 'standard');
+  const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
   const [addingKsbs, setAddingKsbs] = useState(false);
+  const sourceLocked = Boolean(lockedSourceId);
   const standardSourceOptions = useMemo(() => standards.map(standard => ({
       id: ksbStandardSourceId(standard),
       label: `${standard.code} - ${standard.name} (${standard.total} KSBs)`,
@@ -3653,21 +3532,20 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       options,
     };
   }), [ksbSets]);
-  const sourceOptions = sourceMode === 'standard' ? standardSourceOptions : profileSourceOptions;
+  const sourceOptions = [...profileSourceOptions, ...standardSourceOptions];
   useEffect(() => {
-    if (!selectedSourceId && initialSourceId) {
-      setSourceMode(initialSourceId.startsWith('profile:') ? 'profile' : 'standard');
-      setSelectedSourceId(initialSourceId);
+    const preferredSourceId = lockedSourceId;
+    if (sourceLocked && preferredSourceId) {
+      setSourceMode(preferredSourceId.startsWith('profile:') ? 'profile' : 'standard');
+      setSelectedSourceId(preferredSourceId);
     }
-  }, [initialSourceId, selectedSourceId]);
+  }, [lockedSourceId, sourceLocked]);
   const selectedSource = sourceOptions.find(source => source.id === selectedSourceId) || null;
-  const selectedSourceValue = selectedSource ? selectedSourceId : '';
+  const selectedSourceValue = selectedSource || sourceLocked ? selectedSourceId : '';
   const sourceLabels = Object.fromEntries([
     [
       '',
-      sourceMode === 'standard'
-        ? standardsLoading ? 'Loading standards...' : 'Select a Skills England standard'
-        : ksbSetsLoading ? 'Loading KSB profiles...' : 'Select a KSB profile',
+      ksbSetsLoading || standardsLoading ? 'Loading KSB sources...' : 'No source selected',
     ],
     ...sourceOptions.map(source => [source.id, source.label]),
   ]);
@@ -3690,7 +3568,10 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   };
   const selectedItems = sourceKsbOptions
     .filter(option => selectedKsbIds.has(option.id))
-    .map(option => ({ option, weight: clampKsbWeight(weightForOption(option)), classification: classificationForOption(option) }));
+    .map(option => {
+      const classification = classificationForOption(option);
+      return { option, weight: clampPositiveKsbWeight(weightForOption(option), classification), classification };
+    });
   const handleAddSelectedKsbs = () => {
     if (!selectedItems.length || addingKsbs) return;
     const count = selectedItems.length;
@@ -3734,43 +3615,17 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
         </div>
         <div className="p-5 space-y-4">
           <div className="space-y-3">
-            <div>
-              <p className="text-[10px] font-semibold uppercase text-foreground-400">Choose KSB source</p>
-              <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {[
-                  { mode: 'standard' as const, title: 'Skills standards', detail: `${standardSourceOptions.length} standards` },
-                  { mode: 'profile' as const, title: 'KSB profiles', detail: `${profileSourceOptions.length} profiles` },
-                ].map(item => (
-                  <button
-                    key={item.mode}
-                    type="button"
-                    onClick={() => {
-                      setSourceMode(item.mode);
-                      setSelectedSourceId('');
-                      setWeightsByKsbId({});
-                      setClassificationsByKsbId({});
-                      setSelectedKsbIds(new Set());
-                    }}
-                    className={`rounded-xl border px-3 py-2 text-left transition-smooth ${sourceMode === item.mode ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
-                  >
-                    <span className="block text-[12px] font-bold text-foreground-900">{item.title}</span>
-                    <span className="mt-0.5 block text-[10px] font-semibold text-foreground-500">{item.detail}</span>
-                  </button>
-                ))}
+            {!sourceLocked ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                <p className="text-[10px] font-bold uppercase text-amber-700">Choose KSB source first</p>
+                <p className="mt-0.5 text-[11px] font-semibold text-amber-800">Select a KSB Source from the module-level dropdown, then click Add KSBs again.</p>
               </div>
-            </div>
-            <SelectInput
-              label={sourceMode === 'standard' ? 'Standard' : 'KSB profile'}
-              value={selectedSourceValue}
-              options={['', ...sourceOptions.map(source => source.id)]}
-              labels={sourceLabels}
-              onChange={value => {
-                setSelectedSourceId(value);
-                setWeightsByKsbId({});
-                setClassificationsByKsbId({});
-                setSelectedKsbIds(new Set());
-              }}
-            />
+            ) : (
+              <div className="rounded-xl border border-primary-100 bg-primary-50 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-primary-600">KSB source</p>
+                <p className="mt-0.5 truncate text-[12px] font-bold text-primary-950">{sourceLabels[selectedSourceValue] || selectedSourceValue.replace(/^(profile|standard):/, '')}</p>
+              </div>
+            )}
           </div>
           <div className="max-h-96 overflow-y-auto space-y-2">
             {sourceKsbOptions.map(option => {
@@ -3806,8 +3661,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         onChange={event => updateOptionClassification(option, event.target.value)}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                       >
-                        <option value="main">Main</option>
-                        <option value="secondary">Secondary</option>
+                        <option value="main">Hard</option>
+                        <option value="secondary">Soft</option>
                         <option value="possible">Possible</option>
                       </select>
                     </label>
@@ -3815,9 +3670,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight</span>
                       <input
                         type="number"
-                        min={0}
+                        min={1}
                         step={1}
-                        value={clampKsbWeight(weightForOption(option))}
+                        value={clampPositiveKsbWeight(weightForOption(option), classificationForOption(option))}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
                       />
@@ -3827,7 +3682,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               </div>
               );
             })}
-            {!selectedSource && <EmptyState text={sourceMode === 'standard' ? 'Select a Skills England standard to load its KSBs.' : 'Select a KSB profile to load its KSBs.'} />}
+            {!sourceLocked && !selectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
+            {sourceLocked && !selectedSource && <EmptyState text="Loading the selected KSB Source, or it is no longer available." />}
             {selectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
@@ -3990,6 +3846,75 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+function WeekTemplateImportModal({ scope, onClose, onImport }: {
+  scope: { programmeId: string; programmeName: string };
+  onClose: () => void;
+  onImport: (template: WeekTemplate) => void;
+}) {
+  const [templates, setTemplates] = useState<WeekTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [importingId, setImportingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    fetchWeekTemplates({})
+      .then(rows => { if (active) { setTemplates(rows); setLoading(false); } })
+      .catch(err => { if (active) { setError(err instanceof Error ? err.message : 'Unable to load week templates.'); setLoading(false); } });
+    return () => { active = false; };
+  }, []);
+
+  const list = filterWeekTemplatesForScope(templates, scope);
+
+  const pick = async (template: WeekTemplate) => {
+    setImportingId(template.id);
+    setError('');
+    try {
+      const detail = await fetchWeekTemplateDetail(template.id);
+      onImport(detail);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load that template.');
+      setImportingId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-foreground-950/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-4 border-b border-background-200 px-5 py-4">
+          <div>
+            <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><i className="ri-close-line text-lg"></i></button>
+        </div>
+        <div className="max-h-[60vh] overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-10 text-[12px] text-foreground-500"><span className="h-4 w-4 animate-spin rounded-full border-2 border-background-300 border-t-primary-500" />Loading templates…</div>
+          ) : list.length ? (
+            <div className="space-y-2">
+              {list.map(template => (
+                <button key={template.id} type="button" disabled={Boolean(importingId)} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><i className="ri-calendar-todo-line"></i></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-bold text-foreground-900">{template.title || 'Untitled week'}</span>
+                    <span className="block text-[11px] text-foreground-500">{template.componentCount || template.components.length} components{template.programmeName ? ` · ${template.programmeName}` : ''}</span>
+                  </span>
+                  {importingId === template.id ? <i className="ri-loader-4-line animate-spin text-foreground-400"></i> : <i className="ri-add-line text-primary-600"></i>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="py-10 text-center text-[12px] text-foreground-400">No week templates found. Create one in the Week Builder first.</p>
+          )}
+          {error && <p className="mt-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
+        </div>
+      </div>
     </div>
   );
 }
@@ -4184,8 +4109,97 @@ function ksbStandardSourceId(standard: CurriculumStandard) {
 }
 
 function ksbSetSourceId(set: CurriculumKsbSet) {
-  const key = set.frameworkId || set.profileId || set.programmeId || set.programmeName || set.standard;
-  return `profile:${String(key || 'ksb-set').trim()}`;
+  const key = set.ksbProfileId || set.frameworkId || set.profileId || set.programmeId || set.programmeName || set.standard;
+  return String(key || 'ksb-set').trim();
+}
+
+function cleanKsbSourceId(value?: string) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.startsWith('profile:')) return text.replace(/^profile:/, '');
+  return text;
+}
+
+function ksbSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]) {
+  const seen = new Set<string>();
+  const profileOptions = ksbSets
+    .map(set => {
+      const id = ksbSetSourceId(set);
+      const count = flattenKsbEntries(set.ksbs).length;
+      return {
+        id,
+        label: `Profile: ${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''} - ${count} KSBs`,
+      };
+    });
+  const standardOptions = standards
+    .map(standard => ({
+      id: ksbStandardSourceId(standard),
+      label: `Standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name} - ${standard.total} KSBs`,
+    }));
+  return [...profileOptions, ...standardOptions].filter(option => {
+      if (seen.has(option.id)) return false;
+      seen.add(option.id);
+      return true;
+    });
+}
+
+function ksbMapSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): KsbSourceOption[] {
+  const profileOptions = ksbSets.map(set => {
+    const id = ksbSetSourceId(set);
+    const options = flattenKsbEntries(set.ksbs).map(option => ({ ...option, sourceType: 'framework', sourceId: id }));
+    const name = `${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''}`;
+    return {
+      id,
+      label: `Profile: ${name} - ${options.length} KSBs`,
+      title: set.standard || set.programmeName || 'Profile',
+      subtitle: set.programmeName || set.standard || '',
+      options,
+    };
+  });
+  const standardOptions = standards.map(standard => {
+    const options = standardToKsbOptions(standard);
+    const name = `${standard.code || standard.standardRef || standard.id} - ${standard.name}`;
+    return {
+      id: ksbStandardSourceId(standard),
+      label: `Standard: ${name} - ${options.length || standard.total} KSBs`,
+      title: standard.name || standard.code || 'Standard',
+      subtitle: standard.code || standard.standardRef || '',
+      options,
+    };
+  });
+  const seen = new Set<string>();
+  return [...profileOptions, ...standardOptions].filter(option => {
+    if (seen.has(option.id)) return false;
+    seen.add(option.id);
+    return true;
+  });
+}
+
+function ksbSourceMatchesModule(sourceId: string, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
+  const selectedSource = cleanKsbSourceId(sourceId);
+  if (!selectedSource) return false;
+  if (ksbSourceOptions(ksbSets, standards).some(option => option.id === selectedSource)) return true;
+  if (!module) return false;
+  return Boolean(ksbSetForModule(ksbSets, module, programmes)?.ksbProfileId === selectedSource || standardForModule(standards, module, programmes)?.id === selectedSource);
+}
+
+function valuesMatchAny(values: unknown[] | undefined, candidates: unknown[]) {
+  const expected = (values || []).map(normaliseDeepLinkValue).filter(Boolean);
+  if (!expected.length) return true;
+  const actual = new Set(candidates.map(normaliseDeepLinkValue).filter(Boolean));
+  return expected.some(value => actual.has(value));
+}
+
+function ksbSetMatchesModule(set: CurriculumKsbSet, module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
+  if (!module) return false;
+  const programmeCandidates = Array.from(moduleStandardCandidates(module, programmes));
+  const moduleCandidates = [module.catalogueId, module.id, module.sourceId, module.sourceModule?.id, module.sourceModule?.sourceId];
+  const cohortCandidates = [module.cohortId, module.cohort];
+  const groupCandidates = [module.groupId, module.group];
+  return valuesMatchAny(set.programmeIds?.length ? set.programmeIds : [set.programmeId], programmeCandidates)
+    && valuesMatchAny(set.moduleCatalogueIds, moduleCandidates)
+    && valuesMatchAny(set.cohortIds, cohortCandidates)
+    && valuesMatchAny(set.groupIds, groupCandidates);
 }
 
 function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumKsbSet[]) {
@@ -4196,19 +4210,52 @@ function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumK
     labels[String(standard.id || '').trim()] = label;
   });
   ksbSets.forEach(set => {
-    const label = `KSB profile: ${set.programmeName || set.standard || set.profileId || set.frameworkId || 'Profile'}${set.standard ? ` (${set.standard})` : ''}`;
+    const label = readableKsbSetLabel(set);
     const prefixedSourceId = ksbSetSourceId(set);
-    labels[prefixedSourceId] = label;
-    labels[prefixedSourceId.replace(/^profile:/, '')] = label;
-    if (set.frameworkId) labels[String(set.frameworkId).trim()] = label;
-    if (set.profileId) labels[`ksb-${String(set.profileId).trim()}`] = label;
+    [
+      prefixedSourceId,
+      prefixedSourceId.replace(/^profile:/, ''),
+      set.frameworkId,
+      set.profileId,
+      set.ksbProfileId,
+      set.programmeId,
+      ...(set.programmeIds || []),
+    ].forEach(value => {
+      const id = String(value || '').trim();
+      if (!id) return;
+      labels[id] = label;
+      labels[`profile:${id}`] = label;
+      const legacyNumeric = legacyKsbProfileNumericId(id);
+      if (legacyNumeric) labels[`ksb-${legacyNumeric}`] = label;
+    });
+    [set.programmeName, set.standard].forEach(value => {
+      const key = normaliseDeepLinkValue(value);
+      if (key) labels[`programme:${key}`] = label;
+    });
   });
   return labels;
 }
 
-function ksbSourceLabel(mapping: KsbMapping, sourceLabels: Record<string, string> = {}) {
+function readableKsbSetLabel(set: CurriculumKsbSet) {
+  const title = String(set.standard || set.programmeName || set.profileId || set.frameworkId || 'KSB profile').trim();
+  const subtitle = String(set.programmeName || '').trim();
+  return subtitle && normaliseDeepLinkValue(subtitle) !== normaliseDeepLinkValue(title)
+    ? `${title} / ${subtitle}`
+    : title;
+}
+
+function legacyKsbProfileNumericId(value: string) {
+  const match = String(value || '').match(/(?:KSBP-)?\d*?(\d{1,6})$/i);
+  if (!match) return '';
+  return String(Number(match[1]));
+}
+
+function ksbSourceLabel(mapping: KsbMapping, sourceLabels: Record<string, string> = {}, fallbackProgrammeName = '') {
   const sourceId = String(mapping.sourceId || '').trim();
   if (sourceId && sourceLabels[sourceId]) return sourceLabels[sourceId];
+  if (sourceId && sourceLabels[`profile:${sourceId}`]) return sourceLabels[`profile:${sourceId}`];
+  const programmeLabel = sourceLabels[`programme:${normaliseDeepLinkValue(fallbackProgrammeName)}`];
+  if (programmeLabel && /^ksb-\d+$/i.test(sourceId)) return programmeLabel;
   const sourceType = String(mapping.sourceType || '').trim().toLowerCase();
   if (sourceId && sourceId.startsWith('profile:')) return `KSB profile: ${sourceId.replace(/^profile:/, '')}`;
   if (sourceId && sourceId.startsWith('standard:')) return `Skills standard: ${sourceId.replace(/^standard:/, '')}`;
@@ -4248,10 +4295,12 @@ function ksbSetForModule(ksbSets: CurriculumKsbSet[], module: ModuleCatalogueIte
   const candidates = moduleStandardCandidates(module, programmes);
   if (!candidates.size) return null;
   return ksbSets.find(set => {
+    if (!ksbSetMatchesModule(set, module, programmes)) return false;
     const setCandidates = [
       set.frameworkId,
       set.profileId,
       set.programmeId,
+      ...(set.programmeIds || []),
       set.programmeName,
       set.standard,
     ].map(normaliseDeepLinkValue).filter(Boolean);
@@ -4357,7 +4406,7 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClass
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             <p className="truncate text-[11px] font-bold text-foreground-900">{mapping.code} applied</p>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
-            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold capitalize text-foreground-600">{classification}</span>
+            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(classification)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.weightClass}`}>{Number(mapping.weight || 0)}%</span>
           </div>
           <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">{sourceLabel}</p>
@@ -4371,8 +4420,8 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClass
                     onChange={event => onClassificationChange(normaliseKsbMappingType(event.target.value))}
                     className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                   >
-                    <option value="main">Main</option>
-                    <option value="secondary">Secondary</option>
+                    <option value="main">Hard</option>
+                    <option value="secondary">Soft</option>
                     <option value="possible">Possible</option>
                   </select>
                 </label>
@@ -4756,6 +4805,9 @@ function ModuleCatalogueCard({
   const weekCount = module.weekStructure.length || module.weeks || module.sessionsNumber || 0;
   const sessionCount = module.sessionsNumber || module.weeks || weekCount;
   const hasContent = componentCount > 0;
+  // Legacy fallbacks retained by the merge were:
+  // sessionCount = module.sessionsNumber || module.weeks || 0
+  // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
     <article className="group rounded-xl border border-background-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md">
@@ -4785,7 +4837,7 @@ function ModuleCatalogueCard({
         <ModuleDeliverySummary module={module} />
 
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <button onClick={onKsbMap} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+          <button onClick={onKsbMap} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-all duration-150 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1 active:translate-y-px active:bg-primary-100">
             <i className="ri-node-tree"></i>
             Review KSBs
           </button>
@@ -4802,40 +4854,79 @@ function ModuleCatalogueCard({
   );
 }
 
-function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
+type KsbSourceOption = {
+  id: string;
+  label: string;
+  title: string;
+  subtitle: string;
+  options: KsbOption[];
+};
+
+type ModuleKsbMapRow = {
+  code: string;
+  description: string;
+  source: string;
+  sourceFull: string;
+  weight: number;
+  locations: string[];
+  applied: boolean;
+  classificationLabels: string[];
+};
+
+function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
   module: ModuleBuilderListItem;
   sourceLabels: Record<string, string>;
+  ksbSets: CurriculumKsbSet[];
+  standards: CurriculumStandard[];
+  programmes: CurriculumProgramme[];
   onClose: () => void;
   onBuild: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [kindFilter, setKindFilter] = useState<'all' | 'K' | 'S' | 'B'>('all');
-  const rows = moduleKsbMapRows(module, sourceLabels);
+  const sourceOptions = useMemo(() => {
+    return ksbMapSourceOptions(ksbSets, standards)
+      .map(option => {
+        const appliedCount = moduleKsbMapRows(module, sourceLabels, option).length;
+        return {
+          ...option,
+          appliedCount,
+        };
+      })
+      .filter(option => option.appliedCount > 0);
+  }, [ksbSets, module, sourceLabels, standards]);
+  const defaultSourceId = useMemo(() => {
+    const selected = cleanKsbSourceId(module.ksbProfileSourceId);
+    if (selected && sourceOptions.some(option => option.id === selected)) return selected;
+    const matchingProfile = ksbSetForModule(ksbSets, module, programmes);
+    if (matchingProfile) return ksbSetSourceId(matchingProfile);
+    const matchingStandard = standardForModule(standards, module, programmes);
+    return matchingStandard ? ksbStandardSourceId(matchingStandard) : sourceOptions[0]?.id || '';
+  }, [ksbSets, module, programmes, sourceOptions, standards]);
+  const [selectedSourceId, setSelectedSourceId] = useState(defaultSourceId);
+  useEffect(() => {
+    if (!selectedSourceId && defaultSourceId) setSelectedSourceId(defaultSourceId);
+    else if (selectedSourceId && sourceOptions.length && !sourceOptions.some(option => option.id === selectedSourceId)) setSelectedSourceId(defaultSourceId);
+  }, [defaultSourceId, selectedSourceId, sourceOptions]);
+  const selectedSource = sourceOptions.find(option => option.id === selectedSourceId) || null;
+  const rows = moduleKsbMapRows(module, sourceLabels, selectedSource);
   const filteredRows = useMemo(() => {
     const search = query.trim().toLowerCase();
     return rows.filter(row => {
-      const kind = row.code.toUpperCase().slice(0, 1);
-      const matchesKind = kindFilter === 'all' || kind === kindFilter;
       const matchesSearch = !search || [
         row.code,
         row.description,
         row.source,
+        row.applied ? 'mapped applied used' : 'not mapped unused',
         ...row.locations,
       ].some(value => String(value || '').toLowerCase().includes(search));
-      return matchesKind && matchesSearch;
+      return matchesSearch;
     });
-  }, [kindFilter, query, rows]);
+  }, [query, rows]);
   const groups = [
     { key: 'K' as const, title: 'Knowledge', icon: 'ri-book-open-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('K')) },
     { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
     { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
   ];
-  const entriesByKind = {
-    K: rows.filter(row => row.code.toUpperCase().startsWith('K')).length,
-    S: rows.filter(row => row.code.toUpperCase().startsWith('S')).length,
-    B: rows.filter(row => row.code.toUpperCase().startsWith('B')).length,
-  };
-
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -4844,7 +4935,7 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Coverage</p>
               <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
-              <p className="mt-1 text-[11px] font-semibold text-white/70">Review where each KSB is used across this module.</p>
+              <p className="mt-1 text-[11px] font-semibold text-white/70">Review applied KSBs from the selected source and where they are used across this module.</p>
             </div>
             <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
               <i className="ri-close-line"></i>
@@ -4852,102 +4943,218 @@ function ModuleKsbMapModal({ module, sourceLabels, onClose, onBuild }: {
           </div>
         </div>
         <div className="border-b border-background-200 bg-background-50 px-5 py-3">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, description or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="block">
+              <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
+              <div className="flex min-h-10 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 py-2">
+                {selectedSource ? (
+                  <div className="min-w-0">
+                    <p className="truncate text-[12px] font-bold text-foreground-950">{selectedSource.title}</p>
+                    <p className="mt-0.5 truncate text-[11px] font-medium text-foreground-500">{selectedSource.subtitle}</p>
+                  </div>
+                ) : (
+                  <span className="text-[12px] font-semibold text-foreground-500">No applied KSB sources</span>
+                )}
+              </div>
             </div>
-            <div className="flex flex-wrap gap-1 rounded-xl border border-background-200 bg-background-100 p-1">
-              {[
-                { key: 'all' as const, label: 'All', count: rows.length },
-                { key: 'K' as const, label: 'Knowledge', count: entriesByKind.K },
-                { key: 'S' as const, label: 'Skills', count: entriesByKind.S },
-                { key: 'B' as const, label: 'Behaviours', count: entriesByKind.B },
-              ].map(item => (
-                <button key={item.key} type="button" onClick={() => setKindFilter(item.key)} className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[10px] font-bold transition-smooth ${kindFilter === item.key ? 'bg-primary-500 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-50'}`}>
-                  {item.label}
-                  <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${kindFilter === item.key ? 'bg-white/20 text-white' : 'bg-background-50 text-foreground-500'}`}>{item.count}</span>
-                </button>
-              ))}
-            </div>
+          <div className="relative lg:self-end">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, description, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+          </div>
           </div>
         </div>
-        <div className="min-h-0 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {rows.length ? (
-            filteredRows.length ? (
+            <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-              {groups.map(group => (
-                <section key={group.key} className="rounded-2xl border border-background-200 bg-background-100/35">
-                  <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-background-200 bg-background-100/95 px-3 py-3 backdrop-blur">
-                    <div className="flex items-center gap-2">
-                      <span className={`grid h-8 w-8 place-items-center rounded-lg ${ksbVisualTone(group.key).iconClass}`}>
-                        <i className={`${group.icon} text-sm`}></i>
-                      </span>
-                      <h4 className="text-[11px] font-bold uppercase text-foreground-600">{group.title}</h4>
-                    </div>
-                    <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{group.rows.length}</span>
-                  </div>
-                  <div className="max-h-[48vh] space-y-2 overflow-y-auto p-3">
-                    {group.rows.map(row => (
-                      <div key={`${row.code}-${row.source}`} className="rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm transition-smooth hover:border-primary-200">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className={`rounded-md border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
-                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.locations.length} place{row.locations.length === 1 ? '' : 's'}</span>
-                            </div>
-                            <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
-                          </div>
-                          <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${ksbCodeChipClass(row.code)}`}>Weight {row.weight}%</span>
-                        </div>
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background-200">
-                          <div className={`h-full rounded-full ${row.code.toUpperCase().startsWith('S') ? 'bg-amber-400' : row.code.toUpperCase().startsWith('B') ? 'bg-emerald-400' : 'bg-primary-500'}`} style={{ width: `${Math.min(Math.max(row.weight, 4), 100)}%` }} />
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          <div className="rounded-lg bg-background-100 px-2 py-1.5" title={row.sourceFull}>
-                            <p className="text-[8px] font-black uppercase text-foreground-400">Source</p>
-                            <p className="truncate text-[10px] font-bold text-foreground-700">{row.source}</p>
-                          </div>
-                          <div>
-                            <p className="mb-1 text-[8px] font-black uppercase text-foreground-400">Used in</p>
-                            <div className="flex flex-wrap gap-1.5">
-                          {row.locations.slice(0, 2).map(location => (
-                            <span key={location} className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-600">{location}</span>
-                          ))}
-                          {row.locations.length > 2 && <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-black text-foreground-500">+{row.locations.length - 2}</span>}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {!group.rows.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
-                  </div>
-                </section>
-              ))}
-            </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-4 py-12 text-center">
-                <i className="ri-search-line mb-2 block text-3xl text-foreground-300"></i>
-                <p className="text-[13px] font-bold text-foreground-700">No KSBs match your filters</p>
-                <button type="button" onClick={() => { setQuery(''); setKindFilter('all'); }} className="mt-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 hover:bg-background-100">Reset filters</button>
+                {groups.map(group => (
+                  <ModuleKsbGroupPanel key={group.key} group={group} totalRows={filteredRows.length} />
+                ))}
               </div>
-            )
+            </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-4 py-12 text-center">
-              <i className="ri-node-tree mb-2 block text-3xl text-foreground-300"></i>
-              <p className="text-[13px] font-bold text-foreground-700">No KSBs mapped yet</p>
-              <p className="mt-1 text-[12px] text-foreground-500">Use Edit mappings to attach KSBs to weeks or components.</p>
+            <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
+              <i className="ri-node-tree text-3xl text-foreground-300"></i>
+              <p className="mt-2 text-[13px] font-bold text-foreground-700">No applied KSBs for this source</p>
+              <p className="mt-1 text-[12px] text-foreground-500">Choose another source or use Edit mappings to attach KSBs to weeks or components.</p>
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-background-200 bg-background-100/60 px-5 py-3">
-          <button onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">Close</button>
-          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
+        <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-end">
+          <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
+            Close
+          </button>
+          <button type="button" onClick={onBuild} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
             <i className="ri-hammer-line"></i>
             Edit mappings
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }: {
+  programmeName: string;
+  modules: ModuleBuilderListItem[];
+  sourceLabels: Record<string, string>;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const rows = useMemo(() => programmeKsbMapRows(modules, sourceLabels, programmeName), [modules, programmeName, sourceLabels]);
+  const filteredRows = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return rows.filter(row => {
+      if (!search) return true;
+      return [
+        row.code,
+        row.description,
+        row.source,
+        ...row.locations,
+      ].some(value => String(value || '').toLowerCase().includes(search));
+    });
+  }, [query, rows]);
+  const groups = [
+    { key: 'K' as const, title: 'Knowledge', icon: 'ri-book-open-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('K')) },
+    { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
+    { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Programme KSB Coverage</p>
+              <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{programmeName}</h3>
+              <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs across {modules.length} module{modules.length === 1 ? '' : 's'} in this programme.</p>
+            </div>
+            <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
+              <i className="ri-close-line"></i>
+            </button>
+          </div>
+        </div>
+        <div className="border-b border-background-200 bg-background-50 px-5 py-3">
+          <div className="relative">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, module, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {rows.length ? (
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+              {groups.map(group => (
+                <ModuleKsbGroupPanel key={group.key} group={group} totalRows={filteredRows.length} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
+              <i className="ri-node-tree text-3xl text-foreground-300"></i>
+              <p className="mt-2 text-[13px] font-bold text-foreground-700">No detailed KSB mappings in this programme</p>
+              <p className="mt-1 text-[12px] text-foreground-500">Add KSB mappings to weeks or components to see programme coverage here.</p>
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end border-t border-background-200 bg-background-50 px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-semibold text-foreground-700 transition-smooth hover:bg-background-100">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbGroupPanel({ group, totalRows }: {
+  group: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] };
+  totalRows: number;
+}) {
+  const tone = ksbVisualTone(group.key);
+  const percent = totalRows ? Math.round((group.rows.length / totalRows) * 100) : 0;
+  return (
+    <section className={`flex min-h-0 flex-col rounded-2xl border border-l-4 bg-background-100/35 ${tone.row}`}>
+      <div className="border-b border-background-200 px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone.iconClass}`}>
+              <i className={`${group.icon} text-sm`}></i>
+            </span>
+            <div>
+              <h4 className="text-[12px] font-black uppercase text-foreground-800">{group.title}</h4>
+              <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">{percent}% of visible KSBs</p>
+            </div>
+          </div>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${tone.badgeClass}`}>{group.rows.length}</span>
+        </div>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
+          <div className={`h-full rounded-full ${group.key === 'S' ? 'bg-amber-400' : group.key === 'B' ? 'bg-emerald-400' : 'bg-primary-500'}`} style={{ width: `${Math.max(percent, group.rows.length ? 8 : 0)}%` }} />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        {group.rows.map(row => (
+          <ModuleKsbMapCard key={row.code} row={row} />
+        ))}
+        {!group.rows.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-8 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
+      </div>
+    </section>
+  );
+}
+
+function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
+  const kind = row.code.toUpperCase().slice(0, 1);
+  const tone = ksbVisualTone(kind);
+  const barColor = kind === 'S' ? 'bg-amber-400' : kind === 'B' ? 'bg-emerald-400' : 'bg-primary-500';
+  return (
+    <article className={`rounded-xl border bg-background-50 p-3 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md ${tone.selectedRow}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={`rounded-lg border px-2.5 py-1 text-[12px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${row.applied ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.locations.length} place${row.locations.length === 1 ? '' : 's'}` : 'Not mapped'}</span>
+            {row.classificationLabels.map(label => <span key={label} className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{label}</span>)}
+          </div>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${row.applied ? ksbCodeChipClass(row.code) : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.weight}%` : '0%'}</span>
+      </div>
+      <p className="mt-2 line-clamp-3 text-[12px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
+      <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-2">
+        <div className="h-2 overflow-hidden rounded-full bg-background-200">
+          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${row.applied ? Math.min(Math.max(row.weight, 4), 100) : 0}%` }} />
+        </div>
+        <span className="text-[9px] font-black text-foreground-500">Weight</span>
+      </div>
+      <div className="mt-3 space-y-2">
+        <ModuleKsbInfoBlock label="Source" value={row.source} title={row.sourceFull} icon="ri-database-2-line" />
+        {row.applied ? <div>
+          <p className="mb-1 flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
+            <i className="ri-map-pin-line text-[10px]"></i>
+            Used in
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {row.locations.slice(0, 3).map(location => (
+              <span key={location} className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-600">{location}</span>
+            ))}
+            {row.locations.length > 3 && <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-black text-foreground-500">+{row.locations.length - 3}</span>}
+          </div>
+        </div> : (
+          <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-2.5 py-2 text-[10px] font-bold text-foreground-400">
+            Not applied to any week or component yet.
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function ModuleKsbInfoBlock({ label, value, title, icon }: { label: string; value: string; title: string; icon: string }) {
+  return (
+    <div className="rounded-lg bg-background-100 px-2.5 py-2" title={title}>
+      <p className="flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
+        <i className={`${icon} text-[10px]`}></i>
+        {label}
+      </p>
+      <p className="mt-0.5 truncate text-[10px] font-bold text-foreground-700">{value || 'Not set'}</p>
     </div>
   );
 }
@@ -4996,6 +5203,25 @@ function ModuleDeliverySummary({ module }: { module: ModuleBuilderListItem }) {
   );
 }
 
+function hasAnyKsbMappings(module: ModuleCatalogueItem) {
+  return Boolean(
+    module.moduleKsbMappings.length ||
+    module.weekStructure.some(week => week.ksbMappings.length || week.components.some(component => component.ksbMappings.length)),
+  );
+}
+
+function mergeKsbStructureForReview(base: ModuleBuilderListItem, remote: ModuleCatalogueItem): ModuleBuilderListItem {
+  const remoteHasMappings = hasAnyKsbMappings(remote);
+  return {
+    ...base,
+    ...remote,
+    moduleKsbMappings: remote.moduleKsbMappings.length ? remote.moduleKsbMappings : base.moduleKsbMappings,
+    deliveryUsages: base.deliveryUsages,
+    ksbProfileSourceId: remote.ksbProfileSourceId || base.ksbProfileSourceId,
+    weekStructure: remoteHasMappings ? remote.weekStructure : (remote.weekStructure.length ? remote.weekStructure : base.weekStructure),
+  };
+}
+
 function buildMasterModuleList(remoteModules: ModuleCatalogueItem[], localModules: ModuleCatalogueItem[]): ModuleBuilderListItem[] {
   const masters = new Map<string, ModuleBuilderListItem>();
 
@@ -5042,6 +5268,25 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   const programme = cleanModuleMeta(module.programmeName).toLowerCase();
   if (!module.sourceModule) return `local::${programme}::${title || module.catalogueId}`;
   return `${programme || 'programme'}::${title || module.catalogueId}`;
+}
+
+function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
+  const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
+  const selectedKeys = [
+    programmeName,
+    selected?.name,
+    selected?.id,
+    selected?.sourceId,
+    selected?.standard,
+  ].map(normaliseDeepLinkValue).filter(Boolean);
+  const moduleKeys = [
+    module.programmeName,
+    module.programmeId,
+    module.sourceModule?.programme,
+    module.sourceModule?.programmeId,
+    ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
+  ].map(normaliseDeepLinkValue).filter(Boolean);
+  return moduleKeys.some(key => selectedKeys.includes(key));
 }
 
 function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage | null {
@@ -5209,7 +5454,6 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
     module.sourceModule?.structureId,
   ].map(value => String(value || '').trim()).find(isCanonicalModuleCatalogueId);
   if (canonicalId) return canonicalId;
-  // Temporary legacy fallback for unlinked Training_plan rows.
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
 }
@@ -5258,10 +5502,10 @@ function moduleListSubLabel(module: ModuleCatalogueItem) {
   const usages = (module as ModuleBuilderListItem).deliveryUsages || [];
   if (usages.length) {
     const deliveryWord = usages.length === 1 ? 'delivery' : 'deliveries';
-    return `Master module - used in ${usages.length} ${deliveryWord}`;
+    return `Scoped module - used in ${usages.length} ${deliveryWord}`;
   }
   const description = cleanModuleMeta(module.description);
-  return description || 'Master module - not attached to a delivery yet';
+  return description || 'Scoped module - not attached to a delivery yet';
 }
 
 function moduleDeliverySearchText(module: ModuleBuilderListItem) {
@@ -5414,11 +5658,23 @@ function clampKsbWeight(value: number) {
   return Math.max(0, Math.round(parsed * 100) / 100);
 }
 
+function clampPositiveKsbWeight(value: number, classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE) {
+  const weight = clampKsbWeight(value);
+  return weight > 0 ? weight : defaultKsbWeight(classification);
+}
+
 function normaliseKsbMappingType(value?: string): KsbMappingType {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'main' || raw === 'secondary' || raw === 'possible') return raw;
   if (raw === 'practice') return 'possible';
   return 'secondary';
+}
+
+function ksbClassificationLabel(value?: string) {
+  const classification = normaliseKsbMappingType(value);
+  if (classification === 'main') return 'Hard';
+  if (classification === 'secondary') return 'Soft';
+  return 'Possible';
 }
 
 function ksbMappingIdentity(value: Pick<KsbMapping, 'code' | 'sourceType' | 'sourceId'> | Pick<KsbOption, 'code' | 'sourceType' | 'sourceId'>) {
@@ -5514,61 +5770,71 @@ function moveById<T extends { id: string }>(items: T[], sourceId: string, target
   return next;
 }
 
-function moveComponent(weeks: ModuleWeek[], drag: { weekId: string; componentId: string }, targetWeekId: string, targetComponentId?: string): ModuleWeek[] {
-  let moved: ModuleComponent | null = null;
-  const without = weeks.map(week => {
-    if (week.id !== drag.weekId) return week;
-    moved = week.components.find(component => component.id === drag.componentId) || null;
-    return { ...week, components: week.components.filter(component => component.id !== drag.componentId) };
-  });
-  if (!moved) return weeks;
-  return without.map(week => {
-    if (week.id !== targetWeekId) return week;
-    const nextComponent = { ...moved, weekId: targetWeekId };
-    const targetIndex = targetComponentId ? week.components.findIndex(component => component.id === targetComponentId) : week.components.length;
-    const next = [...week.components];
-    next.splice(targetIndex < 0 ? next.length : targetIndex, 0, nextComponent);
-    return { ...week, components: next };
-  });
-}
-
 function uniqueMappings(mappings: KsbMapping[]) {
   const seen = new Set<string>();
   return mappings.filter(mapping => {
-    const key = String(mapping.code || '').trim().toUpperCase();
+    const key = ksbMappingIdentity(mapping);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 
-function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>) {
-  const rows = new Map<string, {
-    code: string;
-    description: string;
-    source: string;
-    sourceFull: string;
-    weight: number;
-    locations: string[];
-  }>();
+function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null): ModuleKsbMapRow[] {
+  const rows = new Map<string, ModuleKsbMapRow>();
+  const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
+  const fallbackSource = conciseKsbSourceLabel(fallbackSourceFull);
+  source?.options.forEach(option => {
+    const code = String(option.code || '').trim().toUpperCase();
+    if (!code) return;
+    const sourceId = String(option.sourceId || source.id || '').trim();
+    const key = ksbMappingIdentity({ code, sourceType: option.sourceType || (sourceId.startsWith('standard:') ? 'standard' : 'framework'), sourceId });
+    rows.set(key, {
+      code,
+      description: option.description || option.title || '',
+      source: fallbackSource,
+      sourceFull: fallbackSourceFull,
+      weight: 0,
+      locations: [],
+      applied: false,
+      classificationLabels: [],
+    });
+  });
   const addMapping = (mapping: KsbMapping, location: string) => {
     const code = String(mapping.code || '').trim().toUpperCase();
     if (!code) return;
+    if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
     const sourceFull = ksbSourceLabel(mapping, sourceLabels);
-    const source = conciseKsbSourceLabel(sourceFull);
-    const key = `${code}::${String(mapping.sourceId || sourceFull).trim()}`;
-    const current = rows.get(key) || {
+    const sourceLabel = conciseKsbSourceLabel(sourceFull);
+    const mappingSourceId = cleanKsbSourceId(mapping.sourceId);
+    const selectedSourceId = cleanKsbSourceId(source?.id);
+    if (selectedSourceId && mappingSourceId && mappingSourceId !== selectedSourceId) return;
+    const mappingKey = ksbMappingIdentity(mapping);
+    const selectedSourceKey = selectedSourceId
+      ? ksbMappingIdentity({
+        code,
+        sourceType: selectedSourceId.startsWith('standard:') ? 'standard' : 'framework',
+        sourceId: selectedSourceId,
+      })
+      : '';
+    const rowKey = rows.has(mappingKey) ? mappingKey : (selectedSourceKey && rows.has(selectedSourceKey) ? selectedSourceKey : mappingKey);
+    const current = rows.get(rowKey) || {
       code,
       description: mapping.description || '',
-      source,
-      sourceFull,
+      source: sourceLabel || fallbackSource,
+      sourceFull: sourceFull || fallbackSourceFull,
       weight: 0,
       locations: [],
+      applied: false,
+      classificationLabels: [],
     };
     current.weight += Number(mapping.weight || 0);
+    current.applied = true;
+    const classification = ksbClassificationLabel(mapping.classification || mapping.type);
+    if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
     if (!current.description && mapping.description) current.description = mapping.description;
     if (!current.locations.includes(location)) current.locations.push(location);
-    rows.set(key, current);
+    rows.set(rowKey, current);
   };
 
   module.moduleKsbMappings.forEach(mapping => addMapping(mapping, 'Module'));
@@ -5581,7 +5847,72 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     });
   });
 
-  return Array.from(rows.values()).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+  return Array.from(rows.values()).filter(row => row.applied).sort((a, b) => {
+    const codeSort = a.code.localeCompare(b.code, undefined, { numeric: true });
+    if (codeSort) return codeSort;
+    return a.source.localeCompare(b.source);
+  });
+}
+
+function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Record<string, string>, programmeName = ''): ModuleKsbMapRow[] {
+  const rows = new Map<string, ModuleKsbMapRow>();
+  const addMapping = (mapping: KsbMapping, location: string) => {
+    const code = String(mapping.code || '').trim().toUpperCase();
+    if (!code) return;
+    if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
+    const sourceFull = ksbSourceLabel(mapping, sourceLabels, programmeName);
+    const source = conciseKsbSourceLabel(sourceFull);
+    const key = `${code}::${normaliseDeepLinkValue(sourceFull) || normaliseDeepLinkValue(mapping.description) || 'source'}`;
+    const current = rows.get(key) || {
+      code,
+      description: mapping.description || '',
+      source,
+      sourceFull,
+      weight: 0,
+      locations: [],
+      applied: true,
+      classificationLabels: [],
+    };
+    current.weight += Number(mapping.weight || 0);
+    const classification = ksbClassificationLabel(mapping.classification || mapping.type);
+    if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
+    if (!current.description && mapping.description) current.description = mapping.description;
+    if (!current.locations.includes(location)) current.locations.push(location);
+    rows.set(key, current);
+  };
+
+  modules.forEach(module => {
+    const moduleLabel = module.title || module.programmeName || 'Module';
+    module.moduleKsbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / Module`));
+    module.weekStructure.forEach(week => {
+      const weekLabel = week.title || `Week ${week.weekNumber}`;
+      week.ksbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / ${weekLabel}`));
+      week.components.forEach(component => {
+        const componentLabel = readableComponentTitle(component.title) || 'Component';
+        component.ksbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / ${weekLabel} / ${componentLabel}`));
+      });
+    });
+  });
+
+  return Array.from(rows.values()).filter(hasReadableKsbSource).sort((a, b) => {
+    const codeSort = a.code.localeCompare(b.code, undefined, { numeric: true });
+    if (codeSort) return codeSort;
+    return a.source.localeCompare(b.source);
+  });
+}
+
+function isLegacyModuleLevelKsbFallback(mapping: KsbMapping, location: string) {
+  return (
+    /\/ Module$/i.test(location) &&
+    /^Mapped KSB\s+/i.test(String(mapping.description || '').trim())
+  );
+}
+
+function hasReadableKsbSource(row: Pick<ModuleKsbMapRow, 'source' | 'sourceFull'>) {
+  const source = String(row.source || '').trim().toLowerCase();
+  const sourceFull = String(row.sourceFull || '').trim().toLowerCase();
+  if (!source || source === 'no source' || !sourceFull || sourceFull === 'no source') return false;
+  return !/^profile\s*-\s*ksbp-/i.test(row.source) && !/^ksb profile:\s*ksbp-/i.test(row.sourceFull);
 }
 
 function componentDisplayTitle(title: string) {
@@ -5664,29 +5995,9 @@ function createNamedComponents(week: ModuleWeek, types: ModuleComponentType[]) {
   return types.map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
 }
 
-function cloneComponentForWeek(component: ModuleComponent, weekId: string, title: string): ModuleComponent {
-  const clonedId = createLocalComponentId();
-  return {
-    ...component,
-    id: clonedId,
-    weekId,
-    title,
-    settings: { ...(component.settings || {}) },
-    ksbMappings: component.ksbMappings.map(mapping => ({
-      ...mapping,
-      id: makeAuthoringId('KSBMAP'),
-    })),
-  };
-}
-
-function createLocalComponentId() {
-  return makeAuthoringId('COMP');
-}
-
 function componentTypeDescription(type: ModuleComponentType) {
   const descriptions: Record<ModuleComponentType, string> = {
     'live-session': 'Tutor-led session via Teams',
-    'recording-placeholder': 'Auto-published after live session',
     video: 'Upload or link a video',
     podcast: 'Upload audio or podcast link',
     reading: 'PDF, Word, or typed text',

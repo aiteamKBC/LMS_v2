@@ -43,20 +43,19 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
       { id: 'learner-absence-report', label: 'Absence Report', icon: 'ri-file-warning-line', href: '/learner/report-absence' },
-      { id: 'learner-catchup', label: 'Catch-up', icon: 'ri-timer-line', href: '/learner/catchup' },
     ],
   },
 
-  // Monthly Progress
+  // My Progress
   {
     id: 'learner-group-monthly',
-    label: 'Monthly Progress',
+    label: 'My Progress',
     icon: 'ri-loop-left-line',
     href: '',
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
@@ -92,8 +91,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/learner/knowledge-base' },
-      { id: 'learner-messages', label: 'Messages', icon: 'ri-mail-line', href: '/learner/messages', badge: 2 },
-      { id: 'learner-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },
@@ -119,7 +116,6 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
       { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports', badge: 3 },
-      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-timer-line', href: '/coach/catchup-queue', badge: 5 },
     ],
   },
   {
@@ -128,9 +124,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '',
     children: [
-      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue', badge: 12 },
-      { id: 'coach-ai-marking', label: 'AI-assisted Marking', icon: 'ri-robot-line', href: '/coach/ai-marking' },
-      { id: 'coach-evidence-validation', label: 'Evidence Validation', icon: 'ri-shield-check-line', href: '/coach/evidence-validation', badge: 14 },
+      { id: 'coach-marking-coming-soon', label: 'Coming Soon', icon: 'ri-edit-line', href: '/coach/marking-queue' },
     ],
   },
   {
@@ -140,7 +134,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable', badge: 20 },
-      { id: 'coach-meetings', label: 'Coaching Meetings', icon: 'ri-calendar-check-line', href: '/coach/meetings', badge: 8 },
+      { id: 'coach-meetings', label: 'Monthly Coache Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings', badge: 8 },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews', badge: 6 },
       { id: 'coach-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/coach/monthly-cycle' },
     ],
@@ -162,8 +156,6 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions', badge: 2 },
-      { id: 'coach-messages', label: 'Messages', icon: 'ri-mail-line', href: '/coach/messages', badge: 4 },
-      { id: 'coach-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
     ],
   },
   { id: 'coach-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/coach/reports' },
@@ -328,8 +320,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     children: [
       { id: 'curriculum-quiz-xml', label: 'Quiz Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
       { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
-      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=trash' },
-      { id: 'curriculum-test-banks', label: 'Test Banks', icon: 'ri-database-2-line', href: '/curriculum/test-banks' },
+      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=archive' },
       { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
     ],
   },

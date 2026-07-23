@@ -5,6 +5,8 @@ type LoadOptions = {
   silent?: boolean;
 };
 
+const MODULE_LOAD_RETRY_DELAY_MS = 400;
+
 type UseCurriculumModulesOptions = {
   autoLoad?: boolean;
 };
@@ -17,9 +19,25 @@ export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOp
   const load = useCallback((options: LoadOptions = {}) => {
     const controller = new AbortController();
     let mounted = true;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-    if (!options.silent) setLoading(true);
-    fetchCurriculumModules(controller.signal)
+    if (!options.silent) {
+      setLoading(true);
+      setError(null);
+    }
+
+    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(controller.signal)
+      .catch(error => {
+        if (controller.signal.aborted || retry) throw error;
+        return new Promise<CurriculumModule[]>((resolve, reject) => {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            fetchCurriculumModules(controller.signal).then(resolve, reject);
+          }, MODULE_LOAD_RETRY_DELAY_MS);
+        });
+      });
+
+    request(false)
       .then(result => {
         if (!mounted) return;
         setModules(result);
@@ -35,6 +53,7 @@ export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOp
 
     return () => {
       mounted = false;
+      if (retryTimer !== null) clearTimeout(retryTimer);
       controller.abort();
     };
   }, []);

@@ -25,7 +25,8 @@ interface QuestionBankProgramme {
   name: string;
   questionCount: number;
   quizCount: number;
-  trainingPlanRows: number;
+  moduleRows?: number;
+  trainingPlanRows?: number;
 }
 
 interface QuestionBankQuestion {
@@ -326,7 +327,7 @@ export default function QuestionBankPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-foreground-900 truncate">{programme.name}</p>
-                          <p className="text-[11px] text-[#647083] mt-1">{programme.quizCount} quizzes - {programme.trainingPlanRows} plan rows</p>
+                          <p className="text-[11px] text-[#647083] mt-1">{programme.quizCount} quizzes - {programme.moduleRows ?? programme.trainingPlanRows ?? 0} module rows</p>
                         </div>
                         <span className="text-xs font-bold text-[#5b2dbb] bg-white rounded-full px-2 py-1 shrink-0">{programme.questionCount}</span>
                       </div>

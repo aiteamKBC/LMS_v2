@@ -1,28 +1,8 @@
-import json
-import re
-
 from django.db import migrations, models
-
-
-def clean_str(value):
-    return str(value or '').strip()
-
-
-def slugify(value):
-    text = re.sub(r'[^a-z0-9]+', '-', clean_str(value).lower()).strip('-')
-    return text or 'staff'
 
 
 def table_name(connection, table):
     return f'curriculum."{table}"' if connection.vendor == 'postgresql' else f'"{table}"'
-
-
-def table_exists(cursor, connection, table):
-    if connection.vendor == 'postgresql':
-        cursor.execute('select to_regclass(%s)', [f'curriculum.{table}'])
-        return bool(cursor.fetchone()[0])
-    cursor.execute("select name from sqlite_master where type='table' and name=%s", [table])
-    return bool(cursor.fetchone())
 
 
 def create_staff_table(cursor, connection, table):
@@ -51,61 +31,6 @@ def create_staff_table(cursor, connection, table):
     cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(connection, table)} (status)')
 
 
-def copy_legacy_profiles(cursor, connection, target_table, legacy_table):
-    if not table_exists(cursor, connection, legacy_table):
-        return
-    cursor.execute(f'select * from {table_name(connection, legacy_table)}')
-    columns = [col[0] for col in cursor.description]
-    for source_row in cursor.fetchall():
-        row = dict(zip(columns, source_row))
-        name = clean_str(row.get('name') or row.get('Tutor_name') or row.get('Coach_name') or row.get('email'))
-        if not name:
-            continue
-        profile_id = clean_str(row.get('id')) or f'{target_table[:-1]}-{slugify(name)}'
-        payload = {
-            'id': profile_id,
-            'name': name,
-            'email': clean_str(row.get('email')),
-            'phone': clean_str(row.get('phone') or row.get('telephone')),
-            'job_title': clean_str(row.get('job_title') or row.get('role') or row.get('title')),
-            'status': clean_str(row.get('status')) or 'active',
-            'specialisms': json.dumps([]),
-            'assigned_module_ids': json.dumps([]),
-            'notes': clean_str(row.get('notes')),
-            'is_archived': False,
-        }
-        insert_profile(cursor, connection, target_table, payload)
-
-
-def insert_profile(cursor, connection, table, payload):
-    columns = list(payload)
-    placeholders = ', '.join(['%s'] * len(columns))
-    if connection.vendor == 'postgresql':
-        assignments = ', '.join(
-            f'"{column}" = excluded."{column}"'
-            for column in columns
-            if column != 'id'
-        )
-        cursor.execute(
-            f'''
-            insert into {table_name(connection, table)}
-            ({', '.join(f'"{column}"' for column in columns)})
-            values ({placeholders})
-            on conflict (id) do update set {assignments}, updated_at = current_timestamp
-            ''',
-            [payload[column] for column in columns],
-        )
-    else:
-        cursor.execute(
-            f'''
-            insert or replace into {table_name(connection, table)}
-            ({', '.join(f'"{column}"' for column in columns)})
-            values ({placeholders})
-            ''',
-            [payload[column] for column in columns],
-        )
-
-
 def create_staff_profile_tables(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
@@ -113,8 +38,6 @@ def create_staff_profile_tables(apps, schema_editor):
             cursor.execute('create schema if not exists curriculum')
         create_staff_table(cursor, connection, 'coaches')
         create_staff_table(cursor, connection, 'tutors')
-        copy_legacy_profiles(cursor, connection, 'coaches', 'coach_profiles')
-        copy_legacy_profiles(cursor, connection, 'tutors', 'tutor_profiles')
 
 
 def drop_staff_profile_tables(apps, schema_editor):

@@ -177,7 +177,7 @@ function buildKsbRows(data: CaseFileTabProps['data']): KsbRow[] {
       return {
         code,
         category: normalizeCategory(ksb.type, code),
-        description: ksb.description || 'No description provided.',
+        description: ksb.description || '--',
         status: passedAttempts.length > 0 ? 'passed-link' : linkedAttempts.length > 0 ? 'attempt-link' : 'unlinked',
         linkCount: linkedAttempts.length,
         passedCount: passedAttempts.length,
