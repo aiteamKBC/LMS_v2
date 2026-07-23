@@ -1250,6 +1250,8 @@ def monthly_event_type_label(event: dict) -> str:
         return "PR"
     if source == CATCH_UP_EVENT_TYPE:
         return "Catch-up"
+    if source == "student-support":
+        return "Support"
     return clean_text(event.get("title")) or "Session"
 
 
@@ -1273,6 +1275,8 @@ def build_monthly_activity_item(
     detail: str,
     tone: str,
     source: str,
+    status: str = "",
+    time_label: str = "",
 ) -> dict:
     return {
         "id": item_id,
@@ -1282,6 +1286,8 @@ def build_monthly_activity_item(
         "detail": detail,
         "tone": tone,
         "source": source,
+        "status": status,
+        "timeLabel": time_label,
     }
 
 
@@ -1300,7 +1306,6 @@ def build_monthly_activity_learner(
         event
         for event in events
         if monthly_event_matches_learner(event, learner)
-        and clean_text(event.get("status")).lower() != CoachCalendarEvent.STATUS_CANCELLED
     ]
 
     monthly_hours = round(sum(reported_minutes(entry.get("reportedTime")) for entry in monthly_progress) / 60, 1)
@@ -1315,7 +1320,12 @@ def build_monthly_activity_learner(
     }
     monthly_ksb_codes = completed_ksb_codes(monthly_progress, [])
 
-    event_sources = [clean_text(event.get("source")).lower() for event in learner_events]
+    active_learner_events = [
+        event
+        for event in learner_events
+        if clean_text(event.get("status")).lower() != CoachCalendarEvent.STATUS_CANCELLED
+    ]
+    event_sources = [clean_text(event.get("source")).lower() for event in active_learner_events]
     mcm_count = event_sources.count("mcr")
     review_count = event_sources.count("progress-review")
     catchup_count = event_sources.count(CATCH_UP_EVENT_TYPE)
@@ -1347,6 +1357,8 @@ def build_monthly_activity_learner(
                 detail=f"{monthly_status_label(clean_text(event.get('status')))} - {clean_text(event.get('timeLabel')) or 'Time TBC'}",
                 tone=monthly_event_tone(event),
                 source="calendar",
+                status=clean_text(event.get("status")),
+                time_label=clean_text(event.get("timeLabel")) or "Time TBC",
             )
         )
 
@@ -1436,7 +1448,7 @@ def build_monthly_activity_learner(
             "reflections": reflections,
         },
         "coaching": {
-            "total": len(learner_events),
+            "total": len(active_learner_events),
             "booked": booked_count,
             "needsSchedule": needs_schedule_count,
             "mcm": mcm_count,
