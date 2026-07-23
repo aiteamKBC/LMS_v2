@@ -412,6 +412,7 @@ def _serialize_quiz(quiz):
         "mappedComponents": quiz.mapped_components,
         "author": quiz.author,
         "linkedCourses": quiz.linked_courses,
+        "linkedGroups": getattr(quiz, "_linked_group_count", None),
         "shortDescription": quiz.short_description,
         "lessonContent": quiz.lesson_content,
         "duration": quiz.duration,
@@ -1242,6 +1243,16 @@ def _quiz_component_options(quiz):
         week_label = f"Week {week_number}" if week_number else ""
         label_parts = [module_title, week_label, title]
         context_parts = [part for part in (programme_name or component_programme_id, cohort_name, group_name) if part]
+        # Delivery groups the author assigned to this quiz component in the Week
+        # / Module Builder (stored on the component's own settings). These are
+        # what the Quiz Workspace popup surfaces; fall back to the module-level
+        # group only when no explicit assignment was made.
+        raw_group_names = settings_json.get("selectedGroupNames")
+        assigned_groups = (
+            [str(name).strip() for name in raw_group_names if str(name).strip()]
+            if isinstance(raw_group_names, list)
+            else []
+        )
         options.append({
             "id": component_id,
             "componentId": component_id,
@@ -1257,10 +1268,102 @@ def _quiz_component_options(quiz):
             "week": week_number or "",
             "cohort": cohort_name or "",
             "group": group_name or "",
+            "groups": assigned_groups,
+            "source": "module",
             "startDate": "",
             "context": " - ".join(context_parts),
         })
     return options
+
+
+def _quiz_week_template_options(quiz):
+    """Quiz/checkpoint components inside Week Builder templates that link to this
+    quiz. These live in their own ``week_template_components`` table (separate
+    from module authoring), so the module-scoped lookup above never sees them —
+    a quiz used only in a (free or paid) week template would otherwise read as
+    "not linked". Matched purely by the explicit ``linkedQuizId`` the Week
+    Builder stores; free templates carry no programme/module/cohort scope."""
+    if not _curriculum_table_exists("week_template_components"):
+        return []
+    quiz_id = str(quiz.id)
+    has_templates = _curriculum_table_exists("week_templates")
+    try:
+        with connection.cursor() as cursor:
+            if has_templates:
+                cursor.execute(
+                    """
+                    select c.id, c.title, c.type, c.settings_json,
+                           t.title, t.programme_name, t.course_type, t.group_name, t.module_catalogue_id
+                    from curriculum."week_template_components" c
+                    left join curriculum."week_templates" t on t.id = c.week_template_id
+                    where lower(coalesce(c.type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+            else:
+                cursor.execute(
+                    """
+                    select id, title, type, settings_json,
+                           null, null, null, null, null
+                    from curriculum."week_template_components"
+                    where lower(coalesce(type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+            rows = cursor.fetchall()
+    except Exception:
+        return []
+
+    options = []
+    for component_id, title, component_type, settings_json, template_title, programme_name, course_type, group_name, module_catalogue_id in rows:
+        component_id = str(component_id or "")
+        if isinstance(settings_json, str):
+            try:
+                settings_json = json.loads(settings_json or "{}")
+            except json.JSONDecodeError:
+                settings_json = {}
+        if not isinstance(settings_json, dict):
+            settings_json = {}
+        if str(settings_json.get("linkedQuizId") or "").strip() != quiz_id:
+            continue
+        raw_group_names = settings_json.get("selectedGroupNames")
+        assigned_groups = (
+            [str(name).strip() for name in raw_group_names if str(name).strip()]
+            if isinstance(raw_group_names, list)
+            else []
+        )
+        title = title or "Quiz component"
+        is_free = str(course_type or "").strip().lower() == "free"
+        template_label = template_title or "Week template"
+        programme = programme_name or ("Free course" if is_free else "")
+        options.append({
+            "id": component_id,
+            "componentId": component_id,
+            "label": " - ".join(part for part in (template_label, title) if part),
+            "programme": programme,
+            "programmeId": "",
+            "module": template_label,
+            "moduleCatalogueId": module_catalogue_id or "",
+            "component": title,
+            "componentType": component_type or "quiz",
+            "linkedQuizId": quiz_id,
+            "weekId": "",
+            "week": "",
+            "cohort": "",
+            "group": group_name or "",
+            "groups": assigned_groups,
+            "source": "week-template",
+            "startDate": "",
+            "context": template_label,
+        })
+    return options
+
+
+def _merge_quiz_component_options(quiz):
+    """Module-authoring components + Week Builder template components, deduped by
+    id (module ids and template ids don't overlap in practice, but guard anyway)."""
+    merged = {}
+    for option in _quiz_component_options(quiz) + _quiz_week_template_options(quiz):
+        merged.setdefault(str(option["id"]), option)
+    return list(merged.values())
 
 
 def _infer_quiz_component_link_ids(quiz, options):
@@ -1308,14 +1411,29 @@ def _infer_quiz_component_link_ids(quiz, options):
     return set()
 
 
+def _distinct_group_count(options, selected_ids):
+    """Distinct delivery groups (case-insensitive) assigned across the selected
+    quiz components — this is the number the Quiz Workspace shows in its list."""
+    names = set()
+    for option in options:
+        if str(option["id"]) not in selected_ids:
+            continue
+        for name in (option.get("groups") or []):
+            cleaned = str(name).strip()
+            if cleaned:
+                names.add(cleaned.lower())
+    return len(names)
+
+
 def _sync_quiz_linked_component_count(quiz):
     try:
         _ensure_quiz_component_links_table()
-        options = _quiz_component_options(quiz)
+        options = _merge_quiz_component_options(quiz)
         valid_ids = {str(option["id"]) for option in options}
         selected_ids = set(_quiz_component_link_ids(quiz.id)) & valid_ids
         if not selected_ids:
             selected_ids = _infer_quiz_component_link_ids(quiz, options) & valid_ids
+        quiz._linked_group_count = _distinct_group_count(options, selected_ids)
     except Exception:
         return quiz
 
@@ -1333,6 +1451,7 @@ def _sync_quiz_linked_component_counts(quizzes):
 
     quiz_ids = {str(quiz.id) for quiz in quizzes}
     linked_component_ids = defaultdict(set)
+    linked_group_names = defaultdict(set)
     components_table = _first_existing_curriculum_table("components", "module_authoring_components")
     if components_table and _curriculum_column_exists(components_table, "settings_json"):
         try:
@@ -1355,6 +1474,44 @@ def _sync_quiz_linked_component_counts(quizzes):
                     linked_quiz_id = str(settings_json.get("linkedQuizId") or "").strip()
                     if linked_quiz_id in quiz_ids:
                         linked_component_ids[linked_quiz_id].add(str(component_id))
+                        raw_groups = settings_json.get("selectedGroupNames")
+                        if isinstance(raw_groups, list):
+                            for name in raw_groups:
+                                cleaned = str(name).strip()
+                                if cleaned:
+                                    linked_group_names[linked_quiz_id].add(cleaned.lower())
+        except Exception:
+            pass
+
+    # Week Builder template components (their own table) linked by linkedQuizId,
+    # so a quiz used only in a week template still counts on the list.
+    if _curriculum_table_exists("week_template_components"):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select id, settings_json
+                    from curriculum."week_template_components"
+                    where lower(coalesce(type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+                for component_id, settings_json in cursor.fetchall():
+                    if isinstance(settings_json, str):
+                        try:
+                            settings_json = json.loads(settings_json or "{}")
+                        except json.JSONDecodeError:
+                            settings_json = {}
+                    if not isinstance(settings_json, dict):
+                        continue
+                    linked_quiz_id = str(settings_json.get("linkedQuizId") or "").strip()
+                    if linked_quiz_id in quiz_ids:
+                        linked_component_ids[linked_quiz_id].add(str(component_id))
+                        raw_groups = settings_json.get("selectedGroupNames")
+                        if isinstance(raw_groups, list):
+                            for name in raw_groups:
+                                cleaned = str(name).strip()
+                                if cleaned:
+                                    linked_group_names[linked_quiz_id].add(cleaned.lower())
         except Exception:
             pass
 
@@ -1373,6 +1530,7 @@ def _sync_quiz_linked_component_counts(quizzes):
 
     for quiz in quizzes:
         count = len(linked_component_ids.get(str(quiz.id), set()))
+        quiz._linked_group_count = len(linked_group_names.get(str(quiz.id), set()))
         if count and quiz.linked_courses != count:
             quiz.linked_courses = count
             quiz.save(update_fields=["linked_courses", "updated_at"])
@@ -2841,7 +2999,7 @@ def quiz_course_links(request, pk):
         return JsonResponse({"error": f"Could not prepare course links table: {exc}"}, status=500)
 
     programme = quiz.programme or _training_plan_programme_for_id(quiz.programme_id)
-    component_options = _quiz_component_options(quiz)
+    component_options = _merge_quiz_component_options(quiz)
     if request.method == "PATCH":
         try:
             payload = json.loads(request.body or "{}")
@@ -2890,6 +3048,8 @@ def quiz_course_links(request, pk):
     if quiz.linked_courses != len(selected_ids):
         quiz.linked_courses = len(selected_ids)
         quiz.save(update_fields=["linked_courses", "updated_at"])
+
+    quiz._linked_group_count = _distinct_group_count(component_options, selected_ids)
 
     return JsonResponse({
         "programme": programme or "",
