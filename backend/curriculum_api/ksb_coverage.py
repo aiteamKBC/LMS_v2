@@ -212,7 +212,7 @@ def coverage_sort_key(identity):
     return (ksb_sort_key(code), source_type, source_id)
 
 
-def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows):
+def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows, include_mapping_only=True):
     modules_by_id = {clean(row.get('module_catalogue_id')): row for row in module_rows}
     module_authoring_weeks_by_id = {clean(row.get('id')): row for row in week_rows}
     components_by_id = {clean(row.get('id')): row for row in component_rows}
@@ -232,10 +232,11 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         if definition['code']:
             definitions_by_identity[coverage_identity(definition)] = definition
 
-    for mapping in serialised_mappings:
-        identity = coverage_identity(mapping)
-        if mapping['code'] and identity not in definitions_by_identity:
-            definitions_by_identity[identity] = required_definition_from_mapping(mapping)
+    if include_mapping_only:
+        for mapping in serialised_mappings:
+            identity = coverage_identity(mapping)
+            if mapping['code'] and identity not in definitions_by_identity:
+                definitions_by_identity[identity] = required_definition_from_mapping(mapping)
 
     by_identity = defaultdict(list)
     for mapping in serialised_mappings:

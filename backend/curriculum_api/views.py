@@ -3101,11 +3101,10 @@ def split_ksb_source(source_type='', source_id=''):
     return raw_source_type, raw_source_id
 
 
-def standard_required_ksbs(identifier):
-    standard = find_skills_england_standard(identifier)
+def standard_required_ksb_definitions(standard, fallback_id=''):
     if not standard:
         return []
-    source_id = standard.get('id') or identifier
+    source_id = standard.get('id') or fallback_id
     return [
         {
             'ksb_id': f'{source_id}:{ksb.get("code")}',
@@ -3118,6 +3117,27 @@ def standard_required_ksbs(identifier):
         }
         for ksb in standard.get('ksbs') or []
     ]
+
+
+def standard_required_ksbs(identifier):
+    return standard_required_ksb_definitions(find_skills_england_standard(identifier), identifier)
+
+
+def all_standard_required_ksbs():
+    definitions = []
+    seen = set()
+    for standard in build_skills_england_standards():
+        for definition in standard_required_ksb_definitions(standard, standard.get('id')):
+            identity = (
+                clean_str(definition.get('source_type')).lower(),
+                clean_str(definition.get('source_id')).lower(),
+                coverage_normalise_code(definition.get('code')),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            definitions.append(definition)
+    return definitions
 
 
 def profile_required_ksbs(identifier):
@@ -3160,8 +3180,31 @@ def profile_required_ksbs(identifier):
     return definitions
 
 
+def all_profile_required_ksbs(active_only=True):
+    definitions = []
+    seen = set()
+    for row in get_ksb_profile_rows():
+        if active_only and not truthy(row.get('is_active')):
+            continue
+        for definition in profile_required_ksbs(ksb_profile_source_id(row)):
+            identity = (
+                clean_str(definition.get('source_type')).lower(),
+                clean_str(definition.get('source_id')).lower(),
+                coverage_normalise_code(definition.get('code')),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            definitions.append(definition)
+    return definitions
+
+
 def required_ksbs_for_source(source_type='', source_id=''):
     source_type, source_id = split_ksb_source(source_type, source_id)
+    if source_type == 'standard' and not source_id:
+        return all_standard_required_ksbs()
+    if source_type in {'framework', 'profile'} and not source_id:
+        return all_profile_required_ksbs()
     if source_type == 'standard' and source_id:
         return standard_required_ksbs(source_id)
     if source_type in {'framework', 'profile'} and source_id:
@@ -8521,13 +8564,19 @@ def infer_source_from_scope(module_rows):
     return '', ''
 
 
-def required_ksbs_for_request(request, module_rows):
+def required_ksbs_for_request(request, module_rows, scope=''):
     source_type, source_id = split_ksb_source(
         request.GET.get('source_type') or request.GET.get('sourceType') or '',
         request.GET.get('source_id') or request.GET.get('sourceId') or '',
     )
+    if source_type and not source_id:
+        return required_ksbs_for_source(source_type, source_id)
+    if not source_type and not source_id and not scope:
+        return all_profile_required_ksbs()
     if not source_type or not source_id:
         source_type, source_id = infer_source_from_scope(module_rows)
+    if not source_type or not source_id:
+        return all_profile_required_ksbs()
     return required_ksbs_for_source(source_type, source_id)
 
 
@@ -8536,7 +8585,15 @@ def coverage_response(request, scope='', identifier=''):
     if identifier and scope in {'module', 'week', 'component', 'programme', 'cohort'} and not module_rows:
         return json_error(f'{scope.title()} not found.', status=404)
     mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
-    coverage = annotate_coverage_sources(build_coverage(required_ksbs_for_request(request, module_rows), mapping_rows, module_rows, week_rows, component_rows))
+    required_ksbs = required_ksbs_for_request(request, module_rows, scope)
+    coverage = annotate_coverage_sources(build_coverage(
+        required_ksbs,
+        mapping_rows,
+        module_rows,
+        week_rows,
+        component_rows,
+        include_mapping_only=not bool(required_ksbs),
+    ))
     return JsonResponse({
         'scope': scope or 'all',
         'identifier': identifier,

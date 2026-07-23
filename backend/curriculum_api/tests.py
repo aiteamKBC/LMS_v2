@@ -4,6 +4,7 @@ from django.db import connection
 from django.test import Client, TestCase
 
 from . import views
+from .ksb_coverage import build_coverage
 
 
 class CurriculumPersistenceTests(TestCase):
@@ -198,6 +199,33 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(module['tutor_name'], 'Tutor One')
         self.assertEqual(component['module_catalogue_id'], 'MOD-DATA-1')
         self.assertEqual(mapping['component_id'], 'COMP-DATA-1')
+
+    def test_global_ksb_coverage_uses_framework_definitions(self):
+        response = self.client.get('/curriculum_api/curriculum/ksb-coverage/')
+        self.assertEqual(response.status_code, 200, response.content)
+
+        payload = response.json()
+        self.assertEqual(payload['scope'], 'all')
+        self.assertEqual(payload['summary']['overall']['required'], 1)
+        self.assertEqual(payload['summary']['overall']['missing'], 1)
+        self.assertEqual(payload['items'][0]['code'], 'K1')
+        self.assertEqual(payload['items'][0]['source_id'], 'KSBP-DATA')
+
+    def test_required_count_can_exclude_mapping_only_ksbs(self):
+        coverage = build_coverage(
+            [{'code': 'K1', 'type': 'knowledge', 'source_type': 'framework', 'source_id': 'KSBP-DATA'}],
+            [
+                {'id': 'MAP-1', 'module_catalogue_id': 'MOD-1', 'ksb_code': 'K1', 'source_type': 'framework', 'source_id': 'KSBP-DATA', 'weight': 100},
+                {'id': 'MAP-2', 'module_catalogue_id': 'MOD-1', 'ksb_code': 'K99', 'source_type': 'framework', 'source_id': 'KSBP-DATA', 'weight': 100},
+            ],
+            [{'module_catalogue_id': 'MOD-1', 'title': 'Module 1'}],
+            [],
+            [],
+            include_mapping_only=False,
+        )
+
+        self.assertEqual(coverage['summary']['overall']['required'], 1)
+        self.assertEqual([item['code'] for item in coverage['items']], ['K1'])
 
     def test_add_cohort_without_archiving_existing_when_hydration_incomplete(self):
         first = self.tree_payload()

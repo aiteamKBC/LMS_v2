@@ -95,6 +95,7 @@ type KsbHeatmapRow = {
   id?: string;
   ksb: string;
   title: string;
+  description?: string;
   coverage: Record<string, number | null>;
   counts?: Record<string, number>;
   evidence?: Record<string, KsbEvidenceItem[]>;
@@ -1073,7 +1074,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   const emptyCounts = moduleNames.reduce<Record<string, number>>((counts, label) => ({ ...counts, [label]: 0 }), {});
   const emptyEvidence = moduleNames.reduce<Record<string, KsbEvidenceItem[]>>((evidence, label) => ({ ...evidence, [label]: [] }), {});
   const ksbSetSourceId = ksbSetSourceIdForProgrammeDetail(ksbSet);
-  const ksbDefinitions = new Map<string, { code: string; title: string; modules: string[]; sourceType?: string; sourceId?: string }>();
+  const ksbDefinitions = new Map<string, { code: string; title: string; description: string; modules: string[]; sourceType?: string; sourceId?: string }>();
   ksbEntries.forEach(entry => {
     const code = ksbKey(entry.code);
     if (!code) return;
@@ -1082,7 +1083,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     const key = ksbRollupIdentity({ code, sourceType, sourceId });
     ksbDefinitions.set(key, {
       code,
-      title: entry.title || entry.description || code,
+      title: entry.title || code,
+      description: entry.description || entry.title || '',
       modules: entry.modules || [],
       sourceType,
       sourceId,
@@ -1093,7 +1095,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       const code = ksbKey(mapping.ksb);
       const key = ksbRollupIdentity(mapping);
       if (!code || ksbDefinitions.has(key)) return;
-      ksbDefinitions.set(key, { code, title: code, modules: [], sourceType: mapping.sourceType, sourceId: mapping.sourceId });
+      ksbDefinitions.set(key, { code, title: code, description: '', modules: [], sourceType: mapping.sourceType, sourceId: mapping.sourceId });
     });
   });
   const ksbHeatmap = [...ksbDefinitions.values()].sort((left, right) => sortKsbCodes(left.code, right.code)).map(definition => {
@@ -1120,6 +1122,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       id: definition.code,
       ksb: definition.code,
       title: definition.title,
+      description: definition.description,
       coverage,
       counts,
       evidence,
@@ -2450,16 +2453,6 @@ export default function ProgrammeDetailPage() {
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
                 <p className="text-[12px] text-foreground-400 mt-1">Rolled up from component KSB mappings into weeks, modules and programme coverage. Empty cells indicate the KSB is not addressed in that module.</p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => openKsbTrace('coverage')} disabled={!PROGRAMME.ksbHeatmap.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50">
-                  <i className="ri-dashboard-3-line"></i>
-                  KSB Coverage Summary
-                </button>
-                <button type="button" onClick={() => openKsbTrace('trace')} disabled={!PROGRAMME.ksbHeatmap.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-                  <i className="ri-route-line"></i>
-                  KSB Trace
-                </button>
-              </div>
             </div>
             {backendCoverageLoading ? (
               <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600">
@@ -3173,6 +3166,7 @@ function backendCoverageToProgrammeHeatmap(
       id,
       ksb: row.code,
       title: row.title || row.code,
+      description: row.description || '',
       coverage: rowCoverage,
       counts,
       evidence,
@@ -3325,8 +3319,7 @@ function ksbRowId(row: Pick<KsbHeatmapRow, 'id' | 'ksb' | 'sourceType' | 'source
   return clean(row.id) || [row.sourceType, row.sourceId, row.ksb].map(normalise).join('|') || row.ksb;
 }
 
-function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programme; initialTab: KsbTraceTab; onClose: () => void }) {
-  const [tab, setTab] = useState<KsbTraceTab>(initialTab);
+function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTab: KsbTraceTab; onClose: () => void }) {
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | KsbKind>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | KsbCoverageState>('all');
@@ -3334,7 +3327,6 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
   const [weekFilter, setWeekFilter] = useState('all');
   const [componentFilter, setComponentFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
-  const [selectedCode, setSelectedCode] = useState(programme.ksbHeatmap[0] ? ksbRowId(programme.ksbHeatmap[0]) : '');
 
   const evidenceByCode = useMemo(() => {
     const map = new Map<string, KsbTraceEvidence[]>();
@@ -3346,10 +3338,6 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
   const weekOptions = useMemo(() => uniqueCleanValues(allEvidence.map(item => item.week)), [allEvidence]);
   const componentOptions = useMemo(() => uniqueCleanValues(allEvidence.map(item => item.component)), [allEvidence]);
   const groupOptions = useMemo(() => uniqueCleanValues(allEvidence.flatMap(item => item.groups)), [allEvidence]);
-
-  useEffect(() => {
-    if (!selectedCode && programme.ksbHeatmap[0]) setSelectedCode(ksbRowId(programme.ksbHeatmap[0]));
-  }, [programme.ksbHeatmap, selectedCode]);
 
   const filteredRows = useMemo(() => {
     const query = normalise(search);
@@ -3373,13 +3361,7 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
     });
   }, [programme.ksbHeatmap, evidenceByCode, search, kindFilter, statusFilter, moduleFilter, weekFilter, componentFilter, groupFilter]);
 
-  const selectedRow = programme.ksbHeatmap.find(row => ksbRowId(row) === selectedCode) || filteredRows[0] || programme.ksbHeatmap[0] || null;
   const summary = ksbTraceSummary(programme.ksbHeatmap);
-  const tabs: Array<{ key: KsbTraceTab; label: string; icon: string }> = [
-    { key: 'map', label: 'Map', icon: 'ri-node-tree' },
-    { key: 'coverage', label: 'Coverage', icon: 'ri-dashboard-3-line' },
-    { key: 'trace', label: 'Trace', icon: 'ri-route-line' },
-  ];
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
@@ -3387,20 +3369,13 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
         <div className="bg-primary-950 px-5 py-4 text-white">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Curriculum KSB Trace</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Curriculum KSB Coverage</p>
               <h3 className="mt-0.5 text-base font-heading font-bold text-white">{programme.name}</h3>
               <p className="mt-1 text-[12px] font-semibold text-white/70">{programme.standard || 'Selected KSB profile'}</p>
             </div>
             <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 lg:self-start">
               <i className="ri-close-line"></i>
             </button>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {tabs.map(item => (
-              <button key={item.key} type="button" onClick={() => setTab(item.key)} className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth ${tab === item.key ? 'bg-white text-primary-900' : 'bg-white/10 text-white hover:bg-white/20'}`}>
-                <i className={item.icon}></i>{item.label}
-              </button>
-            ))}
           </div>
         </div>
 
@@ -3429,9 +3404,7 @@ function KsbTraceModal({ programme, initialTab, onClose }: { programme: Programm
             <p className="mt-3 text-[11px] font-semibold text-foreground-400">{filteredRows.length} of {programme.ksbHeatmap.length} KSBs shown</p>
           </div>
 
-          {tab === 'map' && <KsbTraceMapView rows={filteredRows} evidenceByCode={evidenceByCode} onTrace={(code) => { setSelectedCode(code); setTab('trace'); }} />}
-          {tab === 'coverage' && <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} onTrace={(code) => { setSelectedCode(code); setTab('trace'); }} />}
-          {tab === 'trace' && <KsbTraceDetailView rows={filteredRows} selectedRow={selectedRow} evidence={selectedRow ? evidenceByCode.get(ksbRowId(selectedRow)) || [] : []} onSelectCode={setSelectedCode} />}
+          <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} />
         </div>
       </div>
     </div>
@@ -3461,51 +3434,7 @@ function KsbTraceSelect({ value, onChange, options, labels = {} }: { value: stri
   );
 }
 
-function KsbTraceMapView({ rows, evidenceByCode, onTrace }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]>; onTrace: (code: string) => void }) {
-  if (!rows.length) return <EmptyPanel title="No KSBs match" message="Adjust the filters to see mapped KSBs." />;
-  return (
-    <div className="overflow-hidden rounded-2xl border border-background-200 bg-background-50">
-      <div className="grid grid-cols-[220px_1fr_140px] gap-3 border-b border-background-200 bg-background-100 px-4 py-3 text-[10px] font-bold uppercase text-foreground-400">
-        <span>KSB outcome</span>
-        <span>Mapped locations</span>
-        <span className="text-right">Action</span>
-      </div>
-      <div className="divide-y divide-background-200">
-        {rows.map(row => {
-          const rowId = ksbRowId(row);
-          const evidence = evidenceByCode.get(rowId) || [];
-          return (
-            <div key={rowId} className="grid grid-cols-[220px_1fr_140px] gap-3 px-4 py-3">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <KsbBadge code={row.ksb} />
-                  <CoverageStateBadge state={ksbCoverageState(row)} />
-                  {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[11px] font-medium text-foreground-600">{row.title}</p>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {evidence.length ? evidence.slice(0, 8).map((item, index) => (
-                  <span key={`${rowId}-${index}`} className="rounded-md border border-background-200 bg-background-100 px-2 py-1 text-[10px] font-semibold text-foreground-600">
-                    <span className="font-bold text-foreground-900">{item.module}</span>
-                    {item.week && <span> / {item.week}</span>}
-                    {item.component && <span> / {item.component}</span>}
-                  </span>
-                )) : <span className="text-[11px] font-semibold text-foreground-300">Not mapped yet</span>}
-                {evidence.length > 8 && <span className="text-[10px] font-bold text-foreground-400">+{evidence.length - 8} more</span>}
-              </div>
-              <div className="flex justify-end">
-                <button type="button" onClick={() => onTrace(rowId)} className="h-8 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">Trace</button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function KsbCoverageSummaryView({ rows, evidenceByCode, onTrace }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]>; onTrace: (code: string) => void }) {
+function KsbCoverageSummaryView({ rows, evidenceByCode }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]> }) {
   if (!rows.length) return <EmptyPanel title="No KSB coverage" message="No KSBs match the current filters." />;
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -3522,8 +3451,9 @@ function KsbCoverageSummaryView({ rows, evidenceByCode, onTrace }: { rows: KsbHe
                 const rowId = ksbRowId(row);
                 const evidence = evidenceByCode.get(rowId) || [];
                 const state = ksbCoverageState(row);
+                const description = ksbDescriptionText(row);
                 return (
-                  <button key={rowId} type="button" onClick={() => onTrace(rowId)} className={`w-full rounded-xl border p-3 text-left transition-smooth hover:border-primary-200 ${state === 'missing' ? 'border-red-100 bg-red-50/35' : state === 'mapped' ? 'border-slate-200 bg-slate-50/60' : 'border-emerald-100 bg-emerald-50/35'}`}>
+                  <article key={rowId} className={`w-full rounded-xl border p-3 text-left ${state === 'missing' ? 'border-red-100 bg-red-50/35' : state === 'mapped' ? 'border-slate-200 bg-slate-50/60' : 'border-emerald-100 bg-emerald-50/35'}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -3531,7 +3461,7 @@ function KsbCoverageSummaryView({ rows, evidenceByCode, onTrace }: { rows: KsbHe
                           <CoverageStateBadge state={state} />
                           {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
                         </div>
-                        <p className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-foreground-700">{row.title}</p>
+                        <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-foreground-700">{description}</p>
                       </div>
                       <span className="rounded-lg bg-background-50 px-2 py-1 text-center text-[10px] font-bold text-foreground-600">
                         <span className="block text-[9px] uppercase text-foreground-400">Times</span>
@@ -3539,7 +3469,7 @@ function KsbCoverageSummaryView({ rows, evidenceByCode, onTrace }: { rows: KsbHe
                       </span>
                     </div>
                     <KsbTraceMiniMeta evidence={evidence} />
-                  </button>
+                  </article>
                 );
               })}
               {!kindRows.length && <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-center text-[11px] font-semibold text-foreground-300">No {ksbKindLabel(kind).toLowerCase()} KSBs.</p>}
@@ -3622,6 +3552,15 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
       </section>
     </div>
   );
+}
+
+function ksbDescriptionText(row: KsbHeatmapRow) {
+  const code = normalise(row.ksb);
+  const title = clean(row.title);
+  const description = clean(row.description);
+  if (description && normalise(description) !== code) return description;
+  if (title && normalise(title) !== code) return title;
+  return 'No KSB description supplied.';
 }
 
 function KsbTraceMiniMeta({ evidence }: { evidence: KsbTraceEvidence[] }) {
