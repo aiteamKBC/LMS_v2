@@ -83,6 +83,7 @@ interface QuizPackage {
   weekId?: string;
   author: string;
   linkedCourses: number;
+  linkedGroups?: number;
   updatedAt: string;
 }
 
@@ -169,6 +170,8 @@ interface QuizCourseLinkOption {
   week?: string | number;
   cohort: string;
   group?: string;
+  groups?: string[];
+  source?: string;
   context?: string;
   startDate: string;
   selected: boolean;
@@ -846,6 +849,15 @@ function statusClasses(status: QuizStatus) {
 function statusLabel(status: QuizStatus | 'all') {
   if (status === 'validating') return 'Pending';
   return statusOptions.find(option => option.value === status)?.label || status;
+}
+
+// The workspace "Linked" column shows both the team's original linked-course
+// count and the newer assigned-groups count, e.g. "1 course · 22 groups". The
+// group half is omitted when the backend hasn't computed it (older payloads).
+function formatLinkedSummary(courses: number, groups?: number) {
+  const courseText = `${courses} course${courses === 1 ? '' : 's'}`;
+  if (typeof groups !== 'number') return courseText;
+  return `${courseText} · ${groups} group${groups === 1 ? '' : 's'}`;
 }
 
 function serializeEditorQuestions(questions: QuizPreviewQuestion[]) {
@@ -2009,9 +2021,9 @@ export default function QuizXmlWorkspacePage() {
                           }}
                           className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
                           disabled={courseLinksLoadingId === quiz.id}
-                          title="View linked courses"
+                          title="View linked courses and assigned groups"
                         >
-                          {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                          {courseLinksLoadingId === quiz.id ? '...' : formatLinkedSummary(quiz.linkedCourses, quiz.linkedGroups)}
                         </button>
                       </div>
                       <div className="rounded-lg bg-background-100/80 px-3 py-2">
@@ -2058,7 +2070,7 @@ export default function QuizXmlWorkspacePage() {
                 <tr className="border-b border-foreground-300/50 bg-background-100/60">
                   <th className="px-4 py-3 w-10"></th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Title</th>
-                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Linked Courses</th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Linked</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Date</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Author</th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-foreground-500">Package</th>
@@ -2084,9 +2096,9 @@ export default function QuizXmlWorkspacePage() {
                         onClick={() => void openLinkedCourses(quiz)}
                         className="font-semibold text-primary-600 hover:text-primary-700 hover:underline disabled:cursor-wait disabled:opacity-60"
                         disabled={courseLinksLoadingId === quiz.id}
-                        title="View linked courses"
+                        title="View linked courses and assigned groups"
                       >
-                        {courseLinksLoadingId === quiz.id ? '...' : quiz.linkedCourses}
+                        {courseLinksLoadingId === quiz.id ? '...' : formatLinkedSummary(quiz.linkedCourses, quiz.linkedGroups)}
                       </button>
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground-700">
@@ -2180,57 +2192,98 @@ export default function QuizXmlWorkspacePage() {
           )}
         </div>
 
-        {courseLinksData && (
+        {courseLinksData && (() => {
+          const linkedCourses = courseLinksData.courses.filter(course => course.selected);
+          // The delivery groups the author assigned to each component (the
+          // multi-select). This is what the list column counts, so the popup
+          // header and chips stay in step with it.
+          const courseGroups = (course: QuizCourseLinkOption) => course.groups ?? [];
+          const distinctGroups = new Set(linkedCourses.flatMap(course => courseGroups(course).map(name => name.toLowerCase())));
+          const componentIcon = (type?: string) => (String(type || '').toLowerCase() === 'checkpoint' ? 'ri-flag-2-line' : 'ri-questionnaire-line');
+          const metaParts = (course: QuizCourseLinkOption) =>
+            [course.module, course.week ? `Week ${course.week}` : '', course.cohort].filter(Boolean) as string[];
+
+          return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setCourseLinksData(null)}>
             <div className="w-full max-w-2xl rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 border-b border-foreground-200/60 p-5">
                 <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">Linked Quiz Components</p>
+                  <p className="text-xs font-bold uppercase tracking-wider text-primary-600 mb-1">Where this quiz is used</p>
                   <h3 className="text-lg font-heading font-bold text-foreground-900 truncate">{courseLinksData.quiz.title}</h3>
-                  <p className="text-sm text-foreground-400">{courseLinksData.programme || courseLinksData.quiz.programme || 'No programme'}</p>
+                  <p className="text-sm text-foreground-400 truncate">{courseLinksData.programme || courseLinksData.quiz.programme || 'No programme'}</p>
+                  <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-semibold">
+                    <span className="inline-flex items-center gap-1.5 text-foreground-500">
+                      <i className="ri-links-line text-foreground-400"></i>{linkedCourses.length} linked component{linkedCourses.length === 1 ? '' : 's'}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 text-primary-600">
+                      <i className="ri-group-line text-primary-500"></i>{distinctGroups.size} group{distinctGroups.size === 1 ? '' : 's'} assigned
+                    </span>
+                  </div>
                 </div>
-                <button onClick={() => setCourseLinksData(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0">
-                  <i className="ri-close-line"></i>
+                <button onClick={() => setCourseLinksData(null)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200 hover:text-foreground-800 transition-colors" aria-label="Close">
+                  <i className="ri-close-line text-lg"></i>
                 </button>
               </div>
 
               <div className="max-h-[60vh] overflow-y-auto p-5 quiz-preview-scroll">
-                {courseLinksData.courses.filter(course => course.selected).length === 0 ? (
+                {linkedCourses.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-foreground-200/80 bg-background-100/60 px-4 py-10 text-center">
                     <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-white text-foreground-300 border border-foreground-200/60">
                       <i className="ri-links-line text-xl"></i>
                     </span>
-                    <p className="text-sm font-semibold text-foreground-700">No linked quiz components</p>
-                    <p className="mt-1 text-xs text-foreground-400">This quiz is not linked to any module authoring component yet.</p>
+                    <p className="text-sm font-semibold text-foreground-700">Not linked anywhere yet</p>
+                    <p className="mt-1 text-xs text-foreground-400">This quiz isn't attached to a module component, so no groups sit it yet.</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {courseLinksData.courses.filter(course => course.selected).map(course => (
-                      <article key={course.id} className="rounded-xl border border-[#dbe3ee] bg-white p-4 shadow-sm">
-                        <div className="flex items-start gap-3">
-                          <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700 border border-primary-100">
-                            <i className="ri-book-open-line"></i>
+                    {linkedCourses.map(course => {
+                      const groups = courseGroups(course);
+                      const meta = metaParts(course);
+                      const isCheckpoint = String(course.componentType || '').toLowerCase() === 'checkpoint';
+                      const isTemplate = String(course.source || '').toLowerCase() === 'week-template';
+                      return (
+                      <article key={course.id} className="overflow-hidden rounded-xl border border-foreground-200/70 bg-white shadow-sm">
+                        <div className="flex items-start gap-3 p-4">
+                          <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${isCheckpoint ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-primary-50 text-primary-700 border-primary-100'}`}>
+                            <i className={componentIcon(course.componentType)}></i>
                           </span>
                           <div className="min-w-0 flex-1">
-                            <h4 className="text-sm font-heading font-bold text-foreground-900 break-words">{course.component || course.label || 'Quiz component'}</h4>
-                            <p className="mt-1 text-xs text-foreground-500 break-words">{course.label || course.module || course.programme || courseLinksData.programme}</p>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {course.module && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Module: {course.module}</span>}
-                              {course.week && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Week: {course.week}</span>}
-                              {course.cohort && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Cohort: {course.cohort}</span>}
-                              {course.group && <span className="rounded-full bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-600">Group: {course.group}</span>}
-                              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">Component: {course.id}</span>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="min-w-0 truncate text-sm font-heading font-bold text-foreground-900">{course.component || course.label || 'Quiz component'}</h4>
+                              {isCheckpoint && <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 border border-amber-200">Checkpoint</span>}
+                              {isTemplate && <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500 border border-foreground-200/70"><i className="ri-layout-masonry-line text-[11px]"></i>Week template</span>}
                             </div>
+                            {meta.length > 0 && (
+                              <p className="mt-1 truncate text-xs text-foreground-400">{meta.join('  ·  ')}</p>
+                            )}
                           </div>
                         </div>
+                        <div className="border-t border-foreground-100 bg-background-50/60 px-4 py-3">
+                          <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+                            <i className="ri-group-line text-foreground-400"></i>Assigned groups
+                          </p>
+                          {groups.length === 0 ? (
+                            <p className="text-xs text-foreground-400">No specific groups — open to the whole module.</p>
+                          ) : (
+                            <div className="flex flex-wrap gap-1.5">
+                              {groups.map((name, index) => (
+                                <span key={`${course.id}-${index}`} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">
+                                  <i className="ri-group-line text-xs text-primary-500"></i>{name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </article>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         {selectedQuiz && (
           <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={() => setSelectedQuiz(null)}>

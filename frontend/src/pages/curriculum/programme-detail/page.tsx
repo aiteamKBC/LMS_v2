@@ -25,7 +25,9 @@ import {
   fetchCurriculumComponents,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
+  fetchCurriculumCoaches,
   fetchCurriculumStandards,
+  fetchCurriculumTutors,
   updateCurriculumProgramme,
   updateStaffingAssignment,
 } from '@/lib/curriculumApi';
@@ -119,7 +121,6 @@ interface Module {
   tutor?: string;
   weeks: number;
   otjh: number;
-  version: string;
   status: 'published' | 'approved' | 'in-review' | 'draft';
   ksbTags: string[];
   ksbMapping: ModuleKsbMappingSummary[];
@@ -148,8 +149,6 @@ interface Cohort {
   status: 'active' | 'planned' | 'completed';
   learners: number;
   groups: Group[];
-  progress: number;
-  attendance: number;
 }
 
 interface Programme {
@@ -162,14 +161,6 @@ interface Programme {
   color: string;
   description: string;
   duration: string;
-  intent: string;
-  rationale: string;
-  learnerBenefit: string;
-  employerBenefit: string;
-  epaOverview: string;
-  qualifications: string[];
-  mainKsbs: string[];
-  secondaryKsbs: string[];
   cohorts: Cohort[];
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
@@ -180,484 +171,54 @@ interface Programme {
 type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description'>>;
 type SelectOption = { value: string; label: string };
 
-const SHOW_LEGACY_PROGRAMME_SUMMARY = false;
-const SHOW_LEGACY_OVERVIEW_TAB = false;
+// A delivery session shown on the Sessions tab, derived from real week-builder
+// components: `live-session` components are Live, `video` components are Recorded.
+type DeliverySessionKind = 'live' | 'recorded';
+interface DeliverySession {
+  id: string;
+  kind: DeliverySessionKind;
+  title: string;
+  module: string;
+  week: number;
+  weekTitle: string;
+  date: string;
+  time: string;
+  groups: string[];
+  url: string;
+  provider: string;
+  durationMinutes: number;
+  attendanceRequired: boolean;
+  recordingExpected: boolean;
+  ksbRefs: string[];
+  status: CurriculumComponent['status'] | string;
+}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Mock Data — Marketing Executive Level 4
-// ─────────────────────────────────────────────────────────────────────────────
-
-const PROGRAMME: Programme = {
-  id: 'p-3',
-  sourceId: 'p-3',
-  name: 'Marketing Executive',
-  standard: 'ST0094',
-  level: 'Level 4',
-  owner: 'Curriculum Team',
-  color: '#6941c6',
-  description: '16-month L4 apprenticeship preparing learners for the Marketing Executive standard and CIM L4 Diploma.',
-  duration: '16 months',
-  intent: 'Build a confident, evidence-led marketing executive who can plan, deliver and evaluate campaigns aligned to employer goals.',
-  rationale: 'Sequenced foundations → insight → planning/channels → evaluation/EPA so KSBs build cumulatively. Each module reinforces and applies prior KSBs.',
-  learnerBenefit: 'Career-ready marketing executive with professional qualification, portfolio and confidence to lead campaigns.',
-  employerBenefit: 'Measurable improvements in campaign quality, insight-led decisions and team capability.',
-  epaOverview: 'EPA covers: professional discussion underpinned by portfolio, knowledge test, and presentation with questions.',
-  qualifications: ['CIM Level 4 Diploma in Professional Marketing'],
-  mainKsbs: ['K11', 'K21', 'K22', 'K31', 'K41', 'K51', 'S51', 'S52', 'S61', 'S71'],
-  secondaryKsbs: ['S12', 'S11', 'S21', 'S31'],
-  moduleNames: ['M1', 'M2', 'M3', 'M4'],
-
-  cohorts: [
-    {
-      id: 'c-A',
-      name: 'Cohort A',
-      startDate: 'Sep 2024',
-      endDate: 'Mar 2026',
-      status: 'active',
-      learners: 8,
-      progress: 72,
-      attendance: 94,
-      groups: [
-        {
-          id: 'g-A1',
-          name: 'Group A1',
-          learners: 4,
-          coach: 'Sarah Mitchell',
-          tutor: 'James Thompson',
-          startDate: 'Sep 2024',
-          endDate: 'Mar 2026',
-          status: 'active',
-          schedule: 'Mon, Wed, Fri — 09:30',
-          mode: 'Blended',
-          modules: [],
-        },
-        {
-          id: 'g-A2',
-          name: 'Group A2',
-          learners: 4,
-          coach: 'David Chen',
-          tutor: 'Emily Roberts',
-          startDate: 'Sep 2024',
-          endDate: 'Mar 2026',
-          status: 'active',
-          schedule: 'Tue, Thu — 13:00',
-          mode: 'Remote',
-          modules: [],
-        },
-      ],
-    },
-    {
-      id: 'c-B',
-      name: 'Cohort B',
-      startDate: 'Mar 2025',
-      endDate: 'Sep 2026',
-      status: 'active',
-      learners: 6,
-      progress: 45,
-      attendance: 89,
-      groups: [
-        {
-          id: 'g-B1',
-          name: 'Group B1',
-          learners: 3,
-          coach: 'Sarah Mitchell',
-          tutor: 'James Thompson',
-          startDate: 'Mar 2025',
-          endDate: 'Sep 2026',
-          status: 'active',
-          schedule: 'Mon, Wed — 09:30',
-          mode: 'Blended',
-          modules: [],
-        },
-        {
-          id: 'g-B2',
-          name: 'Group B2',
-          learners: 3,
-          coach: 'Lisa Park',
-          tutor: 'Mark Williams',
-          startDate: 'Mar 2025',
-          endDate: 'Sep 2026',
-          status: 'active',
-          schedule: 'Tue, Thu — 09:30',
-          mode: 'In-person',
-          modules: [],
-        },
-      ],
-    },
-    {
-      id: 'c-C',
-      name: 'Cohort C',
-      startDate: 'Sep 2025',
-      endDate: 'Mar 2027',
-      status: 'planned',
-      learners: 0,
-      progress: 0,
-      attendance: 0,
-      groups: [
-        {
-          id: 'g-C1',
-          name: 'Group C1',
-          learners: 0,
-          coach: 'Unassigned',
-          tutor: 'Unassigned',
-          startDate: 'Sep 2025',
-          endDate: 'Mar 2027',
-          status: 'planned',
-          schedule: 'TBD',
-          mode: 'Blended',
-          modules: [],
-        },
-      ],
-    },
-  ],
-
-  modules: [
-    {
-      id: 'mod-1',
-      name: 'Module 1 — Marketing Foundations & the Marketing Environment',
-      description: 'Establish a shared language and framework for marketing before learners specialise in insight, planning and channels.',
-      weeks: 4,
-      otjh: 90,
-      version: 'v1.2',
-      status: 'published',
-      ksbTags: ['K11', 'K21', 'S12', 'S11'],
-      ksbMapping: [
-        { ksb: 'K11', weight: 40 },
-        { ksb: 'K21', weight: 25 },
-        { ksb: 'S12', weight: 20 },
-        { ksb: 'S11', weight: 20 },
-      ],
-      weeksData: [
-        {
-          id: 'wk-1',
-          number: 1,
-          title: 'Introduction to Marketing Foundations',
-          startDate: '1 Sep 2024',
-          endDate: '7 Sep 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-1', title: 'Welcome & Cohort Induction', type: 'Live Session', day: 'Mon', date: '1 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['B1', 'B2'], status: 'completed' },
-            { id: 's-2', title: 'Marketing Environment & PESTLE', type: 'Workshop', day: 'Wed', date: '3 Sep', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K11', 'K21'], status: 'completed' },
-            { id: 's-3', title: 'Self-study: Marketing Frameworks', type: 'Self-study', day: 'Thu', date: '4 Sep', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Self-directed', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['K11'], status: 'completed' },
-            { id: 's-4', title: 'Weekly OTJH Log & Reflection', type: 'OTJH', day: 'Fri', date: '5 Sep', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-            { id: 's-5', title: 'Quiz — Marketing Foundations', type: 'Quiz', day: 'Fri', date: '5 Sep', startTime: '11:00', endTime: '11:30', duration: 30, tutor: 'Auto-marked', venue: 'LMS', deliveryMode: 'Online', ksbRefs: ['K11', 'K21'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-2',
-          number: 2,
-          title: 'Customer Journey & Market Segmentation',
-          startDate: '8 Sep 2024',
-          endDate: '14 Sep 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-6', title: 'Customer Journey Mapping', type: 'Live Session', day: 'Mon', date: '8 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K22', 'S12'], status: 'completed' },
-            { id: 's-7', title: 'Segmentation Workshop', type: 'Workshop', day: 'Wed', date: '10 Sep', startTime: '09:30', endTime: '12:00', duration: 150, tutor: 'Emily Roberts', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K22', 'S12'], status: 'completed' },
-            { id: 's-8', title: 'Segmentation Analysis Assignment', type: 'Assignment', day: 'Thu', date: '11 Sep', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S12', 'S11'], status: 'completed' },
-            { id: 's-9', title: 'Weekly Review & OTJH', type: 'OTJH', day: 'Fri', date: '12 Sep', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-3',
-          number: 3,
-          title: 'Brand Positioning & Value Proposition',
-          startDate: '15 Sep 2024',
-          endDate: '21 Sep 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-10', title: 'Brand Positioning Principles', type: 'Live Session', day: 'Mon', date: '15 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K31', 'K41'], status: 'completed' },
-            { id: 's-11', title: 'Value Proposition Workshop', type: 'Workshop', day: 'Wed', date: '17 Sep', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K31', 'S51'], status: 'completed' },
-            { id: 's-12', title: 'Positioning Exercise', type: 'Assignment', day: 'Thu', date: '18 Sep', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['K31', 'S51'], status: 'completed' },
-            { id: 's-13', title: 'Peer Review Session', type: 'Collaboration', day: 'Fri', date: '19 Sep', startTime: '10:00', endTime: '11:00', duration: 60, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['S51', 'B2'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-4',
-          number: 4,
-          title: 'Module 1 Assessment & Review',
-          startDate: '22 Sep 2024',
-          endDate: '28 Sep 2024',
-          otjh: 24,
-          sessions: [
-            { id: 's-14', title: 'Assessment Preparation', type: 'Live Session', day: 'Mon', date: '22 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K11', 'K21', 'K31'], status: 'completed' },
-            { id: 's-15', title: 'Module 1 Knowledge Test', type: 'Quiz', day: 'Wed', date: '24 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Auto-marked', venue: 'LMS', deliveryMode: 'Online', ksbRefs: ['K11', 'K21', 'K22'], status: 'completed' },
-            { id: 's-16', title: 'Portfolio Review 1-to-1', type: 'Review', day: 'Thu', date: '25 Sep', startTime: '14:00', endTime: '14:45', duration: 45, tutor: 'Sarah Mitchell', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['B1', 'B2'], status: 'completed' },
-            { id: 's-17', title: 'Module 1 Wrap-up & OTJH', type: 'OTJH', day: 'Fri', date: '26 Sep', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'mod-2',
-      name: 'Module 2 — Customer Insight, Research and Data',
-      description: 'Move learners from basic marketing knowledge into evidence-based decision-making.',
-      weeks: 4,
-      otjh: 90,
-      version: 'v1.0',
-      status: 'approved',
-      ksbTags: ['K21', 'K22', 'S51', 'S52', 'S61', 'S11'],
-      ksbMapping: [
-        { ksb: 'K21', weight: 25 },
-        { ksb: 'K22', weight: 30 },
-        { ksb: 'S51', weight: 25 },
-        { ksb: 'S52', weight: 10 },
-        { ksb: 'S61', weight: 5 },
-        { ksb: 'S11', weight: 5 },
-      ],
-      weeksData: [
-        {
-          id: 'wk-5',
-          number: 5,
-          title: 'Research Methods & Data Collection',
-          startDate: '29 Sep 2024',
-          endDate: '5 Oct 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-18', title: 'Qualitative vs Quantitative Research', type: 'Live Session', day: 'Mon', date: '29 Sep', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Mark Williams', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K21', 'K22'], status: 'completed' },
-            { id: 's-19', title: 'Survey Design Workshop', type: 'Workshop', day: 'Wed', date: '1 Oct', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'Mark Williams', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K22', 'S52'], status: 'completed' },
-            { id: 's-20', title: 'Data Collection Assignment', type: 'Assignment', day: 'Thu', date: '2 Oct', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['K22', 'S52'], status: 'completed' },
-            { id: 's-21', title: 'Weekly OTJH Log', type: 'OTJH', day: 'Fri', date: '3 Oct', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-6',
-          number: 6,
-          title: 'Data Analysis & Interpretation',
-          startDate: '6 Oct 2024',
-          endDate: '12 Oct 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-22', title: 'Analysing Marketing Data', type: 'Live Session', day: 'Mon', date: '6 Oct', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Mark Williams', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K21', 'S51'], status: 'completed' },
-            { id: 's-23', title: 'Data Visualisation Workshop', type: 'Workshop', day: 'Wed', date: '8 Oct', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'Mark Williams', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['S51', 'S52'], status: 'completed' },
-            { id: 's-24', title: 'Interpretation Exercise', type: 'Assignment', day: 'Thu', date: '9 Oct', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S51', 'S61'], status: 'completed' },
-            { id: 's-25', title: 'Group Discussion', type: 'Collaboration', day: 'Fri', date: '10 Oct', startTime: '10:00', endTime: '11:00', duration: 60, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['S61', 'B2'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-7',
-          number: 7,
-          title: 'Insight Application & Personas',
-          startDate: '13 Oct 2024',
-          endDate: '19 Oct 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-26', title: 'Customer Insight & Personas', type: 'Live Session', day: 'Mon', date: '13 Oct', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K22', 'S51'], status: 'completed' },
-            { id: 's-27', title: 'Persona Building Workshop', type: 'Workshop', day: 'Wed', date: '15 Oct', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K22', 'S52'], status: 'completed' },
-            { id: 's-28', title: 'Persona Application', type: 'Assignment', day: 'Thu', date: '16 Oct', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S52', 'S61'], status: 'completed' },
-            { id: 's-29', title: 'Weekly Review', type: 'OTJH', day: 'Fri', date: '17 Oct', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-8',
-          number: 8,
-          title: 'Module 2 Assessment & Review',
-          startDate: '20 Oct 2024',
-          endDate: '26 Oct 2024',
-          otjh: 24,
-          sessions: [
-            { id: 's-30', title: 'Assessment Prep', type: 'Live Session', day: 'Mon', date: '20 Oct', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Mark Williams', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K21', 'K22'], status: 'completed' },
-            { id: 's-31', title: 'Module 2 Knowledge Test', type: 'Quiz', day: 'Wed', date: '22 Oct', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Auto-marked', venue: 'LMS', deliveryMode: 'Online', ksbRefs: ['K21', 'K22', 'S51'], status: 'completed' },
-            { id: 's-32', title: 'Portfolio Review', type: 'Review', day: 'Thu', date: '23 Oct', startTime: '14:00', endTime: '14:45', duration: 45, tutor: 'Sarah Mitchell', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['B1'], status: 'completed' },
-            { id: 's-33', title: 'Module 2 Wrap-up', type: 'OTJH', day: 'Fri', date: '24 Oct', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'mod-3',
-      name: 'Module 3 — Campaign Planning & Digital Channels',
-      description: 'Translate insight into executable campaign plans.',
-      weeks: 4,
-      otjh: 90,
-      version: 'v0.6',
-      status: 'in-review',
-      ksbTags: ['K31', 'K41', 'S51', 'S61', 'S71'],
-      ksbMapping: [
-        { ksb: 'K31', weight: 25 },
-        { ksb: 'K41', weight: 30 },
-        { ksb: 'S51', weight: 20 },
-        { ksb: 'S61', weight: 20 },
-        { ksb: 'S71', weight: 15 },
-      ],
-      weeksData: [
-        {
-          id: 'wk-9',
-          number: 9,
-          title: 'Campaign Planning Framework',
-          startDate: '27 Oct 2024',
-          endDate: '2 Nov 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-34', title: 'Campaign Planning Overview', type: 'Live Session', day: 'Mon', date: '27 Oct', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K31', 'K41'], status: 'completed' },
-            { id: 's-35', title: 'Campaign Planning Workshop', type: 'Workshop', day: 'Wed', date: '29 Oct', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K31', 'S51'], status: 'completed' },
-            { id: 's-36', title: 'Campaign Brief Assignment', type: 'Assignment', day: 'Thu', date: '30 Oct', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['K31', 'S51'], status: 'completed' },
-            { id: 's-37', title: 'Weekly OTJH', type: 'OTJH', day: 'Fri', date: '31 Oct', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-10',
-          number: 10,
-          title: 'Digital Channels Strategy',
-          startDate: '3 Nov 2024',
-          endDate: '9 Nov 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-38', title: 'Digital Channels Overview', type: 'Live Session', day: 'Mon', date: '3 Nov', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K41', 'S61'], status: 'completed' },
-            { id: 's-39', title: 'Channel Strategy Workshop', type: 'Workshop', day: 'Wed', date: '5 Nov', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'Emily Roberts', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K41', 'S61'], status: 'completed' },
-            { id: 's-40', title: 'Channel Selection Exercise', type: 'Assignment', day: 'Thu', date: '6 Nov', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S61', 'S71'], status: 'completed' },
-            { id: 's-41', title: 'Peer Review', type: 'Collaboration', day: 'Fri', date: '7 Nov', startTime: '10:00', endTime: '11:00', duration: 60, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['S71', 'B2'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-11',
-          number: 11,
-          title: 'Content Strategy & Execution',
-          startDate: '10 Nov 2024',
-          endDate: '16 Nov 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-42', title: 'Content Strategy Principles', type: 'Live Session', day: 'Mon', date: '10 Nov', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K41', 'S61'], status: 'completed' },
-            { id: 's-43', title: 'Content Planning Workshop', type: 'Workshop', day: 'Wed', date: '12 Nov', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K41', 'S61'], status: 'completed' },
-            { id: 's-44', title: 'Content Calendar Assignment', type: 'Assignment', day: 'Thu', date: '13 Nov', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S61', 'S71'], status: 'completed' },
-            { id: 's-45', title: 'Weekly Review', type: 'OTJH', day: 'Fri', date: '14 Nov', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-12',
-          number: 12,
-          title: 'Module 3 Assessment & Review',
-          startDate: '17 Nov 2024',
-          endDate: '23 Nov 2024',
-          otjh: 24,
-          sessions: [
-            { id: 's-46', title: 'Assessment Prep', type: 'Live Session', day: 'Mon', date: '17 Nov', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K31', 'K41'], status: 'completed' },
-            { id: 's-47', title: 'Module 3 Knowledge Test', type: 'Quiz', day: 'Wed', date: '19 Nov', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Auto-marked', venue: 'LMS', deliveryMode: 'Online', ksbRefs: ['K31', 'K41', 'S51'], status: 'completed' },
-            { id: 's-48', title: 'Portfolio Review', type: 'Review', day: 'Thu', date: '20 Nov', startTime: '14:00', endTime: '14:45', duration: 45, tutor: 'Sarah Mitchell', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['B1'], status: 'completed' },
-            { id: 's-49', title: 'Module 3 Wrap-up', type: 'OTJH', day: 'Fri', date: '21 Nov', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'mod-4',
-      name: 'Module 4 — Evaluation, Improvement & EPA Preparation',
-      description: 'Bring everything together and prepare for end-point assessment.',
-      weeks: 4,
-      otjh: 90,
-      version: 'v0.3',
-      status: 'draft',
-      ksbTags: ['K51', 'K41', 'S52', 'S71'],
-      ksbMapping: [
-        { ksb: 'K51', weight: 40 },
-        { ksb: 'K41', weight: 30 },
-        { ksb: 'S52', weight: 20 },
-        { ksb: 'S71', weight: 20 },
-      ],
-      weeksData: [
-        {
-          id: 'wk-13',
-          number: 13,
-          title: 'Campaign Evaluation Metrics',
-          startDate: '24 Nov 2024',
-          endDate: '30 Nov 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-50', title: 'Evaluation Frameworks', type: 'Live Session', day: 'Mon', date: '24 Nov', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Mark Williams', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K51', 'K41'], status: 'completed' },
-            { id: 's-51', title: 'KPI Workshop', type: 'Workshop', day: 'Wed', date: '26 Nov', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'Mark Williams', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K51', 'S52'], status: 'completed' },
-            { id: 's-52', title: 'Metrics Analysis', type: 'Assignment', day: 'Thu', date: '27 Nov', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['K51', 'S52'], status: 'completed' },
-            { id: 's-53', title: 'Weekly OTJH', type: 'OTJH', day: 'Fri', date: '28 Nov', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-14',
-          number: 14,
-          title: 'Continuous Improvement & Optimisation',
-          startDate: '1 Dec 2024',
-          endDate: '7 Dec 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-54', title: 'Improvement Methodologies', type: 'Live Session', day: 'Mon', date: '1 Dec', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K51', 'S71'], status: 'completed' },
-            { id: 's-55', title: 'A/B Testing Workshop', type: 'Workshop', day: 'Wed', date: '3 Dec', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['S52', 'S71'], status: 'completed' },
-            { id: 's-56', title: 'Optimisation Exercise', type: 'Assignment', day: 'Thu', date: '4 Dec', startTime: '14:00', endTime: '15:30', duration: 90, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S52', 'S71'], status: 'completed' },
-            { id: 's-57', title: 'Group Discussion', type: 'Collaboration', day: 'Fri', date: '5 Dec', startTime: '10:00', endTime: '11:00', duration: 60, tutor: 'Emily Roberts', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['S71', 'B2'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-15',
-          number: 15,
-          title: 'EPA Preparation & Portfolio Review',
-          startDate: '8 Dec 2024',
-          endDate: '14 Dec 2024',
-          otjh: 22,
-          sessions: [
-            { id: 's-58', title: 'EPA Overview & Requirements', type: 'Live Session', day: 'Mon', date: '8 Dec', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'James Thompson', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K51', 'K41'], status: 'completed' },
-            { id: 's-59', title: 'Portfolio Review Workshop', type: 'Workshop', day: 'Wed', date: '10 Dec', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'James Thompson', venue: 'Room 302', deliveryMode: 'In-person', ksbRefs: ['K51', 'S52'], status: 'completed' },
-            { id: 's-60', title: 'Mock Presentation', type: 'Assignment', day: 'Thu', date: '11 Dec', startTime: '14:00', endTime: '16:00', duration: 120, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['S52', 'S71'], status: 'completed' },
-            { id: 's-61', title: 'Weekly Review', type: 'OTJH', day: 'Fri', date: '12 Dec', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-        {
-          id: 'wk-16',
-          number: 16,
-          title: 'Final Review & EPA Readiness',
-          startDate: '15 Dec 2024',
-          endDate: '21 Dec 2024',
-          otjh: 24,
-          sessions: [
-            { id: 's-62', title: 'Final Knowledge Review', type: 'Live Session', day: 'Mon', date: '15 Dec', startTime: '09:30', endTime: '11:00', duration: 90, tutor: 'Mark Williams', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['K51', 'K41'], status: 'completed' },
-            { id: 's-63', title: 'Final Assessment', type: 'Quiz', day: 'Wed', date: '17 Dec', startTime: '09:30', endTime: '11:30', duration: 120, tutor: 'Auto-marked', venue: 'LMS', deliveryMode: 'Online', ksbRefs: ['K51', 'K41', 'S52'], status: 'completed' },
-            { id: 's-64', title: 'EPA Readiness Check', type: 'Review', day: 'Thu', date: '18 Dec', startTime: '14:00', endTime: '14:45', duration: 45, tutor: 'Sarah Mitchell', venue: 'Teams', deliveryMode: 'Virtual', ksbRefs: ['B1'], status: 'completed' },
-            { id: 's-65', title: 'Programme Wrap-up', type: 'OTJH', day: 'Fri', date: '19 Dec', startTime: '16:00', endTime: '16:30', duration: 30, tutor: 'Sarah Mitchell', venue: 'LMS', deliveryMode: 'Async', ksbRefs: ['B1'], status: 'completed' },
-          ],
-        },
-      ],
-    },
-  ],
-
-  ksbHeatmap: [
-    { ksb: 'K1.1', title: 'The marketing concept and its role in organisations', coverage: { M1: 40, M2: null, M3: null, M4: null } },
-    { ksb: 'K2.1', title: 'Sources of marketing data and research methods', coverage: { M1: null, M2: 25, M3: null, M4: null } },
-    { ksb: 'K2.2', title: 'How customer insight informs marketing decisions', coverage: { M1: null, M2: 30, M3: null, M4: null } },
-    { ksb: 'K3.1', title: 'Marketing planning frameworks and campaign principles', coverage: { M1: null, M2: null, M3: 25, M4: null } },
-    { ksb: 'K4.1', title: 'Digital channels and their use in marketing', coverage: { M1: null, M2: null, M3: 30, M4: null } },
-    { ksb: 'K5.1', title: 'Measuring and evaluating marketing performance', coverage: { M1: null, M2: null, M3: null, M4: 40 } },
-    { ksb: 'S1.1', title: 'Use data and analytics to support marketing decisions', coverage: { M1: null, M2: 25, M3: null, M4: 20 } },
-    { ksb: 'S1.2', title: 'Interpret research findings to recommend actions', coverage: { M1: null, M2: 10, M3: null, M4: null } },
-    { ksb: 'S5.1', title: 'Plan and contribute to marketing campaigns', coverage: { M1: null, M2: null, M3: 20, M4: null } },
-    { ksb: 'S7.1', title: 'Apply digital tools to deliver marketing activity', coverage: { M1: null, M2: null, M3: 15, M4: null } },
-    { ksb: 'S1.2', title: 'Collaborate effectively within a marketing team', coverage: { M1: 20, M2: 5, M3: null, M4: null } },
-    { ksb: 'B1.1', title: 'Acts ethically and with integrity in marketing practice', coverage: { M1: null, M2: null, M3: null, M4: null } },
-    { ksb: 'B1.2', title: 'Reflects on practice and applies learning at work', coverage: { M1: 20, M2: null, M3: null, M4: null } },
-    { ksb: 'B1.3', title: 'Resilient and adaptable in changing marketing contexts', coverage: { M1: 20, M2: 5, M3: null, M4: 20 } },
-  ],
-
-  staffing: [
-    { coach: 'Sarah Mitchell', tutor: 'James Thompson', groups: 'A1, B1', cohorts: 'A, B', status: 'active', role: 'Coach / Tutor' },
-    { coach: 'David Chen', tutor: 'Emily Roberts', groups: 'A2', cohorts: 'A', status: 'active', role: 'Coach / Tutor' },
-    { coach: 'Lisa Park', tutor: 'Mark Williams', groups: 'B2', cohorts: 'B', status: 'active', role: 'Coach / Tutor' },
-  ],
-};
+// Classify a component as a Live session or a Recorded video. NOTE: the
+// `/curriculum/components/` list endpoint returns a *display* type — live-session
+// becomes "Live Session" but video/podcast/reading/powerpoint all collapse to
+// "Self-study" — so `type` alone can't isolate video. We match on the tolerant
+// type string first, then fall back to the component's own authoring settings
+// keys (which stay type-specific), so this works whichever endpoint fed us.
+function deliveryKindForComponent(component: { type?: string; settings?: Record<string, unknown> }): DeliverySessionKind | null {
+  const settings = (component.settings || {}) as Record<string, unknown>;
+  const key = normalise(component.type);
+  if (key.includes('live') || 'liveSessionUrl' in settings || 'sessionDate' in settings || 'attendanceRequired' in settings || 'recordingExpected' in settings) {
+    return 'live';
+  }
+  if (key.includes('video') || 'videoUrl' in settings || 'requiredProgressPercentage' in settings) {
+    return 'recorded';
+  }
+  return null;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Type badge colours
 // ─────────────────────────────────────────────────────────────────────────────
 
-const typeColors: Record<string, string> = {
-  'Live Session': 'bg-primary-100 text-primary-700',
-  'Workshop': 'bg-accent-100 text-accent-700',
-  'Self-study': 'bg-secondary-100 text-secondary-700',
-  'Assignment': 'bg-amber-100 text-amber-700',
-  'Quiz': 'bg-rose-100 text-rose-700',
-  'OTJH': 'bg-emerald-100 text-emerald-700',
-  'Collaboration': 'bg-violet-100 text-violet-700',
-  'Review': 'bg-sky-100 text-sky-700',
-};
-
-const sessionStatusColors: Record<string, string> = {
-  scheduled: 'bg-primary-100 text-primary-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  cancelled: 'bg-red-100 text-red-700',
-  pending: 'bg-amber-100 text-amber-700',
+const componentStatusColors: Record<string, string> = {
+  published: 'bg-emerald-50 text-emerald-700 border-emerald-200/60',
+  review: 'bg-amber-50 text-amber-700 border-amber-200/60',
+  draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/60',
 };
 
 const moduleStatusColors: Record<string, string> = {
@@ -673,7 +234,6 @@ const EMPTY_MODULE: Module = {
   description: 'No live modules are currently linked to this programme.',
   weeks: 0,
   otjh: 0,
-  version: '1.0',
   status: 'draft',
   ksbTags: [],
   ksbMapping: [],
@@ -690,14 +250,6 @@ const EMPTY_PROGRAMME: Programme = {
   color: '#6941c6',
   description: '',
   duration: 'Live curriculum',
-  intent: 'No live programme intent has been configured yet.',
-  rationale: 'No live curriculum rationale has been configured yet.',
-  learnerBenefit: 'No learner benefit has been configured yet.',
-  employerBenefit: 'No employer benefit has been configured yet.',
-  epaOverview: 'No EPA overview has been configured yet.',
-  qualifications: [],
-  mainKsbs: [],
-  secondaryKsbs: [],
   cohorts: [],
   modules: [],
   ksbHeatmap: [],
@@ -1034,7 +586,10 @@ function findProgramme(data: CurriculumOverview | null, routeId: string) {
   )) ?? null;
 }
 
-function programmeDetailToOverview(detail: CurriculumProgrammeDetail): CurriculumOverview {
+function programmeDetailToOverview(
+  detail: CurriculumProgrammeDetail,
+  staff: { coaches?: CurriculumStaffProfile[]; tutors?: CurriculumStaffProfile[] } = {},
+): CurriculumOverview {
   const modules = detail.flat.modules ?? [];
   const cohorts = detail.flat.cohorts ?? [];
   const groups = detail.flat.groups ?? [];
@@ -1062,8 +617,8 @@ function programmeDetailToOverview(detail: CurriculumProgrammeDetail): Curriculu
     components,
     holidays: [],
     cohortAuthoringDetails: [],
-    tutors: [],
-    coaches: [],
+    tutors: staff.tutors ?? [],
+    coaches: staff.coaches ?? [],
   };
 }
 
@@ -1080,9 +635,13 @@ function useProgrammeDetailData(programmeId: string) {
     }
     setLoading(true);
     try {
-      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal);
+      const [detail, coaches, tutors] = await Promise.all([
+        fetchCurriculumProgrammeDetail(programmeId, signal),
+        fetchCurriculumCoaches(signal).catch(() => []),
+        fetchCurriculumTutors(signal).catch(() => []),
+      ]);
       if (signal?.aborted) return null;
-      const overview = programmeDetailToOverview(detail);
+      const overview = programmeDetailToOverview(detail, { coaches, tutors });
       setData(overview);
       setError(null);
       return overview;
@@ -1303,6 +862,9 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     sourceId: number | string;
     sourceType?: string;
     catalogueId?: string;
+    moduleId?: string;
+    moduleCatalogueId?: string;
+    structureId?: string;
     name: string;
     programmeId?: string;
     programme: string;
@@ -1350,10 +912,28 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
 
   const modules = moduleSource.map((liveModule) => {
     const relatedAuthoringModules = relatedAuthoringModulesBySignature.get(moduleDeliverySignature(liveModule as CurriculumModule)) ?? [];
-    const moduleSessions = programmeSessions.filter(session => (
-      String(session.trainingPlanId) === String(liveModule.sourceId) ||
-      (!liveModule.sourceId && normalise(session.module) === normalise(liveModule.name))
-    ));
+    const moduleIdentityKeys = uniqueCleanValues([
+      liveModule.sourceId,
+      liveModule.id,
+      liveModule.catalogueId,
+      liveModule.moduleId,
+      liveModule.moduleCatalogueId,
+      liveModule.structureId,
+    ]).map(normalise).filter(Boolean);
+    const moduleSessions = programmeSessions.filter(session => {
+      const sessionIdentityKeys = uniqueCleanValues([
+        session.trainingPlanId,
+        session.deliveryRowId,
+        session.moduleId,
+        session.moduleCatalogueId,
+        session.deliveryModuleId,
+      ]).map(normalise).filter(Boolean);
+      const identifierMatch = sessionIdentityKeys.some(key => moduleIdentityKeys.includes(key));
+      const contextualNameMatch = normalise(session.module) === normalise(liveModule.name)
+        && (!liveModule.cohortId || normalise(session.cohortId || session.cohort) === normalise(liveModule.cohortId || liveModule.cohort))
+        && (!liveModule.groupId || normalise(session.groupId || session.group) === normalise(liveModule.groupId || liveModule.group));
+      return identifierMatch || contextualNameMatch;
+    });
     const moduleComponents = (data.components ?? []).filter(component => (
       (isComponentForModule(component, liveModule) || relatedAuthoringModules.some(relatedModule => isComponentForModule(component, relatedModule))) &&
       (!component.programme || isProgrammeMatch(source, component.programme))
@@ -1383,7 +963,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       tutor: liveModule.tutor || '',
       weeks: weeksData.length || liveModule.weeks || 0,
       otjh: moduleOtjh,
-      version: '1.0',
       status: moduleStatus(liveModule.status),
       ksbTags,
       ksbMapping: ksbRollup.map(item => ({
@@ -1420,8 +999,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     endDate: formatDateLabel(cohort.endDate),
     status: cohortStatus(cohort.status),
     learners: cohort.learners || 0,
-    progress: cohort.progress || 0,
-    attendance: cohort.attendance || 0,
     groups: (groupsByCohort.get(cohort.id) ?? []).map(group => ({
       id: group.id,
       name: group.name,
@@ -1459,8 +1036,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       endDate: formatDateLabel(firstModule.weeksData.at(-1)?.endDate || ''),
       status: 'active' as const,
       learners: 0,
-      progress: 0,
-      attendance: 0,
       groups: [],
     };
     cohortEntry.groups.push({
@@ -1480,6 +1055,12 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   });
   const supplementalCohorts = [...supplementalCohortsById.values()];
   const allCohorts = [...cohorts, ...supplementalCohorts];
+  const deliveryStart = programmeCohorts.map(cohort => clean(cohort.startDate)).filter(Boolean).sort()[0] || '';
+  const deliveryEnd = programmeCohorts.map(cohort => clean(cohort.endDate)).filter(Boolean).sort().at(-1) || '';
+  const deliveryWindow = [
+    deliveryStart ? formatDateLabel(deliveryStart) : '',
+    deliveryEnd ? formatDateLabel(deliveryEnd) : '',
+  ].filter(Boolean).join(' – ');
 
   const ksbSet = data.ksbSets.find(set => (
     normalise(set.programmeId) === normalise(source.id) ||
@@ -1552,8 +1133,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       missing: totalOccurrences === 0,
     };
   });
-  const mainKsbs = ksbEntries.filter(entry => entry.type !== 'Behaviour').map(entry => entry.code);
-  const secondaryKsbs = ksbEntries.filter(entry => entry.type === 'Behaviour').map(entry => entry.code);
   const staffMap = new Map<string, { coach: string; tutor: string; groups: Set<string>; cohorts: Set<string> }>();
   allCohorts.flatMap(cohort => cohort.groups.map(group => ({ cohort, group }))).forEach(({ cohort, group }) => {
     const key = `${group.coach}|${group.tutor}`;
@@ -1573,16 +1152,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       level: source.level || 'Level not set',
       owner: source.owner || '',
       color: source.color || '#6941c6',
-      description: source.description || `${source.standard} curriculum plan.`,
-      duration: 'Live curriculum',
-      intent: source.description || 'No live programme intent has been configured yet.',
-      rationale: 'Built from the live curriculum training plan, modules, cohorts, groups and scheduled sessions.',
-      learnerBenefit: 'Learners follow the live cohorts, groups and modules configured in the LMS.',
-      employerBenefit: 'Employers see the current delivery plan and staffing linked to this programme.',
-      epaOverview: source.standard || 'EPA overview not configured.',
-      qualifications: [],
-      mainKsbs,
-      secondaryKsbs,
+      description: source.description || `${deliveryWindow || source.standard} curriculum plan.`,
+      duration: deliveryWindow || 'Live curriculum',
       cohorts: allCohorts,
       modules,
       ksbHeatmap,
@@ -1619,8 +1190,8 @@ export default function ProgrammeDetailPage() {
     const heatmapRows = backendCoverageToProgrammeHeatmap(backendCoverage, sourceLabels, liveProgramme.modules);
     return {
       ...liveProgramme,
-      moduleNames: heatmapRows?.moduleNames || [],
-      ksbHeatmap: heatmapRows?.rows || [],
+      moduleNames: heatmapRows?.moduleNames || liveProgramme.moduleNames,
+      ksbHeatmap: heatmapRows?.rows || liveProgramme.ksbHeatmap,
     };
   }, [backendCoverage, data, liveProgramme]);
   const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('cohorts');
@@ -1628,7 +1199,7 @@ export default function ProgrammeDetailPage() {
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
   const [selectedWeek, setSelectedWeek] = useState<string>(PROGRAMME.modules[0]?.weeksData[0]?.id || '');
-  const [sessionFilter, setSessionFilter] = useState<string>('all');
+  const [sessionKind, setSessionKind] = useState<'live' | 'recorded'>('live');
   const [cohortSearch, setCohortSearch] = useState<string>('');
   const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
   const [groupSearch, setGroupSearch] = useState<string>('');
@@ -1638,7 +1209,7 @@ export default function ProgrammeDetailPage() {
   const [moduleCohortFilter, setModuleCohortFilter] = useState<string>('all');
   const [moduleGroupFilter, setModuleGroupFilter] = useState<string>('all');
   const [sessionSearch, setSessionSearch] = useState<string>('');
-  const [sessionTutorFilter, setSessionTutorFilter] = useState<string>('all');
+  const [sessionModuleFilter, setSessionModuleFilter] = useState<string>('all');
   const [sessionPage, setSessionPage] = useState<number>(1);
   const [sessionPageSize, setSessionPageSize] = useState<number>(25);
   const [ksbSearch, setKsbSearch] = useState<string>('');
@@ -1726,7 +1297,7 @@ export default function ProgrammeDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    if (!data || !['modules', 'weeks', 'ksb'].includes(tab)) return;
+    if (!data) return;
     const moduleCatalogueIds = [...new Set(data.modules.flatMap(module => [
       module.moduleCatalogueId,
       module.catalogueId,
@@ -1751,7 +1322,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
     };
-  }, [data, tab]);
+  }, [data]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1782,7 +1353,7 @@ export default function ProgrammeDetailPage() {
 
   useEffect(() => {
     setSessionPage(1);
-  }, [sessionSearch, sessionTutorFilter, sessionFilter, sessionPageSize]);
+  }, [sessionSearch, sessionModuleFilter, sessionKind, sessionPageSize]);
 
   const cohort = PROGRAMME.cohorts.find(c => c.id === selectedCohort) || PROGRAMME.cohorts[0];
   const module = PROGRAMME.modules.find(m => m.id === selectedModule) || PROGRAMME.modules[0] || EMPTY_MODULE;
@@ -1829,17 +1400,52 @@ export default function ProgrammeDetailPage() {
   const filteredWeeks = module.weeksData;
   const weekModuleOptions = PROGRAMME.modules;
 
-  const allSessions = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.sessions));
-  const sessionTutors = useMemo(() => [...new Set(allSessions.map(session => clean(session.tutor)).filter(Boolean))].sort(), [allSessions]);
+  const deliverySessions = useMemo<DeliverySession[]>(() => {
+    const rows: DeliverySession[] = [];
+    PROGRAMME.modules.forEach(mod => {
+      mod.weeksData.forEach(wk => {
+        (wk.components || []).forEach(component => {
+          const kind = deliveryKindForComponent(component);
+          if (!kind) return;
+          const settings = (component.settings || {}) as Record<string, unknown>;
+          const groupNames = Array.isArray(settings.selectedGroupNames)
+            ? (settings.selectedGroupNames as unknown[]).map(value => clean(value)).filter(Boolean)
+            : [];
+          rows.push({
+            id: component.id,
+            kind,
+            title: clean(component.title, kind === 'live' ? 'Live session' : 'Recorded video'),
+            module: mod.name,
+            week: wk.number,
+            weekTitle: clean(wk.title, `Week ${wk.number}`),
+            date: clean(settings.sessionDate),
+            time: clean(settings.sessionTime),
+            groups: groupNames,
+            url: clean(settings.liveSessionUrl || settings.videoUrl || settings.embedCode),
+            provider: clean(settings.provider || settings.sourceType),
+            durationMinutes: Number(settings.durationMinutes) || Number(component.duration) || 0,
+            attendanceRequired: kind === 'live' && settings.attendanceRequired !== false,
+            recordingExpected: Boolean(settings.recordingExpected),
+            ksbRefs: component.ksbRefs || [],
+            status: component.status || 'draft',
+          });
+        });
+      });
+    });
+    return rows;
+  }, [PROGRAMME.modules]);
+  const liveSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'live'), [deliverySessions]);
+  const recordedSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'recorded'), [deliverySessions]);
+  const activeSessions = sessionKind === 'live' ? liveSessions : recordedSessions;
+  const sessionModules = useMemo(() => [...new Set(activeSessions.map(session => session.module).filter(Boolean))].sort(), [activeSessions]);
   const filteredSessions = useMemo(() => {
     const query = normalise(sessionSearch);
-    return allSessions.filter(session => {
-      const matchesStatus = sessionFilter === 'all' || session.status === sessionFilter;
-      const matchesTutor = sessionTutorFilter === 'all' || session.tutor === sessionTutorFilter;
-      const matchesSearch = !query || [session.title, session.type, session.day, session.date, session.startTime, session.endTime, session.tutor, session.venue, session.status, ...session.ksbRefs].some(value => normalise(value).includes(query));
-      return matchesStatus && matchesTutor && matchesSearch;
+    return activeSessions.filter(session => {
+      const matchesModule = sessionModuleFilter === 'all' || session.module === sessionModuleFilter;
+      const matchesSearch = !query || [session.title, session.module, session.weekTitle, session.provider, session.date, session.time, ...session.groups, ...session.ksbRefs].some(value => normalise(value).includes(query));
+      return matchesModule && matchesSearch;
     });
-  }, [allSessions, sessionFilter, sessionTutorFilter, sessionSearch]);
+  }, [activeSessions, sessionModuleFilter, sessionSearch]);
   const sessionPageCount = Math.max(1, Math.ceil(filteredSessions.length / sessionPageSize));
   const currentSessionPage = Math.min(sessionPage, sessionPageCount);
   const sessionStartIndex = (currentSessionPage - 1) * sessionPageSize;
@@ -1857,12 +1463,14 @@ export default function ProgrammeDetailPage() {
     });
   }, [PROGRAMME.staffing, staffingSearch, staffingStatusFilter]);
 
-  const totalSessions = allSessions.length;
-  const completedSessions = allSessions.filter(s => s.status === 'completed').length;
-  const scheduledSessions = allSessions.filter(s => s.status === 'scheduled').length;
+  const totalSessions = deliverySessions.length;
+  const allComponents = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.components || []));
+  const publishedComponents = allComponents.filter(c => c.status === 'published').length;
+  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
   const totalOtjh = PROGRAMME.modules.reduce((a, m) => a + m.otjh, 0);
   const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
   const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
+  const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
   const activeGroups = allGroups.filter(({ group }) => group.status === 'active').length;
   const assignedGroups = allGroups.filter(({ group }) => group.coach !== 'Unassigned' && group.tutor !== 'Unassigned').length;
   const staffingCoverage = totalGroups ? Math.round((assignedGroups / totalGroups) * 100) : 0;
@@ -1874,8 +1482,7 @@ export default function ProgrammeDetailPage() {
     : 0;
   const missingKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'missing').length;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
-  const completionRate = totalSessions ? Math.round((completedSessions / totalSessions) * 100) : 0;
-  const programmeHealth = Math.round((ksbCoverage + staffingCoverage + completionRate) / 3);
+  const programmeHealth = Math.round((ksbCoverage + staffingCoverage + contentReadiness) / 3);
   const unassignedGroups = PROGRAMME.cohorts.flatMap(c => (
     c.groups
       .filter(g => g.coach === 'Unassigned' || g.tutor === 'Unassigned')
@@ -2011,7 +1618,7 @@ export default function ProgrammeDetailPage() {
     groups: { title: 'Groups and weekly delivery', description: 'Manage delivery teams, timetable patterns and module links for every group.', count: `${filteredGroups.length} visible` },
     modules: { title: 'Module catalogue in this programme', description: 'Review attached modules, KSB coverage, delivery context and authoring links.', count: `${filteredModules.length} visible` },
     weeks: { title: 'Weekly learning sequence', description: 'Inspect the selected module week-by-week with sessions and tutor delivery detail.', count: `${module.weeksData.length} weeks` },
-    sessions: { title: 'Session operations', description: 'Search, filter and page through live scheduled and completed sessions.', count: `${filteredSessions.length} sessions` },
+    sessions: { title: 'Sessions & recordings', description: 'Live Teams sessions and recorded videos pulled straight from the week-builder components.', count: `${filteredSessions.length} ${sessionKind === 'live' ? 'live' : 'recorded'}` },
     ksb: { title: 'KSB heatmap', description: 'See how each KSB is covered across the modules in this programme.', count: `${filteredKsbHeatmap.length} KSBs` },
     staffing: { title: 'Staff assignment', description: 'Assign and monitor coaches and tutors across cohorts and groups.', count: `${filteredStaffing.length} assignments` },
   }[tab];
@@ -2063,86 +1670,91 @@ export default function ProgrammeDetailPage() {
     );
   }
 
+  if (error || !found) {
+    return (
+      <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme unavailable" pageSubtitle="The requested curriculum programme could not be opened" userName="Rachel Myers" userRole="Curriculum Designer">
+        <div className="flex min-h-[65vh] items-center justify-center bg-[linear-gradient(180deg,#fbfcff_0%,#f4f6fa_100%)] p-6">
+          <div className="w-full max-w-lg rounded-2xl border border-foreground-200/70 bg-background-50 p-7 text-center shadow-sm">
+            <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl ${error ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
+              <i className={`${error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'} text-xl`}></i>
+            </span>
+            <h1 className="mt-4 text-lg font-heading font-black text-foreground-950">{error ? 'Unable to load programme data' : 'Programme not found'}</h1>
+            <p className="mt-2 text-[13px] leading-6 text-foreground-500">
+              {error || `There is no live curriculum programme matching “${id || 'this route'}”. It may have been renamed or removed.`}
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/programmes')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
+                <i className="ri-arrow-left-line"></i> All programmes
+              </button>
+              {error && (
+                <button onClick={() => void reload()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700">
+                  <i className="ri-refresh-line"></i> Try again
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.standard} · ${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
-        {loading && (
-          <div className="rounded-xl border border-primary-200/60 bg-primary-50 px-4 py-3 text-[12px] font-medium text-primary-700">
-            Loading live programme data...
-          </div>
-        )}
-        {error && (
-          <div className="rounded-xl border border-red-200/60 bg-red-50 px-4 py-3 text-[12px] font-medium text-red-700">
-            Curriculum API error: {error}.
-          </div>
-        )}
-        {!loading && !error && !found && (
-          <div className="rounded-xl border border-amber-200/60 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-700">
-            Programme not found for route id: {id}
-          </div>
-        )}
-        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
-                  <i className="ri-database-2-line text-xs"></i>
-                  Live programme
-                </span>
-                <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
-                <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.standard || 'Standard not set'}</span>
+        <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+          {/* Signature: an accent bar tinted with this programme's own colour identity */}
+          <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: PROGRAMME.color || 'oklch(var(--primary-500))' }} aria-hidden="true" />
+          <div className="p-5 pl-6 sm:p-6 sm:pl-7">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+              <div className="min-w-0">
+                <div className="mb-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
+                    <i className="ri-database-2-line text-xs"></i>
+                    Live programme
+                  </span>
+                  <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
+                  <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.standard || 'Standard not set'}</span>
+                </div>
+                <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
+                <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
               </div>
-              <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
-              <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
+
+              <div className="flex flex-col items-start gap-4 xl:items-end">
+                <div className="flex items-center gap-3">
+                  <HealthRing value={programmeHealth} color={PROGRAMME.color} />
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
+                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Staffing {staffingCoverage}% · Content {contentReadiness}%</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 xl:justify-end">
+                  <button onClick={() => openStructureWizard({ startStep: 'cohort' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+                    <i className="ri-add-line text-sm"></i>
+                    Add structure
+                  </button>
+                  <button onClick={openProgrammeForm} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+                    <i className="ri-edit-line text-sm"></i>
+                    Edit programme
+                  </button>
+                  <button onClick={openSkillsStandard} disabled={skillsStandardsLoading && !skillsStandardTarget} title={skillsStandardTarget ? 'Open the linked Skills England standard' : 'No linked Skills England standard found for this programme'} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-wait disabled:opacity-60">
+                    <i className="ri-file-list-3-line text-sm"></i>
+                    {skillsStandardTarget ? 'View Standard' : skillsStandardsLoading ? 'Checking Standard' : 'Browse Standards'}
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2 xl:justify-end">
-              <button type="button" onClick={() => openKsbTrace('coverage')} disabled={!PROGRAMME.ksbHeatmap.length} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-50">
-                <i className="ri-route-line text-sm"></i>
-                Review KSB coverage
-              </button>
-              <button onClick={openSkillsStandard} disabled={skillsStandardsLoading && !skillsStandardTarget} title={skillsStandardTarget ? 'Open the linked Skills England standard' : 'No linked Skills England standard found for this programme'} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-wait disabled:opacity-60">
-                <i className="ri-file-list-3-line text-sm"></i>
-                {skillsStandardTarget ? 'View Standard' : skillsStandardsLoading ? 'Checking Standard' : 'Browse Standards'}
-              </button>
+            {/* Live KPI rail — every value computed from the fetched programme data */}
+            <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
+              <StatPill icon="ri-group-line" value={PROGRAMME.cohorts.length} label="Cohorts" />
+              <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
+              <StatPill icon="ri-graduation-cap-line" value={totalLearners} label="Learners" />
+              <StatPill icon="ri-stack-line" value={PROGRAMME.modules.length} label="Modules" />
+              <StatPill icon="ri-time-line" value={`${totalOtjh}h`} label="Total OTJH" />
+              <StatPill icon="ri-broadcast-line" value={totalSessions} label="Sessions" />
             </div>
           </div>
         </section>
-
-        {SHOW_LEGACY_PROGRAMME_SUMMARY && (
-        <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 sm:p-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">{PROGRAMME.cohorts.length} cohorts · {PROGRAMME.modules.length} modules · {PROGRAMME.standard} · {PROGRAMME.level}</span>
-              </div>
-              <h1 className="text-xl font-heading font-bold text-foreground-900">{PROGRAMME.name}</h1>
-              <p className="text-[13px] text-foreground-500 mt-1">{PROGRAMME.description}</p>
-              {PROGRAMME.owner && <p className="text-[11px] text-foreground-400 mt-2">Owner: {PROGRAMME.owner}</p>}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => openStructureWizard({ startStep: 'cohort' })} className="px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[12px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Add Structure
-              </button>
-              <button onClick={openProgrammeForm} className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line mr-1"></i> Edit Programme
-              </button>
-              <button onClick={openSkillsStandard} disabled={skillsStandardsLoading && !skillsStandardTarget} title={skillsStandardTarget ? 'Open the linked Skills England standard' : 'No linked Skills England standard found for this programme'} className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-wait disabled:opacity-60">
-                <i className="ri-file-list-3-line mr-1"></i> {skillsStandardTarget ? 'View Standard' : skillsStandardsLoading ? 'Checking Standard' : 'Browse Standards'}
-              </button>
-            </div>
-          </div>
-
-          {/* Stats Row */}
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5 pt-4 border-t border-foreground-200/60">
-            <StatPill icon="ri-group-line" value={PROGRAMME.cohorts.length} label="Cohorts" />
-            <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
-            <StatPill icon="ri-graduation-cap-line" value={totalLearners} label="Learners" />
-            <StatPill icon="ri-stack-line" value={PROGRAMME.modules.length} label="Modules" />
-            <StatPill icon="ri-time-line" value={totalOtjh} label="Total OTJH" />
-          </div>
-        </div>
-        )}
 
         {/* Programme Navigation */}
         <div className="sticky top-0 z-20 flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
@@ -2155,6 +1767,7 @@ export default function ProgrammeDetailPage() {
               {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
               {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.cohorts.length}</span>}
               {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
+              {t.key === 'weeks' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalWeeks}</span>}
               {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
               {t.key === 'staffing' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{staffingCoverage}%</span>}
             </button>
@@ -2173,57 +1786,13 @@ export default function ProgrammeDetailPage() {
           </span>
         </div>
 
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Overview & Intent
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {SHOW_LEGACY_OVERVIEW_TAB && (
-          <div className="space-y-5">
-            {/* Programme Intent */}
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">Programme Intent</h3>
-              <div className="space-y-4">
-                <IntentBlock label="Intent" text={PROGRAMME.intent} />
-                <IntentBlock label="Curriculum Rationale" text={PROGRAMME.rationale} />
-                <IntentBlock label="Learner Benefit" text={PROGRAMME.learnerBenefit} />
-                <IntentBlock label="Employer Benefit" text={PROGRAMME.employerBenefit} />
-                <IntentBlock label="EPA Overview" text={PROGRAMME.epaOverview} />
-              </div>
-              <div className="mt-4 pt-4 border-t border-foreground-200/60">
-                <h4 className="text-[12px] font-semibold text-foreground-700 mb-2">Professional Qualifications</h4>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {PROGRAMME.qualifications.map((q, i) => (
-                    <span key={i} className="text-[12px] font-medium text-foreground-700 bg-background-100 px-3 py-1.5 rounded-lg border border-foreground-200/60">{q}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* KSB Groups */}
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4">KSB Groups</h3>
-              <p className="text-[12px] text-foreground-400 mb-3">Hard and soft KSBs covered at programme level.</p>
-              <div className="mb-4">
-                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Hard ({PROGRAMME.mainKsbs.length})</h4>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <KsbGroupedTags codes={PROGRAMME.mainKsbs} />
-                </div>
-              </div>
-              <div>
-                <h4 className="text-[11px] font-semibold text-foreground-500 uppercase mb-2">Soft ({PROGRAMME.secondaryKsbs.length})</h4>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <KsbGroupedTags codes={PROGRAMME.secondaryKsbs} />
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Cohorts
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'cohorts' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
@@ -2241,14 +1810,14 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {filteredCohorts.length === 0 && (
-              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
                 <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No cohorts match these filters</p>
               </div>
             )}
 
             {filteredCohorts.map(c => (
-              <div key={c.id} className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div key={c.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 {/* Cohort Header — Clickable */}
                 <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
@@ -2261,16 +1830,19 @@ export default function ProgrammeDetailPage() {
                     </div>
                     <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} — {c.endDate} · {c.learners} learners · {c.groups.length} groups</p>
                   </div>
-                  <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                    {c.status === 'active' && (
-                      <div className="flex items-center gap-2">
-                        <div className="w-20 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                          <div className="h-full bg-primary-500 rounded-full" style={{ width: `${c.progress}%` }}></div>
+                  <div className="hidden items-center gap-4 text-[12px] text-foreground-500 shrink-0 sm:flex">
+                    {c.groups.length > 0 && (() => {
+                      const staffed = c.groups.filter(g => g.coach !== 'Unassigned' && g.tutor !== 'Unassigned').length;
+                      const pct = Math.round((staffed / c.groups.length) * 100);
+                      return (
+                        <div className="flex items-center gap-2" title="Groups with both a coach and a tutor assigned">
+                          <div className="w-20 h-1.5 bg-background-200 rounded-full overflow-hidden">
+                            <div className="h-full bg-primary-500 rounded-full" style={{ width: `${pct}%` }}></div>
+                          </div>
+                          <span className="text-[10px] font-semibold">{staffed}/{c.groups.length} staffed</span>
                         </div>
-                        <span className="text-[10px] font-semibold">{c.progress}%</span>
-                        <span className="text-[10px] text-foreground-400"><i className="ri-check-double-line mr-0.5"></i>{c.attendance}% att.</span>
-                      </div>
-                    )}
+                      );
+                    })()}
                     <span className="text-[12px]"><i className="ri-graduation-cap-line mr-1"></i>{c.learners}</span>
                   </div>
                 </button>
@@ -2337,7 +1909,7 @@ export default function ProgrammeDetailPage() {
                                     <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                                       <div className="min-w-0">
                                         <p className="text-[11px] font-semibold text-foreground-900 truncate">{moduleItem.name}</p>
-                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks · {moduleItem.otjh}h OTJH · {moduleItem.weeksData.reduce((sum, weekItem) => sum + weekItem.sessions.length, 0)} sessions</p>
+                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks · {moduleItem.otjh}h OTJH · {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
                                       </div>
                                       <button onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }} className="px-2.5 py-1 rounded-md border border-background-200 bg-background-100 text-[10px] font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
                                         Open Weeks
@@ -2373,7 +1945,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'groups' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
@@ -2395,7 +1967,7 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {filteredGroups.length === 0 && (
-              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
                 <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No groups match these filters</p>
               </div>
@@ -2408,7 +1980,7 @@ export default function ProgrammeDetailPage() {
                   <span className="text-[10px] text-foreground-400">{c.groups.length} groups · {c.learners} learners</span>
                 </div>
                 {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
-                  <div key={g.id} className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+                  <div key={g.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
                     <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4">
                       <div className="w-12 h-12 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
                         <i className="ri-team-line text-secondary-700 text-lg"></i>
@@ -2475,7 +2047,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'modules' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
@@ -2518,7 +2090,7 @@ export default function ProgrammeDetailPage() {
             </div>
 
             {filteredModules.length === 0 && (
-              <div className="rounded-2xl border border-white/80 bg-background-50 p-8 text-center shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
                 <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No modules match these filters</p>
                 <button onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }} className="mt-3 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth">
@@ -2529,7 +2101,7 @@ export default function ProgrammeDetailPage() {
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {filteredModules.map((mod, idx) => (
-              <div key={mod.id} className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
+              <div key={mod.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
@@ -2552,9 +2124,9 @@ export default function ProgrammeDetailPage() {
 
                 {/* Module Info Row */}
                 <div className="flex items-center gap-4 text-[12px] text-foreground-500 mb-4">
-                  <span><i className="ri-calendar-line mr-1 text-[10px]"></i>~{mod.weeks} months</span>
+                  <span><i className="ri-calendar-line mr-1 text-[10px]"></i>{mod.weeks} {mod.weeks === 1 ? 'week' : 'weeks'}</span>
                   <span><i className="ri-time-line mr-1 text-[10px]"></i>{mod.otjh}h OTJH</span>
-                  <span><i className="ri-file-list-3-line mr-1 text-[10px]"></i>v{mod.version}</span>
+                  <span><i className="ri-layout-grid-line mr-1 text-[10px]"></i>{mod.weeksData.reduce((total, week) => total + (week.components?.length || 0), 0)} components</span>
                 </div>
 
                 {/* KSB Mapping Bars */}
@@ -2603,7 +2175,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'weeks' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
                 <div className="space-y-3">
                   <div>
@@ -2643,7 +2215,7 @@ export default function ProgrammeDetailPage() {
                 </div>
               </div>
             </div>
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{module.name}</h3>
@@ -2704,96 +2276,170 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'sessions' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_auto] gap-3 items-center">
+            {/* Live / Recorded toggle */}
+            <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="inline-flex rounded-xl border border-foreground-200/70 bg-background-100 p-1">
+                <button onClick={() => setSessionKind('live')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'live' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
+                  <i className="ri-broadcast-line text-sm"></i>
+                  Live
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'live' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{liveSessions.length}</span>
+                </button>
+                <button onClick={() => setSessionKind('recorded')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'recorded' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
+                  <i className="ri-film-line text-sm"></i>
+                  Recorded
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'recorded' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{recordedSessions.length}</span>
+                </button>
+              </div>
+              <p className="text-[12px] leading-5 text-foreground-500 sm:max-w-md sm:text-right">
+                {sessionKind === 'live'
+                  ? 'Live Teams sessions authored in the week builder — scheduled date, assigned groups and attendance.'
+                  : 'Recorded videos authored in the week builder — provider, source and watch time.'}
+              </p>
+            </div>
+
+            {/* Search + module filter */}
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="Search sessions, dates, KSB, venue..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups, KSB…' : 'Search videos, provider, module, KSB…'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
-                <select value={sessionTutorFilter} onChange={event => setSessionTutorFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                  <option value="all">All tutors</option>
-                  {sessionTutors.map(tutor => <option key={tutor} value={tutor}>{tutor}</option>)}
+                <select value={sessionModuleFilter} onChange={event => setSessionModuleFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
+                  <option value="all">All modules</option>
+                  {sessionModules.map(name => <option key={name} value={name}>{name}</option>)}
                 </select>
-                <button onClick={() => { setSessionSearch(''); setSessionTutorFilter('all'); setSessionFilter('all'); }} disabled={!sessionSearch && sessionTutorFilter === 'all' && sessionFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+                <button onClick={() => { setSessionSearch(''); setSessionModuleFilter('all'); }} disabled={!sessionSearch && sessionModuleFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
+                <div className="flex items-center gap-2 md:justify-end">
+                  <span className="text-[11px] font-semibold text-foreground-400 uppercase">Show</span>
+                  <select value={sessionPageSize} onChange={event => setSessionPageSize(Number(event.target.value))} className="h-10 px-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 outline-none cursor-pointer">
+                    {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
+                  </select>
+                </div>
               </div>
+              <p className="mt-3 text-[11px] text-foreground-400">{filteredSessions.length} of {activeSessions.length} {sessionKind === 'live' ? 'live sessions' : 'recorded videos'}</p>
             </div>
 
-            {/* Filters */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold text-foreground-400 uppercase">Filter:</span>
-              {['all', 'completed', 'scheduled', 'cancelled', 'pending'].map(f => (
-                <button key={f} onClick={() => setSessionFilter(f)} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${sessionFilter === f ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600 hover:bg-background-200'}`}>
-                  {f === 'all' ? 'All Sessions' : f.charAt(0).toUpperCase() + f.slice(1)}
-                </button>
-              ))}
-              <span className="text-[11px] text-foreground-400 ml-2">{filteredSessions.length} of {totalSessions} sessions</span>
-              <div className="ml-auto flex items-center gap-2">
-                <span className="text-[11px] font-semibold text-foreground-400 uppercase">Show</span>
-                <select value={sessionPageSize} onChange={event => setSessionPageSize(Number(event.target.value))} className="h-8 px-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 outline-none cursor-pointer">
-                  {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-                </select>
-              </div>
-            </div>
-
-            {/* Sessions Table */}
-            <div className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
-              <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60 bg-background-50">
-                <p className="text-[11px] text-foreground-500">
-                  Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}-{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
-                </p>
-              </div>
-              <div className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-                <span>Session</span>
-                <span className="text-center">Type</span>
-                <span className="text-center">Day</span>
-                <span className="text-center">Time</span>
-                <span className="text-center">Tutor</span>
-                <span className="text-center">Duration</span>
-                <span className="text-center">Status</span>
-              </div>
-              <div className="divide-y divide-background-200/30">
-                {pagedSessions.map((s, i) => (
-                  <div key={s.id} className="grid grid-cols-[2fr_0.8fr_0.8fr_1fr_1fr_0.8fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-medium text-foreground-900 truncate">{s.title}</p>
-                      {!!s.skippedHolidays?.length && (
-                        <p className="mt-0.5 text-[10px] font-semibold text-amber-600">
-                          {s.skippedHolidays.length} holiday clash{s.skippedHolidays.length === 1 ? '' : 'es'} skipped
-                        </p>
-                      )}
-                      <p className="text-[10px] text-foreground-400">{s.date} · {s.venue}</p>
-                    </div>
-                    <div className="flex justify-center">
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${typeColors[s.type] || 'bg-foreground-100 text-foreground-500'}`}>{s.type}</span>
-                    </div>
-                    <span className="text-[11px] text-foreground-500 text-center">{s.day}</span>
-                    <span className="text-[11px] text-foreground-500 text-center">{s.startTime}—{s.endTime}</span>
-                    <span className="text-[11px] text-foreground-500 text-center">{s.tutor}</span>
-                    <span className="text-[11px] text-foreground-500 text-center">{s.duration}m</span>
-                    <div className="flex justify-center">
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sessionStatusColors[s.status]}`}>{s.status}</span>
-                    </div>
+            {activeSessions.length === 0 ? (
+              <EmptyPanel
+                title={sessionKind === 'live' ? 'No live sessions yet' : 'No recorded videos yet'}
+                message={sessionKind === 'live'
+                  ? 'Add a Live Teams Session component to a week in the module builder and it will appear here.'
+                  : 'Add a Video component to a week in the module builder and it will appear here.'}
+              />
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60">
+                  <p className="text-[11px] text-foreground-500">
+                    Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}–{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <div className="min-w-[760px]">
+                    {sessionKind === 'live' ? (
+                      <>
+                        <div className="grid grid-cols-[2fr_1.4fr_1fr_1.4fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
+                          <span>Session</span>
+                          <span>Module · Week</span>
+                          <span className="text-center">Date / Time</span>
+                          <span>Groups</span>
+                          <span className="text-center">Mins</span>
+                          <span className="text-center">Status</span>
+                        </div>
+                        <div className="divide-y divide-background-200/40">
+                          {pagedSessions.map(s => (
+                            <div key={s.id} className="grid grid-cols-[2fr_1.4fr_1fr_1.4fr_0.7fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
+                              <div className="min-w-0">
+                                <p className="text-[12px] font-semibold text-foreground-900 truncate">{s.title}</p>
+                                <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-foreground-400">
+                                  {s.attendanceRequired && <span className="inline-flex items-center gap-1 text-primary-600"><i className="ri-user-follow-line"></i>Attendance</span>}
+                                  {s.recordingExpected && <span className="inline-flex items-center gap-1"><i className="ri-record-circle-line"></i>Recording</span>}
+                                  {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary-600 hover:underline"><i className="ri-links-line"></i>Join link</a>}
+                                </p>
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
+                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` · ${s.weekTitle}` : ''}</p>
+                              </div>
+                              <div className="text-center">
+                                <p className="text-[11px] text-foreground-700">{s.date || '—'}</p>
+                                <p className="text-[10px] text-foreground-400">{s.time || 'Time TBC'}</p>
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {s.groups.length ? (
+                                  <>
+                                    {s.groups.slice(0, 3).map(g => <span key={g} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 text-[9px] font-semibold text-primary-700">{g}</span>)}
+                                    {s.groups.length > 3 && <span className="text-[9px] text-foreground-400">+{s.groups.length - 3}</span>}
+                                  </>
+                                ) : <span className="text-[10px] text-foreground-400">All groups</span>}
+                              </div>
+                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || '—'}</span>
+                              <div className="flex justify-center">
+                                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-[2fr_1.4fr_1fr_1.2fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
+                          <span>Video</span>
+                          <span>Module · Week</span>
+                          <span>Provider</span>
+                          <span>KSBs</span>
+                          <span className="text-center">Mins</span>
+                          <span className="text-center">Status</span>
+                        </div>
+                        <div className="divide-y divide-background-200/40">
+                          {pagedSessions.map(s => (
+                            <div key={s.id} className="grid grid-cols-[2fr_1.4fr_1fr_1.2fr_0.7fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
+                              <div className="min-w-0">
+                                <p className="text-[12px] font-semibold text-foreground-900 truncate">{s.title}</p>
+                                {s.url && <p className="mt-0.5 text-[10px] text-foreground-400 truncate">{s.url}</p>}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
+                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` · ${s.weekTitle}` : ''}</p>
+                              </div>
+                              <span className="text-[11px] text-foreground-600 truncate">{s.provider || '—'}</span>
+                              <div className="flex flex-wrap gap-1">
+                                {s.ksbRefs.length ? (
+                                  <>
+                                    {s.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
+                                    {s.ksbRefs.length > 3 && <span className="text-[9px] text-foreground-400">+{s.ksbRefs.length - 3}</span>}
+                                  </>
+                                ) : <span className="text-[10px] text-foreground-400">—</span>}
+                              </div>
+                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || '—'}</span>
+                              <div className="flex justify-center">
+                                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60 bg-background-50">
-                <div className="flex items-center gap-1">
-                  <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <i className="ri-skip-left-line text-xs"></i>
-                  </button>
-                  <button onClick={() => setSessionPage(page => Math.max(1, page - 1))} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <i className="ri-arrow-left-s-line text-sm"></i>
-                  </button>
-                  <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
-                  <button onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <i className="ri-arrow-right-s-line text-sm"></i>
-                  </button>
-                  <button onClick={() => setSessionPage(sessionPageCount)} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                    <i className="ri-skip-right-line text-xs"></i>
-                  </button>
+                </div>
+                <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60">
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <i className="ri-skip-left-line text-xs"></i>
+                    </button>
+                    <button onClick={() => setSessionPage(page => Math.max(1, page - 1))} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <i className="ri-arrow-left-s-line text-sm"></i>
+                    </button>
+                    <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
+                    <button onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <i className="ri-arrow-right-s-line text-sm"></i>
+                    </button>
+                    <button onClick={() => setSessionPage(sessionPageCount)} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
+                      <i className="ri-skip-right-line text-xs"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -2801,7 +2447,7 @@ export default function ProgrammeDetailPage() {
             TAB: KSB Heatmap
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'ksb' && (
-          <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+          <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
@@ -2924,7 +2570,7 @@ export default function ProgrammeDetailPage() {
         ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'staffing' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Coach & Tutor Assignment</h3>
@@ -2938,7 +2584,7 @@ export default function ProgrammeDetailPage() {
                 </button>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 <div className="border-b border-foreground-200/60 p-4">
                   <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
                     <div className="relative">
@@ -2954,6 +2600,8 @@ export default function ProgrammeDetailPage() {
                   </div>
                   <p className="text-[11px] text-foreground-400 mt-3">{filteredStaffing.length} of {PROGRAMME.staffing.length} assignments</p>
                 </div>
+                <div className="overflow-x-auto">
+                <div className="min-w-[860px]">
                 <div className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                   <span>Coach</span>
                   <span>Tutor</span>
@@ -2997,11 +2645,13 @@ export default function ProgrammeDetailPage() {
                     </div>
                   ))}
                 </div>
+                </div>
+                </div>
               </div>
             </div>
 
             {/* Unassigned Groups */}
-            <div className="rounded-2xl border border-white/80 bg-background-50 p-5 shadow-[0_12px_32px_rgba(15,23,42,0.06)]">
+            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Unassigned Groups</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {unassignedGroups.length === 0 ? (
@@ -3200,6 +2850,19 @@ function StatPill({ icon, value, label }: { icon: string; value: number | string
       <div>
         <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
         <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function HealthRing({ value, color }: { value: number; color?: string }) {
+  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
+  const ring = color || 'oklch(var(--primary-500))';
+  return (
+    <div className="relative h-14 w-14 shrink-0" role="img" aria-label={`Programme health ${safe} percent`}>
+      <div className="h-14 w-14 rounded-full" style={{ background: `conic-gradient(${ring} ${safe * 3.6}deg, oklch(var(--background-200)) ${safe * 3.6}deg)` }} />
+      <div className="absolute inset-[4px] flex items-center justify-center rounded-full bg-background-50">
+        <span className="text-[13px] font-black text-foreground-900">{safe}%</span>
       </div>
     </div>
   );
@@ -4015,11 +3678,3 @@ function groupTraceEvidence(evidence: KsbTraceEvidence[]) {
   }));
 }
 
-function IntentBlock({ label, text }: { label: string; text: string }) {
-  return (
-    <div>
-      <p className="text-[10px] font-bold text-foreground-400 uppercase tracking-wider mb-1">{label}</p>
-      <p className="text-[13px] text-foreground-700 leading-relaxed">{text}</p>
-    </div>
-  );
-}

@@ -2,16 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
-import { fetchAbsenceReports, submitAbsenceReport, type LearnerAbsenceReport } from '@/api/absenceReports';
+import {
+  fetchAbsenceReports,
+  submitAbsenceReport,
+  type LearnerAbsenceReport,
+  type MissedAttendanceSession,
+} from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 
 const learnerNav = roleNavMap.learner;
-
-const MISSED_SESSIONS = [
-  { id: 'session-1', date: '18 Jun 2026', dateIso: '2026-06-18', time: '10:00 - 12:00', startTime: '10:00', title: 'Consumer Behaviour', tutor: 'Crispin Jones', module: 'Marketing Principles' },
-  { id: 'session-2', date: '11 Jun 2026', dateIso: '2026-06-11', time: '10:00 - 12:00', startTime: '10:00', title: 'Campaign Targeting', tutor: 'Crispin Jones', module: 'Digital Campaigns' },
-  { id: 'session-3', date: '04 Jun 2026', dateIso: '2026-06-04', time: '14:00 - 15:00', startTime: '14:00', title: 'Monthly Coaching', tutor: 'Med Maher', module: 'Progress Review' },
-];
 
 const REASONS = [
   { value: 'illness', label: 'Illness or medical appointment', icon: 'ri-heart-pulse-line' },
@@ -55,6 +54,7 @@ export default function ReportAbsencePage() {
   const [submitted, setSubmitted] = useState(false);
   const [submittedReport, setSubmittedReport] = useState<LearnerAbsenceReport | null>(null);
   const [reports, setReports] = useState<LearnerAbsenceReport[]>([]);
+  const [missedSessions, setMissedSessions] = useState<MissedAttendanceSession[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
   const [requestError, setRequestError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -63,8 +63,8 @@ export default function ReportAbsencePage() {
   const [previewError, setPreviewError] = useState('');
 
   const selectedSession = useMemo(
-    () => MISSED_SESSIONS.find((session) => session.id === sessionId),
-    [sessionId],
+    () => missedSessions.find((session) => session.id === sessionId),
+    [missedSessions, sessionId],
   );
   const availableSessions = useMemo(() => {
     const reportedSessions = new Set(
@@ -72,10 +72,10 @@ export default function ReportAbsencePage() {
         .filter((report) => !['declined', 'rejected'].includes(report.status.trim().toLowerCase()))
         .map((report) => `${report.sessionDate}|${report.sessionTitle.trim().toLowerCase()}`),
     );
-    return MISSED_SESSIONS.filter(
+    return missedSessions.filter(
       (session) => !reportedSessions.has(`${session.dateIso}|${session.title.trim().toLowerCase()}`),
     );
-  }, [reports]);
+  }, [missedSessions, reports]);
   const hasReason = Boolean(reasonType && (reasonType !== 'other' || otherReason.trim()));
   const canUploadEvidence = Boolean(sessionId && hasReason);
   const canSubmit = Boolean(sessionId && hasReason && (explanation.trim() || file));
@@ -85,7 +85,12 @@ export default function ReportAbsencePage() {
     let cancelled = false;
     setReportsLoading(true);
     fetchAbsenceReports(myLearner.kind, myLearner.id)
-      .then((results) => { if (!cancelled) setReports(results); })
+      .then((data) => {
+        if (!cancelled) {
+          setReports(data.results);
+          setMissedSessions(data.missedSessions);
+        }
+      })
       .catch((error: unknown) => { if (!cancelled) setRequestError(error instanceof Error ? error.message : 'Could not load reports.'); })
       .finally(() => { if (!cancelled) setReportsLoading(false); });
     return () => { cancelled = true; };
@@ -281,13 +286,13 @@ export default function ReportAbsencePage() {
                 <label htmlFor="missed-session" className="mb-2 block text-sm font-semibold text-foreground-700">Missed session *</label>
                 <select id="missed-session" value={sessionId} onChange={(event) => setSessionId(event.target.value)} required disabled={reportsLoading || availableSessions.length === 0} className="w-full rounded-xl border border-background-200 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400">
                   <option value="">{reportsLoading ? 'Loading missed sessions...' : availableSessions.length === 0 ? 'All missed sessions have been reported' : 'Choose the session you missed'}</option>
-                  {availableSessions.map((session) => <option key={session.id} value={session.id}>{session.date} - {session.title}</option>)}
+                  {availableSessions.map((session) => <option key={session.id} value={session.id}>{displayDate(session.dateIso)} - {session.title}</option>)}
                 </select>
                 {selectedSession && (
                   <div className="mt-3 grid gap-2 rounded-xl border border-primary-100 bg-primary-50/60 p-3 sm:grid-cols-3">
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-time-line text-primary-500" />{selectedSession.time}</div>
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-user-star-line text-primary-500" />{selectedSession.tutor}</div>
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-book-open-line text-primary-500" />{selectedSession.module}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-time-line text-primary-500" />{selectedSession.startTime}{selectedSession.endTime ? ` - ${selectedSession.endTime}` : ''}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-user-star-line text-primary-500" />{selectedSession.coach || 'Coach not assigned'}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-book-open-line text-primary-500" />{selectedSession.module || selectedSession.sessionType.replaceAll('_', ' ')}</div>
                   </div>
                 )}
               </div>
