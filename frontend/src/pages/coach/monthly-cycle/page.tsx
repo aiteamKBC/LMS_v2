@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { jsPDF } from 'jspdf';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { DEFAULT_COACH_EMAIL, formatDateLabel } from '@/pages/coach/shared/calendarEvents';
@@ -218,11 +219,131 @@ function formatHours(value: number) {
   return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}h`;
 }
 
+const PDF_MARGIN = 14;
+const PDF_PAGE_WIDTH = 210;
+const PDF_PAGE_HEIGHT = 297;
+const PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - (PDF_MARGIN * 2);
+
+function pdfFileNameSegment(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'learner';
+}
+
+function ensurePdfSpace(doc: jsPDF, y: number, heightNeeded: number) {
+  if (y + heightNeeded <= PDF_PAGE_HEIGHT - PDF_MARGIN) return y;
+  doc.addPage();
+  return PDF_MARGIN;
+}
+
+function addPdfDivider(doc: jsPDF, y: number) {
+  const lineY = ensurePdfSpace(doc, y, 2);
+  doc.setDrawColor(226, 232, 240);
+  doc.line(PDF_MARGIN, lineY, PDF_PAGE_WIDTH - PDF_MARGIN, lineY);
+  return lineY + 4;
+}
+
+function addPdfText(
+  doc: jsPDF,
+  {
+    text,
+    y,
+    x = PDF_MARGIN,
+    maxWidth = PDF_CONTENT_WIDTH,
+    fontSize = 10,
+    fontStyle = 'normal',
+    textColor = [17, 24, 39],
+    lineHeight = 5,
+  }: {
+    text: string;
+    y: number;
+    x?: number;
+    maxWidth?: number;
+    fontSize?: number;
+    fontStyle?: 'normal' | 'bold';
+    textColor?: [number, number, number];
+    lineHeight?: number;
+  },
+) {
+  doc.setFont('helvetica', fontStyle);
+  doc.setFontSize(fontSize);
+  doc.setTextColor(textColor[0], textColor[1], textColor[2]);
+
+  const lines = doc.splitTextToSize(text, maxWidth) as string[];
+  const neededHeight = Math.max(lineHeight, lines.length * lineHeight);
+  const nextY = ensurePdfSpace(doc, y, neededHeight);
+
+  doc.text(lines, x, nextY);
+  return nextY + neededHeight;
+}
+
+function downloadLearnerActivityPdf(learner: MonthlyLearnerActivity, monthLabel: string, monthKey: string) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const status = safeStatus(learner.status);
+  const generatedDate = formatDateLabel(new Date().toISOString());
+  const metrics = [
+    `Learning: ${formatNumber(learner.learning.total)} total (${learner.learning.quizzes} quiz, ${learner.learning.videos} video, ${learner.learning.components} component, ${learner.learning.reflections} reflection)`,
+    `MCM / PR: ${learner.coaching.mcm}/${learner.coaching.progressReviews} (${learner.coaching.booked} booked, ${learner.coaching.needsSchedule} need schedule, ${learner.coaching.catchups} catch-up)`,
+    `Evidence: ${formatNumber(learner.evidence.submitted)} submitted${learner.evidence.latestDate ? `, latest ${formatDateLabel(learner.evidence.latestDate)}` : ''}`,
+    `KSBs touched: ${formatNumber(learner.ksb.touched)}${learner.ksb.codes.length ? ` (${learner.ksb.codes.join(', ')})` : ''}`,
+    `OTJH: ${learner.otjh.monthlyHoursLabel} logged this month (${formatNumber(learner.otjh.completed)}/${formatNumber(learner.otjh.target)} completed, ${learner.otjh.progress}% progress)`,
+  ];
+
+  let y = PDF_MARGIN;
+  y = addPdfText(doc, { text: 'Learner Activity Report', y, fontSize: 18, fontStyle: 'bold', lineHeight: 8 });
+  y = addPdfText(doc, { text: `Monthly Cycle - ${monthLabel}`, y, fontSize: 12, textColor: [79, 70, 229], lineHeight: 6 });
+  y = addPdfText(doc, { text: `Generated on ${generatedDate}`, y, fontSize: 10, textColor: [107, 114, 128], lineHeight: 5 });
+  y = addPdfDivider(doc, y + 1);
+
+  y = addPdfText(doc, { text: 'Learner Overview', y, fontSize: 12, fontStyle: 'bold', lineHeight: 6 });
+  y = addPdfText(doc, { text: `Name: ${learner.name}`, y });
+  y = addPdfText(doc, { text: `Status: ${status.label}`, y });
+  y = addPdfText(doc, { text: `Programme: ${learner.programme || '--'}`, y });
+  y = addPdfText(doc, { text: `Cohort / Group: ${learner.cohortName} / ${learner.group}`, y });
+  y = addPdfText(doc, { text: `Last activity: ${learner.lastActivityLabel}${learner.lastActivityDate ? ` on ${formatDateLabel(learner.lastActivityDate)}` : ''}`, y });
+  y = addPdfText(doc, { text: `OTJH status: ${learner.otjhStatus}`, y });
+  y = addPdfDivider(doc, y + 1);
+
+  y = addPdfText(doc, { text: 'Monthly Summary', y, fontSize: 12, fontStyle: 'bold', lineHeight: 6 });
+  metrics.forEach((line) => {
+    y = addPdfText(doc, { text: `- ${line}`, y });
+  });
+
+  y = addPdfDivider(doc, y + 1);
+  y = addPdfText(doc, { text: 'Action Flags', y, fontSize: 12, fontStyle: 'bold', lineHeight: 6 });
+  if (learner.needsAction.length === 0) {
+    y = addPdfText(doc, { text: 'No action flags recorded for this learner in the selected month.', y, textColor: [75, 85, 99] });
+  } else {
+    learner.needsAction.forEach((action) => {
+      y = addPdfText(doc, { text: `- ${action}`, y, textColor: [75, 85, 99] });
+    });
+  }
+
+  y = addPdfDivider(doc, y + 1);
+  y = addPdfText(doc, { text: 'Activity Timeline', y, fontSize: 12, fontStyle: 'bold', lineHeight: 6 });
+  if (learner.activities.length === 0) {
+    y = addPdfText(doc, { text: `No captured activity for ${monthLabel}.`, y, textColor: [75, 85, 99] });
+  } else {
+    learner.activities.forEach((activity, index) => {
+      y = ensurePdfSpace(doc, y, 22);
+      y = addPdfText(doc, { text: `${index + 1}. ${activity.type} | ${formatDateLabel(activity.date)}`, y, fontSize: 11, fontStyle: 'bold', lineHeight: 5.5 });
+      y = addPdfText(doc, { text: `Title: ${activity.title}`, y });
+      y = addPdfText(doc, { text: `Detail: ${activity.detail}`, y, textColor: [75, 85, 99] });
+      y = addPdfText(doc, { text: `Source: ${activity.source}`, y, fontSize: 9, textColor: [107, 114, 128], lineHeight: 4.5 });
+      y += 2;
+    });
+  }
+
+  doc.save(`learner-activity-${pdfFileNameSegment(learner.name)}-${monthKey}.pdf`);
+}
+
 export default function CoachMonthlyCycle() {
   const navigate = useNavigate();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
   const [data, setData] = useState<MonthlyActivityResponse | null>(null);
   const [expandedLearnerId, setExpandedLearnerId] = useState<string | null>(null);
+  const [exportingLearnerId, setExportingLearnerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -267,6 +388,17 @@ export default function CoachMonthlyCycle() {
       .slice(0, 6),
     [learners],
   );
+
+  const handleExportLearnerPdf = (learner: MonthlyLearnerActivity) => {
+    setExportingLearnerId(learner.id);
+    window.setTimeout(() => {
+      try {
+        downloadLearnerActivityPdf(learner, monthLabel, selectedMonth);
+      } finally {
+        setExportingLearnerId((current) => (current === learner.id ? null : current));
+      }
+    }, 0);
+  };
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={data?.owner?.name || 'Med Maher'} userRole="Progress Coach">
@@ -383,7 +515,16 @@ export default function CoachMonthlyCycle() {
                             </p>
                           </div>
                         </button>
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                          <button
+                            type="button"
+                            onClick={() => handleExportLearnerPdf(learner)}
+                            disabled={exportingLearnerId === learner.id}
+                            className="px-3 py-2 rounded-xl border border-red-200 bg-red-50 text-red-700 text-[11px] font-semibold hover:bg-red-100 transition-smooth cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                          >
+                            <i className="ri-file-pdf-line mr-1.5"></i>
+                            {exportingLearnerId === learner.id ? 'Preparing...' : 'Export PDF'}
+                          </button>
                           <button type="button" onClick={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)} className="px-3 py-2 rounded-xl bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 transition-smooth cursor-pointer">
                             View File
                           </button>
