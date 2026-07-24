@@ -73,6 +73,8 @@ def _serialize_event(record):
         "meetingProvider": _s(record.meeting_provider),
         "meetingLink": meeting_link,
         "notes": _s(record.notes),
+        "reviewResponses": record.review_responses if isinstance(record.review_responses, dict) else {},
+        "reviewCompletedAt": record.review_completed_at.isoformat() if record.review_completed_at else None,
     }
 
 

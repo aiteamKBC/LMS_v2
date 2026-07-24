@@ -50,6 +50,8 @@ export interface CoachCalendarEvent {
   platform?: string;
   location?: string;
   syncWarning?: string;
+  reviewResponses?: Record<string, string>;
+  reviewCompletedAt?: string | null;
 }
 
 interface CoachTimetableResponse {
@@ -102,7 +104,11 @@ export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form
   return data;
 }
 
-export async function runCoachCalendarAction(event: CoachCalendarEvent, action: CalendarAction) {
+export async function runCoachCalendarAction(
+  event: CoachCalendarEvent,
+  action: CalendarAction,
+  options: { reviewResponses?: Record<string, string> } = {},
+) {
   if (!event.eventKey || !event.ownerEmail) {
     throw new Error('This event is missing its calendar key.');
   }
@@ -114,6 +120,7 @@ export async function runCoachCalendarAction(event: CoachCalendarEvent, action: 
       eventKey: event.eventKey,
       ownerEmail: event.ownerEmail,
       action,
+      ...options,
     }),
   });
   const data = await readJsonResponse<{ event: CoachCalendarEvent; warning?: string }>(response);

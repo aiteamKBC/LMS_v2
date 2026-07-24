@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 
 const learnerNav = roleNavMap.learner;
 
@@ -85,6 +86,40 @@ function Empty({ children = 'No information has been recorded for this review.' 
   );
 }
 
+function SavedReviewAnswers({
+  sectionId,
+  responses,
+  emptyMessage,
+}: {
+  sectionId: string;
+  responses?: ProgressReviewResponses;
+  emptyMessage: string;
+}) {
+  const answers = responsesForSection(responses, sectionId);
+  if (!answers.length) return <Empty>{emptyMessage}</Empty>;
+  return (
+    <div className="space-y-3">
+      {answers.map((item) => (
+        <div key={item.id} className="rounded-xl border border-background-200 bg-background-100/55 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{item.label}</p>
+          {item.type === 'rating' ? (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-lg font-bold text-primary-700">{item.answer}/5</span>
+              <div className="flex gap-1">{[1, 2, 3, 4, 5].map((rating) => <i key={rating} className={`${rating <= Number(item.answer) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></i>)}</div>
+            </div>
+          ) : item.type === 'rag' ? (
+            <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${item.answer.toLowerCase() === 'green' ? 'bg-emerald-100 text-emerald-700' : item.answer.toLowerCase() === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+              <i className="ri-circle-fill text-[8px]"></i>{item.answer}
+            </span>
+          ) : (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{item.answer}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PersonCard({ role, name, icon, tone }: { role: string; name?: string; icon: string; tone: string }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3.5">
@@ -106,12 +141,14 @@ function Accordion({
 }) {
   const steps: Record<string, number> = {
     learning: 1,
-    notes: 2,
+    'progress-checks': 2,
     'learner-reflection': 3,
     'manager-reflection': 4,
-    'coach-reflection': 5,
-    actions: 6,
-    rag: 7,
+    'tutor-reflection': 5,
+    safeguarding: 6,
+    'additional-support': 7,
+    actions: 8,
+    rag: 9,
   };
   const step = steps[id];
   return (
@@ -122,7 +159,7 @@ function Accordion({
           <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
         </span>
         <span className="min-w-0 flex-1">
-          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 7</span>
+          <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 9</span>
           <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
         </span>
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><i className="ri-arrow-down-s-line text-lg" /></span>
@@ -518,21 +555,30 @@ export default function ProgressReviewsPage() {
                 </div>
 
                 {learnedKsbCodes.length > 0 && <div className="mt-4"><p className="mb-2 text-xs font-bold text-foreground-800">KSBs covered</p><div className="flex flex-wrap gap-1.5">{learnedKsbCodes.map((code) => <span key={code} className="rounded-md bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700">{code}</span>)}</div></div>}
+                {responsesForSection(selected?.reviewResponses, 'learning').length > 0 && (
+                  <div className="mt-4">
+                    <p className="mb-2 text-xs font-bold text-foreground-800">Coach review summary</p>
+                    <SavedReviewAnswers sectionId="learning" responses={selected?.reviewResponses} emptyMessage="No coach summary has been recorded for this PR." />
+                  </div>
+                )}
               </Accordion>
 
-              <Accordion id="notes" title="Progress Review Notes" icon="ri-file-text-line" open={openSections.includes('notes')} onToggle={toggleSection}>
-                {selected?.notes ? <p className="whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.notes}</p> : <Empty>No notes have been saved against this PR.</Empty>}
+              <Accordion id="progress-checks" title="Progress Checks" icon="ri-check-double-line" open={openSections.includes('progress-checks')} onToggle={toggleSection}>
+                <SavedReviewAnswers sectionId="progress-checks" responses={selected?.reviewResponses} emptyMessage="No progress checks have been recorded for this PR." />
               </Accordion>
-              <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><Empty>Learner reflection data is not available for this PR.</Empty></Accordion>
-              <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><Empty>Manager reflection data is not available for this PR.</Empty></Accordion>
-              <Accordion id="coach-reflection" title="Coach Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('coach-reflection')} onToggle={toggleSection}><Empty>Coach reflection data is not available for this PR.</Empty></Accordion>
-              <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><Empty>No targets or actions have been recorded for this PR.</Empty></Accordion>
+              <Accordion id="learner-reflection" title="Learner Reflections & Ratings" icon="ri-user-heart-line" open={openSections.includes('learner-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="learner-reflection" responses={selected?.reviewResponses} emptyMessage="Learner reflection data is not available for this PR." /></Accordion>
+              <Accordion id="manager-reflection" title="Manager Reflections & Ratings" icon="ri-briefcase-line" open={openSections.includes('manager-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="manager-reflection" responses={selected?.reviewResponses} emptyMessage="Manager reflection data is not available for this PR." /></Accordion>
+              <Accordion id="tutor-reflection" title="Tutor Reflections & Ratings" icon="ri-user-star-line" open={openSections.includes('tutor-reflection')} onToggle={toggleSection}><SavedReviewAnswers sectionId="tutor-reflection" responses={selected?.reviewResponses} emptyMessage="Tutor reflection data is not available for this PR." /></Accordion>
+              <Accordion id="safeguarding" title="Safeguarding & Key Themes" icon="ri-shield-check-line" open={openSections.includes('safeguarding')} onToggle={toggleSection}><SavedReviewAnswers sectionId="safeguarding" responses={selected?.reviewResponses} emptyMessage="No safeguarding or key-theme discussion has been recorded for this PR." /></Accordion>
+              <Accordion id="additional-support" title="Additional Support" icon="ri-hand-heart-line" open={openSections.includes('additional-support')} onToggle={toggleSection}><SavedReviewAnswers sectionId="additional-support" responses={selected?.reviewResponses} emptyMessage="No additional support information has been recorded for this PR." /></Accordion>
+              <Accordion id="actions" title="Progress Targets & Actions" icon="ri-focus-3-line" open={openSections.includes('actions')} onToggle={toggleSection}><SavedReviewAnswers sectionId="actions" responses={selected?.reviewResponses} emptyMessage="No targets or actions have been recorded for this PR." /></Accordion>
               <Accordion id="rag" title="RAG Status" icon="ri-traffic-light-line" open={openSections.includes('rag')} onToggle={toggleSection}>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">OTJH status</p><p className="mt-1 text-base font-bold text-foreground-900">{learner?.otjhStatus || '-'}</p></div>
                   <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Progress variance</p><p className="mt-1 text-base font-bold text-foreground-900">{progressVariance === null ? '-' : `${Math.round(progressVariance * 100)}%`}</p></div>
-                  <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Coach RAG</p><p className="mt-1 text-base font-bold text-foreground-900">-</p></div>
+                  <div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Coach RAG</p><p className="mt-1 text-base font-bold text-foreground-900">{selected?.reviewResponses?.rag_status || '-'}</p></div>
                 </div>
+                {responsesForSection(selected?.reviewResponses, 'rag').length > 0 && <div className="mt-4"><SavedReviewAnswers sectionId="rag" responses={selected?.reviewResponses} emptyMessage="No RAG assessment has been recorded for this PR." /></div>}
               </Accordion>
             </main>
           </div>

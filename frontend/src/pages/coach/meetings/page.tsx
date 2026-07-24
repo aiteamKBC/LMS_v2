@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
 import {
   type CalendarAction,
   type CoachCalendarEvent,
@@ -78,8 +80,11 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
   durationMinutes: 60,
 };
 
+const MEETINGS_PER_PAGE = 10;
+
 export default function CoachMeetings() {
   const [filter, setFilter] = useState<MeetingFilter>('this-month');
+  const [currentPage, setCurrentPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -89,6 +94,7 @@ export default function CoachMeetings() {
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -133,6 +139,18 @@ export default function CoachMeetings() {
     if (filter === 'cancelled') return isCancelledEvent(event);
     return true;
   });
+  const pageCount = Math.ceil(filtered.length / MEETINGS_PER_PAGE);
+  const activePage = Math.min(currentPage, Math.max(pageCount, 1));
+  const paginatedEvents = filtered.slice(
+    (activePage - 1) * MEETINGS_PER_PAGE,
+    activePage * MEETINGS_PER_PAGE,
+  );
+
+  const changeFilter = (nextFilter: MeetingFilter) => {
+    setFilter(nextFilter);
+    setCurrentPage(1);
+    setExpanded(null);
+  };
 
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvents(prevEvents => sortEvents(prevEvents.map(event => (
@@ -191,49 +209,59 @@ export default function CoachMeetings() {
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  const openCompletionForm = (event: CoachCalendarEvent) => {
+    setActionError(null);
+    setCompletionEvent(event);
+  };
+
+  const handleCompleteMeeting = async (responses: ProgressReviewResponses) => {
+    if (!completionEvent) return;
+    setBusyEventId(eventIdentity(completionEvent));
+    setActionError(null);
+    setActionNotice(null);
+    try {
+      const result = await runCoachCalendarAction(completionEvent, 'complete', { reviewResponses: responses });
+      updateEvent(result.event);
+      if (result.warning) setActionNotice(result.warning);
+      setCompletionEvent(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to complete monthly coaching meeting.');
+    } finally {
+      setBusyEventId(null);
+    }
+  };
+
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Coaching Meetings" pageSubtitle="Schedule and manage coaching sessions" userName={ownerName} userRole="Progress Coach">
-      <div className="p-6 space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-calendar-check-line text-white text-2xl"></i>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Coaching Meetings</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{events.length} meetings</strong> generated from {ownerName}'s active learners. {thisMonthEvents.length} this month, {atRiskEvents.length} overdue, {dueSoonEvents.length} due soon, {needsScheduleEvents.length} need scheduling, {inProgressEvents.length} in progress.
+      <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
+        <section
+          className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
+          style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
+        >
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
+                <span>Coach Workspace</span>
+                <i className="ri-arrow-right-s-line"></i>
+                <span className="font-semibold text-white">Coaching Meetings</span>
+              </div>
+              <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Coaching Meetings</h1>
+              <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
+                Plan, run and follow up on monthly coaching meetings for {ownerName}'s active learners.
               </p>
             </div>
-            <div className="flex flex-wrap items-center justify-start sm:justify-end gap-3 shrink-0">
-              <MetricCard value={events.length} label="Total" />
-              <MetricCard value={thisMonthEvents.length} label="This Month" />
-              <MetricCard value={atRiskEvents.length} label="Overdue" tone="text-red-300" />
-              <MetricCard value={needsScheduleEvents.length} label="Needs Schedule" tone="text-amber-300" />
-              <MetricCard value={scheduledEvents.length} label="Scheduled" />
-              <MetricCard value={inProgressEvents.length} label="In Progress" tone="text-primary-200" />
-              <MetricCard value={completedEvents.length} label="Completed" tone="text-emerald-300" />
-            </div>
+            <button
+              type="button"
+              onClick={() => changeFilter(atRiskEvents.length > 0 ? 'at-risk' : 'this-month')}
+              className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
+            >
+              <i className={atRiskEvents.length > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-checkbox-circle-line text-emerald-600'}></i>
+              {atRiskEvents.length > 0
+                ? `${atRiskEvents.length} overdue meeting${atRiskEvents.length === 1 ? '' : 's'}`
+                : 'Everything is on track'}
+            </button>
           </div>
-        </div>
-
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit flex-wrap">
-          <FilterButton active={filter === 'this-month'} onClick={() => setFilter('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonthEvents.length} description={FILTER_COPY['this-month'].description} />
-          <FilterButton active={filter === 'at-risk'} onClick={() => setFilter('at-risk')} label={FILTER_COPY['at-risk'].label} count={atRiskEvents.length} description={FILTER_COPY['at-risk'].description} />
-          <FilterButton active={filter === 'due-soon'} onClick={() => setFilter('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoonEvents.length} description={FILTER_COPY['due-soon'].description} />
-          <FilterButton active={filter === 'needs-schedule'} onClick={() => setFilter('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={needsScheduleEvents.length} description={FILTER_COPY['needs-schedule'].description} />
-          <FilterButton active={filter === 'scheduled'} onClick={() => setFilter('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
-          <FilterButton active={filter === 'in-progress'} onClick={() => setFilter('in-progress')} label={FILTER_COPY['in-progress'].label} count={inProgressEvents.length} description={FILTER_COPY['in-progress'].description} />
-          <FilterButton active={filter === 'completed'} onClick={() => setFilter('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
-          <FilterButton active={filter === 'cancelled'} onClick={() => setFilter('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
-          <FilterButton active={filter === 'all'} onClick={() => setFilter('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
-        </div>
-        <div className="rounded-xl border border-background-200/70 bg-background-50 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">{FILTER_COPY[filter].label}</p>
-          <p className="mt-1 text-[12px] text-foreground-500">{FILTER_COPY[filter].description}</p>
-        </div>
+        </section>
 
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
@@ -241,47 +269,78 @@ export default function CoachMeetings() {
           </div>
         )}
 
-        <div className="space-y-3">
+        <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_12px_40px_-30px_oklch(var(--foreground-950)/0.35)]">
+          <div className="border-b border-background-200 px-4 pt-5 sm:px-6">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <h3 className="text-base font-bold text-foreground-900">{FILTER_COPY[filter].label} meetings</h3>
+                <p className="mt-1 max-w-3xl text-xs leading-5 text-foreground-400">{FILTER_COPY[filter].description}</p>
+              </div>
+              <span className="w-fit rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">
+                {filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}
+              </span>
+            </div>
+            <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-3">
+              <FilterButton active={filter === 'this-month'} onClick={() => changeFilter('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonthEvents.length} description={FILTER_COPY['this-month'].description} />
+              <FilterButton active={filter === 'at-risk'} onClick={() => changeFilter('at-risk')} label={FILTER_COPY['at-risk'].label} count={atRiskEvents.length} description={FILTER_COPY['at-risk'].description} />
+              <FilterButton active={filter === 'due-soon'} onClick={() => changeFilter('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoonEvents.length} description={FILTER_COPY['due-soon'].description} />
+              <FilterButton active={filter === 'needs-schedule'} onClick={() => changeFilter('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={needsScheduleEvents.length} description={FILTER_COPY['needs-schedule'].description} />
+              <FilterButton active={filter === 'scheduled'} onClick={() => changeFilter('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
+              <FilterButton active={filter === 'in-progress'} onClick={() => changeFilter('in-progress')} label={FILTER_COPY['in-progress'].label} count={inProgressEvents.length} description={FILTER_COPY['in-progress'].description} />
+              <FilterButton active={filter === 'completed'} onClick={() => changeFilter('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
+              <FilterButton active={filter === 'cancelled'} onClick={() => changeFilter('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
+              <FilterButton active={filter === 'all'} onClick={() => changeFilter('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
+            </div>
+          </div>
+          <div className="space-y-3 bg-background-100/55 p-3 sm:p-5">
           {loading && <EmptyState icon="ri-loader-4-line" title="Loading coaching meetings..." />}
           {!loading && !error && filtered.length === 0 && <EmptyState icon="ri-calendar-check-line" title="No coaching meetings found." />}
 
-          {!loading && filtered.map(event => {
+          {!loading && paginatedEvents.map(event => {
             const isOpen = expanded === eventIdentity(event);
             const isBusy = busyEventId === eventIdentity(event);
             const url = meetingUrl(event);
             return (
-              <div key={eventIdentity(event)} className={`bg-background-50 rounded-xl border p-4 transition-smooth cursor-pointer ${isOpen ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60'}`} onClick={() => toggleExpanded(event)}>
-                <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ring-2 ${avatarClass(event)}`}>
+              <article key={eventIdentity(event)} className={`group overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)]' : 'border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
+                <div className="flex cursor-pointer items-center gap-3 p-4 sm:gap-4 sm:p-5" onClick={() => toggleExpanded(event)}>
+                  <div className="hidden h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl border border-background-200 bg-background-100 sm:flex">
+                    <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-300">Meeting</span>
+                    <i className="ri-calendar-line mt-1 text-lg text-primary-600"></i>
+                  </div>
+                  <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-background-50 ${avatarClass(event)}`}>
                     <span className="text-sm font-bold">{initialsFor(event.learner)}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-sm font-semibold text-foreground-900">{event.learner || 'Unknown learner'}</p>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${statusPillClass(event.status)}`}>{statusLabel(event.status)}</span>
-                      {isAtRiskEvent(event) && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Overdue</span>}
-                      {isDueSoonEvent(event) && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Due Soon</span>}
-                      <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">Monthly Coaching</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-bold text-foreground-900">{event.learner || 'Unknown learner'}</p>
+                      <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${statusPillClass(event.status)}`}>{statusLabel(event.status)}</span>
+                      {isAtRiskEvent(event) && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-bold text-red-700">Overdue</span>}
+                      {isDueSoonEvent(event) && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[9px] font-bold text-amber-700">Due Soon</span>}
                     </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">
-                      {formatDateLabel(eventDisplayDate(event))} - {formatTimeLabel(event)} - {event.platform || 'Microsoft Teams'}
-                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
+                      <span><i className="ri-calendar-line mr-1 text-primary-500"></i>{formatDateLabel(eventDisplayDate(event))}</span>
+                      <span><i className="ri-time-line mr-1 text-primary-500"></i>{formatTimeLabel(event)}</span>
+                      <span><i className="ri-video-chat-line mr-1 text-primary-500"></i>{event.platform || 'Microsoft Teams'}</span>
+                      {event.cohort && <span className="hidden lg:inline"><i className="ri-group-line mr-1 text-primary-500"></i>{event.cohort}</span>}
+                    </div>
                   </div>
-                  <div className="hidden lg:flex items-center gap-3 shrink-0">
+                  <div className="hidden shrink-0 items-center gap-2 md:flex">
                     {url && (
-                      <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(event); }} disabled={isBusy} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 transition-smooth cursor-pointer whitespace-nowrap">
-                        Join Teams
+                      <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(event); }} disabled={isBusy} className="cursor-pointer whitespace-nowrap rounded-xl bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:opacity-60">
+                        <i className="ri-video-on-line mr-1.5"></i>Join
                       </button>
                     )}
-                    <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(event); }} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      {needsScheduling(event) ? 'Schedule' : 'Reschedule'}
+                    <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(event); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50">
+                      {needsScheduling(event) ? 'Schedule' : 'Manage'}
                     </button>
                   </div>
-                  <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300`}></i>
+                  <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-foreground-400 transition-transform ${isOpen ? 'rotate-180 bg-primary-50 text-primary-600' : ''}`}>
+                    <i className="ri-arrow-down-s-line"></i>
+                  </span>
                 </div>
 
                 {isOpen && (
-                  <div className="mt-4 ml-14 pt-3 border-t border-background-200/30 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="space-y-4 border-t border-background-200 bg-white/60 p-4 sm:p-5 sm:pl-[9.25rem]" onClick={(e) => e.stopPropagation()}>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <InfoBox label="Target date" value={formatDateLabel(event.targetDate)} />
                       <InfoBox label="Scheduled date" value={event.scheduledDate ? formatDateLabel(event.scheduledDate) : '--'} />
@@ -321,7 +380,7 @@ export default function CoachMeetings() {
                             </button>
                           )}
                           {event.status === 'in-progress' && (
-                            <button type="button" onClick={() => handleAction(event, 'complete')} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
+                            <button type="button" onClick={() => openCompletionForm(event)} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
                               <i className="ri-check-double-line mr-1"></i>Complete
                             </button>
                           )}
@@ -335,37 +394,97 @@ export default function CoachMeetings() {
                     )}
                   </div>
                 )}
-              </div>
+              </article>
             );
           })}
-        </div>
+            {!loading && pageCount > 1 && (
+              <Pagination
+                currentPage={activePage}
+                pageCount={pageCount}
+                totalItems={filtered.length}
+                onPageChange={(page) => {
+                  setCurrentPage(page);
+                  setExpanded(null);
+                }}
+              />
+            )}
+          </div>
+        </section>
+        {completionEvent && (
+          <MonthlyCoachingCompletionModal
+            key={eventIdentity(completionEvent)}
+            event={completionEvent}
+            busy={busyEventId === eventIdentity(completionEvent)}
+            error={actionError}
+            onClose={() => {
+              if (!busyEventId) setCompletionEvent(null);
+            }}
+            onSubmit={handleCompleteMeeting}
+          />
+        )}
       </div>
     </WorkspaceShell>
   );
 }
 
-function MetricCard({ value, label, tone = 'text-white' }: { value: number; label: string; tone?: string }) {
+function FilterButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
   return (
-    <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-      <p className={`text-2xl font-bold ${tone}`}>{value}</p>
-      <p className="text-[10px] text-white/70 uppercase tracking-wide">{label}</p>
-    </div>
+    <button type="button" onClick={onClick} title={description} className={`cursor-pointer whitespace-nowrap rounded-xl px-3.5 py-2 text-[11px] font-semibold transition-smooth ${active ? 'bg-primary-900 text-white shadow-sm' : 'text-foreground-400 hover:bg-background-100 hover:text-foreground-700'}`}>
+      {label} <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[9px] ${active ? 'bg-white/15 text-white' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
+    </button>
   );
 }
 
-function FilterButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
+function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { currentPage: number; pageCount: number; totalItems: number; onPageChange: (page: number) => void }) {
+  const visiblePages = Array.from(
+    new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount]),
+  ).filter(page => page > 0 && page <= pageCount).sort((a, b) => a - b);
+
   return (
-    <button type="button" onClick={onClick} title={description} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${active ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-      {label} <span className="text-[10px] opacity-60">({count})</span>
-    </button>
+    <nav className="flex flex-col items-center justify-between gap-3 border-t border-background-200 pt-4 sm:flex-row" aria-label="Meeting pages">
+      <p className="text-[11px] font-medium text-foreground-400">
+        Showing {(currentPage - 1) * MEETINGS_PER_PAGE + 1}–{Math.min(currentPage * MEETINGS_PER_PAGE, totalItems)} of {totalItems}
+      </p>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <i className="ri-arrow-left-s-line"></i>Previous
+        </button>
+        {visiblePages.map((page, index) => (
+          <div key={page} className="flex items-center gap-1">
+            {index > 0 && page - visiblePages[index - 1] > 1 && <span className="px-1 text-xs text-foreground-300">…</span>}
+            <button
+              type="button"
+              onClick={() => onPageChange(page)}
+              aria-current={currentPage === page ? 'page' : undefined}
+              className={`h-9 min-w-9 rounded-xl px-2 text-[11px] font-bold transition-smooth ${currentPage === page ? 'bg-primary-900 text-white shadow-sm' : 'border border-background-200 bg-background-50 text-foreground-500 hover:border-primary-200 hover:bg-primary-50'}`}
+            >
+              {page}
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === pageCount}
+          className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next<i className="ri-arrow-right-s-line"></i>
+        </button>
+      </div>
+    </nav>
   );
 }
 
 function InfoBox({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-background-100/50 rounded-lg p-3">
-      <p className="text-[10px] text-foreground-400 mb-1 uppercase font-semibold">{label}</p>
-      <p className="text-[12px] text-foreground-700 font-medium">{value}</p>
+    <div className="rounded-xl border border-background-200/70 bg-background-50 p-3.5">
+      <p className="mb-1 text-[9px] font-bold uppercase tracking-wider text-foreground-300">{label}</p>
+      <p className="text-xs font-semibold text-foreground-700">{value}</p>
     </div>
   );
 }
@@ -381,9 +500,11 @@ function ScheduleInput({ label, type, value, onChange }: { label: string; type: 
 
 function EmptyState({ icon, title }: { icon: string; title: string }) {
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-8 text-center">
-      <i className={`${icon} text-2xl text-foreground-300`}></i>
-      <p className="text-sm font-semibold text-foreground-500 mt-2">{title}</p>
+    <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 p-12 text-center">
+      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
+        <i className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></i>
+      </span>
+      <p className="mt-3 text-sm font-semibold text-foreground-500">{title}</p>
     </div>
   );
 }
