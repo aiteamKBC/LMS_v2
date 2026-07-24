@@ -34,6 +34,8 @@ class CoachCalendarEvent(models.Model):
     graph_event_id = models.CharField(max_length=255, blank=True)
     graph_web_link = models.URLField(max_length=1000, blank=True)
     notes = models.TextField(blank=True)
+    review_responses = models.JSONField(default=dict, blank=True)
+    review_completed_at = models.DateTimeField(null=True, blank=True)
     last_graph_sync_error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

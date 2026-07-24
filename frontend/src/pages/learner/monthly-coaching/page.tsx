@@ -5,6 +5,8 @@ import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
+import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 
 const learnerNav = roleNavMap.learner;
 
@@ -56,6 +58,27 @@ function hoursLabel(minutes: number): string {
 
 function Empty({ children }: { children: ReactNode }) {
   return <div className="rounded-xl border border-dashed border-background-300 bg-background-100/50 px-5 py-7 text-center"><p className="text-xl font-bold text-foreground-300">-</p><p className="mt-1 text-xs text-foreground-400">{children}</p></div>;
+}
+
+function SavedMcmAnswers({ sectionId, responses, emptyMessage }: { sectionId: string; responses?: ProgressReviewResponses; emptyMessage: string }) {
+  const answers = monthlyCoachingAnswers(responses, sectionId);
+  if (!answers.length) return <Empty>{emptyMessage}</Empty>;
+  return (
+    <div className="space-y-3">
+      {answers.map((item) => (
+        <div key={item.id} className="rounded-xl border border-background-200 bg-background-100/55 p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{item.label}</p>
+          {item.type === 'rating' ? (
+            <div className="mt-2 flex items-center gap-2"><span className="text-lg font-bold text-primary-700">{item.answer}/5</span><div className="flex gap-1">{[1, 2, 3, 4, 5].map((rating) => <i key={rating} className={rating <= Number(item.answer) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}></i>)}</div></div>
+          ) : item.type === 'rag' ? (
+            <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${item.answer.toLowerCase() === 'green' ? 'bg-emerald-100 text-emerald-700' : item.answer.toLowerCase() === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}><i className="ri-circle-fill text-[8px]"></i>{item.answer}</span>
+          ) : (
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{item.answer}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Accordion({ id, title, icon, status, open, onToggle, children }: { id: string; title: string; icon: string; status?: 'Complete' | 'Incomplete'; open: boolean; onToggle: (id: string) => void; children: ReactNode }) {
@@ -201,7 +224,6 @@ export default function MonthlyCoachingPage() {
   const selected = sessions.find((session) => session.id === sessionId) || null;
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
-  const next = index >= 0 && index < sessions.length - 1 ? sessions[index + 1] : null;
 
   const window = useMemo(() => {
     const previousDate = dateOf(previous);
@@ -249,26 +271,26 @@ export default function MonthlyCoachingPage() {
               <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Completed activities</p><p className="mt-1 text-2xl font-bold text-primary-800">{progress.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Completed activity time</p><p className="mt-1 text-2xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs evidenced</p><p className="mt-1 text-2xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div>
               <div className="mt-4"><div className="mb-2 flex items-center justify-between"><h2 className="text-xs font-bold text-foreground-800">What the learner completed</h2><span className="text-[10px] text-foreground-400">{learningItems.length} {learningItems.length === 1 ? 'record' : 'records'}</span></div>{learningItems.length === 0 ? <Empty>No completed learning was recorded in this 30-day period.</Empty> : <div className="divide-y divide-background-200 rounded-xl border border-background-200">{learningItems.map((item) => <div key={item.key} className="flex items-start gap-3 p-3.5"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><i className="ri-checkbox-circle-line" /></span><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{item.title}</p><p className="text-xs text-foreground-400">{item.detail}</p></div><span className="text-[10px] text-foreground-400">{new Date(item.at).toLocaleDateString('en-GB')}</span></div>)}</div>}</div>
             </Accordion>
-            <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" open={openSections.includes('previous-summary')} onToggle={toggle}>
-              {previous ? <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Previous session</p><p className="mt-1 text-sm font-bold text-foreground-900">Monthly Coaching #{previous.sequence}</p></div><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Date</p><p className="mt-1 text-sm font-bold text-foreground-900">{formatDate(dateOf(previous))}</p></div><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Status</p><p className="mt-1 text-sm font-bold text-foreground-900">{statusLabel(previous.status)}</p></div>{previous.notes && <p className="sm:col-span-3 whitespace-pre-wrap rounded-xl border border-background-200 p-4 text-sm text-foreground-700">{previous.notes}</p>}</div> : <Empty>This is the first monthly coaching session, so there is no previous meeting summary.</Empty>}
+            <Accordion id="previous-summary" title="Previous Meeting Summary" icon="ri-history-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'previous-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('previous-summary')} onToggle={toggle}>
+              <SavedMcmAnswers sectionId="previous-summary" responses={selected.reviewResponses} emptyMessage="No previous meeting summary has been recorded." />
             </Accordion>
-            <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={selected.status === 'completed' ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
-              <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="mt-1 text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="mt-1 text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div><div className="rounded-xl bg-background-100 p-4"><p className="text-[10px] font-semibold uppercase text-foreground-400">Session status</p><p className="mt-1 text-sm font-bold text-foreground-900">{statusLabel(selected.status)}</p></div></div>
+            <Accordion id="opening" title="Opening the Meeting (5 minutes)" icon="ri-play-circle-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'opening').length ? 'Complete' : 'Incomplete'} open={openSections.includes('opening')} onToggle={toggle}>
+              <SavedMcmAnswers sectionId="opening" responses={selected.reviewResponses} emptyMessage="The opening check-in has not been recorded." />
             </Accordion>
-            <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={learningItems.length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
-              {learningItems.length ? <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-primary-50 p-4"><p className="text-[10px] font-semibold uppercase text-primary-500">Activities presented</p><p className="mt-1 text-xl font-bold text-primary-800">{learningItems.length}</p></div><div className="rounded-xl bg-accent-50 p-4"><p className="text-[10px] font-semibold uppercase text-accent-600">Learning time</p><p className="mt-1 text-xl font-bold text-accent-800">{hoursLabel(learningMinutes)}</p></div><div className="rounded-xl bg-emerald-50 p-4"><p className="text-[10px] font-semibold uppercase text-emerald-600">KSBs</p><p className="mt-1 text-xl font-bold text-emerald-800">{ksbCodes.length}</p></div></div> : <Empty>No learner presentation information has been recorded for this session.</Empty>}
+            <Accordion id="presentation" title="Learner Presentation & Review (15 minutes)" icon="ri-presentation-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'presentation').length ? 'Complete' : 'Incomplete'} open={openSections.includes('presentation')} onToggle={toggle}>
+              <SavedMcmAnswers sectionId="presentation" responses={selected.reviewResponses} emptyMessage="No learner presentation information has been recorded for this session." />
             </Accordion>
-            <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={ksbCodes.length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
-              {ksbCodes.length ? <div className="flex flex-wrap gap-2">{ksbCodes.map((code) => <span key={code} className="rounded-md bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700">{code}</span>)}</div> : <Empty>No KSB reflection has been recorded for this session.</Empty>}
+            <Accordion id="ksb-reflection" title="Reflection on Knowledge, Skills, and Behaviours (10 minutes)" icon="ri-lightbulb-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'ksb-reflection').length ? 'Complete' : 'Incomplete'} open={openSections.includes('ksb-reflection')} onToggle={toggle}>
+              <SavedMcmAnswers sectionId="ksb-reflection" responses={selected.reviewResponses} emptyMessage="No KSB reflection has been recorded for this session." />
             </Accordion>
-            <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status="Incomplete" open={openSections.includes('next-month')} onToggle={toggle}><Empty>No targets or actions for next month have been recorded.</Empty></Accordion>
-            <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status="Incomplete" open={openSections.includes('resources')} onToggle={toggle}><Empty>No coach learning resources or guidance have been recorded.</Empty></Accordion>
-            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status="Incomplete" open={openSections.includes('wellbeing')} onToggle={toggle}><Empty>No wellbeing or safeguarding response has been recorded.</Empty></Accordion>
-            <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status="Incomplete" open={openSections.includes('feedback')} onToggle={toggle}><Empty>No learner feedback has been recorded.</Empty></Accordion>
-            <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={next ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
-              {next ? <div className="flex items-center justify-between rounded-xl bg-background-100 p-4"><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Next monthly coaching session</p><p className="mt-1 text-sm font-bold text-foreground-900">Monthly Coaching #{next.sequence} · {formatDate(dateOf(next))}</p></div><span className="rounded-full bg-background-200 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">{statusLabel(next.status)}</span></div> : <Empty>The next monthly coaching meeting has not been created.</Empty>}
+            <Accordion id="next-month" title="Preparing for Next Month (10 minutes)" icon="ri-calendar-todo-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'next-month').length ? 'Complete' : 'Incomplete'} open={openSections.includes('next-month')} onToggle={toggle}><SavedMcmAnswers sectionId="next-month" responses={selected.reviewResponses} emptyMessage="No targets or actions for next month have been recorded." /></Accordion>
+            <Accordion id="resources" title="Learning Resources – Coach Guidance (5 minutes)" icon="ri-book-open-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'resources').length ? 'Complete' : 'Incomplete'} open={openSections.includes('resources')} onToggle={toggle}><SavedMcmAnswers sectionId="resources" responses={selected.reviewResponses} emptyMessage="No coach learning resources or guidance have been recorded." /></Accordion>
+            <Accordion id="wellbeing" title="Wellbeing & Safeguarding Check (5 minutes)" icon="ri-shield-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'wellbeing').length ? 'Complete' : 'Incomplete'} open={openSections.includes('wellbeing')} onToggle={toggle}><SavedMcmAnswers sectionId="wellbeing" responses={selected.reviewResponses} emptyMessage="No wellbeing or safeguarding response has been recorded." /></Accordion>
+            <Accordion id="feedback" title="Learner Feedback on Teaching & Curriculum (5 minutes)" icon="ri-feedback-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'feedback').length ? 'Complete' : 'Incomplete'} open={openSections.includes('feedback')} onToggle={toggle}><SavedMcmAnswers sectionId="feedback" responses={selected.reviewResponses} emptyMessage="No learner feedback has been recorded." /></Accordion>
+            <Accordion id="confirm-next" title="Confirm Next Meeting & Close (5 minutes)" icon="ri-calendar-check-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'confirm-next').length ? 'Complete' : 'Incomplete'} open={openSections.includes('confirm-next')} onToggle={toggle}>
+              <SavedMcmAnswers sectionId="confirm-next" responses={selected.reviewResponses} emptyMessage="The next meeting confirmation has not been recorded." />
             </Accordion>
-            <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={selected.notes ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}>{selected.notes ? <p className="whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.notes}</p> : <Empty>No meeting summary has been recorded.</Empty>}</Accordion>
+            <Accordion id="meeting-summary" title="Meeting Summary" icon="ri-file-text-line" status={monthlyCoachingAnswers(selected.reviewResponses, 'meeting-summary').length ? 'Complete' : 'Incomplete'} open={openSections.includes('meeting-summary')} onToggle={toggle}><SavedMcmAnswers sectionId="meeting-summary" responses={selected.reviewResponses} emptyMessage="No meeting summary has been recorded." /></Accordion>
           </>
         )}
       </div>

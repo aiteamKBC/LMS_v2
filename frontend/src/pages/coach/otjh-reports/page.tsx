@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/caseload';
+const ROWS_PER_PAGE = 10;
 
 type FilterKey = 'all' | 'behind' | 'need-attention' | 'on-track';
 type OtjhRowStatus = 'behind' | 'on-track' | 'ahead' | 'need-attention' | 'unknown';
@@ -192,8 +193,67 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   };
 }
 
+function OtjhMetricCard({ icon, label, value, tone }: { icon: string; label: string; value: string; tone: 'purple' | 'blue' | 'amber' | 'red' }) {
+  const toneClasses = {
+    purple: 'bg-violet-50 text-violet-700',
+    blue: 'bg-sky-50 text-sky-700',
+    amber: 'bg-amber-50 text-amber-700',
+    red: 'bg-red-50 text-red-700',
+  };
+
+  return (
+    <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
+      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
+        <i className={`${icon} text-xl`} />
+      </span>
+      <div className="min-w-0">
+        <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
+        <p className="mt-2 truncate text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function OtjhTableMessage({ icon, message }: { icon: string; message: string }) {
+  return (
+    <div className="px-5 py-14 text-center">
+      <i className={`${icon} text-2xl text-slate-400`} />
+      <p className="mt-2 text-xs font-semibold text-slate-500">{message}</p>
+    </div>
+  );
+}
+
+function OtjhPagination({ currentPage, pageCount, total, onChange }: { currentPage: number; pageCount: number; total: number; onChange: (page: number) => void }) {
+  const start = (currentPage - 1) * ROWS_PER_PAGE + 1;
+  const end = Math.min(currentPage * ROWS_PER_PAGE, total);
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-[11px] font-medium text-slate-500">
+        Showing <span className="font-bold text-slate-800">{start}-{end}</span> of <span className="font-bold text-slate-800">{total}</span>
+      </p>
+      {pageCount > 1 && (
+        <div className="flex items-center gap-1">
+          <button type="button" aria-label="Previous page" disabled={currentPage === 1} onClick={() => onChange(currentPage - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
+            <i className="ri-arrow-left-s-line" />
+          </button>
+          {Array.from({ length: pageCount }, (_, index) => index + 1).map(page => (
+            <button key={page} type="button" onClick={() => onChange(page)} className={`h-8 min-w-8 rounded-lg px-2 text-[11px] font-bold transition ${currentPage === page ? 'bg-[#21003f] text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+              {page}
+            </button>
+          ))}
+          <button type="button" aria-label="Next page" disabled={currentPage === pageCount} onClick={() => onChange(currentPage + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
+            <i className="ri-arrow-right-s-line" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CoachOtjhReports() {
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [currentPage, setCurrentPage] = useState(1);
   const [rows, setRows] = useState<OtjhRow[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -248,6 +308,14 @@ export default function CoachOtjhReports() {
     () => rows.filter(row => filter === 'all' || row.status === filter),
     [filter, rows],
   );
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / ROWS_PER_PAGE));
+  const activePage = Math.min(currentPage, pageCount);
+  const paginatedRows = filteredRows.slice((activePage - 1) * ROWS_PER_PAGE, activePage * ROWS_PER_PAGE);
+
+  const changeFilter = (nextFilter: FilterKey) => {
+    setFilter(nextFilter);
+    setCurrentPage(1);
+  };
 
   const filterOptions: Array<{ key: FilterKey; label: string; count: number }> = [
     { key: 'all', label: 'All', count: rows.length },
@@ -264,111 +332,116 @@ export default function CoachOtjhReports() {
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="OTJH Reports" pageSubtitle="Monitor Off-The-Job Hours progress and targets" userName={ownerName} userRole="Progress Coach">
-      <div className="p-6 space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-time-line text-white text-2xl"></i>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">OTJH Reports</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                Total caseload: <strong>{formatHours(stats.totalCompleted)}/{formatHours(stats.totalTarget)} target hours</strong> ({stats.completion}%). Planned hours {formatHours(stats.totalPlanned)}. {stats.behind} at risk, {stats.needAttention} need attention, {stats.onTrack} on track.
+      <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
+        <section className="rounded-2xl border border-white/10 px-5 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-7" style={{ background: 'linear-gradient(110deg, #100021 0%, #190034 52%, #2a0752 100%)' }}>
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
+            <div>
+              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/55">
+                <span>Coach Workspace</span>
+                <i className="ri-arrow-right-s-line text-sm" />
+                <span className="text-white">OTJH Reports</span>
+              </div>
+              <h1 className="font-heading text-2xl font-bold tracking-tight md:text-[28px]">Off-The-Job Hours</h1>
+              <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/70">
+                Monitor completed hours against each learner's target and quickly identify caseload risks.
               </p>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{formatHours(stats.totalCompleted)}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Completed hrs</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{formatHours(stats.totalPlanned)}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Planned hrs</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{formatHours(stats.totalTarget)}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Target hrs</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-red-300">{stats.behind}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">At risk</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit">
-          {filterOptions.map(option => (
-            <button
-              key={option.key}
-              onClick={() => setFilter(option.key)}
-              className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === option.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}
-            >
-              {option.label} <span className="text-[10px] opacity-60">({option.count})</span>
+            <button type="button" onClick={() => changeFilter(stats.behind ? 'behind' : 'on-track')} className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur-sm transition hover:bg-white/15 md:self-auto">
+              <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.behind ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
+                <i className={stats.behind ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
+              </span>
+              <span>
+                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-white/55">{stats.behind ? 'Needs attention' : 'Caseload status'}</span>
+                <span className="mt-0.5 block text-sm font-bold">{stats.behind ? `${stats.behind} learner${stats.behind === 1 ? '' : 's'} at risk` : 'Everything on track'}</span>
+              </span>
             </button>
-          ))}
-        </div>
+          </div>
+        </section>
 
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="grid grid-cols-[minmax(260px,1.7fr)_minmax(150px,1fr)_repeat(4,minmax(95px,0.65fr))_minmax(125px,0.8fr)_minmax(90px,0.5fr)] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-            <span>Learner</span>
-            <span>Programme</span>
-            <span className="text-center">Planned</span>
-            <span className="text-center">Target</span>
-            <span className="text-center">Completed</span>
-            <span className="text-center">Remaining</span>
-            <span className="text-center">OTJH Status</span>
-            <span className="text-center">Action</span>
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <OtjhMetricCard icon="ri-checkbox-circle-line" label="Completed hours" value={formatHours(stats.totalCompleted)} tone="purple" />
+          <OtjhMetricCard icon="ri-calendar-schedule-line" label="Planned hours" value={formatHours(stats.totalPlanned)} tone="blue" />
+          <OtjhMetricCard icon="ri-focus-3-line" label="Target hours" value={formatHours(stats.totalTarget)} tone="amber" />
+          <OtjhMetricCard icon="ri-alarm-warning-line" label="Learners at risk" value={String(stats.behind)} tone="red" />
+        </section>
+
+        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
+          <div className="border-b border-slate-100 px-4 py-4 md:px-5">
+            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-bold text-slate-950">Learner OTJH progress</h2>
+                  <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-700">{filteredRows.length} learner{filteredRows.length === 1 ? '' : 's'}</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Completed, planned and remaining hours across the active caseload.</p>
+              </div>
+              <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
+                {filterOptions.map(option => (
+                  <button key={option.key} type="button" onClick={() => changeFilter(option.key)} className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-[11px] font-semibold transition ${filter === option.key ? 'bg-[#21003f] text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}`}>
+                    {option.label}
+                    <span className={`ml-1.5 text-[10px] ${filter === option.key ? 'text-white/65' : 'text-slate-400'}`}>{option.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
-          {loading && (
-            <div className="px-4 py-12 text-center text-[12px] text-foreground-500">
-              Loading live OTJH data...
-            </div>
-          )}
+          <div className="overflow-x-auto">
+            <div className="min-w-[1100px]">
+              <div className="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)] gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">
+                <span>Learner</span>
+                <span>Programme</span>
+                <span className="text-center">Planned</span>
+                <span className="text-center">Target</span>
+                <span className="text-center">Completed</span>
+                <span className="text-center">Remaining</span>
+                <span>OTJH progress</span>
+                <span className="text-center">Action</span>
+              </div>
 
-          {!loading && error && (
-            <div className="px-4 py-12 text-center">
-              <i className="ri-error-warning-line text-red-500 text-2xl"></i>
-              <p className="mt-2 text-sm font-semibold text-foreground-900">{error}</p>
-            </div>
-          )}
+              {loading && <OtjhTableMessage icon="ri-loader-4-line animate-spin" message="Loading live OTJH data..." />}
+              {!loading && error && <OtjhTableMessage icon="ri-error-warning-line text-red-500" message={error} />}
+              {!loading && !error && filteredRows.length === 0 && <OtjhTableMessage icon="ri-user-search-line text-violet-500" message="No learners match this OTJH filter." />}
 
-          {!loading && !error && filteredRows.length === 0 && (
-            <div className="px-4 py-12 text-center text-[12px] text-foreground-500">
-              No learners match this OTJH filter.
+              {!loading && !error && paginatedRows.length > 0 && (
+                <div className="divide-y divide-slate-100">
+                  {paginatedRows.map(row => (
+                    <div key={row.id} className="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)] items-center gap-3 px-5 py-4 transition hover:bg-violet-50/30">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-bold text-slate-900">{row.learner}</p>
+                          <p className="mt-0.5 truncate text-[10px] text-slate-500">{row.employer}</p>
+                        </div>
+                      </div>
+                      <span className="truncate text-[11px] font-medium text-slate-600">{row.programme}</span>
+                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.planned)}</span>
+                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.target)}</span>
+                      <span className="text-center text-[12px] font-bold text-violet-700">{formatHours(row.completed)}</span>
+                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.remaining)}</span>
+                      <div className="min-w-0">
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <span className={`text-[11px] font-bold ${getPaceTone(row.pace)}`}>{row.pace}%</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase ${getBadgeStyle(row.risk)}`}>{row.statusLabel}</span>
+                        </div>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
+                          <div className={`h-full rounded-full ${getProgressBarStyle(row.risk)}`} style={{ width: `${Math.min(row.pace, 100)}%` }} />
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <button type="button" onClick={() => handleViewDetails(row)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[10px] font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100">Details</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {!loading && !error && filteredRows.length > 0 && (
-            <div className="divide-y divide-background-200/30">
-              {filteredRows.map(row => (
-                <div key={row.id} className="grid grid-cols-[minmax(260px,1.7fr)_minmax(150px,1fr)_repeat(4,minmax(95px,0.65fr))_minmax(125px,0.8fr)_minmax(90px,0.5fr)] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
-                    <div className="min-w-0">
-                      <p className="text-[12px] font-medium text-foreground-900 truncate">{row.learner}</p>
-                      <p className="text-[10px] text-foreground-400 truncate">{row.employer}</p>
-                    </div>
-                  </div>
-                  <span className="text-[11px] text-foreground-500 truncate">{row.programme}</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.planned)}</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.target)}</span>
-                  <span className="text-[11px] font-semibold text-primary-600 text-center">{formatHours(row.completed)}</span>
-                  <span className="text-[11px] text-foreground-500 text-center">{formatHours(row.remaining)}</span>
-                  <div className="flex justify-center">
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getBadgeStyle(row.risk)}`}>{row.statusLabel}</span>
-                  </div>
-                  <div className="text-center">
-                    <button onClick={() => handleViewDetails(row)} className="px-2 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Details</button>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <OtjhPagination currentPage={activePage} pageCount={pageCount} total={filteredRows.length} onChange={setCurrentPage} />
           )}
-        </div>
+        </section>
       </div>
 
       <RightSlidePanel

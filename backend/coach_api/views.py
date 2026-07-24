@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from django.db import connections, router
 from django.db.models import Q
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
@@ -40,6 +41,48 @@ from curriculum_api.views import (
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
+PROGRESS_REVIEW_RESPONSE_IDS = {
+    "learning_summary",
+    "key_achievements",
+    "progress_checks",
+    "attendance_progress",
+    "otjh_progress",
+    "learner_reflection",
+    "learner_rating",
+    "manager_reflection",
+    "manager_rating",
+    "tutor_reflection",
+    "tutor_rating",
+    "safeguarding_discussion",
+    "key_themes",
+    "support_required",
+    "support_plan",
+    "targets_actions",
+    "action_owners_dates",
+    "rag_status",
+    "rag_reason",
+}
+MONTHLY_COACHING_RESPONSE_IDS = {
+    "mcm_previous_summary",
+    "mcm_previous_barriers",
+    "mcm_opening_checkin",
+    "mcm_agenda_agreed",
+    "mcm_presentation_summary",
+    "mcm_presentation_feedback",
+    "mcm_ksb_reflection",
+    "mcm_workplace_application",
+    "mcm_next_month_targets",
+    "mcm_next_month_actions",
+    "mcm_resources_guidance",
+    "mcm_wellbeing_check",
+    "mcm_safeguarding_action",
+    "mcm_learner_feedback",
+    "mcm_learning_rating",
+    "mcm_next_meeting",
+    "mcm_close_confirmation",
+    "mcm_meeting_summary",
+    "mcm_outcome",
+}
 DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
 ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
@@ -2926,6 +2969,8 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "platform": meeting_provider or ("Microsoft Teams" if meeting_link else "--"),
             "location": "Online" if meeting_link else "--",
             "notes": " ".join(event_note_lines(base_event, record)),
+            "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
+            "reviewCompletedAt": record.review_completed_at.isoformat() if record and record.review_completed_at else None,
             "priority": generated_event_priority(status, target_date, display_date),
             "syncWarning": clean_text(record.last_graph_sync_error) if record else "",
         }
@@ -3628,12 +3673,43 @@ def coach_timetable_event_action(request):
 
     record.owner_name = owner_name
     warning = ""
+    review_responses = None
+    completion_source = base_event.get("source")
+    response_ids = (
+        PROGRESS_REVIEW_RESPONSE_IDS
+        if completion_source == "progress-review"
+        else MONTHLY_COACHING_RESPONSE_IDS
+        if completion_source == "mcr"
+        else None
+    )
+    if action == "complete" and response_ids:
+        submitted_responses = payload.get("reviewResponses")
+        if not isinstance(submitted_responses, dict):
+            record_label = "Progress review" if completion_source == "progress-review" else "Monthly coaching"
+            return JsonResponse({"detail": f"{record_label} responses are required before completing the session."}, status=400)
+        review_responses = {
+            key: clean_text(submitted_responses.get(key))[:4000]
+            for key in response_ids
+        }
+        missing = sorted(key for key, value in review_responses.items() if not value)
+        if missing:
+            return JsonResponse(
+                {"detail": "Please answer every question before completing the session.", "missing": missing},
+                status=400,
+            )
+        outcome_key = "rag_status" if completion_source == "progress-review" else "mcm_outcome"
+        if review_responses[outcome_key].lower() not in {"green", "amber", "red"}:
+            return JsonResponse({"detail": "RAG status must be Green, Amber or Red."}, status=400)
+
     if action == "start" and not calendar_record_has_launch_url(record):
         return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
     if action == "start":
         record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
     elif action == "complete":
         record.status = CoachCalendarEvent.STATUS_COMPLETED
+        if review_responses is not None:
+            record.review_responses = review_responses
+            record.review_completed_at = timezone.now()
     elif action == "cancel":
         warning = delete_calendar_event_from_graph(record)
         record.status = CoachCalendarEvent.STATUS_CANCELLED

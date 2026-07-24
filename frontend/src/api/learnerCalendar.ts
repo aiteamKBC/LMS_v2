@@ -23,6 +23,8 @@ export interface LearnerCalendarEvent {
   meetingProvider: string;
   meetingLink: string;
   notes: string;
+  reviewResponses?: Record<string, string>;
+  reviewCompletedAt?: string | null;
 }
 
 export interface LearnerCalendarResponse {
