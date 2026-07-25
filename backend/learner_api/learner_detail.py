@@ -21,7 +21,7 @@ from django.http import JsonResponse
 
 from .active_users import completed_hours_from_progress, fmt_hours
 from .mappers import _s, to_learner_detail
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
 
@@ -563,7 +563,7 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = ActiveUser.objects.filter(id=pk).first()
+        active = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

@@ -58,6 +58,7 @@ class CoachAbsenceReport(models.Model):
         (STATUS_DECLINED, "Declined"),
     ]
 
+    attendance_id = models.BigIntegerField(unique=True)
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
     learner_id = models.IntegerField(db_index=True)

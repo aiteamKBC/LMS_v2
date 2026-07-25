@@ -16,8 +16,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import completed_hours_from_progress, append_activity_entry
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .active_users import save_progress_record
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -95,7 +95,7 @@ def submit_video_progress(request, component_id):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = ActiveUser.objects.filter(id=learner_id).first()
+        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -123,12 +123,7 @@ def submit_video_progress(request, component_id):
     }
 
     if active is not None:
-        history.append(record)
-        active.training_plan_progress = history
-        # Keep Completed_hours in step with the progress log (summed reportedTime).
-        active.completed_hours = completed_hours_from_progress(history)
-        # Log this completion to the activity feed (newest last).
-        append_activity_entry(active, {
+        activity = {
             "kind": "video",
             "action": "Watched video",
             "title": video_title or "Video",
@@ -137,9 +132,9 @@ def submit_video_progress(request, component_id):
             "week": week_title,
             "module": module_title,
             "at": submitted_at,
-        })
+        }
         try:
-            active.save(update_fields=["training_plan_progress", "completed_hours", "activity_feed"])
+            save_progress_record(active, record, activity)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
 

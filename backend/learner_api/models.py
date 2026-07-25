@@ -142,6 +142,340 @@ class CommercialUser(models.Model):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
 
 
+class LearnerProfile(models.Model):
+    """Permanent learner identity shared by active and inactive workflows."""
+
+    id = models.BigAutoField(primary_key=True)
+    full_name = models.TextField()
+    email = models.EmailField(max_length=320, unique=True)
+    email_normalized = models.TextField(editable=False, unique=True)
+    phone_number = models.TextField(blank=True)
+    lifecycle_status = models.CharField(max_length=50, db_index=True)
+    programme = models.TextField(blank=True)
+    programme_status = models.CharField(max_length=100, blank=True)
+    cohort = models.TextField(blank=True)
+    group_name = models.TextField(blank=True)
+    completed_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    target_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    minimum_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    maximum_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    planned_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    progress_hours = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    progress_variance = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    otjh_status = models.CharField(max_length=50, blank=True)
+    coach_name = models.TextField(blank=True)
+    coach_email = models.EmailField(max_length=320, blank=True)
+    coach_rag = models.CharField(max_length=20, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    gateway_review_date = models.DateField(null=True, blank=True)
+    alert_notify_for_epa = models.DateField(null=True, blank=True)
+    enter_epa = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learners'
+
+    def __str__(self):
+        return f"{self.full_name or 'Unnamed'} <{self.email}>"
+
+    @property
+    def username(self):
+        return self.full_name
+
+    @property
+    def group(self):
+        return self.group_name
+
+    @property
+    def status(self):
+        return self.lifecycle_status
+
+    @property
+    def ksbs(self):
+        return [
+            {
+                "code": item.code,
+                "number": item.number,
+                "type": item.ksb_type,
+                "description": item.description,
+            }
+            for item in self.assigned_ksbs.all()
+        ]
+
+    @property
+    def training_plan(self):
+        modules = []
+        for module in self.plan_modules.all():
+            weeks = []
+            for week in module.weeks.all():
+                components = [
+                    {
+                        "componentId": component.component_ref,
+                        "componentTitle": component.component_title,
+                    }
+                    for component in week.components.all()
+                ]
+                weeks.append(
+                    {
+                        "weekId": week.week_ref,
+                        "weekTitle": week.week_title,
+                        "components": components,
+                    }
+                )
+            modules.append(
+                {
+                    "moduleId": module.module_ref,
+                    "moduleTitle": module.module_title,
+                    "weeks": weeks,
+                }
+            )
+        return modules
+
+    @property
+    def training_plan_progress(self):
+        records = []
+        for entry in self.progress_entries.all():
+            record = {
+                "kind": entry.kind,
+                "moduleId": entry.module_ref,
+                "moduleTitle": entry.module_title,
+                "weekId": entry.week_ref,
+                "weekTitle": entry.week_title,
+                "componentId": entry.component_ref,
+                "componentTitle": entry.component_title,
+                "componentType": entry.component_type,
+                "quizId": entry.quiz_ref,
+                "attempt": entry.attempt,
+                "grade": float(entry.grade) if entry.grade is not None else None,
+                "achievedScore": float(entry.achieved_score) if entry.achieved_score is not None else None,
+                "totalScore": float(entry.total_score) if entry.total_score is not None else None,
+                "passed": entry.passed,
+                "feedback": entry.feedback,
+                "reportedTime": entry.reported_time,
+                "startedAt": entry.started_at.isoformat() if entry.started_at else "",
+                "submittedAt": entry.submitted_at.isoformat() if entry.submitted_at else "",
+                "timeTaken": entry.time_taken,
+                "ksbs": [
+                    row.ksb_code
+                    for row in entry.ksb_links.all()
+                ],
+            }
+            if entry.kind == "quiz":
+                record["questions"] = [
+                    {
+                        "questionId": answer.question_ref,
+                        "chosenAnswerId": (
+                            [
+                                choice.answer_ref
+                                for choice in answer.chosen_answers.all()
+                            ]
+                            if answer.chosen_answers.exists()
+                            else answer.chosen_answer_ref
+                        ),
+                        "correct": answer.is_correct,
+                        "earned": float(answer.earned) if answer.earned is not None else None,
+                        "correctAnswerId": [
+                            key.answer_ref
+                            for key in answer.correct_answers.all()
+                        ],
+                    }
+                    for answer in entry.quiz_answers.all()
+                ]
+            records.append({key: value for key, value in record.items() if value not in (None, "")})
+        return records
+
+    @property
+    def activity_feed(self):
+        return [
+            {
+                "kind": event.kind,
+                "action": event.action,
+                "title": event.title,
+                "detail": event.detail,
+                "componentId": event.component_ref,
+                "componentType": event.component_type,
+                "quizId": event.quiz_ref,
+                "module": event.module_title,
+                "week": event.week_title,
+                "passed": event.passed,
+                "at": event.occurred_at.isoformat() if event.occurred_at else "",
+            }
+            for event in self.activity_events.all()
+        ]
+
+
+class LearnerKsb(models.Model):
+    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="assigned_ksbs")
+    position = models.PositiveIntegerField()
+    code = models.CharField(max_length=100)
+    number = models.CharField(max_length=100, blank=True)
+    ksb_type = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_ksbs'
+        ordering = ("position", "id")
+
+
+class LearnerTrainingPlanModule(models.Model):
+    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="plan_modules")
+    position = models.PositiveIntegerField()
+    module_ref = models.TextField(null=True, blank=True)
+    module_title = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_training_plan_modules'
+        ordering = ("position", "id")
+
+
+class LearnerTrainingPlanWeek(models.Model):
+    plan_module = models.ForeignKey(
+        LearnerTrainingPlanModule,
+        on_delete=models.CASCADE,
+        related_name="weeks",
+    )
+    position = models.PositiveIntegerField()
+    week_ref = models.TextField(null=True, blank=True)
+    week_title = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_training_plan_weeks'
+        ordering = ("position", "id")
+
+
+class LearnerTrainingPlanComponent(models.Model):
+    plan_week = models.ForeignKey(
+        LearnerTrainingPlanWeek,
+        on_delete=models.CASCADE,
+        related_name="components",
+    )
+    position = models.PositiveIntegerField()
+    component_ref = models.TextField(null=True, blank=True)
+    component_title = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_training_plan_components'
+        ordering = ("position", "id")
+
+
+class LearnerProgressEntry(models.Model):
+    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="progress_entries")
+    entry_order = models.PositiveIntegerField()
+    kind = models.CharField(max_length=30)
+    module_ref = models.TextField(null=True, blank=True)
+    module_title = models.TextField(blank=True)
+    week_ref = models.TextField(null=True, blank=True)
+    week_title = models.TextField(blank=True)
+    component_ref = models.TextField(null=True, blank=True)
+    component_title = models.TextField(blank=True)
+    component_type = models.CharField(max_length=100, blank=True)
+    quiz_ref = models.TextField(null=True, blank=True)
+    attempt = models.PositiveIntegerField(null=True, blank=True)
+    grade = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
+    achieved_score = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    total_score = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    passed = models.BooleanField(null=True, blank=True)
+    feedback = models.TextField(blank=True)
+    reported_time = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    time_taken = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_progress_entries'
+        ordering = ("entry_order", "id")
+
+
+class LearnerProgressKsb(models.Model):
+    pk = models.CompositePrimaryKey("progress_id", "position")
+    progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="ksb_links")
+    position = models.PositiveIntegerField()
+    ksb_code = models.CharField(max_length=100)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_progress_ksbs'
+        unique_together = (("progress", "position"),)
+        ordering = ("position",)
+
+
+class LearnerQuizAnswer(models.Model):
+    progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="quiz_answers")
+    position = models.PositiveIntegerField()
+    question_ref = models.BigIntegerField()
+    chosen_answer_ref = models.BigIntegerField(null=True, blank=True)
+    is_correct = models.BooleanField(null=True, blank=True)
+    earned = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_quiz_answers'
+        ordering = ("position", "id")
+
+
+class LearnerQuizCorrectAnswer(models.Model):
+    pk = models.CompositePrimaryKey("quiz_answer_id", "position")
+    quiz_answer = models.ForeignKey(
+        LearnerQuizAnswer,
+        on_delete=models.CASCADE,
+        related_name="correct_answers",
+    )
+    position = models.PositiveIntegerField()
+    answer_ref = models.BigIntegerField()
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_quiz_correct_answers'
+        unique_together = (("quiz_answer", "position"),)
+        ordering = ("position",)
+
+
+class LearnerQuizChosenAnswer(models.Model):
+    pk = models.CompositePrimaryKey("quiz_answer_id", "position")
+    quiz_answer = models.ForeignKey(
+        LearnerQuizAnswer,
+        on_delete=models.CASCADE,
+        related_name="chosen_answers",
+    )
+    position = models.PositiveIntegerField()
+    answer_ref = models.BigIntegerField()
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_quiz_chosen_answers'
+        unique_together = (("quiz_answer", "position"),)
+        ordering = ("position",)
+
+
+class LearnerActivityEvent(models.Model):
+    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="activity_events")
+    event_order = models.PositiveIntegerField()
+    kind = models.CharField(max_length=30, blank=True)
+    action = models.TextField(blank=True)
+    title = models.TextField(blank=True)
+    detail = models.TextField(blank=True)
+    component_ref = models.TextField(null=True, blank=True)
+    component_type = models.CharField(max_length=100, blank=True)
+    quiz_ref = models.TextField(null=True, blank=True)
+    module_title = models.TextField(blank=True)
+    week_title = models.TextField(blank=True)
+    passed = models.BooleanField(null=True, blank=True)
+    occurred_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_activity_events'
+        ordering = ("event_order", "id")
+
+
 class ActiveUser(models.Model):
     """Unmanaged mapping of "Learner"."Active_users".
 

@@ -23,7 +23,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
-from learner_api.models import ActiveUser
+from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
 
@@ -2847,14 +2847,12 @@ def quiz_students(request, pk):
 
     try:
         question_lookup, answer_lookup = _quiz_question_lookup(pk)
-        active_users = ActiveUser.objects.all().only(
-            "id",
-            "username",
-            "email",
-            "programme",
-            "cohort",
-            "group",
-            "training_plan_progress",
+        active_users = LearnerProfile.objects.filter(
+            lifecycle_status="active"
+        ).prefetch_related(
+            "progress_entries__ksb_links",
+            "progress_entries__quiz_answers__correct_answers",
+            "progress_entries__quiz_answers__chosen_answers",
         )
         students = []
         all_grade_percents = []
