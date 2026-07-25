@@ -9,6 +9,10 @@ SQL rather than Django migrations — consistent with the rest of learner_api.
       Full upload lifecycle record (quarantine -> approved/rejected). Adapted to
       this project: learners are addressed by (learner_kind, learner_id), NOT the
       Django auth_user the generic spec assumes.
+          Training_plan_details  json snapshot of the training-plan context the
+          file was uploaded against (module/week/component identity+titles), so
+          an evidence row is still traceable back to its assignment even if the
+          curriculum is later restructured.
 
   "Learner"."Evidence"
       The learner-facing index requested for approved evidence: a row is inserted
@@ -48,10 +52,12 @@ def ensure_evidence_tables():
                 scan_result       varchar(32),
                 uploaded_by       varchar(255),
                 uploaded_at       timestamptz not null default now(),
-                reviewed_at       timestamptz
+                reviewed_at       timestamptz,
+                "Training_plan_details" json
             )
             """
         )
+        cur.execute('alter table "Learner"."evidence_files" add column if not exists "Training_plan_details" json')
         cur.execute("create index if not exists idx_evidence_files_learner on \"Learner\".evidence_files (learner_kind, learner_id)")
         cur.execute("create index if not exists idx_evidence_files_section on \"Learner\".evidence_files (section_ref)")
         cur.execute("create index if not exists idx_evidence_files_status  on \"Learner\".evidence_files (status)")

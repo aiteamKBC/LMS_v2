@@ -4,7 +4,7 @@ from django.http import JsonResponse
 from .learner_detail import SOURCE_MODELS
 
 
-ATTENDANCE_TABLE = '"Coach"."learner_attendance_details"'
+ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
 
 
 def _error(message, status):

@@ -17,11 +17,24 @@ export interface LearnerWeekEntry {
   module: string | null;
   week: string;
 }
+/** A KSB authored against a component, with the weight it contributes. */
+export interface ComponentKsbMapping {
+  code: string;
+  description: string | null;
+  classification: string | null;   // main | secondary | possible
+  weight: number;
+}
+
 export interface LearnerComponentEntry {
   module: string | null;
   week: string | null;
   component: string;
   expectedOtjh: number | null;
+  moduleId?: string | null;             // curriculum.modules.module_catalogue_id (null for legacy id-less modules)
+  weekId?: string | null;               // curriculum.weeks.id
+  ksbWeightTotal?: number | null;       // summed weight of this component's KSB mappings
+  ksbMappingCount?: number | null;      // 0 => component is not gated by the completion criteria
+  ksbMappings?: ComponentKsbMapping[];  // the KSBs auto-credited when this component is completed
   componentId?: string | null;
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;

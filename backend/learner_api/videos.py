@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import completed_hours_from_progress, append_activity_entry
+from .components import component_ksb_codes
 from .models import ActiveUser, CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
@@ -77,8 +78,12 @@ def submit_video_progress(request, component_id):
     module_title = payload.get("module")
     started_at = payload.get("startedAt")
     time_taken_seconds = payload.get("timeTakenSeconds")
-    # Post-watch reflection window (same shape as the quiz reflection).
-    ksbs = payload.get("ksbs") if isinstance(payload.get("ksbs"), list) else []
+    # KSBs are auto-mapped from the component's authored mappings rather than
+    # picked by the learner (see components.component_ksb_codes). The client's
+    # list is only a fallback for components with no authored mappings.
+    ksbs = component_ksb_codes(component_id)
+    if not ksbs and isinstance(payload.get("ksbs"), list):
+        ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
     # Client may pass the title it rendered; fall back to a live master lookup.
@@ -95,7 +100,7 @@ def submit_video_progress(request, component_id):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = ActiveUser.objects.filter(id=learner_id).first()
+        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -123,12 +128,7 @@ def submit_video_progress(request, component_id):
     }
 
     if active is not None:
-        history.append(record)
-        active.training_plan_progress = history
-        # Keep Completed_hours in step with the progress log (summed reportedTime).
-        active.completed_hours = completed_hours_from_progress(history)
-        # Log this completion to the activity feed (newest last).
-        append_activity_entry(active, {
+        activity = {
             "kind": "video",
             "action": "Watched video",
             "title": video_title or "Video",
@@ -137,9 +137,9 @@ def submit_video_progress(request, component_id):
             "week": week_title,
             "module": module_title,
             "at": submitted_at,
-        })
+        }
         try:
-            active.save(update_fields=["training_plan_progress", "completed_hours", "activity_feed"])
+            save_progress_record(active, record, activity)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
 

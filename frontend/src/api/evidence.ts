@@ -2,6 +2,19 @@ import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/evidence';
 
+/** Training-plan context an evidence file was uploaded against — snapshotted at
+ * upload time so the row stays traceable even if the curriculum is later
+ * restructured (module/week/component ids can be reused or removed). */
+export interface EvidenceTrainingPlanDetails {
+  moduleId?: string | null;
+  moduleTitle?: string | null;
+  weekId?: string | null;
+  weekTitle?: string | null;
+  componentId?: string | null;
+  componentTitle?: string | null;
+  componentType?: string | null;
+}
+
 export interface EvidenceRecord {
   id: string;
   filename: string;
@@ -11,6 +24,7 @@ export interface EvidenceRecord {
   scanResult: string | null;
   sectionRef: string;
   uploadedAt: string | null;
+  trainingPlanDetails: EvidenceTrainingPlanDetails | null;
 }
 
 export interface UploadEvidenceResult {
@@ -43,10 +57,12 @@ export async function uploadEvidence(
   id: string,
   file: File,
   sectionRef: string,
+  trainingPlanDetails?: EvidenceTrainingPlanDetails,
 ): Promise<UploadEvidenceResult> {
   const form = new FormData();
   form.append('file', file);
   form.append('section_ref', sectionRef);
+  if (trainingPlanDetails) form.append('training_plan_details', JSON.stringify(trainingPlanDetails));
   let res: Response;
   try {
     // NOTE: do not set Content-Type — the browser sets the multipart boundary.

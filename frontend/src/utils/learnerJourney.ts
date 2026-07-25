@@ -1,8 +1,13 @@
-import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+import type { ComponentKsbMapping, LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
 
 export interface JourneyComponent {
   title: string;
   expectedOtjh: number | null;
+  moduleId?: string | null;
+  weekId?: string | null;
+  ksbWeightTotal?: number | null;
+  ksbMappingCount?: number | null;
+  ksbMappings?: ComponentKsbMapping[];
   componentId?: string | null;
   type?: string | null;
   description?: string | null;
@@ -36,6 +41,188 @@ export function componentContentKind(type: string | null | undefined): ContentKi
   if (t === 'powerpoint') return 'slides';
   if (t === 'reflection') return 'reflection';
   return 'resource';
+}
+
+/* ═══════════════════════════════════════════════════════
+   COMPLETION CRITERIA
+   A component with KSBs mapped can only be completed once
+   those mappings carry at least COMPONENT_KSB_WEIGHT_TARGET
+   total weight AND the learner has uploaded evidence for it.
+   Components with no KSBs mapped are not gated.
+   Mirrors COMPONENT_KSB_WEIGHT_TARGET / _completion_criteria
+   in learner_api/components.py, which is the authority — this
+   copy exists so the UI can explain what's outstanding.
+   ═══════════════════════════════════════════════════════ */
+export const COMPONENT_KSB_WEIGHT_TARGET = 100;
+
+/** Only assignments collect uploaded evidence, so only they can require it. */
+export function componentRequiresEvidence(type: string | null | undefined): boolean {
+  return (type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+}
+
+export interface ComponentCriteria {
+  gated: boolean;          // false => no KSBs mapped, nothing to satisfy
+  weightTotal: number;
+  weightMet: boolean;
+  evidenceRequired: boolean;
+  evidenceMet: boolean;
+  met: boolean;            // overall: safe to complete
+}
+
+/** Evaluate the completion gate. `evidenceCount` is the learner's approved
+ * uploads for this component (pass 0 when not yet known). */
+export function componentCriteria(c: JourneyComponent, evidenceCount: number): ComponentCriteria {
+  const weightTotal = Number(c.ksbWeightTotal || 0);
+  const gated = Number(c.ksbMappingCount || 0) > 0;
+  const weightMet = weightTotal >= COMPONENT_KSB_WEIGHT_TARGET;
+  const evidenceRequired = componentRequiresEvidence(c.type);
+  const evidenceMet = evidenceRequired ? evidenceCount > 0 : true;
+  return {
+    gated,
+    weightTotal,
+    weightMet,
+    evidenceRequired,
+    evidenceMet,
+    met: !gated || (weightMet && evidenceMet),
+  };
+}
+
+/* ═══════════════════════════════════════════════════════
+   KSB PROGRESS (weighted)
+   The component rule above, inverted: a component declares
+   which KSBs it develops and at what weight, so a KSB's
+   progress is the weight it has EARNED from completed
+   components over the weight AVAILABLE across the plan.
+
+   Weight is always taken from the component's AUTHORED
+   mapping, never from the codes stored on a completion
+   record — legacy records hold learner-picked codes with no
+   weight behind them (one historic quiz attempt lists 31
+   codes at once), which would otherwise wildly overstate
+   progress.
+   ═══════════════════════════════════════════════════════ */
+
+/** Component mappings use sub-codes ('K3.1', 'S1.2') that are not themselves
+ * programme KSB codes. Roll them up to the parent ('K3', 'S1') so the weight
+ * lands on the KSB the learner is actually assessed against. */
+export function ksbParentCode(code: string): string {
+  return String(code || '').trim().toUpperCase().split('.')[0];
+}
+
+export type KsbStatus = 'complete' | 'in-progress' | 'not-started' | 'not-scheduled';
+
+export interface KsbContributor {
+  componentId: string;
+  title: string;
+  module: string | null;
+  week: string | null;
+  type: string | null;
+  weight: number;
+  classification: string | null;
+  done: boolean;
+}
+
+export interface KsbProgress {
+  code: string;
+  type: string;                 // K | S | B
+  description: string;
+  availableWeight: number;      // total weight this KSB can earn from the plan
+  earnedWeight: number;         // weight from components already completed
+  remainingWeight: number;
+  pct: number;                  // earnedWeight / availableWeight (0 when unscheduled)
+  status: KsbStatus;
+  contributors: KsbContributor[];   // components that develop this KSB
+  doneCount: number;
+  totalCount: number;
+}
+
+export interface KsbProgressSource {
+  ksbs: { code: string; type?: string; description?: string }[];
+  components: {
+    componentId?: string | null;
+    component?: string;
+    module?: string | null;
+    week?: string | null;
+    type?: string | null;
+    ksbMappings?: { code: string; weight: number; classification?: string | null }[];
+  }[];
+  completedComponentIds: Iterable<string>;
+}
+
+/** Derive weighted progress for every programme KSB.
+ * `completedComponentIds` must already be de-duplicated, so a component
+ * completed twice (retake / re-watch) contributes its weight only once. */
+export function buildKsbProgress(src: KsbProgressSource): KsbProgress[] {
+  const done = new Set(src.completedComponentIds);
+  const byCode = new Map<string, KsbContributor[]>();
+
+  for (const c of src.components || []) {
+    const componentId = c.componentId || '';
+    if (!componentId) continue;
+    for (const m of c.ksbMappings || []) {
+      const code = ksbParentCode(m.code);
+      if (!code) continue;
+      const list = byCode.get(code) || [];
+      // A component can map both a parent and its sub-code (e.g. K1 and K1.1);
+      // both are genuine authored weight, so both are kept.
+      list.push({
+        componentId,
+        title: c.component || 'Activity',
+        module: c.module ?? null,
+        week: c.week ?? null,
+        type: c.type ?? null,
+        weight: Number(m.weight) || 0,
+        classification: m.classification ?? null,
+        done: done.has(componentId),
+      });
+      byCode.set(code, list);
+    }
+  }
+
+  return (src.ksbs || []).map((k) => {
+    const code = String(k.code || '').trim().toUpperCase();
+    const contributors = (byCode.get(code) || [])
+      .slice()
+      .sort((a, b) => Number(a.done) - Number(b.done) || b.weight - a.weight);
+    const availableWeight = contributors.reduce((s, c) => s + c.weight, 0);
+    const earnedWeight = contributors.reduce((s, c) => s + (c.done ? c.weight : 0), 0);
+    const doneCount = contributors.filter((c) => c.done).length;
+    const pct = availableWeight > 0
+      ? Math.max(0, Math.min(100, Math.round((earnedWeight / availableWeight) * 100)))
+      : 0;
+    const status: KsbStatus = contributors.length === 0
+      ? 'not-scheduled'
+      : earnedWeight >= availableWeight && availableWeight > 0
+        ? 'complete'
+        : earnedWeight > 0
+          ? 'in-progress'
+          : 'not-started';
+    return {
+      code,
+      type: (k.type || code.charAt(0) || '?').toUpperCase(),
+      description: k.description || '',
+      availableWeight,
+      earnedWeight,
+      remainingWeight: Math.max(0, availableWeight - earnedWeight),
+      pct,
+      status,
+      contributors,
+      doneCount,
+      totalCount: contributors.length,
+    };
+  });
+}
+
+/** Component ids the learner has finished, de-duplicated across every
+ * completion source (a re-watch or retake must not count twice). */
+export function completedComponentIds(real: {
+  videoProgress?: { componentId: string }[];
+  componentProgress?: { componentId: string }[];
+} | null): Set<string> {
+  const ids = new Set<string>();
+  for (const v of real?.videoProgress || []) if (v.componentId) ids.add(v.componentId);
+  for (const c of real?.componentProgress || []) if (c.componentId) ids.add(c.componentId);
+  return ids;
 }
 
 /** Short noun used in the reflection copy ("this podcast", "this reading…"). */
@@ -224,6 +411,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
           .filter((c) => c.module === moduleTitle && c.week === w.week)
           .map((c) => ({
             title: c.component, expectedOtjh: c.expectedOtjh, isQuiz: c.isQuiz, quizMeta: c.quizMeta,
+            moduleId: c.moduleId, weekId: c.weekId,
+            ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
+            ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
