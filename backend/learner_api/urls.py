@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, learner_detail, quizzes, videos, views
+from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, quizzes, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -30,4 +30,8 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),
     path("absence-reports/<str:kind>/<int:learner_id>/", absence_reports.learner_absence_reports, name="learner-absence-reports"),
+    # learner evidence uploads (Azure Blob Storage backed)
+    path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),
+    path("evidence/<str:kind>/<int:pk>/", evidence.list_evidence, name="evidence-list"),
+    path("evidence/<str:kind>/<int:pk>/<uuid:file_id>/download/", evidence.download_evidence, name="evidence-download"),
 ]
