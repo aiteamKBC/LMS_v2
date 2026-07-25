@@ -1,356 +1,328 @@
-"""Keep "Learner"."Active_users" in sync with programme status changes.
+"""Relational learner persistence helpers.
 
-Whenever an apprenticeship (EnrolmentUser) or commercial (CommercialUser)
-learner's programme status is set to "Active", a matching row is upserted into
-"Learner"."Active_users" so downstream phases can work from a single
-active-learner table. If the status is later changed away from "Active", the
-mirrored row is removed again — Active_users should only ever hold currently
-active learners.
-
-The upsert/removal is keyed on the learner's id, which is globally unique across
-both enrolment tables (they share enrolment.learner_id_seq) and is carried
-forward here as the Active_users id — so a learner keeps one id across every
-phase. Re-saving an already-active learner refreshes their row rather than
-duplicating.
-
-Called for its side effect from the enrolment/commercial PATCH handlers. A sync
-failure is logged but never breaks the primary update — the status change itself
-has already been committed by the caller.
+The module name is retained for import compatibility. Runtime data is stored in
+``Learner.learners`` and its normalized child tables; the former Active/Unactive
+JSON tables are not read or written here.
 """
-import json
+
 import logging
+import re
 from datetime import timedelta
 
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, connections, transaction
+from django.db.models import Max
+from django.utils.dateparse import parse_datetime
 
 from .mappers import get_training_plan
-from .models import ActiveUser, SafeJSONField, UnactiveUser
+from .models import (
+    LearnerActivityEvent,
+    LearnerKsb,
+    LearnerProfile,
+    LearnerProgressEntry,
+    LearnerProgressKsb,
+    LearnerQuizAnswer,
+    LearnerQuizChosenAnswer,
+    LearnerQuizCorrectAnswer,
+    LearnerTrainingPlanComponent,
+    LearnerTrainingPlanModule,
+    LearnerTrainingPlanWeek,
+)
 
 logger = logging.getLogger(__name__)
-
-ACTIVE_STATUS = "active"  # compared case-insensitively
-JSON_FIELDS = {"training_plan", "ksbs", "training_plan_progress", "activity_feed"}
+ACTIVE_STATUS = "active"
 
 
 def _s(value):
     return "" if value is None else str(value).strip()
 
 
-def _reported_minutes(reported_time):
-    """Parse a record's reportedTime into minutes.
+def _number(value):
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
-    Handles the two formats the reflection window produces:
-      - "MM:SS" (e.g. "23:16")   -> 23 + 16/60 minutes
-      - "N ..." (e.g. "60 minutes", "9 min", "1.5 hours") -> N, treated as
-        minutes UNLESS the text mentions hours, in which case N*60.
-    Returns 0.0 if nothing parseable.
-    """
-    text = _s(reported_time)
+
+def _datetime(value):
+    if not value:
+        return None
+    return value if hasattr(value, "tzinfo") else parse_datetime(str(value))
+
+
+def _reported_minutes(value):
+    text = _s(value)
     if not text:
         return 0.0
-    if ":" in text:  # MM:SS
-        parts = text.split(":")
+    if ":" in text:
         try:
-            mm = float(parts[0])
-            ss = float(parts[1]) if len(parts) > 1 else 0.0
-            return mm + ss / 60.0
-        except (ValueError, IndexError):
+            minutes, seconds, *_ = [float(part) for part in text.split(":")]
+            return minutes + seconds / 60
+        except (TypeError, ValueError):
             return 0.0
-    import re
-    m = re.search(r"\d+(\.\d+)?", text)
-    if not m:
+    match = re.search(r"\d+(?:\.\d+)?", text)
+    if not match:
         return 0.0
-    n = float(m.group(0))
-    return n * 60.0 if "hour" in text.lower() or "hr" in text.lower() else n
+    amount = float(match.group(0))
+    return amount * 60 if "hour" in text.lower() or "hr" in text.lower() else amount
 
 
 def fmt_hours(hours):
-    """A numeric hours value -> the text form these columns store (1 dp, e.g.
-    "48.0" -> "48", "1.5" -> "1.5"). None/invalid -> "0"."""
     try:
-        h = round(float(hours), 1)
+        value = round(float(hours), 1)
     except (TypeError, ValueError):
         return "0"
-    return str(int(h)) if h == int(h) else str(h)
+    return str(int(value)) if value == int(value) else str(value)
 
 
 def completed_hours_from_progress(progress):
-    """Total the reportedTime across ALL progress records -> hours string (1 dp).
-
-    OTJ hours count EVERY attempt/record: a retake of a quiz or a re-watch of a
-    video each add their logged time. Sums every record's reportedTime across all
-    activity kinds, converts to hours, returns e.g. "1.4". "0" when empty.
-    (KSBs, by contrast, count only the best attempt — see quizAggregateStats.)
-    """
     if not isinstance(progress, list):
         return "0"
-    total_minutes = sum(_reported_minutes(r.get("reportedTime")) for r in progress if isinstance(r, dict))
-    return fmt_hours(total_minutes / 60.0)
+    minutes = sum(
+        _reported_minutes(record.get("reportedTime"))
+        for record in progress
+        if isinstance(record, dict)
+    )
+    return fmt_hours(minutes / 60)
 
 
-def append_activity_entry(active, entry):
-    """Append one activity entry to an ActiveUser's activity_feed list (in place)
-    and return the updated list. Does NOT save — the caller persists it (usually
-    in the same save as the progress append). `active` may be None (returns [])."""
-    if active is None:
-        return []
-    feed = active.activity_feed if isinstance(active.activity_feed, list) else []
-    feed.append(entry)
-    active.activity_feed = feed
-    return feed
+def append_activity_entry(learner, entry):
+    if learner is None:
+        return None
+    next_order = (
+        LearnerActivityEvent.objects.filter(learner=learner)
+        .aggregate(value=Max("event_order"))["value"]
+        or 0
+    ) + 1
+    return LearnerActivityEvent.objects.create(
+        learner=learner,
+        event_order=next_order,
+        kind=_s(entry.get("kind")),
+        action=_s(entry.get("action")),
+        title=_s(entry.get("title")),
+        detail=_s(entry.get("detail")),
+        component_ref=_s(entry.get("componentId")) or None,
+        component_type=_s(entry.get("componentType")),
+        quiz_ref=_s(entry.get("quizId")) or None,
+        module_title=_s(entry.get("module")),
+        week_title=_s(entry.get("week")),
+        passed=entry.get("passed") if isinstance(entry.get("passed"), bool) else None,
+        occurred_at=_datetime(entry.get("at")),
+    )
+
+
+def replace_training_plan(learner, plan):
+    LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
+    for module_position, module in enumerate(plan or [], 1):
+        module_row = LearnerTrainingPlanModule.objects.create(
+            learner=learner,
+            position=module_position,
+            module_ref=_s(module.get("moduleId")) or None,
+            module_title=_s(module.get("moduleTitle")),
+        )
+        for week_position, week in enumerate(module.get("weeks") or [], 1):
+            week_row = LearnerTrainingPlanWeek.objects.create(
+                plan_module=module_row,
+                position=week_position,
+                week_ref=_s(week.get("weekId")) or None,
+                week_title=_s(week.get("weekTitle")),
+            )
+            LearnerTrainingPlanComponent.objects.bulk_create(
+                [
+                    LearnerTrainingPlanComponent(
+                        plan_week=week_row,
+                        position=position,
+                        component_ref=_s(component.get("componentId")) or None,
+                        component_title=_s(component.get("componentTitle")),
+                    )
+                    for position, component in enumerate(week.get("components") or [], 1)
+                ]
+            )
+
+
+def replace_learner_ksbs(learner, items):
+    LearnerKsb.objects.filter(learner=learner).delete()
+    LearnerKsb.objects.bulk_create(
+        [
+            LearnerKsb(
+                learner=learner,
+                position=position,
+                code=_s(item.get("code")),
+                number=_s(item.get("number")),
+                ksb_type=_s(item.get("type")),
+                description=_s(item.get("description")),
+            )
+            for position, item in enumerate(items or [], 1)
+            if isinstance(item, dict)
+        ]
+    )
+
+
+def save_progress_record(learner, record, activity=None):
+    """Store one progress record and all child rows atomically."""
+    if learner is None:
+        return None
+    with transaction.atomic(using="enrolment"):
+        # Serialize writes per learner so two simultaneous submissions cannot
+        # claim the same entry/event order.
+        learner = LearnerProfile.objects.select_for_update().get(pk=learner.pk)
+        next_order = (
+            LearnerProgressEntry.objects.filter(learner=learner)
+            .aggregate(value=Max("entry_order"))["value"]
+            or 0
+        ) + 1
+        progress = LearnerProgressEntry.objects.create(
+            learner=learner,
+            entry_order=next_order,
+            kind=_s(record.get("kind")) or "quiz",
+            module_ref=_s(record.get("moduleId")) or None,
+            module_title=_s(record.get("moduleTitle") or record.get("module")),
+            week_ref=_s(record.get("weekId")) or None,
+            week_title=_s(record.get("weekTitle") or record.get("week")),
+            component_ref=_s(record.get("componentId")) or None,
+            component_title=_s(record.get("componentTitle")),
+            component_type=_s(record.get("componentType")),
+            quiz_ref=_s(record.get("quizId")) or None,
+            attempt=record.get("attempt"),
+            grade=_number(record.get("grade", record.get("Score"))),
+            achieved_score=_number(record.get("achievedScore")),
+            total_score=_number(record.get("totalScore")),
+            passed=record.get("passed") if isinstance(record.get("passed"), bool) else None,
+            feedback=_s(record.get("feedback")),
+            reported_time=_s(record.get("reportedTime")),
+            started_at=_datetime(record.get("startedAt")),
+            submitted_at=_datetime(record.get("submittedAt")),
+            time_taken=_s(record.get("timeTaken")),
+        )
+        LearnerProgressKsb.objects.bulk_create(
+            [
+                LearnerProgressKsb(progress=progress, position=position, ksb_code=_s(code))
+                for position, code in enumerate(record.get("ksbs") or [], 1)
+            ]
+        )
+        for position, answer in enumerate(record.get("questions") or [], 1):
+            chosen = answer.get("chosenAnswerId")
+            answer_row = LearnerQuizAnswer.objects.create(
+                progress=progress,
+                position=position,
+                question_ref=int(answer.get("questionId")),
+                chosen_answer_ref=chosen if not isinstance(chosen, list) else None,
+                is_correct=answer.get("correct") if isinstance(answer.get("correct"), bool) else None,
+                earned=_number(answer.get("earned")),
+            )
+            LearnerQuizCorrectAnswer.objects.bulk_create(
+                [
+                    LearnerQuizCorrectAnswer(
+                        quiz_answer=answer_row,
+                        position=key_position,
+                        answer_ref=int(answer_ref),
+                    )
+                    for key_position, answer_ref in enumerate(answer.get("correctAnswerId") or [], 1)
+                ]
+            )
+            LearnerQuizChosenAnswer.objects.bulk_create(
+                [
+                    LearnerQuizChosenAnswer(
+                        quiz_answer=answer_row,
+                        position=choice_position,
+                        answer_ref=int(answer_ref),
+                    )
+                    for choice_position, answer_ref in enumerate(
+                        chosen if isinstance(chosen, list) else [],
+                        1,
+                    )
+                ]
+            )
+        if activity:
+            append_activity_entry(learner, activity)
+        learner.completed_hours = _number(
+            completed_hours_from_progress(learner.training_plan_progress)
+        )
+        learner.save(update_fields=["completed_hours", "updated_at"])
+        return progress
 
 
 def recompute_completed_hours(learner_id):
-    """Recompute Completed_hours for an Active_users learner from their current
-    training_plan_progress, and persist it. Best-effort; errors are logged.
-    Returns the stored string, or None if there's no active row / on error."""
     try:
-        active = ActiveUser.objects.filter(id=learner_id).first()
-        if active is None:
+        learner = LearnerProfile.objects.filter(id=learner_id).first()
+        if learner is None:
             return None
-        value = completed_hours_from_progress(active.training_plan_progress)
-        active.completed_hours = value
-        active.save(update_fields=["completed_hours"])
+        value = completed_hours_from_progress(learner.training_plan_progress)
+        learner.completed_hours = _number(value)
+        learner.save(update_fields=["completed_hours", "updated_at"])
         return value
     except DatabaseError as exc:
-        logger.warning("Could not recompute Completed_hours for %s: %s", learner_id, exc)
+        logger.warning("Could not recompute learner hours for %s: %s", learner_id, exc)
         return None
 
 
 def cohort_dates(programme, cohort):
-    """(start_date, end_date) for a learner's cohort, or (None, None).
-
-    Looked up from curriculum."cohort_authoring_details" by matching the learner's
-    free-text Programme + Cohort against the authored cohort's programme_name +
-    cohort_name (case-insensitive, trimmed) — the learner tables have no cohort_id
-    to join on. Newest updated_at wins if a (programme, cohort) pair repeats.
-    Best-effort: any DB/lookup error returns (None, None) so it never breaks a
-    learner create or mirror sync.
-    """
-    prog = _s(programme)
-    coh = _s(cohort)
-    if not prog or not coh:
+    programme, cohort = _s(programme), _s(cohort)
+    if not programme or not cohort:
         return None, None
     try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
                 'SELECT start_date, end_date FROM curriculum."cohort_authoring_details" '
                 "WHERE lower(btrim(programme_name)) = lower(%s) "
                 "AND lower(btrim(cohort_name)) = lower(%s) "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [prog, coh],
+                [programme, cohort],
             )
-            row = cur.fetchone()
+            row = cursor.fetchone()
     except DatabaseError as exc:
-        logger.warning("Could not look up cohort dates for %r / %r: %s", prog, coh, exc)
+        logger.warning("Could not find cohort dates for %s / %s: %s", programme, cohort, exc)
         return None, None
-    if not row:
-        return None, None
-    return row[0], row[1]
+    return (row[0], row[1]) if row else (None, None)
 
 
 def _fetch_ksb_items(programme):
-    """The KSBs for `programme`, from curriculum.ksb_profiles.ksb_items.
-
-    Matched tolerantly against curriculum modules: an exact programme_name
-    match, or `programme` prefixed with the profile's programme_name.
-    """
     programme = _s(programme)
     if not programme:
         return []
     try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
                 "WHERE is_active AND (programme_name = %s OR %s LIKE programme_name || ' %%') "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
                 [programme, programme],
             )
-            row = cur.fetchone()
+            row = cursor.fetchone()
     except DatabaseError as exc:
-        logger.warning("Could not look up KSB profile for %r: %s", programme, exc)
+        logger.warning("Could not find KSB profile for %s: %s", programme, exc)
         return []
-    if not row or row[0] is None:
-        return []
-    items = row[0]
-    if isinstance(items, str):  # tolerate a raw-string jsonb value
-        import json
-
-        try:
-            items = json.loads(items)
-        except (TypeError, ValueError):
-            return []
-    return items if isinstance(items, list) else []
-
-
-def _insert_with_id(source_id, fields):
-    """INSERT a brand-new Active_users row carrying an explicit id.
-
-    Active_users.id may still be GENERATED ALWAYS AS IDENTITY (before the
-    one-off shared-sequence migration is applied), which rejects a plain INSERT
-    that supplies its own id. OVERRIDING SYSTEM VALUE allows it regardless —
-    it's accepted (and a no-op) once the column is just a sequence-defaulted
-    column post-migration too, so this works in both states.
-    """
-    import json
-
-    columns = ["id"]
-    placeholders = ["%s"]
-    values = [source_id]
-    for attr, value in fields.items():
-        columns.append(ActiveUser._meta.get_field(attr).column)
-        placeholders.append("%s")
-        values.append(json.dumps(value) if attr in JSON_FIELDS else value)
-
-    col_sql = ", ".join(f'"{c}"' for c in columns)
-    sql = (
-        f'INSERT INTO "Learner"."Active_users" ({col_sql}) '
-        f"OVERRIDING SYSTEM VALUE VALUES ({', '.join(placeholders)})"
-    )
-    with connections["enrolment"].cursor() as cur:
-        cur.execute(sql, values)
-
-
-# Fields whose VALUES are learner-owned progress/state (not rebuildable from the
-# source enrolment tables). These must survive the Active <-> Unactive round-trip
-# so a learner keeps their coach, hours, and progress when re-activated.
-PRESERVED_FIELDS = (
-    "coach_name", "coach_email", "coach_rag", "completed_hours",
-    "training_plan", "ksbs", "training_plan_progress", "activity_feed",
-)
-
-
-def _archive_active_user(learner_id, new_status):
-    """Move a learner's Active_users row into Unactive_users (stamped with the
-    non-Active status they're moving to), then remove it from Active_users.
-    No-op if there is no Active_users row. Best-effort; errors are logged."""
-    try:
-        active = ActiveUser.objects.filter(id=learner_id).first()
-        if active is None:
-            return
-        # Snapshot only the fields Unactive_users ALSO has (ActiveUser has extra
-        # columns — planned/target/progress hours — that the archive table lacks;
-        # copying those would raise FieldDoesNotExist and abort the whole archive,
-        # which is exactly how Training_plan_progress was getting lost).
-        unactive_attrs = {
-            f.name for f in UnactiveUser._meta.get_fields()
-            if getattr(f, "concrete", False) and not f.primary_key
-        }
-        # JSON-typed archive columns, so their Python list/dict values are encoded.
-        json_cols = {
-            f.name for f in UnactiveUser._meta.get_fields()
-            if isinstance(f, SafeJSONField)
-        }
-        fields = {}
-        for f in ActiveUser._meta.get_fields():
-            if not getattr(f, "concrete", False) or f.primary_key:
-                continue
-            if f.name in unactive_attrs:
-                fields[f.name] = getattr(active, f.name)
-        fields["status"] = new_status  # the status the learner is moving OUT under
-
-        # Upsert into Unactive_users keyed on the same id.
-        set_cols, values = [], []
-        for attr, value in fields.items():
-            col = UnactiveUser._meta.get_field(attr).column
-            set_cols.append((col, attr))
-            values.append(json.dumps(value) if attr in json_cols else value)
-
-        with connections["enrolment"].cursor() as cur:
-            exists = UnactiveUser.objects.filter(id=learner_id).exists()
-            if exists:
-                assignments = ", ".join(f'"{c}" = %s' for c, _ in set_cols)
-                cur.execute(
-                    f'UPDATE "Learner"."Unactive_users" SET {assignments} WHERE "id" = %s',
-                    values + [learner_id],
-                )
-            else:
-                cols = ", ".join(['"id"'] + [f'"{c}"' for c, _ in set_cols])
-                marks = ", ".join(["%s"] * (len(set_cols) + 1))
-                cur.execute(
-                    f'INSERT INTO "Learner"."Unactive_users" ({cols}) '
-                    f"OVERRIDING SYSTEM VALUE VALUES ({marks})",
-                    [learner_id] + values,
-                )
-        ActiveUser.objects.filter(id=learner_id).delete()
-    except Exception as exc:  # noqa: BLE001 — never let an archive error break the caller's save, and never delete the Active row unless the archive write above succeeded
-        logger.warning("Could not archive learner %s into Unactive_users: %s", learner_id, exc)
-
-
-def _restore_preserved(learner_id):
-    """Pull a learner's preserved fields out of the Unactive_users archive (if
-    any) and delete the archive row. Returns a dict of {attr: value} for the
-    PRESERVED_FIELDS that had a stored value, or {} if there's no archive."""
-    try:
-        archived = UnactiveUser.objects.filter(id=learner_id).first()
-        if archived is None:
-            return {}
-        preserved = {}
-        for attr in PRESERVED_FIELDS:
-            value = getattr(archived, attr, None)
-            if value not in (None, "", [], {}):
-                preserved[attr] = value
-        UnactiveUser.objects.filter(id=learner_id).delete()
-        return preserved
-    except DatabaseError as exc:
-        logger.warning("Could not restore learner %s from Unactive_users: %s", learner_id, exc)
-        return {}
+    return row[0] if row and isinstance(row[0], list) else []
 
 
 def sync_active_user(source):
-    """Upsert `source` in Active_users to match its programme status, MOVING the
-    row to/from the Unactive_users archive so no learner data is lost.
-
-    `source` is an EnrolmentUser or CommercialUser instance.
-      - status != Active: archive the Active_users row into Unactive_users
-        (preserving coach/progress/hours/etc.), remove it from Active_users,
-        return None.
-      - status == Active: upsert into Active_users; if the learner has an
-        archived row, its preserved fields are restored (and the archive
-        deleted) so a re-activated learner keeps everything.
-    Swallows DatabaseError so a sync problem never fails the caller's own save.
-    """
+    """Upsert one permanent learner and refresh authored plan/KSB child rows."""
     status = _s(getattr(source, "programme_status", ""))
-    if status.lower() != ACTIVE_STATUS:
-        _archive_active_user(source.id, status)
-        return None
-
     start_date, end_date = cohort_dates(
-        getattr(source, "programme", None), getattr(source, "cohort", None)
+        getattr(source, "programme", None),
+        getattr(source, "cohort", None),
     )
-    fields = {
-        "username": _s(getattr(source, "username", "")) or None,
-        "email": _s(getattr(source, "email", "")) or None,
-        "phone_number": _s(getattr(source, "phone_number", "")) or None,
-        "programme": _s(getattr(source, "programme", "")) or None,
+    defaults = {
+        "full_name": _s(getattr(source, "username", ""))
+        or _s(getattr(source, "email", ""))
+        or f"Learner {source.id}",
+        "email": _s(getattr(source, "email", "")) or f"learner-{source.id}@invalid.local",
+        "phone_number": _s(getattr(source, "phone_number", "")),
+        "lifecycle_status": "active" if status.lower() == ACTIVE_STATUS else status.lower() or "inactive",
+        "programme": _s(getattr(source, "programme", "")),
         "programme_status": status,
-        "cohort": _s(getattr(source, "cohort", "")) or None,
-        "group": _s(getattr(source, "group", "")) or None,
-        # Cohort delivery window, looked up from the authored cohort table.
+        "cohort": _s(getattr(source, "cohort", "")),
+        "group_name": _s(getattr(source, "group", "")),
         "start_date": start_date,
         "end_date": end_date,
         "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
-        # The learner's structured plan, copied through as-is: modules contain
-        # weeks, weeks contain components (Commercial_users.Training_plan /
-        # Enrolment_Users.Learning_plan — same shape, see mappers.py).
-        "training_plan": get_training_plan(source),
-        # Looked up live from curriculum.ksb_profiles for the learner's programme.
-        "ksbs": _fetch_ksb_items(getattr(source, "programme", None)),
     }
-
-    # If the learner is returning from a non-Active spell, restore the fields we
-    # can't rebuild from source (coach/hours/progress). Restored values win over
-    # the freshly-derived ones so nothing the learner did is lost.
-    fields.update(_restore_preserved(source.id))
-
     try:
-        # Carry the learner's id forward as the Active_users id (key on it).
-        # UPDATE never touches the identity column, so it works pre-migration;
-        # only a brand-new row needs the OVERRIDING SYSTEM VALUE insert path.
-        updated = ActiveUser.objects.filter(id=source.id).update(**fields)
-        if not updated:
-            _insert_with_id(source.id, fields)
-        return ActiveUser.objects.get(id=source.id)
+        with transaction.atomic(using="enrolment"):
+            learner, _ = LearnerProfile.objects.update_or_create(id=source.id, defaults=defaults)
+            if status.lower() == ACTIVE_STATUS:
+                replace_training_plan(learner, get_training_plan(source))
+                replace_learner_ksbs(learner, _fetch_ksb_items(source.programme))
+        return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:
-        logger.warning("Could not mirror learner into Active_users: %s", exc)
+        logger.warning("Could not sync learner %s: %s", source.id, exc)
         return None

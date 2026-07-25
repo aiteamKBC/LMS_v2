@@ -19,8 +19,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import append_activity_entry, completed_hours_from_progress
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .active_users import save_progress_record
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ def submit_component_progress(request, component_id):
         )
 
     try:
-        active = ActiveUser.objects.filter(id=learner_id).first()
+        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -272,11 +272,8 @@ def submit_component_progress(request, component_id):
     }
 
     if active is not None:
-        history.append(record)
-        active.training_plan_progress = history
-        active.completed_hours = completed_hours_from_progress(history)
         action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))
-        append_activity_entry(active, {
+        activity = {
             "kind": "component",
             "componentType": component_type,
             "action": action,
@@ -286,9 +283,9 @@ def submit_component_progress(request, component_id):
             "week": week_title,
             "module": module_title,
             "at": submitted_at,
-        })
+        }
         try:
-            active.save(update_fields=["training_plan_progress", "completed_hours", "activity_feed"])
+            save_progress_record(active, record, activity)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
 

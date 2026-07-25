@@ -27,7 +27,7 @@ from .mappers import (
     write_commercial_fields,
     write_fields,
 )
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 
 def _parse_body(request):
@@ -58,7 +58,7 @@ def learner_coach(request, pk):
     excludes these columns).
     """
     try:
-        active = ActiveUser.objects.filter(id=pk).first()
+        active = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
     if active is None:

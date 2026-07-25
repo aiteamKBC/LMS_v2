@@ -20,7 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
-from learner_api.models import ActiveUser, CommercialUser, EnrolmentUser, LearnerAbsence
+from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
@@ -89,16 +89,9 @@ ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
-UNACTIVE_USER_RELATION_CANDIDATES = (
-    '"Learner"."Unactive_users"',
-    '"Learner"."unactive_users"',
-    '"learner"."Unactive_users"',
-    '"learner"."unactive_users"',
-)
-ACTIVE_USER_RELATION = '"Learner"."Active_users"'
 COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES = (
-    '"Coach"."learner_attendance_details"',
-    '"coach"."learner_attendance_details"',
+    '"Learner"."learner_attendance_details"',
+    '"learner"."learner_attendance_details"',
 )
 LEARNER_EVIDENCE_FILES_RELATION_CANDIDATES = (
     '"Learner"."evidence_files"',
@@ -793,7 +786,7 @@ def get_lms_row_program_status(row) -> str:
 
 
 def get_learner_db_alias() -> str:
-    return router.db_for_read(ActiveUser) or "default"
+    return router.db_for_read(LearnerProfile) or "default"
 
 
 def find_existing_relation(connection, relation_candidates: tuple[str, ...]) -> str | None:
@@ -839,116 +832,29 @@ def first_existing_column(columns: dict[str, str], *candidates: str) -> str | No
     return None
 
 
-def fetch_inactive_user_caseload_rows(owner_email: str) -> list[SimpleNamespace]:
-    connection = connections[get_learner_db_alias()]
-    relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
-    if not relation:
-        return []
-
-    query = f"""
-        select
-            id,
-            "Username" as username,
-            "Email" as email,
-            "Phone_number" as phone_number,
-            "Programme" as programme,
-            "status" as status,
-            "Cohort" as cohort,
-            "Group" as "group",
-            "Completed_hours" as completed_hours,
-            "Target_hours" as target_hours,
-            "Minimum_hours" as minimum_hours,
-            "Maximum_hours" as maximum_hours,
-            "Progress_variance" as progress_variance,
-            "Progress_Hours" as progress_hours,
-            "OTJHoursStatus" as otjh_status,
-            "Training_plan" as training_plan,
-            "Training_plan_progress" as training_plan_progress,
-            "KSBs" as ksbs,
-            "Activity_Feed" as activity_feed,
-            coach_name,
-            coach_email,
-            coach_rag,
-            planned_hours,
-            "Start_date" as start_date,
-            "End_date" as end_date,
-            "Gateway_review_date" as gateway_review_date
-        from {relation}
-        where lower(trim(coach_email)) = %s
-        order by "Username", id
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, [normalize_email(owner_email)])
-        columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
-
-    return [
-        SimpleNamespace(**row)
-        for row in rows
-        if clean_text(row.get("username"))
-    ]
-
-
-def fetch_active_user_caseload_rows(owner_email: str) -> list[ActiveUser | SimpleNamespace]:
-    active_queryset = ActiveUser.objects.only(
-        "id",
-        "username",
-        "email",
-        "phone_number",
-        "programme",
-        "programme_status",
-        "cohort",
-        "group",
-        "completed_hours",
-        "target_hours",
-        "minimum_hours",
-        "maximum_hours",
-        "progress_variance",
-        "progress_hours",
-        "otjh_status",
-        "training_plan",
-        "training_plan_progress",
-        "ksbs",
-        "activity_feed",
-        "coach_name",
-        "coach_email",
-        "coach_rag",
-        "planned_hours",
-        "start_date",
-        "end_date",
-        "gateway_review_date",
-    )
-    active_rows = [
-        row
-        for row in active_queryset.order_by("username", "id")
-        if clean_text(row.username)
-    ]
-    inactive_rows = fetch_inactive_user_caseload_rows(owner_email)
+def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
-    matched_rows = [
+    queryset = LearnerProfile.objects.prefetch_related(
+        "assigned_ksbs",
+        "plan_modules__weeks__components",
+        "progress_entries__ksb_links",
+        "progress_entries__quiz_answers__correct_answers",
+        "progress_entries__quiz_answers__chosen_answers",
+        "activity_events",
+    )
+    rows = [
         row
-        for row in [*active_rows, *inactive_rows]
-        if normalize_email(row.coach_email) == requested_owner
+        for row in queryset.order_by("full_name", "id")
+        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
     ]
-    matched_rows.sort(key=lambda row: (clean_text(row.username).lower(), getattr(row, "id", 0)))
-    return matched_rows
+    return rows
 
 
-def fetch_owner_active_user_rows(owner_email: str) -> list[ActiveUser]:
+def fetch_owner_active_user_rows(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     rows = [
         row
-        for row in ActiveUser.objects.only(
-            "id",
-            "username",
-            "email",
-            "programme",
-            "cohort",
-            "group",
-            "coach_name",
-            "coach_email",
-        ).order_by("username", "id")
+        for row in LearnerProfile.objects.filter(lifecycle_status="active").order_by("full_name", "id")
         if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
     ]
     return rows
@@ -996,7 +902,7 @@ def resolve_schedule_window(
     return start_date, end_date
 
 
-def serialize_active_user_learner(row: ActiveUser | SimpleNamespace) -> dict:
+def serialize_active_user_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
     planned_components = count_planned_components(row.training_plan)
@@ -1335,7 +1241,7 @@ def build_monthly_activity_item(
 
 
 def build_monthly_activity_learner(
-    row: ActiveUser | SimpleNamespace,
+    row: LearnerProfile | SimpleNamespace,
     learner: dict,
     events: list[dict],
     start_date: date,
@@ -1595,25 +1501,7 @@ def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]
 
 
 def update_learner_coach_rag(learner_id: int, coach_rag: str | None) -> bool:
-    connection = connections[get_learner_db_alias()]
-
-    with connection.cursor() as cursor:
-        cursor.execute(
-            f'UPDATE {ACTIVE_USER_RELATION} SET coach_rag = %s WHERE id = %s RETURNING id',
-            [coach_rag, learner_id],
-        )
-        if cursor.fetchone():
-            return True
-
-        relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
-        if not relation:
-            return False
-
-        cursor.execute(
-            f"UPDATE {relation} SET coach_rag = %s WHERE id = %s RETURNING id",
-            [coach_rag, learner_id],
-        )
-        return cursor.fetchone() is not None
+    return LearnerProfile.objects.filter(id=learner_id).update(coach_rag=coach_rag) > 0
 
 
 def attendance_risk_from_rate(rate: int | None) -> str | None:
@@ -1765,12 +1653,14 @@ def fetch_attendance_data(email_keys: list[str]) -> dict:
 
 
 def fetch_learner_absence_data(email_keys: list[str]) -> dict:
-    """Read the coach attendance table from Learner.Absence in the primary DB."""
+    """Read the optional legacy summary table when it still exists."""
     unique_email_keys = sorted({normalize_email(email) for email in email_keys if email})
     if not unique_email_keys:
         return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
 
     connection = connections[router.db_for_read(LearnerAbsence) or "default"]
+    if not find_existing_relation(connection, ('"Learner"."Absence"',)):
+        return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
     columns = relation_columns(connection, '"Learner"."Absence"')
     required_fields = ["learner_email", "sessions", "present", "absent", "catchup"]
     optional_fields = ["late", "risk", "last_session_date", "consecutive_missed"]
@@ -1834,6 +1724,8 @@ def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys:
     connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
     detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
     if not detail_relation:
+        return
+    if not find_existing_relation(connection, ('"Learner"."Absence"',)):
         return
 
     detail_columns = relation_columns(connection, detail_relation)
@@ -2263,7 +2155,7 @@ def fetch_timetable_source_rows(case_owner: str) -> dict[str, list[dict]]:
     return {"progress_review": list(progress_rows), "mcr": list(mcr_rows)}
 
 
-def build_caseload_matchers(rows: list[ActiveUser | SimpleNamespace]) -> tuple[set[str], set[str]]:
+def build_caseload_matchers(rows: list[LearnerProfile | SimpleNamespace]) -> tuple[set[str], set[str]]:
     learner_emails: set[str] = set()
     learner_names: set[str] = set()
 
@@ -2506,8 +2398,8 @@ def generated_event_priority(status: str, target_date: date, display_date: date)
     return "normal"
 
 
-def build_active_user_map(rows: list[ActiveUser]) -> dict[int, ActiveUser]:
-    active_user_map: dict[int, ActiveUser] = {}
+def build_active_user_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
+    active_user_map: dict[int, LearnerProfile] = {}
     for row in rows:
         try:
             learner_id = int(getattr(row, "id", 0) or 0)
@@ -2589,7 +2481,7 @@ def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> l
 
 
 def build_catchup_template_event(
-    learner: ActiveUser,
+    learner: LearnerProfile,
     *,
     owner_email: str,
     owner_name: str,
@@ -2647,7 +2539,7 @@ def build_catchup_calendar_event(
     record: CoachCalendarEvent,
     *,
     owner_name: str | None = None,
-    learner: ActiveUser | None = None,
+    learner: LearnerProfile | None = None,
 ) -> dict:
     event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
     event_title = {
@@ -2757,8 +2649,8 @@ def fetch_catchup_event_records(owner_email: str) -> list[CoachCalendarEvent]:
 def build_catchup_scheduler_events(
     owner_email: str,
     owner_name: str,
-    active_rows: list[ActiveUser],
-    active_user_map: dict[int, ActiveUser],
+    active_rows: list[LearnerProfile],
+    active_user_map: dict[int, LearnerProfile],
     persisted_records: list[CoachCalendarEvent],
 ) -> list[dict]:
     scheduler_events = [
@@ -2803,7 +2695,7 @@ def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]
 
 def build_generated_calendar_event(
     *,
-    learner: ActiveUser,
+    learner: LearnerProfile,
     owner_email: str,
     owner_name: str,
     event_type: str,
@@ -4059,25 +3951,11 @@ def coach_caseload_coach_rag(request, learner_id):
     if request.method not in ("GET", "PATCH", "PUT"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
-    connection = connections[get_learner_db_alias()]
-    relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
-
     if request.method == "GET":
-        with connection.cursor() as cursor:
-            cursor.execute(
-                f"SELECT coach_rag FROM {ACTIVE_USER_RELATION} WHERE id = %s",
-                [learner_id],
-            )
-            row = cursor.fetchone()
-            if not row and relation:
-                cursor.execute(
-                    f"SELECT coach_rag FROM {relation} WHERE id = %s",
-                    [learner_id],
-                )
-                row = cursor.fetchone()
-        if not row:
+        row = LearnerProfile.objects.filter(id=learner_id).values_list("coach_rag", flat=True).first()
+        if row is None and not LearnerProfile.objects.filter(id=learner_id).exists():
             return JsonResponse({"detail": "Learner not found."}, status=404)
-        return JsonResponse({"id": str(learner_id), "coachRag": format_coach_rag_value(row[0])})
+        return JsonResponse({"id": str(learner_id), "coachRag": format_coach_rag_value(row)})
 
     try:
         payload = parse_json_body(request)
@@ -4235,7 +4113,9 @@ def fetch_absence_report_attendance_rates(learner_ids: list[int], learner_emails
         for email in learner_emails
         if normalize_email(email) and normalize_email(email) not in by_email
     ]
-    if missing_ids or missing_emails:
+    connection = connections[router.db_for_read(LearnerAbsence) or "default"]
+    legacy_summary_exists = find_existing_relation(connection, ('"Learner"."Absence"',))
+    if legacy_summary_exists and (missing_ids or missing_emails):
         query = Q()
         if missing_ids:
             query |= Q(learner_id__in=missing_ids)

@@ -11,7 +11,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachAbsenceReport
 
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 
 ALLOWED_REASONS = {"illness", "work", "emergency", "travel", "technical", "other"}
@@ -30,7 +30,7 @@ EVIDENCE_STORAGE = FileSystemStorage(
     location=Path(settings.BASE_DIR) / "media" / "absence-evidence",
     base_url="/media/absence-evidence/",
 )
-ATTENDANCE_TABLE = '"Coach"."learner_attendance_details"'
+ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
 
 
 def _error(message, status=400):
@@ -89,9 +89,51 @@ def _fetch_missed_sessions(learner, learner_id):
     ]
 
 
+def _resolve_absent_attendance(
+    learner,
+    learner_id,
+    session_title,
+    session_date,
+    session_time,
+):
+    learner_email = str(getattr(learner, "email", "") or "").strip()
+    learner_filter = (
+        "lower(trim(learner_email)) = lower(trim(%s))"
+        if learner_email
+        else "learner_id = %s"
+    )
+    learner_value = learner_email or learner_id
+    time_filter = "AND session_start_time = %s" if session_time is not None else ""
+    params = [learner_value, session_date, session_title]
+    if session_time is not None:
+        params.append(session_time)
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+                SELECT id
+                FROM {ATTENDANCE_TABLE}
+                WHERE {learner_filter}
+                  AND session_date = %s
+                  AND lower(trim(session_title)) = lower(trim(%s))
+                  {time_filter}
+                  AND lower(trim(attendance_status::text)) IN
+                      ('0', 'false', 'no', 'n', 'absent', 'missed',
+                       'did not attend', 'non-attendance')
+                ORDER BY id
+                LIMIT 2
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+
+    return rows[0][0] if len(rows) == 1 else None
+
+
 def _serialize(report):
     return {
         "id": report.id,
+        "attendanceId": report.attendance_id,
         "reference": f"AR-{report.id:04d}",
         "sessionTitle": report.session_title,
         "sessionDate": report.session_date.isoformat(),
@@ -162,6 +204,18 @@ def learner_absence_reports(request, kind, learner_id):
     except ValueError:
         return _error("Invalid session date or time.")
 
+    attendance_id = _resolve_absent_attendance(
+        learner,
+        learner_id,
+        session_title,
+        parsed_date,
+        parsed_time,
+    )
+    if attendance_id is None:
+        return _error("Choose a valid missed attendance session.")
+    if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
+        return _error("An absence report already exists for this session.", 409)
+
     if upload is not None:
         if upload.content_type not in ALLOWED_UPLOAD_TYPES:
             return _error("Evidence must be a JPG, PNG, WEBP, or PDF file.")
@@ -175,7 +229,7 @@ def learner_absence_reports(request, kind, learner_id):
     except (TypeError, ValueError):
         attendance_rate = None
 
-    active = ActiveUser.objects.filter(id=learner_id).first()
+    active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
     owner_name = str(getattr(active, "coach_name", "") or "").strip() or DEFAULT_COACH_NAME
     owner_email = str(getattr(active, "coach_email", "") or "").strip() or DEFAULT_COACH_EMAIL
     reason = other_reason if reason_category == "other" else REASON_LABELS[reason_category]
@@ -191,6 +245,7 @@ def learner_absence_reports(request, kind, learner_id):
         with transaction.atomic():
             previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
+                attendance_id=attendance_id,
                 owner_email=owner_email,
                 owner_name=owner_name,
                 learner_id=learner_id,
@@ -202,7 +257,7 @@ def learner_absence_reports(request, kind, learner_id):
                 reason_category=reason_category,
                 reason=reason,
                 reported_by=learner_email or learner_name,
-                status="Pending",
+                status=CoachAbsenceReport.STATUS_PENDING,
                 evidence_provided=bool(upload or evidence_text),
                 coach_note="",
                 attendance_rate=attendance_rate,

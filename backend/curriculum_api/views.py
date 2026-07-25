@@ -2041,7 +2041,7 @@ def detail_is_archived(detail):
 def active_learner_delivery_counts():
     """Count live learners by their programme/cohort/group delivery labels.
 
-    ``Learner.Active_users`` is the canonical live-learner mirror. Curriculum
+    ``Learner.learners`` is the permanent canonical learner table. Curriculum
     relationships currently carry the same labels rather than learner foreign
     keys, so comparison is deliberately case/whitespace insensitive. Missing
     learner infrastructure is treated as an empty data source (for example in
@@ -2051,13 +2051,14 @@ def active_learner_delivery_counts():
         return {}, {}
     try:
         with connection.cursor() as cursor:
-            cursor.execute("select to_regclass(%s)", ['\"Learner\".\"Active_users\"'])
+            cursor.execute("select to_regclass(%s)", ['\"Learner\".\"learners\"'])
             if not cursor.fetchone()[0]:
                 return {}, {}
             cursor.execute(
-                'select "Programme", "Cohort", "Group", count(*) '
-                'from "Learner"."Active_users" '
-                'group by "Programme", "Cohort", "Group"'
+                'select programme, cohort, group_name, count(*) '
+                'from "Learner"."learners" '
+                "where lifecycle_status = 'active' "
+                'group by programme, cohort, group_name'
             )
             rows = cursor.fetchall()
     except Exception as exc:
