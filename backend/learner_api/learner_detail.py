@@ -389,6 +389,41 @@ def _resolve_from_master(modules, weeks, components):
                 [module_ids],
             )
             master_components = cur.fetchall()  # [(comp_id, week_id, module_id, type, title, description, settings_json, display_order)]
+
+            # Authored KSB weight per component. Drives the completion criteria
+            # (see COMPONENT_KSB_WEIGHT_TARGET in components.py): a component
+            # with KSBs mapped can only be completed once its weights total the
+            # target AND the learner has uploaded evidence for it.
+            cur.execute(
+                "SELECT component_id, COALESCE(SUM(weight), 0), COUNT(*) "
+                "FROM curriculum.ksb_mappings "
+                "WHERE component_id IS NOT NULL AND module_catalogue_id = ANY(%s) "
+                "GROUP BY component_id",
+                [module_ids],
+            )
+            ksb_weight_by_component = {
+                row[0]: (float(row[1] or 0), int(row[2] or 0)) for row in cur.fetchall()
+            }
+
+            # The individual KSBs authored against each component. The learner
+            # no longer picks KSBs by hand on completion — these are applied
+            # automatically (see components.py), so the UI shows what will be
+            # credited rather than asking.
+            cur.execute(
+                "SELECT component_id, ksb_code, ksb_description, classification, weight "
+                "FROM curriculum.ksb_mappings "
+                "WHERE component_id IS NOT NULL AND module_catalogue_id = ANY(%s) "
+                "ORDER BY component_id, ksb_code",
+                [module_ids],
+            )
+            ksbs_by_component = {}
+            for comp_id, code, description, classification, weight in cur.fetchall():
+                ksbs_by_component.setdefault(comp_id, []).append({
+                    "code": _s(code),
+                    "description": _s(description) or None,
+                    "classification": _s(classification) or None,
+                    "weight": float(weight or 0),
+                })
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
@@ -451,6 +486,7 @@ def _resolve_from_master(modules, weeks, components):
             or None
         )
         duration = settings.get("durationMinutes")
+        ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
             "display": _display_component_title(ctype, ctitle),
@@ -464,6 +500,9 @@ def _resolve_from_master(modules, weeks, components):
             "reflectionPrompt": reflection_prompt,
             "resourceUrl": resource_url,
             "durationMinutes": duration if isinstance(duration, (int, float)) else None,
+            "ksbWeightTotal": ksb_weight,
+            "ksbMappingCount": ksb_count,
+            "ksbMappings": ksbs_by_component.get(comp_id, []),
         })
 
     # Distinct snapshot module ids in first-seen order, plus any legacy
@@ -506,6 +545,9 @@ def _resolve_from_master(modules, weeks, components):
                     "reflectionPrompt": comp["reflectionPrompt"],
                     "resourceUrl": comp["resourceUrl"],
                     "durationMinutes": comp["durationMinutes"],
+                    "ksbWeightTotal": comp["ksbWeightTotal"],
+                    "ksbMappingCount": comp["ksbMappingCount"],
+                    "ksbMappings": comp["ksbMappings"],
                 })
 
     # Preserve legacy (id-less) modules unchanged so pre-structured-format

@@ -16,6 +16,7 @@ adapted to plain CSRF-exempt JSON views keyed on kind+id.
     GET  /learner_api/evidence/<kind>/<pk>/          (optional ?section_ref= &status=)
     GET  /learner_api/evidence/<kind>/<pk>/<file_id>/download/
 """
+import json
 import logging
 import uuid
 
@@ -90,6 +91,17 @@ def upload_evidence(request, kind, pk):
     if f.size > MAX_BYTES:
         return _error("File exceeds the 50 MB size limit.", 400)
 
+    # Training-plan context the file was uploaded against (module/week/component
+    # identity+titles), stored verbatim so the row stays traceable even if the
+    # curriculum is later restructured. Optional — posted as a JSON string field.
+    training_plan_details = None
+    raw_details = request.POST.get("training_plan_details")
+    if raw_details:
+        try:
+            training_plan_details = json.loads(raw_details)
+        except ValueError:
+            return _error("training_plan_details must be valid JSON.", 400)
+
     ensure_evidence_tables()
 
     ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else "bin"
@@ -110,11 +122,13 @@ def upload_evidence(request, kind, pk):
                 """
                 insert into "Learner"."evidence_files"
                   (id, learner_kind, learner_id, section_ref, container, blob_name,
-                   original_filename, content_type, size_bytes, status, uploaded_by, uploaded_at)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                   original_filename, content_type, size_bytes, status, uploaded_by, uploaded_at,
+                   "Training_plan_details")
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s)
                 """,
                 [str(file_id), kind, str(pk), section_ref, quarantine, blob_name,
-                 f.name, f.content_type, f.size, str(pk), timezone.now()],
+                 f.name, f.content_type, f.size, str(pk), timezone.now(),
+                 json.dumps(training_plan_details) if training_plan_details is not None else None],
             )
     except DatabaseError as exc:
         logger.warning("Could not record evidence_files row: %s", exc)
@@ -177,7 +191,7 @@ def list_evidence(request, kind, pk):
         with _conn().cursor() as cur:
             cur.execute(
                 "select id, original_filename, content_type, size_bytes, status, "
-                "scan_result, section_ref, uploaded_at "
+                'scan_result, section_ref, uploaded_at, "Training_plan_details" '
                 'from "Learner"."evidence_files" '
                 f"where {' and '.join(where)} "
                 "order by uploaded_at desc",
@@ -193,6 +207,7 @@ def list_evidence(request, kind, pk):
             "id": str(r[0]), "filename": r[1], "contentType": r[2], "sizeBytes": r[3],
             "status": r[4], "scanResult": r[5], "sectionRef": r[6],
             "uploadedAt": r[7].isoformat() if r[7] else None,
+            "trainingPlanDetails": r[8],
         }
         for r in rows
     ]})

@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import completed_hours_from_progress, append_activity_entry
+from .components import component_ksb_codes
 from .models import ActiveUser, CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
@@ -77,8 +78,12 @@ def submit_video_progress(request, component_id):
     module_title = payload.get("module")
     started_at = payload.get("startedAt")
     time_taken_seconds = payload.get("timeTakenSeconds")
-    # Post-watch reflection window (same shape as the quiz reflection).
-    ksbs = payload.get("ksbs") if isinstance(payload.get("ksbs"), list) else []
+    # KSBs are auto-mapped from the component's authored mappings rather than
+    # picked by the learner (see components.component_ksb_codes). The client's
+    # list is only a fallback for components with no authored mappings.
+    ksbs = component_ksb_codes(component_id)
+    if not ksbs and isinstance(payload.get("ksbs"), list):
+        ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
     # Client may pass the title it rendered; fall back to a live master lookup.

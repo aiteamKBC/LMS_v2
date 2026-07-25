@@ -3,8 +3,9 @@ import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import type { LearnerDetail, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
+import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 
 /** Resolve a stored (id-only) attempt question to display text using the fetched
@@ -290,6 +291,8 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
   const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
+  // Only assignments collect uploaded evidence, so only they get the view-file affordance.
+  const isAssignment = (c.type || '').toLowerCase() === 'assignment';
 
   // Grade is stored as a 0-1 decimal now; render as a whole percent.
   const gradeOf = (a: LearnerQuizAttempt | null) => (a ? `${gradePercent(a.grade)}%` : '');
@@ -374,6 +377,9 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
             {completed ? 'Rewatch' : 'Play'}
           </button>
+        )}
+        {isAssignment && kind && learnerId && c.componentId && (
+          <EvidenceFilesButton kind={kind as LearnerKind} learnerId={learnerId} componentId={c.componentId} />
         )}
         {!c.isQuiz && c.type !== 'video' && c.componentId && canOpenComponent && (
           <button

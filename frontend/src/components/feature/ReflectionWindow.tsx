@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { LearnerKsbItem } from '@/api/learnerDetail';
+import type { ComponentKsbMapping, LearnerKsbItem } from '@/api/learnerDetail';
 
 /* ═══════════════════════════════════════════════════════
    REFLECTION WINDOW — shared by quiz-take and video-watch.
@@ -35,9 +35,59 @@ export function formatClock(totalSeconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+const CLASSIFICATION_STYLES: Record<string, { label: string; bg: string; color: string }> = {
+  main: { label: 'Main', bg: 'bg-primary-100', color: 'text-primary-700' },
+  secondary: { label: 'Secondary', bg: 'bg-blue-100', color: 'text-blue-700' },
+  possible: { label: 'Possible', bg: 'bg-background-200', color: 'text-foreground-600' },
+};
+
+/** Read-only summary of the KSBs a component credits on completion. Shown
+ * instead of the manual picker: the component's authored mappings already
+ * decide which KSBs it develops and at what weight. */
+function AutoMappedKsbs({ ksbs, noun }: { ksbs: ComponentKsbMapping[]; noun: string }) {
+  const total = ksbs.reduce((sum, k) => sum + (Number(k.weight) || 0), 0);
+  return (
+    <div>
+      <p className="text-sm font-semibold text-foreground-800 mb-1">KSBs this {noun} develops</p>
+      <p className="text-xs text-foreground-400 mb-3">
+        {ksbs.length === 0
+          ? 'No KSBs are mapped to this activity.'
+          : 'Mapped by your coach when this activity was built — these are credited automatically.'}
+      </p>
+      {ksbs.length > 0 && (
+        <>
+          <div className="border border-background-300 rounded-xl divide-y divide-background-300 max-h-72 overflow-y-auto">
+            {ksbs.map((k) => {
+              const style = CLASSIFICATION_STYLES[(k.classification || '').toLowerCase()] || CLASSIFICATION_STYLES.possible;
+              return (
+                <div key={k.code} className="flex items-start gap-2.5 px-3 py-2.5">
+                  <i className="ri-checkbox-circle-fill text-emerald-600 text-sm mt-0.5 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-semibold text-primary-600">{k.code}</span>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${style.bg} ${style.color}`}>{style.label}</span>
+                    </span>
+                    {k.description && <span className="block text-[11px] text-foreground-600 line-clamp-2 mt-0.5">{k.description}</span>}
+                  </span>
+                  <span className="shrink-0 text-[11px] font-semibold text-foreground-500 tabular-nums">
+                    {Number(k.weight) % 1 === 0 ? Number(k.weight) : Number(k.weight).toFixed(1)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-foreground-500 mt-2">
+            {ksbs.length} KSB{ksbs.length === 1 ? '' : 's'} · total weight {total % 1 === 0 ? total : total.toFixed(1)}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function ReflectionWindow({
   learnerKsbs, elapsedSeconds, plannedTimeLabel, noun = 'quiz',
-  submitting, submitError, onSubmit,
+  submitting, submitError, onSubmit, autoKsbs,
 }: {
   learnerKsbs: LearnerKsbItem[];
   elapsedSeconds: number;
@@ -46,7 +96,13 @@ export function ReflectionWindow({
   submitting: boolean;
   submitError: string | null;
   onSubmit: (r: { ksbs: string[]; feedback: string; reportedTime: string }) => void;
+  /** KSBs authored against the component. When provided, the manual picker is
+   * replaced by a read-only summary of what will be credited — the component
+   * already declares its KSBs and their weights, so there is nothing to choose.
+   * Quizzes omit this and keep the picker. */
+  autoKsbs?: ComponentKsbMapping[];
 }) {
+  const autoMapped = Array.isArray(autoKsbs);
   const [tab, setTab] = useState<'ksbs' | 'time'>('ksbs');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
   const [feedback, setFeedback] = useState('');
@@ -76,7 +132,10 @@ export function ReflectionWindow({
       setTab('time');
       return;
     }
-    onSubmit({ ksbs: selectedKsbs, feedback: feedback.trim(), reportedTime });
+    // When auto-mapped, send the component's own KSB codes. The server derives
+    // these itself too — this just keeps the request self-describing.
+    const ksbs = autoMapped ? autoKsbs!.map((k) => k.code) : selectedKsbs;
+    onSubmit({ ksbs, feedback: feedback.trim(), reportedTime });
   };
 
   return (
@@ -104,6 +163,9 @@ export function ReflectionWindow({
       <div className="p-5 md:p-6">
         {tab === 'ksbs' ? (
           <div className="space-y-5">
+            {autoMapped ? (
+              <AutoMappedKsbs ksbs={autoKsbs!} noun={noun} />
+            ) : (
             <div>
               <p className="text-sm font-semibold text-foreground-800 mb-1">Which KSBs did this {noun} fulfil?</p>
               <p className="text-xs text-foreground-400 mb-3">Expand a category and tick all that apply.</p>
@@ -177,6 +239,7 @@ export function ReflectionWindow({
                 <p className="text-[11px] text-foreground-500 mt-2">{selectedKsbs.length} KSB{selectedKsbs.length === 1 ? '' : 's'} selected</p>
               )}
             </div>
+            )}
 
             <div>
               <p className="text-sm font-semibold text-foreground-800 mb-2">Feedback about this {noun}</p>
