@@ -207,7 +207,6 @@ export default function CoachAttendanceProfile() {
                   <OverviewValue label="Last 30 Days" value={recentRate(30)} />
                   <OverviewValue label="Last 90 Days" value={recentRate(90)} />
                   <OverviewValue label="Consecutive Absences" value={String(learner.consecutiveMissed ?? 0)} tone="red" />
-                  <OverviewValue label="Late Arrivals" value={String(learner.late ?? 0)} tone="amber" />
                   <OverviewValue label="Total Sessions" value={String(learner.sessions ?? '--')} />
                   <OverviewValue label="Catch-Ups Completed" value={String(catchupSessions.length)} tone="emerald" />
                   <OverviewValue label="Current Risk" value={riskLabel(learner.risk)} />

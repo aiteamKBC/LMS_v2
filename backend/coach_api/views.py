@@ -14,6 +14,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.db import connections, router
 from django.db.models import Q
+from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -841,6 +842,10 @@ def first_existing_column(columns: dict[str, str], *candidates: str) -> str | No
     return None
 
 
+def find_learner_absence_relation(connection) -> str | None:
+    return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
+
+
 def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
@@ -856,6 +861,39 @@ def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | S
         for row in queryset.order_by("full_name", "id")
         if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
     ]
+    return rows
+
+
+def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
+    requested_owner = normalize_email(owner_email)
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .only(
+            "id",
+            "full_name",
+            "email",
+            "programme",
+            "programme_status",
+            "cohort",
+            "group_name",
+            "completed_hours",
+            "target_hours",
+            "minimum_hours",
+            "planned_hours",
+            "lifecycle_status",
+            "coach_name",
+            "coach_email",
+        )
+        .order_by("full_name", "id")
+    )
+    rows: list[LearnerProfile] = []
+    for row in queryset:
+        if not clean_text(row.username):
+            continue
+        if normalize_program_status(get_lms_row_program_status(row)) not in ATTENDANCE_INCLUDED_STATUSES:
+            continue
+        rows.append(row)
     return rows
 
 
@@ -1026,6 +1064,42 @@ def serialize_active_user_learner(row: LearnerProfile | SimpleNamespace) -> dict
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
+    }
+
+
+def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
+    target_hours_value = (
+        clean_text(row.target_hours)
+        or clean_text(row.minimum_hours)
+        or clean_text(row.planned_hours)
+    )
+    hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
+    hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
+    programme_name = clean_text(getattr(row, "programme", None)) or "--"
+    cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
+    group_name = clean_text(getattr(row, "group", None)) or "--"
+    program_status = get_lms_row_program_status(row)
+
+    return {
+        "id": str(row.id),
+        "name": clean_text(row.username) or "Unknown learner",
+        "initials": build_initials(row.username),
+        "email": clean_text(row.email) or None,
+        "employer": "--",
+        "programmeName": programme_name,
+        "cohortName": cohort_name,
+        "group": group_name,
+        "enrollmentStatus": normalize_program_status(program_status),
+        "overallProgress": hours_progress,
+        "overallProgressAvailable": hours_available,
+        "otjhCompleted": to_number(row.completed_hours),
+        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhPlanned": to_number(row.planned_hours),
+        "ksbProgress": 0,
+        "ksbProgressAvailable": False,
+        "coachName": clean_text(row.coach_name) or None,
+        "coachEmail": clean_text(row.coach_email) or None,
+        "rawProgramStatus": program_status or "--",
     }
 
 
@@ -1768,10 +1842,12 @@ def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys:
         return
 
     connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
+    absence_relation = find_learner_absence_relation(connection)
+    if not absence_relation:
+        return
+
     detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
     if not detail_relation:
-        return
-    if not find_existing_relation(connection, ('"Learner"."Absence"',)):
         return
 
     detail_columns = relation_columns(connection, detail_relation)
@@ -1938,10 +2014,100 @@ def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
     }
 
 
+def empty_attendance_detail_summary() -> dict:
+    return {
+        "metrics": {},
+        "metricsById": {},
+        "records": {},
+        "recordsById": {},
+        "trends": {"week": [], "month": [], "year": []},
+        "rows": [],
+    }
+
+
+def build_attendance_detail_summary_payload(rows: list[dict]) -> dict:
+    rows_by_id: dict[int, list[dict]] = {}
+    rows_by_email: dict[str, list[dict]] = {}
+    for row in rows:
+        learner_id = to_int(row.get("learner_id"))
+        email_key = normalize_email(row.get("learner_email"))
+        if learner_id:
+            rows_by_id.setdefault(learner_id, []).append(row)
+        if email_key:
+            rows_by_email.setdefault(email_key, []).append(row)
+
+    metrics_by_id = {
+        learner_id: build_attendance_metrics_from_detail_rows(items)
+        for learner_id, items in rows_by_id.items()
+    }
+    metrics_by_email = {
+        email: build_attendance_metrics_from_detail_rows(items)
+        for email, items in rows_by_email.items()
+    }
+
+    trend_groups: dict[str, dict[tuple, dict]] = {"week": {}, "month": {}, "year": {}}
+    for row in rows:
+        status = normalize_attendance_detail_status(row.get("attendance_status"))
+        if status not in {"present", "absent"}:
+            continue
+        parsed_date = parse_date_value(row.get("session_date"))
+        if not parsed_date:
+            continue
+        session_date = parsed_date.date() if isinstance(parsed_date, datetime) else parsed_date
+        week_start = session_date - timedelta(days=session_date.weekday())
+        group_keys = {
+            "week": ((week_start.year, week_start.isocalendar().week), week_start, f"W{week_start.isocalendar().week:02d}"),
+            "month": ((session_date.year, session_date.month), session_date.replace(day=1), session_date.strftime("%b %Y")),
+            "year": ((session_date.year,), session_date.replace(month=1, day=1), str(session_date.year)),
+        }
+        for view, (key, period, label) in group_keys.items():
+            group = trend_groups[view].setdefault(key, {"period": period, "label": label, "attended": 0, "absent": 0})
+            if status == "present":
+                group["attended"] += 1
+            else:
+                group["absent"] += 1
+
+    trends: dict[str, list[dict]] = {"week": [], "month": [], "year": []}
+    for view, groups in trend_groups.items():
+        for group in sorted(groups.values(), key=lambda item: item["period"]):
+            total = group["attended"] + group["absent"]
+            trends[view].append({
+                "label": group["label"],
+                "value": percentage(group["absent"], total),
+                "sessionDate": format_iso_date(group["period"]),
+                "attended": group["attended"],
+                "absent": group["absent"],
+                "onBreak": 0,
+            })
+
+    return {
+        "metrics": metrics_by_email,
+        "metricsById": metrics_by_id,
+        "records": rows_by_email,
+        "recordsById": rows_by_id,
+        "trends": trends,
+        "rows": rows,
+    }
+
+
+def filter_attendance_detail_summary_data(summary_data: dict, learner_ids: list[int], email_keys: list[str]) -> dict:
+    ids = {int(learner_id) for learner_id in learner_ids if learner_id}
+    emails = {normalize_email(email) for email in email_keys if normalize_email(email)}
+    if not ids and not emails:
+        return empty_attendance_detail_summary()
+
+    rows = [
+        row
+        for row in summary_data.get("rows", [])
+        if (to_int(row.get("learner_id")) in ids) or (normalize_email(row.get("learner_email")) in emails)
+    ]
+    return build_attendance_detail_summary_payload(rows)
+
+
 def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: list[str]) -> dict:
     ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
     emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
-    empty = {"metrics": {}, "metricsById": {}, "records": {}, "recordsById": {}, "trends": {"week": [], "month": [], "year": []}}
+    empty = empty_attendance_detail_summary()
     if not ids and not emails:
         return empty
 
@@ -2000,55 +2166,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
         result_columns = [column[0] for column in cursor.description]
         rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
 
-    rows_by_id: dict[int, list[dict]] = {}
-    rows_by_email: dict[str, list[dict]] = {}
-    for row in rows:
-        learner_id = to_int(row.get("learner_id"))
-        email_key = normalize_email(row.get("learner_email"))
-        if learner_id:
-            rows_by_id.setdefault(learner_id, []).append(row)
-        if email_key:
-            rows_by_email.setdefault(email_key, []).append(row)
-
-    metrics_by_id = {learner_id: build_attendance_metrics_from_detail_rows(items) for learner_id, items in rows_by_id.items()}
-    metrics_by_email = {email: build_attendance_metrics_from_detail_rows(items) for email, items in rows_by_email.items()}
-
-    trend_groups: dict[str, dict[tuple, dict]] = {"week": {}, "month": {}, "year": {}}
-    for row in rows:
-        status = normalize_attendance_detail_status(row.get("attendance_status"))
-        if status not in {"present", "absent"}:
-            continue
-        parsed_date = parse_date_value(row.get("session_date"))
-        if not parsed_date:
-            continue
-        session_date = parsed_date.date() if isinstance(parsed_date, datetime) else parsed_date
-        week_start = session_date - timedelta(days=session_date.weekday())
-        group_keys = {
-            "week": ((week_start.year, week_start.isocalendar().week), week_start, f"W{week_start.isocalendar().week:02d}"),
-            "month": ((session_date.year, session_date.month), session_date.replace(day=1), session_date.strftime("%b %Y")),
-            "year": ((session_date.year,), session_date.replace(month=1, day=1), str(session_date.year)),
-        }
-        for view, (key, period, label) in group_keys.items():
-            group = trend_groups[view].setdefault(key, {"period": period, "label": label, "attended": 0, "absent": 0})
-            if status == "present":
-                group["attended"] += 1
-            else:
-                group["absent"] += 1
-
-    trends: dict[str, list[dict]] = {"week": [], "month": [], "year": []}
-    for view, groups in trend_groups.items():
-        for group in sorted(groups.values(), key=lambda item: item["period"]):
-            total = group["attended"] + group["absent"]
-            trends[view].append({
-                "label": group["label"],
-                "value": percentage(group["absent"], total),
-                "sessionDate": format_iso_date(group["period"]),
-                "attended": group["attended"],
-                "absent": group["absent"],
-                "onBreak": 0,
-            })
-
-    return {"metrics": metrics_by_email, "metricsById": metrics_by_id, "records": rows_by_email, "recordsById": rows_by_id, "trends": trends}
+    return build_attendance_detail_summary_payload(rows)
 
 
 def fetch_marking_rows(case_owner: str, case_owner_id: int | None = None) -> list[dict]:
@@ -3696,7 +3814,7 @@ def serialize_attendance_learner(
         "learner": learner["name"],
         "initials": learner["initials"],
         "email": learner.get("email"),
-        "programme": learner["cohortName"],
+        "programme": learner.get("programmeName") or learner["cohortName"],
         "cohort": learner["cohortName"],
         "group": learner["group"],
         "programStatus": learner["rawProgramStatus"],
@@ -3845,8 +3963,8 @@ def coach_attendance_details(request):
     learner_email = normalize_email(request.GET.get("learner_email"))
 
     try:
-        caseload_rows = fetch_active_user_caseload_rows(owner_email)
-        learners = [serialize_active_user_learner(row) for row in caseload_rows]
+        caseload_rows = fetch_attendance_caseload_rows(owner_email)
+        learners = [serialize_attendance_source_learner(row) for row in caseload_rows]
         learner = next(
             (
                 item for item in learners
@@ -4040,10 +4158,10 @@ def coach_attendance(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
 
     try:
-        caseload_rows = fetch_active_user_caseload_rows(owner_email)
+        caseload_rows = fetch_attendance_caseload_rows(owner_email)
         caseload_learners = [
             learner
-            for learner in [serialize_active_user_learner(row) for row in caseload_rows]
+            for learner in [serialize_attendance_source_learner(row) for row in caseload_rows]
             if should_include_in_attendance_page(learner)
         ]
         active_learners = [
@@ -4054,12 +4172,24 @@ def coach_attendance(request):
         email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
         active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
         attendance_data = fetch_attendance_detail_summary_data(learner_ids, email_keys)
-        active_attendance_data = fetch_attendance_detail_summary_data(active_learner_ids, active_email_keys)
+        active_attendance_data = filter_attendance_detail_summary_data(
+            attendance_data,
+            active_learner_ids,
+            active_email_keys,
+        )
         sync_learner_absence_counts_from_details(learner_ids, email_keys)
-        fallback_attendance_data = fetch_learner_absence_data(email_keys)
-        fallback_active_attendance_data = fetch_learner_absence_data(active_email_keys)
         metrics_by_id = attendance_data["metricsById"]
         metrics_by_email = attendance_data["metrics"]
+        missing_fallback_emails = [
+            normalize_email(learner.get("email"))
+            for learner in caseload_learners
+            if (
+                normalize_email(learner.get("email"))
+                and not metrics_by_id.get(int(learner["id"]))
+                and not metrics_by_email.get(normalize_email(learner.get("email")))
+            )
+        ]
+        fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
@@ -4140,12 +4270,15 @@ def coach_attendance(request):
     }
 
     owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
+    active_trends = active_attendance_data["trends"]
+    if not any(active_trends.values()):
+        active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
             "learners": attendance_learners,
-            "trends": active_attendance_data["trends"] if any(active_attendance_data["trends"].values()) else fallback_active_attendance_data["trends"],
+            "trends": active_trends,
         }
     )
 

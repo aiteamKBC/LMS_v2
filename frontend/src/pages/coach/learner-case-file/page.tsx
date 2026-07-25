@@ -9,6 +9,7 @@ import NetworkTab from './components/NetworkTab';
 import {
   flattenJourney,
   formatFraction,
+  formatHours,
   formatPercent,
   toneFromPercent,
   useCoachLearnerCaseFileData,
@@ -16,6 +17,7 @@ import {
 } from './data';
 
 const coachNav = roleNavMap.coach;
+const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
@@ -34,6 +36,31 @@ type LocationState = {
   kind?: 'commercial' | 'apprenticeship';
   tab?: string;
 };
+
+interface AttendanceDetailSession {
+  learnerId: string;
+  learnerName: string;
+  learnerEmail: string;
+  sessionId: string;
+  sessionTitle: string;
+  sessionType: string;
+  sessionDate: string | null;
+  sessionDateLabel: string;
+  startTime: string;
+  endTime: string;
+  status: string;
+  reason: string;
+  catchupCompleted?: boolean;
+}
+
+interface AttendanceDetailsResponse {
+  sessions?: AttendanceDetailSession[];
+}
+
+interface AttendanceDetailsErrorResponse {
+  detail?: string;
+  error?: string;
+}
 
 export default function LearnerCaseFile() {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
@@ -584,10 +611,12 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
 }
 
 function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
-  const completed = data.otjhCompleted ?? 0;
-  const target = data.otjhTarget ?? 0;
-  const remaining = Math.max(0, target - completed);
-  const otjhPercent = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : null;
+  const completed = data.otjhCompleted;
+  const target = data.otjhTarget;
+  const remaining = completed !== null && target !== null ? Math.max(0, target - completed) : null;
+  const otjhPercent = completed !== null && target !== null && target > 0
+    ? Math.min(100, Math.round((completed / target) * 100))
+    : null;
   const ksbs = data.detail?.ksbs || [];
   const touched = new Set(data.touchedKsbCodes);
   const groups = ['K', 'S', 'B'].map((prefix) => ({ prefix, items: ksbs.filter((item) => item.code.toUpperCase().startsWith(prefix)) }));
@@ -595,17 +624,16 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
     <div className="space-y-5">
       <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
         <div className="grid gap-3 sm:grid-cols-3">
-          <BigMetric value={formatFraction(data.otjhCompleted, null).replace('/--', '')} label="Hours Logged" tone="primary" />
-          <BigMetric value={formatFraction(data.otjhTarget, null).replace('/--', '')} label="Target Hours" tone="muted" />
-          <BigMetric value={String(remaining)} label="Hours Remaining" tone="red" />
+          <BigMetric value={formatHours(data.otjhCompleted)} label="Hours Logged" tone="primary" />
+          <BigMetric value={formatHours(data.otjhTarget)} label="Target Hours" tone="muted" />
+          <BigMetric value={formatHours(remaining)} label="Hours Remaining" tone="red" />
         </div>
         <ProfileProgress label="OTJH Progress" value={otjhPercent} color="bg-primary-600" />
       </ReferencePanel>
-      <ReferencePanel title="Components Progress" icon="ri-pie-chart-line" tone="primary">
-        <div className="grid gap-6 sm:grid-cols-3">
-          <ProfileRing label="Overall" value={data.overallProgress} color="#5b35d5" />
+      <ReferencePanel title="Progress Snapshot" icon="ri-pie-chart-line" tone="primary">
+        <div className="grid gap-6 sm:grid-cols-2">
+          <ProfileRing label="OTJH" value={otjhPercent} color="#0ea5e9" />
           <ProfileRing label="KSB" value={data.ksbProgress} color="#18b978" />
-          <ProfileRing label="Attendance" value={data.attendanceRate} color="#f59e0b" />
         </div>
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
@@ -631,30 +659,177 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
 
 function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
   const attendance = data.attendance;
+  const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadAttendanceSessions() {
+      if (!attendance?.id || !attendance.hasAttendance) {
+        setAttendanceSessions([]);
+        setDetailsError(null);
+        setDetailsLoading(false);
+        return;
+      }
+
+      setDetailsLoading(true);
+      setDetailsError(null);
+      try {
+        const params = new URLSearchParams({ learner_id: String(attendance.id) });
+        const learnerEmail = attendance.email || data.email;
+        if (learnerEmail) {
+          params.set('learner_email', learnerEmail);
+        }
+        if (data.coachEmail) {
+          params.set('owner_email', data.coachEmail);
+        }
+
+        const response = await fetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        const payload = await response.json().catch(() => null) as unknown;
+        const parsedPayload = payload && typeof payload === 'object'
+          ? payload as AttendanceDetailsResponse & AttendanceDetailsErrorResponse
+          : null;
+        if (!response.ok) {
+          const message = parsedPayload
+            ? String(parsedPayload.error || parsedPayload.detail || 'Unable to load learner attendance sessions.')
+            : 'Unable to load learner attendance sessions.';
+          throw new Error(message);
+        }
+
+        if (!cancelled) {
+          setAttendanceSessions(Array.isArray(parsedPayload?.sessions) ? parsedPayload.sessions : []);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setAttendanceSessions([]);
+          setDetailsError(loadError instanceof Error ? loadError.message : 'Unable to load learner attendance sessions.');
+        }
+      } finally {
+        if (!cancelled) {
+          setDetailsLoading(false);
+        }
+      }
+    }
+
+    void loadAttendanceSessions();
+    return () => {
+      cancelled = true;
+    };
+  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.coachEmail, data.email]);
+
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
   const sessions = attendance.sessions || 0;
   const percentage = (value: number | null) => sessions > 0 && value !== null ? Math.round((value / sessions) * 100) : 0;
+  const missedSessions = attendanceSessions.filter((session) => session.status === 'absent');
+  const recentSessions = attendanceSessions.slice(0, 8);
+
   return (
     <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <BigMetric value={formatPercent(attendance.attendance)} label="Attendance Rate" tone="primary" />
         <BigMetric value={String(attendance.sessions ?? '--')} label="Total Sessions" tone="muted" />
         <BigMetric value={String(attendance.present ?? '--')} label="Attended" tone="emerald" />
         <BigMetric value={String(attendance.absent ?? '--')} label="Absent" tone="red" />
-        <BigMetric value={String(attendance.late ?? '--')} label="Late" tone="amber" />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <ReferencePanel title="Attendance Breakdown" icon="ri-bar-chart-line" tone="primary">
           <ProfileProgress label={`Attended (${attendance.present ?? 0})`} value={percentage(attendance.present)} color="bg-emerald-500" />
-          <ProfileProgress label={`Late (${attendance.late ?? 0})`} value={percentage(attendance.late)} color="bg-amber-500" />
           <ProfileProgress label={`Absent (${attendance.absent ?? 0})`} value={percentage(attendance.absent)} color="bg-red-500" />
           <ProfileProgress label={`Catch-up (${attendance.catchup ?? 0})`} value={percentage(attendance.catchup)} color="bg-slate-400" />
         </ReferencePanel>
         <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
-          {(attendance.absent || 0) > 0 ? <div className="rounded-xl border border-red-100 bg-red-50 p-4"><p className="text-[12px] font-bold text-red-700">{attendance.absent} session(s) missed</p><p className="mt-1 text-[10px] text-red-500">Monitoring may be required.</p></div> : <p className="text-[11px] text-emerald-600">No missed sessions recorded.</p>}
+          {detailsLoading ? (
+            <ProfileEmpty text="Loading missed session details..." />
+          ) : detailsError ? (
+            <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-[11px] text-red-700">{detailsError}</div>
+          ) : missedSessions.length > 0 ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[12px] font-bold text-red-700">{missedSessions.length} session(s) missed</p>
+                    <p className="mt-1 text-[10px] text-red-500">Latest absence reasons and catch-up status are shown below.</p>
+                  </div>
+                  {(attendance.consecutiveMissed || 0) > 0 && (
+                    <span className="rounded-full border border-red-200 bg-white px-2.5 py-1 text-[9px] font-semibold text-red-600">
+                      {attendance.consecutiveMissed} consecutive
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {missedSessions.slice(0, 3).map((session, index) => (
+                  <div key={`${session.sessionId}-${session.sessionDate || index}`} className="rounded-xl border border-foreground-100 bg-background-100/55 p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[9px] font-semibold text-red-700">Absent</span>
+                          <span className="text-[10px] text-foreground-400">{displayInline(session.sessionType)}</span>
+                        </div>
+                        <p className="mt-2 truncate text-[12px] font-bold text-foreground-900">{displayInline(session.sessionTitle)}</p>
+                        <p className="mt-1 text-[10px] text-foreground-500">
+                          Reason: {displayInline(session.reason, 'No reason recorded')}
+                        </p>
+                        <p className="mt-1 text-[10px] text-foreground-400">
+                          {session.catchupCompleted ? 'Catch-up completed' : 'Catch-up not recorded'}
+                        </p>
+                      </div>
+                      <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
+                        <p className="text-[11px] font-bold text-foreground-900">{displayInline(session.sessionDateLabel)}</p>
+                        <p className="mt-0.5 text-[10px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {missedSessions.length > 3 && (
+                <p className="text-[10px] text-foreground-400">Showing the latest 3 missed sessions out of {missedSessions.length}.</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-[11px] text-emerald-600">No missed sessions recorded.</p>
+          )}
         </ReferencePanel>
       </div>
-      <ReferencePanel title="Session History" icon="ri-table-line" tone="primary"><ProfileEmpty text="Session-by-session history is not exposed by the current attendance endpoint." /></ReferencePanel>
+      <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
+        {detailsLoading ? (
+          <ProfileEmpty text="Loading session history..." />
+        ) : detailsError ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[11px] text-amber-800">{detailsError}</div>
+        ) : recentSessions.length ? (
+          <div className="space-y-2">
+            {recentSessions.map((session, index) => (
+              <div key={`${session.sessionId}-${session.sessionDate || index}-history`} className="rounded-xl border border-foreground-100 bg-background-100/45 p-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${session.status === 'present' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : session.status === 'absent' ? 'border-red-200 bg-red-50 text-red-700' : 'border-foreground-200 bg-background-50 text-foreground-600'}`}>
+                        {displayInline(session.status)}
+                      </span>
+                      <span className="text-[10px] text-foreground-400">{displayInline(session.sessionType)}</span>
+                    </div>
+                    <p className="mt-2 truncate text-[12px] font-bold text-foreground-900">{displayInline(session.sessionTitle)}</p>
+                    <p className="mt-1 text-[10px] text-foreground-500">Reason: {displayInline(session.reason, 'No reason recorded')}</p>
+                  </div>
+                  <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
+                    <p className="text-[11px] font-bold text-foreground-900">{displayInline(session.sessionDateLabel)}</p>
+                    <p className="mt-0.5 text-[10px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {attendanceSessions.length > recentSessions.length && (
+              <p className="text-[10px] text-foreground-400">Showing the latest {recentSessions.length} attendance sessions.</p>
+            )}
+          </div>
+        ) : (
+          <ProfileEmpty text="No session history is available for this learner yet." />
+        )}
+      </ReferencePanel>
     </div>
   );
 }
@@ -699,6 +874,17 @@ function ProfileProgress({ label, value, color }: { label: string; value: number
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
   return <div className="rounded-2xl border border-foreground-100 bg-background-100/55 p-4 text-center"><p className={`text-2xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p></div>;
+}
+
+function displayInline(value?: string | null, fallback = '--') {
+  const text = String(value || '').trim();
+  return text && text !== '--' ? text : fallback;
+}
+
+function formatSessionTime(start?: string | null, end?: string | null) {
+  const startLabel = displayInline(start);
+  const endLabel = displayInline(end);
+  return endLabel === '--' ? startLabel : `${startLabel} - ${endLabel}`;
 }
 
 function ProfileRing({ label, value, color }: { label: string; value: number | null; color: string }) {
