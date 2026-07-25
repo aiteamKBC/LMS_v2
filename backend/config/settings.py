@@ -236,6 +236,14 @@ MEDIA_ROOT = BASE_DIR
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
+AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
+AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")
+AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
+AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
+AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
+AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

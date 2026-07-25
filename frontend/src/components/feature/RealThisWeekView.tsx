@@ -3,11 +3,12 @@ import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import type { LearnerDetail } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import {
   buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
+import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 
 const learnerNav = roleNavMap.learner;
 
@@ -280,6 +281,8 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
   const gradeLabel = lastAttempt ? `${gradePercent(lastAttempt.grade)}%` : '';
   const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
+  // Only assignments collect uploaded evidence, so only they get the view-file affordance.
+  const isAssignment = (c.type || '').toLowerCase() === 'assignment';
 
   return (
     <div className="w-full flex items-center gap-3 px-4 py-3">
@@ -329,6 +332,9 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
           {completed ? 'Rewatch' : 'Play'}
         </button>
+      )}
+      {isAssignment && kind && learnerId && c.componentId && (
+        <EvidenceFilesButton kind={kind as LearnerKind} learnerId={learnerId} componentId={c.componentId} />
       )}
       {!c.isQuiz && c.type !== 'video' && c.componentId && canOpenComponent && (
         <button

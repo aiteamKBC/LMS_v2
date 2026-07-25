@@ -6,10 +6,13 @@ import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
+import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, isOpenableComponent, gradePercent, formatHoursMinutes,
+  componentCriteria, componentRequiresEvidence, COMPONENT_KSB_WEIGHT_TARGET,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
+import { fetchEvidence } from '@/api/evidence';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -84,6 +87,8 @@ export default function ComponentViewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
+  // Bumped by the uploader so the criteria panel re-checks after an upload.
+  const [evidenceVersion, setEvidenceVersion] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -111,6 +116,24 @@ export default function ComponentViewPage() {
   const isVideo = contentKind === 'video';
   const noun = componentNoun(component?.type);
   const openable = component ? isOpenableComponent(component) : false;
+
+  // Approved evidence uploaded for this component. Owned here (not inside the
+  // uploader) because the completion gate depends on it.
+  const [evidenceCount, setEvidenceCount] = useState(0);
+  const needsEvidence = componentRequiresEvidence(component?.type);
+  useEffect(() => {
+    // Only assignments collect evidence — nothing to look up elsewhere.
+    if (!needsEvidence || !kind || !id || !componentId) return;
+    let cancelled = false;
+    fetchEvidence(kind as LearnerKind, id, { sectionRef: componentId })
+      .then((rows) => {
+        if (!cancelled) setEvidenceCount(rows.filter((r) => r.status === 'approved').length);
+      })
+      .catch(() => { /* the criteria panel just shows 0; the server re-checks on submit */ });
+    return () => { cancelled = true; };
+  }, [needsEvidence, kind, id, componentId, evidenceVersion]);
+
+  const criteria = component ? componentCriteria(component, evidenceCount) : null;
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
@@ -212,6 +235,9 @@ export default function ComponentViewPage() {
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
               learnerKsbs={learnerKsbs}
+              // Components carry their own authored KSB mappings, so the learner
+              // is shown what will be credited instead of picking by hand.
+              autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
               submitting={submitting}
               submitError={submitError}
@@ -231,6 +257,21 @@ export default function ComponentViewPage() {
                 onProgress={(t) => setCurrentTime(t)}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
+                evidenceContext={
+                  // Evidence is collected on assignments only.
+                  componentRequiresEvidence(component.type) && kind && id && componentId
+                    ? {
+                        kind: kind as LearnerKind, learnerId: id, componentId,
+                        onUploaded: () => setEvidenceVersion((v) => v + 1),
+                        trainingPlanDetails: {
+                          moduleId: component.moduleId ?? null, moduleTitle: moduleTitle || null,
+                          weekId: component.weekId ?? null, weekTitle: weekTitle || null,
+                          componentId,
+                          componentTitle: pageTitle, componentType: component.type || null,
+                        },
+                      }
+                    : null
+                }
               />
 
               {/* Title + timer + finish */}
@@ -267,9 +308,16 @@ export default function ComponentViewPage() {
                   )}
                   <button
                     onClick={finishConsuming}
-                    className="inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer"
+                    disabled={!!criteria && !criteria.met}
+                    title={criteria && !criteria.met ? 'Complete the criteria below before finishing.' : undefined}
+                    className={`inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
+                      criteria && !criteria.met
+                        ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
+                    }`}
                   >
-                    <i className="ri-check-line" /> {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
+                    <i className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
+                    {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
                   </button>
                 </div>
               </div>
@@ -278,6 +326,35 @@ export default function ComponentViewPage() {
                 <div className="mt-4 rounded-xl border border-background-300 bg-white p-4">
                   <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Description</h2>
                   <p className="text-sm text-foreground-700 leading-relaxed whitespace-pre-line">{component.description}</p>
+                </div>
+              )}
+
+              {criteria?.gated && (
+                <div className={`mt-4 rounded-xl border p-4 ${
+                  criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
+                }`}>
+                  <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500 mb-2 flex items-center gap-1.5">
+                    <i className={criteria.met ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-information-line text-amber-600'} />
+                    {criteria.met ? 'Ready to complete' : 'Before you can complete this'}
+                  </h2>
+                  <ul className="space-y-1.5">
+                    <CriterionRow
+                      met={criteria.weightMet}
+                      label={`KSB weight ${criteria.weightTotal % 1 === 0 ? criteria.weightTotal : criteria.weightTotal.toFixed(1)} of ${COMPONENT_KSB_WEIGHT_TARGET}`}
+                      hint="Set by your coach when the activity was built — contact them if this looks wrong."
+                      showHint={!criteria.weightMet}
+                    />
+                    {criteria.evidenceRequired && (
+                      <CriterionRow
+                        met={criteria.evidenceMet}
+                        label={
+                          criteria.evidenceMet
+                            ? `${evidenceCount} evidence file${evidenceCount === 1 ? '' : 's'} uploaded`
+                            : 'Upload at least one evidence file'
+                        }
+                      />
+                    )}
+                  </ul>
                 </div>
               )}
             </div>
@@ -428,7 +505,43 @@ function normalizeReadingHtml(html: string): string {
 /* ═══════════════════════════════════════════════════════
    CONTENT RENDERER — one presentation per content kind.
    ═══════════════════════════════════════════════════════ */
-function ComponentContent({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
+interface EvidenceContext {
+  kind: LearnerKind;
+  learnerId: string;
+  componentId: string;
+  onUploaded: () => void;
+  trainingPlanDetails: {
+    moduleId: string | null; moduleTitle: string | null;
+    weekId: string | null; weekTitle: string | null;
+    componentId: string; componentTitle: string; componentType: string | null;
+  };
+}
+
+/** Content for the component, plus the evidence uploader when one is required.
+ * The uploader is appended outside the per-kind renderers so a gated video or
+ * reading gets it too — not just the activity/assignment fallback. */
+function ComponentContent({ evidenceContext, ...props }: Parameters<typeof ComponentBody>[0] & {
+  evidenceContext: EvidenceContext | null;
+}) {
+  return (
+    <>
+      <ComponentBody {...props} />
+      {evidenceContext && (
+        <div className="mt-4 rounded-2xl border border-background-300 bg-white p-6">
+          <AssignmentEvidence
+            kind={evidenceContext.kind}
+            learnerId={evidenceContext.learnerId}
+            componentId={evidenceContext.componentId}
+            trainingPlanDetails={evidenceContext.trainingPlanDetails}
+            onUploaded={evidenceContext.onUploaded}
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
@@ -604,6 +717,19 @@ function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; ti
         Back to Training Plan
       </button>
     </div>
+  );
+}
+
+/* One line of the completion-criteria checklist. */
+function CriterionRow({ met, label, hint, showHint }: { met: boolean; label: string; hint?: string; showHint?: boolean }) {
+  return (
+    <li className="flex items-start gap-2">
+      <i className={`mt-0.5 text-sm shrink-0 ${met ? 'ri-checkbox-circle-fill text-emerald-600' : 'ri-close-circle-line text-amber-600'}`} />
+      <span className="min-w-0">
+        <span className={`block text-[13px] font-medium ${met ? 'text-foreground-600' : 'text-foreground-800'}`}>{label}</span>
+        {hint && showHint && <span className="block text-[11px] text-foreground-400 mt-0.5">{hint}</span>}
+      </span>
+    </li>
   );
 }
 
