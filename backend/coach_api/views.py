@@ -91,7 +91,20 @@ TIMETABLE_SCHEDULE_SLOTS = (9, 10, 11, 13, 14, 15, 16)
 ENV_FILE_NAME = ".env"
 COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES = (
     '"Learner"."learner_attendance_details"',
+<<<<<<< HEAD
+    '"Learner"."Learner_attendance_details"',
     '"learner"."learner_attendance_details"',
+    '"Coach"."learner_attendance_details"',
+    '"coach"."learner_attendance_details"',
+=======
+    '"learner"."learner_attendance_details"',
+>>>>>>> main
+)
+LEARNER_ABSENCE_RELATION_CANDIDATES = (
+    '"Learner"."Absence"',
+    '"Learner"."absence"',
+    '"learner"."Absence"',
+    '"learner"."absence"',
 )
 LEARNER_EVIDENCE_FILES_RELATION_CANDIDATES = (
     '"Learner"."evidence_files"',
@@ -832,7 +845,100 @@ def first_existing_column(columns: dict[str, str], *candidates: str) -> str | No
     return None
 
 
+<<<<<<< HEAD
+def find_learner_absence_relation(connection) -> str | None:
+    return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
+
+
+def fetch_inactive_user_caseload_rows(owner_email: str) -> list[SimpleNamespace]:
+    connection = connections[get_learner_db_alias()]
+    relation = find_existing_relation(connection, UNACTIVE_USER_RELATION_CANDIDATES)
+    if not relation:
+        return []
+
+    query = f"""
+        select
+            id,
+            "Username" as username,
+            "Email" as email,
+            "Phone_number" as phone_number,
+            "Programme" as programme,
+            "status" as status,
+            "Cohort" as cohort,
+            "Group" as "group",
+            "Completed_hours" as completed_hours,
+            "Target_hours" as target_hours,
+            "Minimum_hours" as minimum_hours,
+            "Maximum_hours" as maximum_hours,
+            "Progress_variance" as progress_variance,
+            "Progress_Hours" as progress_hours,
+            "OTJHoursStatus" as otjh_status,
+            "Training_plan" as training_plan,
+            "Training_plan_progress" as training_plan_progress,
+            "KSBs" as ksbs,
+            "Activity_Feed" as activity_feed,
+            coach_name,
+            coach_email,
+            coach_rag,
+            planned_hours,
+            "Start_date" as start_date,
+            "End_date" as end_date,
+            "Gateway_review_date" as gateway_review_date
+        from {relation}
+        where lower(trim(coach_email)) = %s
+        order by "Username", id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, [normalize_email(owner_email)])
+        columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(columns, values)) for values in cursor.fetchall()]
+
+    return [
+        SimpleNamespace(**row)
+        for row in rows
+        if clean_text(row.get("username"))
+    ]
+
+
+def fetch_active_user_caseload_rows(owner_email: str) -> list[ActiveUser | SimpleNamespace]:
+    active_queryset = ActiveUser.objects.only(
+        "id",
+        "username",
+        "email",
+        "phone_number",
+        "programme",
+        "programme_status",
+        "cohort",
+        "group",
+        "completed_hours",
+        "target_hours",
+        "minimum_hours",
+        "maximum_hours",
+        "progress_variance",
+        "progress_hours",
+        "otjh_status",
+        "training_plan",
+        "training_plan_progress",
+        "ksbs",
+        "activity_feed",
+        "coach_name",
+        "coach_email",
+        "coach_rag",
+        "planned_hours",
+        "start_date",
+        "end_date",
+        "gateway_review_date",
+    )
+    active_rows = [
+        row
+        for row in active_queryset.order_by("username", "id")
+        if clean_text(row.username)
+    ]
+    inactive_rows = fetch_inactive_user_caseload_rows(owner_email)
+=======
 def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
+>>>>>>> main
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
@@ -1653,12 +1759,63 @@ def fetch_attendance_data(email_keys: list[str]) -> dict:
 
 
 def fetch_learner_absence_data(email_keys: list[str]) -> dict:
+<<<<<<< HEAD
+    """Read fallback attendance summary rows when the legacy absence table exists."""
+=======
     """Read the optional legacy summary table when it still exists."""
+>>>>>>> main
     unique_email_keys = sorted({normalize_email(email) for email in email_keys if email})
+    empty = {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
     if not unique_email_keys:
-        return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
+        return empty
 
     connection = connections[router.db_for_read(LearnerAbsence) or "default"]
+<<<<<<< HEAD
+    relation = find_learner_absence_relation(connection)
+    if not relation:
+        return empty
+
+    columns = relation_columns(connection, relation)
+    email_column = first_existing_column(columns, "learner_email", "email")
+    sessions_column = first_existing_column(columns, "sessions")
+    present_column = first_existing_column(columns, "present")
+    absent_column = first_existing_column(columns, "absent")
+    catchup_column = first_existing_column(columns, "catchup")
+    if not all([email_column, sessions_column, present_column, absent_column, catchup_column]):
+        return empty
+
+    late_column = first_existing_column(columns, "late")
+    risk_column = first_existing_column(columns, "risk")
+    last_session_date_column = first_existing_column(columns, "last_session_date")
+    consecutive_missed_column = first_existing_column(columns, "consecutive_missed")
+
+    selected_aliases: dict[str, str | None] = {
+        "learner_email": email_column,
+        "sessions": sessions_column,
+        "present": present_column,
+        "absent": absent_column,
+        "catchup": catchup_column,
+        "late": late_column,
+        "risk": risk_column,
+        "last_session_date": last_session_date_column,
+        "consecutive_missed": consecutive_missed_column,
+    }
+    select_columns = [
+        f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}" if column else f"null as {quote_sql_identifier(alias)}"
+        for alias, column in selected_aliases.items()
+    ]
+    query = f"""
+        select {", ".join(select_columns)}
+        from {relation}
+        where lower(trim({quote_sql_identifier(email_column)}::text)) = any(%s)
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, [unique_email_keys])
+        result_columns = [column[0] for column in cursor.description]
+        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
+
+=======
     if not find_existing_relation(connection, ('"Learner"."Absence"',)):
         return {"metrics": {}, "records": {}, "trends": {"week": [], "month": [], "year": []}}
     columns = relation_columns(connection, '"Learner"."Absence"')
@@ -1668,6 +1825,7 @@ def fetch_learner_absence_data(email_keys: list[str]) -> dict:
     rows = list(
         LearnerAbsence.objects.filter(learner_email__in=unique_email_keys).values(*value_fields)
     )
+>>>>>>> main
     metrics: dict[str, dict] = {}
     for row in rows:
         email_key = normalize_email(row["learner_email"])
@@ -1725,7 +1883,12 @@ def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys:
     detail_relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
     if not detail_relation:
         return
+<<<<<<< HEAD
+    absence_relation = find_learner_absence_relation(connection)
+    if not absence_relation:
+=======
     if not find_existing_relation(connection, ('"Learner"."Absence"',)):
+>>>>>>> main
         return
 
     detail_columns = relation_columns(connection, detail_relation)
@@ -1733,6 +1896,14 @@ def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys:
     learner_email_column = first_existing_column(detail_columns, "learner_email", "email", "Email")
     status_column = first_existing_column(detail_columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
     if not status_column or not any([learner_id_column, learner_email_column]):
+        return
+
+    absence_columns = relation_columns(connection, absence_relation)
+    absence_learner_id_column = first_existing_column(absence_columns, "learner_id", "learnerid", "Learner ID")
+    absence_learner_email_column = first_existing_column(absence_columns, "learner_email", "email", "Email")
+    absence_present_column = first_existing_column(absence_columns, "present")
+    absence_absent_column = first_existing_column(absence_columns, "absent")
+    if not absence_present_column or not absence_absent_column or not any([absence_learner_id_column, absence_learner_email_column]):
         return
 
     filters = []
@@ -1789,27 +1960,34 @@ def sync_learner_absence_counts_from_details(learner_ids: list[int], email_keys:
         return
 
     with connection.cursor() as cursor:
-        for learner_id, counts in counts_by_id.items():
-            cursor.execute(
-                """
-                update "Learner"."Absence"
-                set present = %s,
-                    absent = %s
-                where learner_id = %s
-                """,
-                [counts["present"], counts["absent"], learner_id],
+        if absence_learner_id_column:
+            for learner_id, counts in counts_by_id.items():
+                cursor.execute(
+                    f"""
+                    update {absence_relation}
+                    set {quote_sql_identifier(absence_present_column)} = %s,
+                        {quote_sql_identifier(absence_absent_column)} = %s
+                    where {quote_sql_identifier(absence_learner_id_column)} = %s
+                    """,
+                    [counts["present"], counts["absent"], learner_id],
+                )
+        if absence_learner_email_column:
+            learner_id_guard = (
+                f" and {quote_sql_identifier(absence_learner_id_column)} is null"
+                if absence_learner_id_column
+                else ""
             )
-        for email_key, counts in counts_by_email.items():
-            cursor.execute(
-                """
-                update "Learner"."Absence"
-                set present = %s,
-                    absent = %s
-                where lower(trim(learner_email::text)) = %s
-                  and learner_id is null
-                """,
-                [counts["present"], counts["absent"], email_key],
-            )
+            for email_key, counts in counts_by_email.items():
+                cursor.execute(
+                    f"""
+                    update {absence_relation}
+                    set {quote_sql_identifier(absence_present_column)} = %s,
+                        {quote_sql_identifier(absence_absent_column)} = %s
+                    where lower(trim({quote_sql_identifier(absence_learner_email_column)}::text)) = %s
+                    {learner_id_guard}
+                    """,
+                    [counts["present"], counts["absent"], email_key],
+                )
 
 
 def is_truthy_value(value) -> bool:

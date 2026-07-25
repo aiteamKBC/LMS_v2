@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { jsPDF } from 'jspdf';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
@@ -33,6 +34,9 @@ interface Learner {
   overallProgressAvailable?: boolean;
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
+  liveAttendanceRate?: number | null;
+  liveAttendanceRateAvailable?: boolean;
+  attendanceSessions?: number | null;
   componentsCompleted?: number;
   componentsPlanned?: number;
   otjhCompleted: number;
@@ -124,12 +128,26 @@ interface CaseloadApiResponse {
   learners?: CaseloadApiLearner[];
 }
 
+interface AttendanceApiLearner {
+  id: string;
+  learner: string;
+  email?: string | null;
+  attendance: number | null;
+  sessions: number | null;
+  hasAttendance: boolean;
+}
+
+interface AttendanceApiResponse {
+  learners?: AttendanceApiLearner[];
+}
+
 const coachNav = roleNavMap.coach;
 const PAGE_SIZE = 8;
 const DEFAULT_COACH_NAME = 'Med Maher';
 const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
 const API_ENDPOINT = '/coach_api/coach/caseload';
+const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const COACH_RAG_ENDPOINT = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 const COACH_RAG_OPTIONS = [
   { value: '', label: EMPTY_VALUE },
@@ -166,13 +184,56 @@ function getCoachRagDotClass(value?: string | null): string {
   return 'bg-foreground-300';
 }
 
-function normalizeLearner(learner: CaseloadApiLearner): Learner {
+function normalizeIdentity(value?: string | number | null): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return displayValue(String(value))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function clampPercent(value?: number | string | null): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
+
+function findAttendanceRecord(learner: CaseloadApiLearner, attendanceLearners: AttendanceApiLearner[]) {
+  const learnerId = normalizeIdentity(learner.id);
+  const learnerEmail = normalizeIdentity(learner.email);
+  const learnerName = normalizeIdentity(learner.name);
+
+  return attendanceLearners.find((attendance) => {
+    const attendanceId = normalizeIdentity(attendance.id);
+    const attendanceEmail = normalizeIdentity(attendance.email);
+    const attendanceName = normalizeIdentity(attendance.learner);
+
+    return Boolean(
+      (learnerId && attendanceId && learnerId === attendanceId)
+      || (learnerEmail && attendanceEmail && learnerEmail === attendanceEmail)
+      || (learnerName && attendanceName && learnerName === attendanceName)
+    );
+  }) || null;
+}
+
+function normalizeLearner(learner: CaseloadApiLearner, attendance?: AttendanceApiLearner | null): Learner {
   const startDate = displayValue(learner.startDate || learner.lastAttendanceDate);
   const gatewayReviewDate = displayValue(
     learner.gatewayReviewDate || learner.lastProgressReview || learner.lastReview || learner.nextReview,
   );
   const plannedEndDate = displayValue(
     learner.plannedEndDate || learner.nextCoaching || learner.lastCoachingSession,
+  );
+  const hasAttendance = Boolean(
+    attendance
+    && attendance.attendance !== null
+    && attendance.attendance !== undefined
+    && attendance.hasAttendance !== false
   );
 
   return {
@@ -181,6 +242,9 @@ function normalizeLearner(learner: CaseloadApiLearner): Learner {
     nextReview: displayValue(learner.nextReview),
     lastContact: displayValue(learner.lastContact),
     lastAttendanceDate: startDate,
+    liveAttendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : null,
+    liveAttendanceRateAvailable: hasAttendance,
+    attendanceSessions: hasAttendance && typeof attendance?.sessions === 'number' ? attendance.sessions : null,
     lastProgressReview: gatewayReviewDate,
     lastReview: gatewayReviewDate,
     lastCoachingSession: plannedEndDate,
@@ -309,6 +373,29 @@ function formatRatio(completed?: number, target?: number) {
   return `${safeCompleted}/${safeTarget}`;
 }
 
+function formatPercentValue(value?: number | null) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return EMPTY_VALUE;
+  }
+  return `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(value)}%`;
+}
+
+function formatComponentsValue(learner: Learner) {
+  if (
+    typeof learner.componentsCompleted === 'number'
+    && typeof learner.componentsPlanned === 'number'
+    && learner.componentsPlanned > 0
+  ) {
+    return `${learner.componentsCompleted}/${learner.componentsPlanned}`;
+  }
+
+  return learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
+}
+
+function formatComponentsHint(learner: Learner) {
+  return learner.attendanceRateAvailable ? `${learner.attendanceRate}% complete` : null;
+}
+
 function formatHoursValue(value?: number) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     return EMPTY_VALUE;
@@ -392,6 +479,28 @@ function DonutChart({ percentage, size = 72, strokeWidth = 6, color = 'primary',
   );
 }
 
+async function fetchAttendanceLearners(signal: AbortSignal, ownerEmail: string) {
+  const endpoints = [
+    `${ATTENDANCE_ENDPOINT}?owner_email=${encodeURIComponent(ownerEmail)}`,
+    ATTENDANCE_ENDPOINT,
+  ];
+
+  for (const endpoint of endpoints) {
+    const response = await fetch(endpoint, { signal });
+    if (!response.ok) {
+      continue;
+    }
+
+    const data: AttendanceApiResponse = await response.json();
+    const learners = data.learners || [];
+    if (learners.length > 0 || endpoint === ATTENDANCE_ENDPOINT) {
+      return learners;
+    }
+  }
+
+  return [];
+}
+
 export default function CoachCaseload() {
   const navigate = useNavigate();
   const [ownerName, setOwnerName] = useState(DEFAULT_COACH_NAME);
@@ -408,7 +517,7 @@ export default function CoachCaseload() {
   const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
   const [selectedMetricDetail, setSelectedMetricDetail] = useState<{ learner: Learner; metric: LearnerMetric } | null>(null);
-  const [sortKey, setSortKey] = useState<'name' | 'progress' | 'attendance' | 'ksb' | 'otjh'>('name');
+  const [sortKey, setSortKey] = useState<'name' | 'progress' | 'attendance' | 'components' | 'ksb' | 'otjh'>('name');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [currentPage, setCurrentPage] = useState(1);
   const [showProgressReport, setShowProgressReport] = useState(false);
@@ -417,7 +526,11 @@ export default function CoachCaseload() {
   const [openCoachRagId, setOpenCoachRagId] = useState<string | null>(null);
   const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(() => new Set());
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
     isPointerDown: false,
     isDragging: false,
@@ -435,15 +548,22 @@ export default function CoachCaseload() {
       setError(null);
 
       try {
-        const response = await fetch(API_ENDPOINT, { signal: controller.signal });
-        if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`);
+        const caseloadResponse = await fetch(API_ENDPOINT, { signal: controller.signal });
+
+        if (!caseloadResponse.ok) {
+          throw new Error(`Request failed with status ${caseloadResponse.status}`);
         }
 
-        const data: CaseloadApiResponse = await response.json();
-        setOwnerName(data.owner?.name || DEFAULT_COACH_NAME);
-        setOwnerEmail(data.owner?.email || DEFAULT_COACH_EMAIL);
-        setLearners((data.learners || []).map(normalizeLearner));
+        const data: CaseloadApiResponse = await caseloadResponse.json();
+        const resolvedOwnerName = data.owner?.name || DEFAULT_COACH_NAME;
+        const resolvedOwnerEmail = data.owner?.email || DEFAULT_COACH_EMAIL;
+        const attendanceLearners = await fetchAttendanceLearners(controller.signal, resolvedOwnerEmail);
+
+        setOwnerName(resolvedOwnerName);
+        setOwnerEmail(resolvedOwnerEmail);
+        setLearners((data.learners || []).map((learner) => (
+          normalizeLearner(learner, findAttendanceRecord(learner, attendanceLearners))
+        )));
       } catch (err) {
         if (controller.signal.aborted) {
           return;
@@ -463,6 +583,30 @@ export default function CoachCaseload() {
 
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setExportMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setExportMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [exportMenuOpen]);
 
   const cohortOptions = useMemo(
     () =>
@@ -554,7 +698,8 @@ export default function CoachCaseload() {
       switch (sortKey) {
         case 'name': va = a.name; vb = b.name; break;
         case 'progress': va = a.overallProgress; vb = b.overallProgress; break;
-        case 'attendance': va = a.attendanceRate; vb = b.attendanceRate; break;
+        case 'attendance': va = a.liveAttendanceRate ?? -1; vb = b.liveAttendanceRate ?? -1; break;
+        case 'components': va = a.attendanceRate; vb = b.attendanceRate; break;
         case 'ksb': va = a.ksbProgress; vb = b.ksbProgress; break;
         case 'otjh': va = getOtjhSortValue(a.otjhStatus, a.progressVariance); vb = getOtjhSortValue(b.otjhStatus, b.progressVariance); break;
       }
@@ -564,12 +709,63 @@ export default function CoachCaseload() {
     return list;
   }, [learners, applySummaryFilter, programStatusFilter, coachRagFilter, employerFilter, cohortFilter, groupFilter, search, sortKey, sortDir]);
 
+  const filteredLearnerIds = useMemo(
+    () => filtered.map((learner) => learner.id),
+    [filtered],
+  );
+
+  useEffect(() => {
+    const filteredIdSet = new Set(filteredLearnerIds);
+    setSelectedLearnerIds((current) => {
+      const next = new Set([...current].filter((id) => filteredIdSet.has(id)));
+      if (next.size !== current.size) {
+        return next;
+      }
+
+      for (const id of current) {
+        if (!next.has(id)) {
+          return next;
+        }
+      }
+
+      return current;
+    });
+  }, [filteredLearnerIds]);
+
+  const selectedLearners = useMemo(
+    () => filtered.filter((learner) => selectedLearnerIds.has(learner.id)),
+    [filtered, selectedLearnerIds],
+  );
+
+  const selectedCount = selectedLearners.length;
+
+  const handleExportPdf = useCallback((scope: 'selected' | 'filtered') => {
+    setExportMenuOpen(false);
+    setIsExportingPdf(true);
+
+    window.setTimeout(() => {
+      try {
+        downloadLearnersPdf(scope === 'selected' ? selectedLearners : filtered, ownerName);
+      } finally {
+        setIsExportingPdf(false);
+      }
+    }, 0);
+  }, [filtered, ownerName, selectedLearners]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
   const paginated = useMemo(() => {
     const start = (safePage - 1) * PAGE_SIZE;
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, safePage]);
+
+  const selectedPageCount = useMemo(
+    () => paginated.filter((learner) => selectedLearnerIds.has(learner.id)).length,
+    [paginated, selectedLearnerIds],
+  );
+
+  const allPageSelected = paginated.length > 0 && selectedPageCount === paginated.length;
+  const allFilteredSelected = filtered.length > 0 && selectedCount === filtered.length;
 
   const selectedLearner = learners.find(learner => learner.id === selectedLearnerId) || null;
 
@@ -581,6 +777,35 @@ export default function CoachCaseload() {
     setSummaryFilter(current => current === filter ? 'all' : filter);
     setCurrentPage(1);
   };
+
+  const toggleLearnerSelection = useCallback((learnerId: string) => {
+    setSelectedLearnerIds((current) => {
+      const next = new Set(current);
+      if (next.has(learnerId)) next.delete(learnerId);
+      else next.add(learnerId);
+      return next;
+    });
+  }, []);
+
+  const handleTogglePageSelection = useCallback(() => {
+    setSelectedLearnerIds((current) => {
+      const next = new Set(current);
+      if (allPageSelected) {
+        paginated.forEach((learner) => next.delete(learner.id));
+      } else {
+        paginated.forEach((learner) => next.add(learner.id));
+      }
+      return next;
+    });
+  }, [allPageSelected, paginated]);
+
+  const handleSelectAllFiltered = useCallback(() => {
+    setSelectedLearnerIds(new Set(filtered.map((learner) => learner.id)));
+  }, [filtered]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedLearnerIds(new Set());
+  }, []);
 
   const setLearnerCoachRag = (learnerId: string, coachRag: string | null | undefined) => {
     setLearners(current =>
@@ -762,14 +987,62 @@ export default function CoachCaseload() {
                 <HeaderMetric icon="ri-user-follow-line" label="Active" value={summaryCounts.active} tone="emerald" />
                 <HeaderMetric icon="ri-error-warning-line" label="Need Attention" value={summaryCounts.needAttention} tone="amber" />
                 <HeaderMetric icon="ri-alarm-warning-line" label="At Risk" value={summaryCounts.atRisk} tone="red" />
-                <button
-                  type="button"
-                  onClick={() => downloadLearnersCsv(filtered)}
-                  className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50"
-                >
-                  <i className="ri-download-2-line"></i>
-                  Export Learners
-                </button>
+                <div ref={exportMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setExportMenuOpen((current) => !current)}
+                    className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50"
+                  >
+                    <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}`}></i>
+                    {selectedCount > 0 ? `Export Selected (${selectedCount})` : 'Export Learners'}
+                    <i className={`ri-arrow-down-s-line transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}></i>
+                  </button>
+
+                  {exportMenuOpen && (
+                    <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-[230px] rounded-2xl border border-foreground-200/70 bg-white p-1.5 shadow-[0_18px_45px_rgba(28,12,58,0.16)]">
+                      <div className="border-b border-foreground-100 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Export Options</p>
+                        <p className="mt-1 text-[11px] text-foreground-500">
+                          {selectedCount > 0 ? `${selectedCount} selected learners` : `${filtered.length} learners in current view`}
+                        </p>
+                      </div>
+                      <div className="pt-1">
+                        {selectedCount > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleExportPdf('selected')}
+                              disabled={isExportingPdf}
+                              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium text-foreground-700 transition hover:bg-background-100 hover:text-foreground-900 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                                <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'} text-sm`}></i>
+                              </span>
+                              <span className="flex-1">
+                                <span className="block font-semibold">Selected PDF</span>
+                                <span className="block text-[10px] text-foreground-400">Only selected learners</span>
+                              </span>
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleExportPdf('filtered')}
+                          disabled={isExportingPdf}
+                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium text-foreground-700 transition hover:bg-background-100 hover:text-foreground-900 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
+                            <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'} text-sm`}></i>
+                          </span>
+                          <span className="flex-1">
+                            <span className="block font-semibold">Current View PDF</span>
+                            <span className="block text-[10px] text-foreground-400">All filtered learners</span>
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </section>
@@ -800,7 +1073,7 @@ export default function CoachCaseload() {
                 <CaseloadMenuSelect
                   value={sortKey}
                   onChange={(value) => {
-                    const next = value as 'name' | 'progress' | 'attendance' | 'ksb' | 'otjh';
+                    const next = value as 'name' | 'progress' | 'attendance' | 'components' | 'ksb' | 'otjh';
                     setSortKey(next);
                     setSortDir(next === 'name' ? 'asc' : 'desc');
                   }}
@@ -808,8 +1081,9 @@ export default function CoachCaseload() {
                     { value: 'name', label: 'Learner Name' },
                     { value: 'progress', label: 'Overall Progress' },
                     { value: 'otjh', label: 'OTJH' },
-                    { value: 'ksb', label: 'KSB' },
                     { value: 'attendance', label: 'Attendance' },
+                    { value: 'components', label: 'Components' },
+                    { value: 'ksb', label: 'KSB' },
                   ]}
                   minWidth="min-w-[164px]"
                   icon="ri-sort-asc"
@@ -857,8 +1131,50 @@ export default function CoachCaseload() {
                   <i className="ri-table-line"></i> Table View
                 </button>
               </div>
-              <span className="text-[11px] text-foreground-400">{filtered.length} learners</span>
+              <span className="text-[11px] text-foreground-400">
+                {selectedCount > 0 ? `${selectedCount} selected` : `${filtered.length} learners`}
+              </span>
             </div>
+
+            {!loading && !error && filtered.length > 0 && (
+              <div className="flex flex-col gap-2 border-b border-foreground-100 bg-background-100/30 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTogglePageSelection}
+                    className={`rounded-xl px-3 py-2 text-[11px] font-semibold transition ${
+                      allPageSelected
+                        ? 'bg-primary-600 text-white shadow-sm'
+                        : 'bg-white text-foreground-600 ring-1 ring-foreground-200 hover:ring-primary-200 hover:text-primary-700'
+                    }`}
+                  >
+                    {allPageSelected ? `Clear Page (${paginated.length})` : `Select Page (${paginated.length})`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSelectAllFiltered}
+                    disabled={allFilteredSelected}
+                    className="rounded-xl bg-white px-3 py-2 text-[11px] font-semibold text-foreground-600 ring-1 ring-foreground-200 transition hover:ring-primary-200 hover:text-primary-700 disabled:cursor-default disabled:opacity-50"
+                  >
+                    Select All Filtered ({filtered.length})
+                  </button>
+                  {selectedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleClearSelection}
+                      className="rounded-xl px-3 py-2 text-[11px] font-semibold text-foreground-500 transition hover:bg-white hover:text-foreground-800"
+                    >
+                      Clear Selection
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-foreground-400">
+                  {selectedCount > 0
+                    ? `${selectedCount} learner${selectedCount === 1 ? '' : 's'} selected across your filtered results.`
+                    : 'Selections stay active while you move between pages.'}
+                </p>
+              </div>
+            )}
 
             {coachRagSaveError && <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-[11px] text-red-700">{coachRagSaveError}</div>}
 
@@ -880,6 +1196,8 @@ export default function CoachCaseload() {
                   <ReferenceLearnerCard
                     key={learner.id}
                     learner={learner}
+                    selected={selectedLearnerIds.has(learner.id)}
+                    onToggleSelect={() => toggleLearnerSelection(learner.id)}
                     onOpen={() => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
                   />
                 ))}
@@ -887,6 +1205,8 @@ export default function CoachCaseload() {
             ) : (
               <ReferenceLearnerTable
                 learners={paginated}
+                selectedLearnerIds={selectedLearnerIds}
+                onToggleSelect={toggleLearnerSelection}
                 onOpen={(learner) => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
               />
             )}
@@ -1734,17 +2054,37 @@ function CaseloadStatusTab({ label, count, active, onClick }: { label: string; c
   );
 }
 
-function ReferenceLearnerCard({ learner, onOpen }: { learner: Learner; onOpen: () => void }) {
+function ReferenceLearnerCard({
+  learner,
+  selected,
+  onToggleSelect,
+  onOpen,
+}: {
+  learner: Learner;
+  selected: boolean;
+  onToggleSelect: () => void;
+  onOpen: () => void;
+}) {
   const statusStyle = getProgramStatusStyle(learner.rawProgramStatus);
   const rag = displayValue(learner.coachRag);
   const ragDot = getCoachRagDotClass(rag);
+  const primaryRisk = learner.riskFlags[0] || 'No active flags';
+  const hasPrimaryRisk = Boolean(learner.riskFlags[0]);
 
   return (
-    <article className="flex h-full overflow-hidden rounded-2xl border border-foreground-200/70 bg-white transition hover:border-primary-200 hover:shadow-[0_12px_28px_rgba(60,30,110,0.08)]">
+    <article className={`flex h-full overflow-hidden rounded-2xl border bg-white transition hover:border-primary-200 hover:shadow-[0_12px_28px_rgba(60,30,110,0.08)] ${
+      selected ? 'border-primary-300 ring-2 ring-primary-100' : 'border-foreground-200/70'
+    }`}>
       <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start gap-3">
-          <input type="checkbox" aria-label={`Select ${learner.name}`} className="mt-3 h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600" />
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelect}
+            aria-label={`Select ${learner.name}`}
+            className="mt-3 h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
+          />
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-secondary-100 text-[11px] font-bold text-primary-800 ring-2 ring-white shadow-sm">
             {learner.initials}
           </span>
@@ -1768,23 +2108,42 @@ function ReferenceLearnerCard({ learner, onOpen }: { learner: Learner; onOpen: (
           <p className="truncate text-foreground-400">{displayValue(learner.cohortName)} <span className="mx-1.5">·</span> {displayValue(learner.group)}</p>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <CardMetric value={`${formatHoursValue(learner.otjhCompleted)}/${formatHoursValue(learner.otjhTarget)}`} label="OTJH" />
-          <CardMetric value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : '--'} label="Attendance" />
+          <CardMetric
+            value={formatPercentValue(learner.liveAttendanceRate)}
+            label="Attendance"
+            hint={learner.attendanceSessions ? `${learner.attendanceSessions} session${learner.attendanceSessions === 1 ? '' : 's'}` : null}
+          />
+          <CardMetric
+            value={formatComponentsValue(learner)}
+            label="Components"
+            hint={formatComponentsHint(learner)}
+          />
           <CardMetric value={formatRatio(learner.ksbCompleted, learner.ksbTarget)} label="KSB" />
         </div>
       </div>
 
-      <footer className="flex h-11 shrink-0 items-center justify-between border-t border-foreground-100 bg-background-100/35 px-4">
-        <div className="flex min-w-0 items-center gap-2 text-[9px] text-foreground-500">
-          <span className={`h-2 w-2 rounded-full ${ragDot}`}></span>
-          <span className="font-semibold">{rag}</span>
-          {learner.riskFlags[0] && <span className="truncate text-foreground-300">{learner.riskFlags[0]}</span>}
+      <footer className="flex min-h-[52px] shrink-0 items-center justify-between gap-3 border-t border-foreground-100 bg-background-100/35 px-4 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-[9px]">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-2 py-1 text-foreground-600 ring-1 ring-foreground-200/70">
+            <span className={`h-2 w-2 rounded-full ${ragDot}`}></span>
+            <span className="font-semibold text-foreground-500">Coach RAG:</span>
+            <span className="font-semibold text-foreground-700">{rag}</span>
+          </span>
+          <span className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full px-2 py-1 ring-1 ${
+            hasPrimaryRisk
+              ? 'bg-red-50 text-red-700 ring-red-100'
+              : 'bg-white text-foreground-500 ring-foreground-200/70'
+          }`}>
+            <span className="font-semibold">Primary Risk:</span>
+            <span className="truncate">{primaryRisk}</span>
+          </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <span className="hidden items-center gap-1 text-[9px] text-foreground-400 sm:flex">
             <i className="ri-calendar-line"></i>
-            Gateway: <strong className="font-semibold text-foreground-600">{learner.gatewayReviewDate}</strong>
+            Gateway Review: <strong className="font-semibold text-foreground-600">{learner.gatewayReviewDate}</strong>
           </span>
           <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 transition hover:bg-primary-100">
             <i className="ri-profile-line"></i> Profile
@@ -1796,35 +2155,65 @@ function ReferenceLearnerCard({ learner, onOpen }: { learner: Learner; onOpen: (
   );
 }
 
-function CardMetric({ value, label }: { value: string; label: string }) {
+function CardMetric({ value, label, hint = null }: { value: string; label: string; hint?: string | null }) {
   return (
     <div className="rounded-xl bg-background-100/75 px-2 py-2.5 text-center">
       <p className="text-[14px] font-bold text-primary-700">{value}</p>
       <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
+      {hint && <p className="mt-1 text-[8px] text-foreground-400">{hint}</p>}
     </div>
   );
 }
 
-function ReferenceLearnerTable({ learners, onOpen }: { learners: Learner[]; onOpen: (learner: Learner) => void }) {
+function ReferenceLearnerTable({
+  learners,
+  selectedLearnerIds,
+  onToggleSelect,
+  onOpen,
+}: {
+  learners: Learner[];
+  selectedLearnerIds: Set<string>;
+  onToggleSelect: (learnerId: string) => void;
+  onOpen: (learner: Learner) => void;
+}) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] text-left">
+      <table className="w-full min-w-[1180px] text-left">
         <thead className="border-b border-foreground-100 bg-background-100/55 text-[9px] uppercase tracking-wider text-foreground-400">
-          <tr><th className="px-4 py-3">Learner</th><th>Cohort / Group</th><th>Status</th><th>OTJH</th><th>KSB</th><th>Progress</th><th>Gateway</th><th></th></tr>
+          <tr><th className="w-12 px-4 py-3 text-center">Select</th><th className="px-4 py-3">Learner</th><th>Cohort / Group</th><th>Status</th><th>OTJH</th><th>Attendance</th><th>Components</th><th>KSB</th><th>Progress</th><th>Gateway</th><th></th></tr>
         </thead>
         <tbody className="divide-y divide-foreground-100">
-          {learners.map((learner) => (
-            <tr key={learner.id} className="text-[11px] text-foreground-600 hover:bg-primary-50/25">
+          {learners.map((learner) => {
+            const selected = selectedLearnerIds.has(learner.id);
+            return (
+            <tr key={learner.id} className={`text-[11px] text-foreground-600 hover:bg-primary-50/25 ${selected ? 'bg-primary-50/35' : ''}`}>
+              <td className="px-4 py-3 text-center">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={() => onToggleSelect(learner.id)}
+                  aria-label={`Select ${learner.name}`}
+                  className="h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
+                />
+              </td>
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-[9px] font-bold text-primary-700">{learner.initials}</span><div><p className="font-bold text-foreground-900">{learner.name}</p><p className="text-[9px] text-foreground-400">{learner.email || learner.employer}</p></div></div></td>
               <td><p>{learner.cohortName}</p><p className="text-[9px] text-foreground-400">{learner.group}</p></td>
               <td><span className={`rounded-full border px-2 py-1 text-[9px] ${getProgramStatusStyle(learner.rawProgramStatus).bg} ${getProgramStatusStyle(learner.rawProgramStatus).text}`}>{displayValue(learner.rawProgramStatus)}</span></td>
               <td className="font-semibold">{formatHoursValue(learner.otjhCompleted)}/{formatHoursValue(learner.otjhTarget)}h</td>
+              <td>
+                <p className="font-semibold">{formatPercentValue(learner.liveAttendanceRate)}</p>
+                <p className="text-[9px] text-foreground-400">{learner.attendanceSessions ? `${learner.attendanceSessions} session${learner.attendanceSessions === 1 ? '' : 's'}` : 'Live metric'}</p>
+              </td>
+              <td>
+                <p className="font-semibold">{formatComponentsValue(learner)}</p>
+                <p className="text-[9px] text-foreground-400">{formatComponentsHint(learner) || 'Tracked components'}</p>
+              </td>
               <td className="font-semibold">{formatRatio(learner.ksbCompleted, learner.ksbTarget)}</td>
               <td className="font-semibold">{learner.overallProgressAvailable ? `${learner.overallProgress}%` : '--'}</td>
               <td>{learner.gatewayReviewDate}</td>
               <td className="pr-4 text-right"><button type="button" onClick={() => onOpen(learner)} className="rounded-lg bg-primary-50 px-3 py-1.5 font-bold text-primary-700">Profile</button></td>
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
     </div>
@@ -1846,16 +2235,136 @@ function ReferencePagination({ page, totalPages, total, pageSize, onPage }: { pa
   );
 }
 
-function downloadLearnersCsv(learners: Learner[]) {
-  const header = ['Name', 'Email', 'Employer', 'Cohort', 'Group', 'Status', 'Coach RAG', 'Progress'];
-  const rows = learners.map((learner) => [learner.name, learner.email || '', learner.employer, learner.cohortName, learner.group, displayValue(learner.rawProgramStatus), displayValue(learner.coachRag), `${learner.overallProgress}%`]);
-  const csv = [header, ...rows].map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(',')).join('\n');
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'coach-learners.csv';
-  link.click();
-  URL.revokeObjectURL(url);
+function formatExportDate() {
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date());
+}
+
+function fitPdfCellText(doc: jsPDF, value: string, maxWidth: number) {
+  const safeValue = value || EMPTY_VALUE;
+  if (doc.getTextWidth(safeValue) <= maxWidth) return safeValue;
+
+  let text = safeValue;
+  while (text.length > 0 && doc.getTextWidth(`${text}...`) > maxWidth) {
+    text = text.slice(0, -1);
+  }
+
+  return text ? `${text}...` : safeValue;
+}
+
+function drawLearnerPdfHeader(doc: jsPDF, columns: { label: string; width: number }[], startX: number, y: number, rowHeight: number) {
+  let x = startX;
+
+  doc.setFillColor(244, 239, 255);
+  doc.rect(startX, y, columns.reduce((total, column) => total + column.width, 0), rowHeight, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(57, 37, 103);
+
+  columns.forEach((column) => {
+    doc.text(column.label, x + 1.5, y + 4.7);
+    x += column.width;
+  });
+
+  doc.setDrawColor(222, 226, 232);
+  doc.line(startX, y + rowHeight, startX + columns.reduce((total, column) => total + column.width, 0), y + rowHeight);
+}
+
+function downloadLearnersPdf(learners: Learner[], ownerName: string) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 10;
+  const marginY = 12;
+  const rowHeight = 7;
+  const columns = [
+    { label: 'Name', width: 28 },
+    { label: 'Status', width: 19 },
+    { label: 'Coach RAG', width: 17 },
+    { label: 'Progress', width: 16 },
+    { label: 'OTJH', width: 18 },
+    { label: 'Attendance', width: 17 },
+    { label: 'Components', width: 20 },
+    { label: 'KSB', width: 14 },
+    { label: 'Employer', width: 30 },
+    { label: 'Cohort', width: 42 },
+    { label: 'Group', width: 18 },
+  ];
+
+  let y = marginY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(31, 41, 55);
+  doc.text('Coach Learners Export', marginX, y);
+
+  y += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(107, 114, 128);
+  doc.text(`Generated ${formatExportDate()} by ${ownerName}`, marginX, y);
+
+  y += 6;
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(marginX, y - 4.5, pageWidth - (marginX * 2), 8, 2, 2, 'F');
+  doc.setFontSize(9);
+  doc.setTextColor(55, 65, 81);
+  doc.text(`Learners included: ${learners.length}`, marginX + 2.5, y + 0.5);
+
+  y += 7.5;
+  drawLearnerPdfHeader(doc, columns, marginX, y, rowHeight);
+  y += rowHeight;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(31, 41, 55);
+
+  learners.forEach((learner, index) => {
+    if (y + rowHeight > pageHeight - marginY) {
+      doc.addPage();
+      y = marginY;
+      drawLearnerPdfHeader(doc, columns, marginX, y, rowHeight);
+      y += rowHeight;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(31, 41, 55);
+    }
+
+    if (index % 2 === 0) {
+      doc.setFillColor(250, 250, 251);
+      doc.rect(marginX, y, columns.reduce((total, column) => total + column.width, 0), rowHeight, 'F');
+    }
+
+    const row = [
+      learner.name,
+      displayValue(learner.rawProgramStatus),
+      displayValue(learner.coachRag),
+      learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE,
+      formatRatio(learner.otjhCompleted, learner.otjhTarget),
+      formatPercentValue(learner.liveAttendanceRate),
+      formatComponentsValue(learner),
+      learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE,
+      learner.employer,
+      learner.cohortName,
+      learner.group,
+    ];
+
+    let x = marginX;
+    row.forEach((value, columnIndex) => {
+      const column = columns[columnIndex];
+      doc.text(fitPdfCellText(doc, value, column.width - 3), x + 1.5, y + 4.5);
+      x += column.width;
+    });
+
+    doc.setDrawColor(235, 238, 242);
+    doc.line(marginX, y + rowHeight, marginX + columns.reduce((total, column) => total + column.width, 0), y + rowHeight);
+    y += rowHeight;
+  });
+
+  doc.save('coach-learners.pdf');
 }
 
 function getMetricCopy(metric: LearnerMetric) {
