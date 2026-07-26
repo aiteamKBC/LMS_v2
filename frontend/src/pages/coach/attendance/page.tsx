@@ -9,7 +9,7 @@ const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 const MISSING_VALUE = '--';
-const ATTENDANCE_DISTRIBUTION_COLORS = ['#10b981', '#ef4444', '#f59e0b'];
+const ABSENCE_REASON_COLORS = ['#8b5cf6', '#ef4444', '#94a3b8', '#c4b5fd', '#d97706', '#a78bfa'];
 
 type RiskTone = 'red' | 'amber' | 'green' | null;
 type TrendView = 'week' | 'month' | 'year';
@@ -35,11 +35,8 @@ interface AttendanceLearner {
   absent: number | null;
   late: number | null;
   catchup: number | null;
-  catchupCompleted?: number | null;
-  catchupPending?: number | null;
   authorisedAbsent?: number | null;
   unauthorisedAbsent?: number | null;
-  authorisationUnknown?: number | null;
   absenceReasons?: Record<string, number>;
   risk: RiskTone;
   employer: string;
@@ -93,13 +90,6 @@ interface AttendanceApiResponse {
   summary?: AttendanceSummary;
   learners?: AttendanceLearner[];
   trends?: Record<TrendView, TrendPoint[]>;
-  filterCounts?: Record<AttendanceRiskFilter, number>;
-  filterOptions?: {
-    cohorts?: string[];
-    programmes?: string[];
-    employers?: string[];
-    groups?: string[];
-  };
 }
 
 interface AttendanceSessionDetail {
@@ -322,20 +312,6 @@ export default function CoachAttendance() {
   const [attendanceDetails, setAttendanceDetails] = useState<AttendanceSessionDetail[]>([]);
   const [attendanceDetailsLoading, setAttendanceDetailsLoading] = useState(false);
   const [attendanceDetailsError, setAttendanceDetailsError] = useState<string | null>(null);
-  const [filterCounts, setFilterCounts] = useState<Record<AttendanceRiskFilter, number>>({
-    all: 0,
-    green: 0,
-    amber: 0,
-    red: 0,
-    break: 0,
-    unknown: 0,
-  });
-  const [filterOptions, setFilterOptions] = useState({
-    cohorts: [] as string[],
-    programmes: [] as string[],
-    employers: [] as string[],
-    groups: [] as string[],
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -344,18 +320,9 @@ export default function CoachAttendance() {
       setLoading(true);
       setError(null);
       try {
-        const params = new URLSearchParams();
-        if (cohortFilter !== 'all') params.set('cohort', cohortFilter);
-        if (programmeFilter !== 'all') params.set('programme', programmeFilter);
-        if (groupFilter !== 'all') params.set('group', groupFilter);
-        if (employerFilter !== 'all') params.set('employer', employerFilter);
-        if (riskFilter !== 'all') params.set('risk', riskFilter);
-        if (searchQuery.trim()) params.set('search', searchQuery.trim());
-        if (dateFrom) params.set('date_from', dateFrom);
-        if (dateTo) params.set('date_to', dateTo);
-        const response = await fetch(`${API_ENDPOINT}${params.size ? `?${params.toString()}` : ''}`);
-        const data = await response.json().catch(() => ({})) as AttendanceApiResponse & { detail?: string };
-        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+        const response = await fetch(API_ENDPOINT);
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+        const data: AttendanceApiResponse = await response.json();
         if (cancelled) return;
         setLearners(data.learners || []);
         setSummary(data.summary || EMPTY_SUMMARY);
@@ -363,20 +330,6 @@ export default function CoachAttendance() {
           week: data.trends?.week || [],
           month: data.trends?.month || [],
           year: data.trends?.year || [],
-        });
-        setFilterCounts({
-          all: data.filterCounts?.all || 0,
-          green: data.filterCounts?.green || 0,
-          amber: data.filterCounts?.amber || 0,
-          red: data.filterCounts?.red || 0,
-          break: data.filterCounts?.break || 0,
-          unknown: data.filterCounts?.unknown || 0,
-        });
-        setFilterOptions({
-          cohorts: data.filterOptions?.cohorts || [],
-          programmes: data.filterOptions?.programmes || [],
-          employers: data.filterOptions?.employers || [],
-          groups: data.filterOptions?.groups || [],
         });
       } catch (err) {
         if (!cancelled) {
@@ -389,16 +342,39 @@ export default function CoachAttendance() {
       }
     }
 
-    const timer = window.setTimeout(loadAttendance, searchQuery.trim() ? 250 : 0);
+    loadAttendance();
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [cohortFilter, programmeFilter, groupFilter, employerFilter, riskFilter, searchQuery, dateFrom, dateTo]);
+  }, []);
+
+  const cohorts = useMemo(() => [...new Set(learners.map(l => l.cohort).filter(Boolean))].sort(), [learners]);
+  const programmes = useMemo(() => [...new Set(learners.map(l => l.programme).filter(Boolean))].sort(), [learners]);
+  const employers = useMemo(() => [...new Set(learners.map(l => l.employer).filter(Boolean))].sort(), [learners]);
 
   const filteredData = useMemo(() => {
-    return learners;
-  }, [learners]);
+    let data = learners;
+    if (cohortFilter !== 'all') data = data.filter(l => l.cohort === cohortFilter);
+    if (programmeFilter !== 'all') data = data.filter(l => l.programme === programmeFilter);
+    if (groupFilter !== 'all') data = data.filter(l => l.group === groupFilter);
+    if (employerFilter !== 'all') data = data.filter(l => l.employer === employerFilter);
+    if (riskFilter === 'break') data = data.filter(l => l.isOnBreak);
+    else if (riskFilter === 'unknown') data = data.filter(l => !l.isOnBreak && l.risk === null);
+    else if (riskFilter !== 'all') data = data.filter(l => !l.isOnBreak && l.risk === riskFilter);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      data = data.filter(l => [l.learner, l.initials, l.email || '', l.employer, l.programme, l.cohort, l.group].some(value => value.toLowerCase().includes(q)));
+    }
+    if (dateFrom || dateTo) {
+      data = data.filter(l => {
+        if (!l.lastSessionDate) return false;
+        if (dateFrom && l.lastSessionDate < dateFrom) return false;
+        if (dateTo && l.lastSessionDate > dateTo) return false;
+        return true;
+      });
+    }
+    return data;
+  }, [learners, cohortFilter, programmeFilter, groupFilter, employerFilter, riskFilter, searchQuery, dateFrom, dateTo]);
 
   const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
   const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -418,32 +394,28 @@ export default function CoachAttendance() {
   );
   const attendanceDistribution = useMemo(() => {
     return [
-      { label: 'On Track (90%+)', value: summary.onTrack, color: '#10b981' },
-      { label: 'At Risk (<80%)', value: summary.atRisk, color: '#ef4444' },
+      { label: 'On Track (90%+)', value: summary.onTrack, color: 'bg-emerald-500' },
+      { label: 'At Risk (<80%)', value: summary.atRisk, color: 'bg-red-500' },
       { label: 'Needs Attention (80–89%)', value: summary.needsAttention, color: 'bg-amber-500' },
     ];
   }, [summary.onTrack, summary.atRisk, summary.needsAttention]);
-  const attendanceDistributionTotal = useMemo(
-    () => attendanceDistribution.reduce((total, item) => total + item.value, 0),
-    [attendanceDistribution],
+  const absenceReasonEntries = useMemo(
+    () => Object.entries(summary.absenceReasons || {}).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]),
+    [summary.absenceReasons],
   );
-  const attendanceDistributionGradient = useMemo(() => {
-    if (!attendanceDistributionTotal) return 'conic-gradient(#e5e7eb 0 100%)';
+  const absenceReasonGradient = useMemo(() => {
+    const total = absenceReasonEntries.reduce((sum, [, count]) => sum + count, 0);
+    if (!total) return 'conic-gradient(#e5e7eb 0 100%)';
     let cursor = 0;
-    const stops = attendanceDistribution.map((item, index) => {
+    const stops = absenceReasonEntries.map(([, count], index) => {
       const start = cursor;
-      cursor += (item.value / attendanceDistributionTotal) * 100;
-      return `${ATTENDANCE_DISTRIBUTION_COLORS[index]} ${start}% ${cursor}%`;
+      cursor += (count / total) * 100;
+      return `${ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length]} ${start}% ${cursor}%`;
     });
     return `conic-gradient(${stops.join(', ')})`;
-  }, [attendanceDistribution, attendanceDistributionTotal]);
-  const trendDirection = attendanceTrendValues.length < 2
-    ? null
-    : attendanceTrendValues[attendanceTrendValues.length - 1] > attendanceTrendValues[0]
-      ? 'improving'
-      : attendanceTrendValues[attendanceTrendValues.length - 1] < attendanceTrendValues[0]
-        ? 'declining'
-        : 'stable';
+  }, [absenceReasonEntries]);
+
+  const trendUp = attendanceTrendValues.length >= 2 && attendanceTrendValues[attendanceTrendValues.length - 1] >= attendanceTrendValues[0];
   const knownLearnerCount = summary.learnersWithAttendance;
   const atRiskLearners = filteredData.filter((learner) => learner.risk === 'red' && !learner.isOnBreak).slice(0, 5);
   const kpiLearners = selectedKpi === 'average'
@@ -455,7 +427,7 @@ export default function CoachAttendance() {
         : selectedKpi === 'needs-attention'
           ? learners.filter(learner => learner.risk === 'amber' && learner.includedInAttendanceMetrics)
           : selectedKpi === 'catchups'
-            ? learners.filter(learner => (learner.catchupPending || 0) > 0)
+            ? learners.filter(learner => (learner.catchup || 0) > 0)
             : [];
   const kpiTitle: Record<AttendanceKpi, string> = {
     average: 'Learner attendance',
@@ -568,22 +540,8 @@ export default function CoachAttendance() {
               <p className="text-xl font-heading font-bold text-foreground-900">{formatPercent(summary.averageAttendance)}</p>
               <p className="text-[10px] text-foreground-400">Average Attendance</p>
               <div className="flex items-center gap-1 mt-1">
-                <i className={`${
-                  trendDirection === 'improving'
-                    ? 'ri-arrow-up-line text-emerald-500'
-                    : trendDirection === 'declining'
-                      ? 'ri-arrow-down-line text-red-500'
-                      : 'ri-subtract-line text-foreground-400'
-                } text-[10px]`}></i>
-                <span className={`text-[10px] font-medium ${
-                  trendDirection === 'improving'
-                    ? 'text-emerald-600'
-                    : trendDirection === 'declining'
-                      ? 'text-red-500'
-                      : 'text-foreground-400'
-                }`}>
-                  {trendDirection === 'improving' ? 'Improving' : trendDirection === 'declining' ? 'Declining' : trendDirection === 'stable' ? 'Stable' : MISSING_VALUE}
-                </span>
+                <i className={`${trendUp ? 'ri-arrow-up-line text-emerald-500' : 'ri-arrow-down-line text-red-500'} text-[10px]`}></i>
+                <span className={`text-[10px] font-medium ${trendUp ? 'text-emerald-600' : 'text-red-500'}`}>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
               </div>
             </div>
           </button>
@@ -596,12 +554,12 @@ export default function CoachAttendance() {
         <section className="space-y-3 rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
           <div className="flex gap-2 overflow-x-auto scrollbar-hide">
             {([
-              ['all', 'All Learners', filterCounts.all, 'ri-group-line'],
-              ['green', 'On Track', filterCounts.green, 'ri-check-line'],
-              ['amber', 'Needs Attention', filterCounts.amber, 'ri-alert-line'],
-              ['red', 'At Risk', filterCounts.red, 'ri-error-warning-line'],
-              ['break', 'On Break', filterCounts.break, 'ri-moon-line'],
-              ['unknown', 'No Data', filterCounts.unknown, 'ri-question-line'],
+              ['all', 'All Learners', summary.totalLearners, 'ri-group-line'],
+              ['green', 'On Track', summary.onTrack, 'ri-check-line'],
+              ['amber', 'Needs Attention', summary.needsAttention, 'ri-alert-line'],
+              ['red', 'At Risk', summary.atRisk, 'ri-error-warning-line'],
+              ['break', 'On Break', summary.onBreakLearners || 0, 'ri-moon-line'],
+              ['unknown', 'No Data', summary.unknown, 'ri-question-line'],
             ] as [AttendanceRiskFilter, string, number, string][]).map(([value, label, count, icon]) => (
               <button
                 key={value}
@@ -626,10 +584,9 @@ export default function CoachAttendance() {
               <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search by learner, email, programme or employer..." className="h-10 w-full rounded-xl border border-foreground-200 bg-background-50 pl-9 pr-3 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <FilterDropdown allLabel="All Cohorts" value={cohortFilter} onChange={(v) => { setCohortFilter(v); setCurrentPage(1); }} options={filterOptions.cohorts} />
-              <FilterDropdown allLabel="All Programmes" value={programmeFilter} onChange={(v) => { setProgrammeFilter(v); setCurrentPage(1); }} options={filterOptions.programmes} />
-              <FilterDropdown allLabel="All Groups" value={groupFilter} onChange={(v) => { setGroupFilter(v); setCurrentPage(1); }} options={filterOptions.groups} />
-              <FilterDropdown allLabel="All Employers" value={employerFilter} onChange={(v) => { setEmployerFilter(v); setCurrentPage(1); }} options={filterOptions.employers} />
+              <FilterDropdown allLabel="All Cohorts" value={cohortFilter} onChange={(v) => { setCohortFilter(v); setCurrentPage(1); }} options={cohorts} />
+              <FilterDropdown allLabel="All Programmes" value={programmeFilter} onChange={(v) => { setProgrammeFilter(v); setCurrentPage(1); }} options={programmes} />
+              <FilterDropdown allLabel="All Employers" value={employerFilter} onChange={(v) => { setEmployerFilter(v); setCurrentPage(1); }} options={employers} />
               <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
               <span className="text-[10px] text-foreground-400">to</span>
               <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
@@ -645,8 +602,8 @@ export default function CoachAttendance() {
           Attendance Analytics
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(520px,0.8fr)]">
-          <section className="min-h-[330px] rounded-xl border border-foreground-200/60 bg-white p-5">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <div className="mb-4 flex items-center justify-between gap-3">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Average Attendance Trend</h3>
               <select value={trendView} onChange={(event) => setTrendView(event.target.value as TrendView)} className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[10px] font-semibold text-foreground-600 focus:border-primary-300 focus:outline-none">
@@ -656,50 +613,55 @@ export default function CoachAttendance() {
               </select>
             </div>
             {attendanceTrendData.length ? (
-              <TrendChart data={attendanceTrendData} height={235} color="primary" yAxisMax={100} yAxisMin={0} />
+              <TrendChart data={attendanceTrendData} height={245} color="primary" yAxisMax={100} yAxisMin={0} />
             ) : (
-              <div className="flex h-[235px] items-center justify-center text-[11px] text-foreground-400">No attendance trend records yet.</div>
+              <div className="flex h-[245px] items-center justify-center text-[11px] text-foreground-400">No attendance trend records yet.</div>
             )}
           </section>
 
-          <section className="flex min-h-[330px] flex-col rounded-xl border border-foreground-200/60 bg-white p-5">
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Distribution</h3>
-            <div className="mx-auto mt-4 flex min-h-[250px] w-full flex-1 flex-col items-center justify-center gap-7 sm:flex-row 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_15rem_minmax(0,1fr)] 2xl:gap-8">
-              <div
-                className="relative h-56 w-56 shrink-0 rounded-full shadow-[inset_0_0_0_1px_rgba(15,23,42,0.04)] sm:-translate-x-5 2xl:col-start-2 2xl:h-60 2xl:w-60 2xl:-translate-x-6 2xl:justify-self-center 2xl:self-center"
-                style={{ background: attendanceDistributionGradient }}
-                role="img"
-                aria-label={`Attendance distribution for ${attendanceDistributionTotal} learners`}
-              >
-                <div className="absolute inset-[42px] flex items-center justify-center rounded-full bg-white shadow-[0_2px_12px_rgba(15,23,42,0.08)] 2xl:inset-[46px]">
-                  <div className="text-center">
-                    <p className="text-3xl font-heading font-bold text-foreground-900">{attendanceDistributionTotal}</p>
-                    <p className="text-[10px] font-medium uppercase tracking-wide text-foreground-400">Learners</p>
+            <div className="mt-6 flex h-[220px] items-end justify-around gap-3 border-b border-l border-dashed border-foreground-200 px-4">
+              {attendanceDistribution.map((bucket) => {
+                const maxValue = Math.max(...attendanceDistribution.map((item) => item.value), 1);
+                const height = bucket.value ? Math.max(12, (bucket.value / maxValue) * 165) : 4;
+                return (
+                  <div key={bucket.label} className="flex h-full flex-1 flex-col items-center justify-end">
+                    <span className="mb-1 text-[9px] font-semibold text-foreground-500">{bucket.value}</span>
+                    <div className={`w-full max-w-[46px] rounded-t-md ${bucket.color}`} style={{ height }}></div>
+                    <span className="mt-2 whitespace-nowrap text-[8px] text-foreground-400">{bucket.label}</span>
                   </div>
-                </div>
-              </div>
-
-              <div className="w-full max-w-[280px] space-y-2.5 2xl:col-start-3 2xl:justify-self-start 2xl:self-center">
-                {attendanceDistribution.map((bucket, index) => (
-                  <div key={bucket.label} className="flex items-center justify-between gap-3 rounded-xl border border-foreground-100/60 bg-background-100/50 px-3.5 py-2.5">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: ATTENDANCE_DISTRIBUTION_COLORS[index] }}></span>
-                      <span className="truncate text-[10px] font-medium text-foreground-600">{bucket.label}</span>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <span className="text-[12px] font-bold text-foreground-900">{bucket.value}</span>
-                      <span className="ml-1 text-[9px] text-foreground-400">
-                        ({attendanceDistributionTotal ? Math.round((bucket.value / attendanceDistributionTotal) * 100) : 0}%)
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           </section>
         </div>
 
-        <div>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+            <h3 className="text-sm font-heading font-semibold text-foreground-900">Absence Reasons</h3>
+            <div className="mt-5 flex min-h-[230px] flex-col items-center justify-center">
+              <div className="relative h-36 w-36 rounded-full" style={{ background: absenceReasonGradient }}>
+                <div className="absolute inset-[28px] flex items-center justify-center rounded-full bg-white">
+                  <div className="text-center">
+                    <p className="text-xl font-bold text-foreground-900">{summary.totalAbsent}</p>
+                    <p className="text-[8px] uppercase tracking-wide text-foreground-400">Absences</p>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-5 flex max-w-xl flex-wrap justify-center gap-x-4 gap-y-2">
+                {absenceReasonEntries.length ? absenceReasonEntries.map(([reason, count], index) => (
+                  <span key={reason} className="inline-flex items-center gap-1.5 text-[9px] text-foreground-500">
+                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length] }}></span>
+                    {reason}: {count}
+                  </span>
+                )) : (
+                  <span className="text-[10px] text-foreground-400">No recorded absence reasons.</span>
+                )}
+              </div>
+            </div>
+          </section>
+
           <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
@@ -735,20 +697,16 @@ export default function CoachAttendance() {
           </section>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
-          <div className="flex items-center justify-between border-b border-foreground-100 bg-white px-4 py-3.5">
-            <div className="flex items-center gap-3">
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-                <i className="ri-table-line text-sm"></i>
+        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-foreground-100 px-3 py-2">
+            <div className="flex rounded-xl bg-background-100 p-1">
+              <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[10px] font-semibold text-primary-700 shadow-sm">
+                <i className="ri-table-line"></i> Table View
               </span>
-              <div>
-                <p className="text-[12px] font-bold text-foreground-900">Learner attendance records</p>
-                <p className="mt-0.5 text-[9px] text-foreground-400">{filteredData.length} learner{filteredData.length === 1 ? '' : 's'} matching the current filters</p>
-              </div>
             </div>
-            <label className="flex items-center gap-2 text-[10px] font-medium text-foreground-500">
+            <label className="flex items-center gap-2 text-[10px] text-foreground-500">
               Rows:
-              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="h-8 rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-[10px] font-semibold text-foreground-700 focus:border-primary-300 focus:outline-none">
+              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="rounded-lg border border-foreground-200 bg-white px-2 py-1.5 text-[10px] text-foreground-700 focus:outline-none">
                 <option value={10}>10</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -757,17 +715,17 @@ export default function CoachAttendance() {
             </label>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1380px] text-left">
-              <thead className="bg-background-100/80">
-                <tr className="border-b border-foreground-200/70">
-                  <th className="w-14 px-5 py-3.5"><input type="checkbox" aria-label="Select all learners" className="h-4 w-4 rounded accent-primary-600" /></th>
-                  <th className="w-[310px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Learner</th>
-                  <th className="w-[190px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Attendance</th>
-                  <th className="w-[175px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Present / Absent</th>
-                  <th className="w-[250px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Absence authorisation</th>
-                  <th className="w-[170px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Catch-up</th>
-                  <th className="w-[190px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Consecutive absences</th>
-                  <th className="w-[170px] px-4 py-3.5 text-[9px] font-bold uppercase tracking-[0.08em] text-foreground-500 whitespace-nowrap">Last session</th>
+            <table className="min-w-[1180px] w-full text-left">
+              <thead>
+                <tr className="border-b border-foreground-200/60">
+                  <th className="w-12 px-4 py-3"><input type="checkbox" aria-label="Select all learners" className="h-3.5 w-3.5 accent-primary-600" /></th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Learner</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Attendance</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Present / Absent</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Authorised / Unauthorised</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Catch-up</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Consecutive Absences</th>
+                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Last Session</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-background-200/30">
@@ -793,81 +751,70 @@ export default function CoachAttendance() {
                   </tr>
                 )}
                 {!loading && !error && paginatedData.map(row => {
-                  const rowPadding = 'py-4';
+                  const rowPadding = 'py-3.5';
                   return (
-                    <tr key={row.id} className="group even:bg-background-100/25 transition-colors hover:bg-primary-50/35">
-                      <td className={`px-5 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-4 w-4 rounded accent-primary-600" /></td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="flex min-w-[285px] items-center gap-3.5">
-                          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
-                            <span className="text-[11px] font-bold">{row.initials}</span>
+                    <tr key={row.id} className="transition-smooth hover:bg-background-100/50">
+                      <td className={`px-4 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-3.5 w-3.5 accent-primary-600" /></td>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="flex min-w-[270px] items-center gap-3">
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
+                            <span className="text-[10px] font-bold">{row.initials}</span>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[12px] font-bold text-foreground-900 transition-colors hover:text-primary-700">{row.learner}</button>
-                              <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
+                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[11px] font-bold text-foreground-900 hover:text-primary-700">{row.learner}</button>
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
                             </div>
-                            <p className="mt-0.5 truncate text-[10px] text-foreground-500">{displayText(row.email)}</p>
+                            <p className="truncate text-[9px] text-foreground-400">{displayText(row.email)}</p>
                             <p className="mt-1 truncate text-[8px] text-foreground-400">{displayText(row.cohort)} <span className="mx-1.5">·</span> {displayText(row.programme)}</p>
                           </div>
                         </div>
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
+                      <td className={`px-3 ${rowPadding}`}>
                         {row.attendance === null ? (
-                          <span className="text-[12px] text-foreground-300">{MISSING_VALUE}</span>
+                          <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <div className="min-w-[145px]">
+                          <div className="min-w-[105px]">
                             <div className="flex items-center gap-2">
-                              <span className={`text-[15px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
-                              <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
+                              <span className={`text-[13px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
+                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
                             </div>
-                            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-background-200">
+                            <div className="mt-1.5 h-1.5 w-full rounded-full bg-background-200">
                               <div className={`h-full rounded-full ${getAttendanceBar(row.attendance)}`} style={{ width: `${row.attendance}%` }}></div>
                             </div>
                           </div>
                         )}
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
+                      <td className={`px-3 ${rowPadding}`}>
                         {row.present === null || row.absent === null ? (
-                          <span className="text-[12px] text-foreground-300">{MISSING_VALUE}</span>
+                          <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-[9px] font-semibold text-emerald-700 hover:bg-emerald-100">Present <strong>{row.present}</strong></button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="rounded-lg bg-red-50 px-2.5 py-1.5 text-[9px] font-semibold text-red-700 hover:bg-red-100">Absent <strong>{row.absent}</strong></button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[9px] font-medium text-foreground-400 hover:text-primary-600">Total sessions: {row.sessions ?? (row.present + row.absent)}</button>
+                          <div className="space-y-0.5 text-[9px]">
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="block text-foreground-600 hover:text-emerald-600">Present: <strong>{row.present}</strong></button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="block text-foreground-600 hover:text-red-600">Absent: <strong>{row.absent}</strong></button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="block text-foreground-400 hover:text-primary-600">Total: {row.sessions ?? (row.present + row.absent)}</button>
                           </div>
                         )}
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="grid grid-cols-3 gap-1.5">
-                          <div className="rounded-lg bg-emerald-50 px-2 py-1.5 text-center">
-                            <p className="text-[8px] font-medium text-emerald-600">Authorised</p>
-                            <p className="mt-0.5 text-[11px] font-bold text-emerald-700">{formatCount(row.authorisedAbsent)}</p>
-                          </div>
-                          <div className="rounded-lg bg-red-50 px-2 py-1.5 text-center">
-                            <p className="text-[8px] font-medium text-red-600">Unauthorised</p>
-                            <p className="mt-0.5 text-[11px] font-bold text-red-700">{formatCount(row.unauthorisedAbsent)}</p>
-                          </div>
-                          <div className="rounded-lg bg-amber-50 px-2 py-1.5 text-center">
-                            <p className="text-[8px] font-medium text-amber-600">Unreviewed</p>
-                            <p className="mt-0.5 text-[11px] font-bold text-amber-700">{formatCount(row.authorisationUnknown)}</p>
-                          </div>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="space-y-0.5 text-[9px] text-foreground-600">
+                          <p>Authorised: <strong>{formatCount(row.authorisedAbsent)}</strong></p>
+                          <p>Unauthorised: <strong className={(row.unauthorisedAbsent || 0) > 0 ? 'text-red-600' : ''}>{formatCount(row.unauthorisedAbsent)}</strong></p>
                         </div>
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded-lg bg-emerald-50 px-2 py-1.5 text-[9px] font-semibold text-emerald-700">Done {formatCount(row.catchupCompleted ?? row.catchup)}</span>
-                          <span className="rounded-lg bg-amber-50 px-2 py-1.5 text-[9px] font-semibold text-amber-700">Pending {formatCount(row.catchupPending)}</span>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <div className="space-y-0.5 text-[9px] text-foreground-600">
+                          <p>Recorded: <strong>{formatCount(row.catchup)}</strong></p>
+                          <p className="text-foreground-400">Next: {displayText(row.nextSession)}</p>
                         </div>
-                        <p className="mt-1.5 text-[9px] text-foreground-400">Next: {displayText(row.nextSession)}</p>
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <span className={`inline-flex rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${(row.consecutiveMissed || 0) >= 2 ? 'bg-red-50 text-red-700' : 'bg-background-100 text-foreground-700'}`}>Current: {formatCount(row.consecutiveMissed)}</span>
-                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1.5 text-[9px] font-medium text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
+                      <td className={`px-3 ${rowPadding}`}>
+                        <p className={`text-[10px] font-semibold ${(row.consecutiveMissed || 0) >= 2 ? 'text-red-600' : 'text-foreground-700'}`}>Current: {formatCount(row.consecutiveMissed)}</p>
+                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1 text-[8px] text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
                       </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <p className="text-[11px] font-bold text-foreground-800">{displayText(row.lastSession)}</p>
-                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-1.5 inline-flex items-center gap-1 text-[9px] font-semibold text-primary-600 hover:text-primary-700">View profile <i className="ri-arrow-right-line"></i></button>
+                      <td className={`px-3 ${rowPadding}`}>
+                        <p className="text-[10px] font-semibold text-foreground-700">{displayText(row.lastSession)}</p>
+                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-1 text-[8px] font-semibold text-primary-600 hover:text-primary-700">View attendance profile</button>
                       </td>
                     </tr>
                   );
@@ -1033,7 +980,7 @@ export default function CoachAttendance() {
                       </div>
                       <div className="shrink-0 text-right">
                         <p className={`text-[12px] font-bold ${getAttendanceTone(learner.attendance)}`}>{formatPercent(learner.attendance)}</p>
-                        <p className="text-[9px] text-foreground-400">{selectedKpi === 'catchups' ? `${formatCount(learner.catchupPending)} pending catch-up` : `${formatCount(learner.present)}/${formatCount(learner.absent)} present/absent`}</p>
+                        <p className="text-[9px] text-foreground-400">{selectedKpi === 'catchups' ? `${formatCount(learner.catchup)} catch-up` : `${formatCount(learner.present)}/${formatCount(learner.absent)} present/absent`}</p>
                       </div>
                     </div>
                   ))}
