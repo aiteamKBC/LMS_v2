@@ -12,6 +12,7 @@ from urllib import request as urllib_request
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
+from django.conf import settings
 from django.db import connections, router
 from django.db.models import Q
 from django.db.models.functions import Lower, Trim
@@ -1970,16 +1971,23 @@ def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
     absence_reasons: dict[str, int] = {}
     authorised_absent = 0
     unauthorised_absent = 0
+    authorisation_unknown = 0
     for row in rows:
         if normalize_attendance_detail_status(row.get("attendance_status")) != "absent":
             continue
         reason = clean_text(row.get("absence_reason"))
-        if reason and reason.lower() not in {"--", "none", "n/a", "no reason", "no reason provided"}:
+        authorisation_status = clean_text(row.get("authorisation_status")).lower()
+        if authorisation_status == CoachAbsenceReport.STATUS_APPROVED:
             authorised_absent += 1
-            label = reason[:80]
-        else:
+        elif authorisation_status == CoachAbsenceReport.STATUS_DECLINED:
             unauthorised_absent += 1
-            label = "No Reason Provided"
+        else:
+            authorisation_unknown += 1
+        label = (
+            reason[:80]
+            if reason and reason.lower() not in {"--", "none", "n/a", "no reason", "no reason provided"}
+            else "No Reason Provided"
+        )
         absence_reasons[label] = absence_reasons.get(label, 0) + 1
     last_session_date = None
     for row in rows:
@@ -1999,13 +2007,15 @@ def build_attendance_metrics_from_detail_rows(rows: list[dict]) -> dict:
     recorded_sessions = present + absent
     attendance_rate = percentage(present, recorded_sessions) if recorded_sessions else None
     return {
-        "sessions": len(rows),
+        "sessions": recorded_sessions,
+        "rawSessions": len(rows),
         "present": present,
         "absent": absent,
         "late": late,
         "catchup": catchup,
         "authorisedAbsent": authorised_absent,
         "unauthorisedAbsent": unauthorised_absent,
+        "authorisationUnknown": authorisation_unknown,
         "absenceReasons": absence_reasons,
         "risk": attendance_risk_from_rate(attendance_rate),
         "lastSessionDate": format_iso_date(last_session_date),
@@ -2104,7 +2114,30 @@ def filter_attendance_detail_summary_data(summary_data: dict, learner_ids: list[
     return build_attendance_detail_summary_payload(rows)
 
 
-def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: list[str]) -> dict:
+def attach_absence_authorisation_status(rows: list[dict]) -> list[dict]:
+    attendance_ids = sorted({
+        to_int(row.get("attendance_id"))
+        for row in rows
+        if to_int(row.get("attendance_id"))
+    })
+    if not attendance_ids:
+        return rows
+
+    statuses = dict(
+        CoachAbsenceReport.objects.filter(attendance_id__in=attendance_ids)
+        .values_list("attendance_id", "status")
+    )
+    for row in rows:
+        row["authorisation_status"] = statuses.get(to_int(row.get("attendance_id")))
+    return rows
+
+
+def fetch_attendance_detail_summary_data(
+    learner_ids: list[int],
+    email_keys: list[str],
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
     ids = sorted({int(learner_id) for learner_id in learner_ids if learner_id})
     emails = sorted({normalize_email(email) for email in email_keys if normalize_email(email)})
     empty = empty_attendance_detail_summary()
@@ -2119,6 +2152,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
     columns = relation_columns(connection, relation)
     learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
     learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
+    attendance_id_column = first_existing_column(columns, "id", "attendance_id")
     session_date_column = first_existing_column(columns, "session_date", "date")
     start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
     status_column = first_existing_column(columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
@@ -2130,6 +2164,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
         return empty
 
     selected_aliases: dict[str, str | None] = {
+        "attendance_id": attendance_id_column,
         "learner_id": learner_id_column,
         "learner_email": learner_email_column,
         "session_date": session_date_column,
@@ -2144,29 +2179,39 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
         for alias, column in selected_aliases.items()
     ]
 
-    filters = []
+    identity_filters = []
+    date_filters = []
     params: list = []
     if learner_id_column and ids:
         placeholders = ", ".join(["%s"] * len(ids))
-        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
+        identity_filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
         params.extend(ids)
     if learner_email_column and emails:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
+        identity_filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
         params.append(emails)
-    if not filters:
+    if session_date_column and start_date:
+        date_filters.append(f"{quote_sql_identifier(session_date_column)} >= %s")
+        params.append(start_date)
+    if session_date_column and end_date:
+        date_filters.append(f"{quote_sql_identifier(session_date_column)} <= %s")
+        params.append(end_date)
+    if not identity_filters:
         return empty
 
+    where_clause = f"({' or '.join(identity_filters)})"
+    if date_filters:
+        where_clause += f" and {' and '.join(date_filters)}"
     query = f"""
         select {", ".join(select_columns)}
         from {relation}
-        where {" or ".join(filters)}
+        where {where_clause}
     """
     with connection.cursor() as cursor:
         cursor.execute(query, params)
         result_columns = [column[0] for column in cursor.description]
         rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
 
-    return build_attendance_detail_summary_payload(rows)
+    return build_attendance_detail_summary_payload(attach_absence_authorisation_status(rows))
 
 
 def fetch_marking_rows(case_owner: str, case_owner_id: int | None = None) -> list[dict]:
@@ -3798,7 +3843,9 @@ def coach_timetable_event_action(request):
 def serialize_attendance_learner(
     learner: dict,
     attendance_metrics: dict | None,
-    catchup_count: int = 0,
+    completed_calendar_catchups: int = 0,
+    pending_catchups: int = 0,
+    next_catchup_date: date | None = None,
 ) -> dict:
     sessions = attendance_metrics.get("sessions", 0) if attendance_metrics else 0
     present = attendance_metrics.get("present", 0) if attendance_metrics else 0
@@ -3826,9 +3873,12 @@ def serialize_attendance_learner(
         "present": present if sessions else None,
         "absent": absent if sessions else None,
         "late": attendance_metrics.get("late", 0) if attendance_metrics else None,
-        "catchup": max(catchup_count, attendance_metrics.get("catchup", 0) if attendance_metrics else 0),
-        "authorisedAbsent": attendance_metrics.get("authorisedAbsent", 0) if attendance_metrics else None,
-        "unauthorisedAbsent": attendance_metrics.get("unauthorisedAbsent", 0) if attendance_metrics else None,
+        "catchup": max(completed_calendar_catchups, attendance_metrics.get("catchup", 0) if attendance_metrics else 0),
+        "catchupCompleted": max(completed_calendar_catchups, attendance_metrics.get("catchup", 0) if attendance_metrics else 0),
+        "catchupPending": pending_catchups,
+        "authorisedAbsent": attendance_metrics.get("authorisedAbsent") if attendance_metrics else None,
+        "unauthorisedAbsent": attendance_metrics.get("unauthorisedAbsent") if attendance_metrics else None,
+        "authorisationUnknown": attendance_metrics.get("authorisationUnknown") if attendance_metrics else None,
         "absenceReasons": attendance_metrics.get("absenceReasons", {}) if attendance_metrics else {},
         "risk": risk,
         "employer": learner["employer"],
@@ -3838,10 +3888,31 @@ def serialize_attendance_learner(
         "ksbProgress": learner["ksbProgress"],
         "lastSession": attendance_metrics.get("lastSession", "--") if attendance_metrics else "--",
         "lastSessionDate": attendance_metrics.get("lastSessionDate") if attendance_metrics else None,
-        "nextSession": "--",
+        "nextSession": format_date(next_catchup_date),
         "consecutiveMissed": attendance_metrics.get("consecutiveMissed", 0) if attendance_metrics else None,
         "hasAttendance": bool(sessions),
     }
+
+
+def resolve_attendance_owner_email(request) -> tuple[str | None, JsonResponse | None]:
+    requested_owner = normalize_email(request.GET.get("owner_email"))
+    request_user = getattr(request, "user", None)
+    authenticated_owner = (
+        normalize_email(getattr(request_user, "email", ""))
+        if getattr(request_user, "is_authenticated", False)
+        else ""
+    )
+
+    if authenticated_owner:
+        if requested_owner and requested_owner != authenticated_owner and not getattr(request_user, "is_staff", False):
+            return None, JsonResponse({"detail": "You cannot view another coach's attendance data."}, status=403)
+        return requested_owner if requested_owner and getattr(request_user, "is_staff", False) else authenticated_owner, None
+
+    if not settings.DEBUG:
+        return None, JsonResponse({"detail": "Authentication is required."}, status=401)
+    if requested_owner and requested_owner != normalize_email(DEFAULT_COACH_EMAIL):
+        return None, JsonResponse({"detail": "Anonymous development access is limited to the default coach."}, status=403)
+    return DEFAULT_COACH_EMAIL, None
 
 
 def normalize_attendance_detail_status(value) -> str:
@@ -3863,6 +3934,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
     learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
     learner_name_column = first_existing_column(columns, "learner_name", "learner", "name")
+    attendance_id_column = first_existing_column(columns, "id", "attendance_id")
     session_id_column = first_existing_column(columns, "session_id", "sessionid")
     session_title_column = first_existing_column(columns, "session_title", "title", "session")
     session_type_column = first_existing_column(columns, "session_type", "type")
@@ -3886,6 +3958,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
 
     select_columns = []
     selected_aliases: dict[str, str | None] = {
+        "attendance_id": attendance_id_column,
         "learner_id": learner_id_column,
         "learner_name": learner_name_column,
         "learner_email": learner_email_column,
@@ -3907,13 +3980,13 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
 
     filters = []
     params = []
-    if learner_id_column:
+    if learner_id_column and learner.get("id"):
         filters.append(f"{quote_sql_identifier(learner_id_column)}::text = %s")
         params.append(str(learner["id"]))
-    if learner_email_column and normalize_email(learner.get("email")):
+    elif learner_email_column and normalize_email(learner.get("email")):
         filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = %s")
         params.append(normalize_email(learner.get("email")))
-    if learner_name_column:
+    elif learner_name_column:
         filters.append(f"lower(trim({quote_sql_identifier(learner_name_column)}::text)) = %s")
         params.append(normalize_person_name(learner.get("name")))
 
@@ -3936,6 +4009,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
         result_columns = [column[0] for column in cursor.description]
         rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
 
+    rows = attach_absence_authorisation_status(rows)
     return [
         {
             "learnerId": clean_text(row.get("learner_id")),
@@ -3951,6 +4025,7 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
             "status": normalize_attendance_detail_status(row.get("attendance_status")),
             "reason": clean_text(row.get("reason")) or "--",
             "catchupCompleted": is_truthy_value(row.get("catchup_completed")),
+            "authorisationStatus": clean_text(row.get("authorisation_status")) or "unreviewed",
         }
         for row in rows
     ]
@@ -3958,7 +4033,9 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
 
 @require_GET
 def coach_attendance_details(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email, owner_error = resolve_attendance_owner_email(request)
+    if owner_error:
+        return owner_error
     learner_id = clean_text(request.GET.get("learner_id"))
     learner_email = normalize_email(request.GET.get("learner_email"))
 
@@ -4155,7 +4232,29 @@ def coach_caseload_coach_rag(request, learner_id):
 
 @require_GET
 def coach_attendance(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email, owner_error = resolve_attendance_owner_email(request)
+    if owner_error:
+        return owner_error
+
+    start_date_value = parse_date_value(request.GET.get("date_from"))
+    end_date_value = parse_date_value(request.GET.get("date_to"))
+    if request.GET.get("date_from") and not start_date_value:
+        return JsonResponse({"detail": "date_from must be a valid date."}, status=400)
+    if request.GET.get("date_to") and not end_date_value:
+        return JsonResponse({"detail": "date_to must be a valid date."}, status=400)
+    start_date = start_date_value.date() if isinstance(start_date_value, datetime) else start_date_value
+    end_date = end_date_value.date() if isinstance(end_date_value, datetime) else end_date_value
+    if start_date and end_date and start_date > end_date:
+        return JsonResponse({"detail": "date_from cannot be after date_to."}, status=400)
+
+    cohort_filter = clean_text(request.GET.get("cohort"))
+    programme_filter = clean_text(request.GET.get("programme"))
+    employer_filter = clean_text(request.GET.get("employer"))
+    group_filter = clean_text(request.GET.get("group"))
+    search_filter = clean_text(request.GET.get("search")).lower()
+    risk_filter = clean_text(request.GET.get("risk")).lower()
+    if risk_filter not in {"", "all", "green", "amber", "red", "break", "unknown"}:
+        return JsonResponse({"detail": "risk must be all, green, amber, red, break or unknown."}, status=400)
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
@@ -4164,20 +4263,27 @@ def coach_attendance(request):
             for learner in [serialize_attendance_source_learner(row) for row in caseload_rows]
             if should_include_in_attendance_page(learner)
         ]
-        active_learners = [
-            learner for learner in caseload_learners if should_include_in_attendance_metrics(learner)
-        ]
+        source_ids = [int(learner["id"]) for learner in caseload_learners if learner.get("id")]
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows(source_ids)
+        for learner in caseload_learners:
+            learner_id = int(learner["id"])
+            commercial = commercial_rows.get(learner_id)
+            enrolment = enrolment_rows.get(learner_id)
+            learner["employer"] = (
+                clean_text(getattr(commercial, "employer", ""))
+                or clean_text(getattr(enrolment, "employer", ""))
+                or clean_text(getattr(commercial, "organization", ""))
+                or clean_text(getattr(enrolment, "organization", ""))
+                or "--"
+            )
         learner_ids = [int(learner["id"]) for learner in caseload_learners if learner.get("id")]
-        active_learner_ids = [int(learner["id"]) for learner in active_learners if learner.get("id")]
         email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
-        active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
-        attendance_data = fetch_attendance_detail_summary_data(learner_ids, email_keys)
-        active_attendance_data = filter_attendance_detail_summary_data(
-            attendance_data,
-            active_learner_ids,
-            active_email_keys,
+        attendance_data = fetch_attendance_detail_summary_data(
+            learner_ids,
+            email_keys,
+            start_date=start_date,
+            end_date=end_date,
         )
-        sync_learner_absence_counts_from_details(learner_ids, email_keys)
         metrics_by_id = attendance_data["metricsById"]
         metrics_by_email = attendance_data["metrics"]
         missing_fallback_emails = [
@@ -4189,25 +4295,52 @@ def coach_attendance(request):
                 and not metrics_by_email.get(normalize_email(learner.get("email")))
             )
         ]
-        fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
+        fallback_attendance_data = (
+            fetch_learner_absence_data(missing_fallback_emails)
+            if not start_date and not end_date
+            else {"metrics": {}}
+        )
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
-        catchup_records = list(
+        all_catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
                 event_type__iexact=CATCH_UP_EVENT_TYPE,
             )
         )
-        catchups_by_learner_id: dict[int, int] = {}
+        catchup_records = [
+            record
+            for record in all_catchup_records
+            if (
+                (not start_date or (record.scheduled_date or record.target_date) >= start_date)
+                and (not end_date or (record.scheduled_date or record.target_date) <= end_date)
+            )
+        ]
+        completed_catchups_by_learner_id: dict[int, int] = {}
+        pending_catchups_by_learner_id: dict[int, int] = {}
+        next_catchup_by_learner_id: dict[int, date] = {}
         for record in catchup_records:
-            catchups_by_learner_id[record.learner_id] = catchups_by_learner_id.get(record.learner_id, 0) + 1
+            if record.status == CoachCalendarEvent.STATUS_COMPLETED:
+                completed_catchups_by_learner_id[record.learner_id] = (
+                    completed_catchups_by_learner_id.get(record.learner_id, 0) + 1
+                )
+            elif record.status != CoachCalendarEvent.STATUS_CANCELLED:
+                pending_catchups_by_learner_id[record.learner_id] = (
+                    pending_catchups_by_learner_id.get(record.learner_id, 0) + 1
+                )
+                effective_date = record.scheduled_date or record.target_date
+                current_next = next_catchup_by_learner_id.get(record.learner_id)
+                if not current_next or effective_date < current_next:
+                    next_catchup_by_learner_id[record.learner_id] = effective_date
 
-        attendance_learners = [
+        all_attendance_learners = [
             serialize_attendance_learner(
                 learner,
                 metrics_by_id.get(int(learner["id"]))
                 or metrics_by_email.get(normalize_email(learner.get("email")))
                 or fallback_metrics_by_email.get(normalize_email(learner.get("email"))),
-                catchups_by_learner_id.get(int(learner["id"]), 0),
+                completed_catchups_by_learner_id.get(int(learner["id"]), 0),
+                pending_catchups_by_learner_id.get(int(learner["id"]), 0),
+                next_catchup_by_learner_id.get(int(learner["id"])),
             )
             for learner in caseload_learners
         ]
@@ -4216,6 +4349,57 @@ def coach_attendance(request):
             {"detail": "Unable to load coach attendance data.", "error": str(exc)},
             status=500,
         )
+
+    base_filtered_learners = [
+        learner
+        for learner in all_attendance_learners
+        if (
+            (not cohort_filter or cohort_filter == "all" or learner["cohort"] == cohort_filter)
+            and (not programme_filter or programme_filter == "all" or learner["programme"] == programme_filter)
+            and (
+                not employer_filter
+                or employer_filter == "all"
+                or learner["employer"].casefold() == employer_filter.casefold()
+            )
+            and (not group_filter or group_filter == "all" or learner["group"] == group_filter)
+            and (
+                not search_filter
+                or any(
+                    search_filter in clean_text(value).lower()
+                    for value in (
+                        learner["learner"],
+                        learner.get("email"),
+                        learner["programme"],
+                        learner["cohort"],
+                        learner["group"],
+                        learner["employer"],
+                    )
+                )
+            )
+        )
+    ]
+    filter_counts = {
+        "all": len(base_filtered_learners),
+        "green": sum(1 for learner in base_filtered_learners if not learner["isOnBreak"] and learner["risk"] == "green"),
+        "amber": sum(1 for learner in base_filtered_learners if not learner["isOnBreak"] and learner["risk"] == "amber"),
+        "red": sum(1 for learner in base_filtered_learners if not learner["isOnBreak"] and learner["risk"] == "red"),
+        "break": sum(1 for learner in base_filtered_learners if learner["isOnBreak"]),
+        "unknown": sum(1 for learner in base_filtered_learners if not learner["isOnBreak"] and learner["risk"] is None),
+    }
+    if risk_filter == "break":
+        attendance_learners = [learner for learner in base_filtered_learners if learner["isOnBreak"]]
+    elif risk_filter == "unknown":
+        attendance_learners = [
+            learner for learner in base_filtered_learners
+            if not learner["isOnBreak"] and learner["risk"] is None
+        ]
+    elif risk_filter in {"green", "amber", "red"}:
+        attendance_learners = [
+            learner for learner in base_filtered_learners
+            if not learner["isOnBreak"] and learner["risk"] == risk_filter
+        ]
+    else:
+        attendance_learners = base_filtered_learners
 
     metric_learners = [
         learner
@@ -4227,14 +4411,18 @@ def coach_attendance(request):
     total_present = sum(learner["present"] or 0 for learner in learners_with_attendance)
     total_absent = sum(learner["absent"] or 0 for learner in learners_with_attendance)
     total_recorded_sessions = total_present + total_absent
+    metric_learner_ids = {int(learner["id"]) for learner in metric_learners}
     pending_catchups = [
         record
         for record in catchup_records
-        if record.status not in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_CANCELLED}
+        if (
+            record.learner_id in metric_learner_ids
+            and record.status not in {CoachCalendarEvent.STATUS_COMPLETED, CoachCalendarEvent.STATUS_CANCELLED}
+        )
     ]
     scheduled_catchups = [
         record
-        for record in catchup_records
+        for record in pending_catchups
         if record.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
     ]
     today = date.today()
@@ -4243,7 +4431,6 @@ def coach_attendance(request):
         for record in pending_catchups
         if (record.scheduled_date or record.target_date) < today
     ]
-    stored_catchups = sum(learner["catchup"] or 0 for learner in metric_learners)
     absence_reasons: dict[str, int] = {}
     for learner in metric_learners:
         for reason, count in (learner.get("absenceReasons") or {}).items():
@@ -4263,22 +4450,52 @@ def coach_attendance(request):
         "needsAttention": sum(1 for learner in learners_with_attendance if learner["risk"] == "amber"),
         "atRisk": sum(1 for learner in learners_with_attendance if learner["risk"] == "red"),
         "unknown": len(metric_learners) - len(learners_with_attendance),
-        "catchupsPending": max(len(pending_catchups), stored_catchups),
+        "catchupsPending": len(pending_catchups),
         "scheduledCatchups": len(scheduled_catchups),
         "overdueCatchups": len(overdue_catchups),
         "absenceReasons": absence_reasons,
     }
 
     owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
-    active_trends = active_attendance_data["trends"]
-    if not any(active_trends.values()):
-        active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
+    selected_active_ids = [int(learner["id"]) for learner in metric_learners]
+    selected_active_emails = [normalize_email(learner.get("email")) for learner in metric_learners]
+    active_trends = filter_attendance_detail_summary_data(
+        attendance_data,
+        selected_active_ids,
+        selected_active_emails,
+    )["trends"]
+    if not any(active_trends.values()) and not start_date and not end_date:
+        active_trends = fetch_learner_absence_data(selected_active_emails)["trends"]
     return JsonResponse(
         {
             "owner": {"name": owner_name, "email": owner_email},
             "summary": summary,
             "learners": attendance_learners,
             "trends": active_trends,
+            "filterCounts": filter_counts,
+            "filterOptions": {
+                "cohorts": sorted({learner["cohort"] for learner in all_attendance_learners if learner["cohort"] != "--"}),
+                "programmes": sorted({learner["programme"] for learner in all_attendance_learners if learner["programme"] != "--"}),
+                "employers": sorted(
+                    {
+                        value.casefold(): value
+                        for value in (learner["employer"] for learner in all_attendance_learners)
+                        if value != "--"
+                    }.values(),
+                    key=str.casefold,
+                ),
+                "groups": sorted({learner["group"] for learner in all_attendance_learners if learner["group"] != "--"}),
+            },
+            "appliedFilters": {
+                "dateFrom": format_iso_date(start_date),
+                "dateTo": format_iso_date(end_date),
+                "cohort": cohort_filter or "all",
+                "programme": programme_filter or "all",
+                "employer": employer_filter or "all",
+                "group": group_filter or "all",
+                "search": search_filter,
+                "risk": risk_filter or "all",
+            },
         }
     )
 
