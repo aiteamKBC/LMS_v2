@@ -106,6 +106,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'coach_api',
     'learner_api',
+    'audit_api',
     'curriculum_api',
     'engagement_api',
 ]

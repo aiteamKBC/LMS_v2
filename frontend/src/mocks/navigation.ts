@@ -741,13 +741,7 @@ export const financeNavItems: SidebarNavItem[] = [
 // AUDITOR WORKSPACE — 6 items
 // ============================================================================
 export const auditorNavItems: SidebarNavItem[] = [
-  { id: 'auditor-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/auditor' },
-  { id: 'auditor-evidence', label: 'Evidence Sample', icon: 'ri-folder-open-line', href: '/auditor/evidence' },
-  { id: 'auditor-trail', label: 'Audit Trail', icon: 'ri-history-line', href: '/auditor/trail' },
-  { id: 'auditor-compliance', label: 'Compliance Review', icon: 'ri-shield-check-line', href: '/auditor/compliance' },
-  { id: 'auditor-ofsted', label: 'Ofsted Pack', icon: 'ri-government-line', href: '/auditor/ofsted' },
-  { id: 'auditor-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages' },
-  { id: 'auditor-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/auditor/reports' },
+  { id: 'auditor-live-audit', label: 'Audit', icon: 'ri-file-search-line', href: '/workspace/auditor' },
 ];
 
 // ============================================================================

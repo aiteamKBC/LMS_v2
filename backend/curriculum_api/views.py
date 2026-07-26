@@ -291,6 +291,7 @@ def ensure_program_config_archive_columns():
             'is_active': 'boolean',
             'is_archived': 'boolean',
             'structure_type': 'varchar(32)',
+            'ksb_profile_source_id': 'varchar(128)',
         })
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
@@ -962,6 +963,53 @@ def payload_context_ids(payload, camel_key, snake_key, single_keys=()):
     return unique([*[clean_str(value) for value in values], *[clean_str(value) for value in singles]])
 
 
+def unlink_programmes_from_other_ksb_profiles(active_profile_id, programme_values):
+    targets = {normalise(value) for value in programme_values if normalise(value)}
+    if not targets:
+        return
+    for row in get_ksb_profile_rows():
+        row_id = clean_str(row.get('id'))
+        if row_id == clean_str(active_profile_id):
+            continue
+        current_primary = clean_str(row.get('programme_id'))
+        current_context = ksb_profile_context_ids(row, 'programme_ids', current_primary)
+        current_values = unique([current_primary, row.get('programme_name'), *current_context])
+        if not any(normalise(value) in targets for value in current_values):
+            continue
+        next_context = [value for value in current_context if normalise(value) not in targets]
+        next_primary = current_primary if normalise(current_primary) not in targets else (next_context[0] if next_context else '')
+        update_rows('ksb_profiles', 'id = %s', [row_id], {
+            'programme_id': next_primary,
+            'programme_ids': json.dumps(next_context),
+            'updated_at': datetime.utcnow(),
+        })
+
+
+def cascade_ksb_profile_source_to_programme_modules(programme_values, source_id):
+    targets = {normalise(value) for value in programme_values if normalise(value)}
+    source_id = clean_str(source_id)
+    if not targets or not source_id:
+        return 0
+    ensure_module_authoring_tables()
+    updated = 0
+    for module in authoring_fetch_all(AUTHORING_MODULES_TABLE):
+        module_programme_values = [
+            module.get('programme_id'),
+            module.get('programme_name'),
+        ]
+        if not any(normalise(value) in targets for value in module_programme_values):
+            continue
+        module_id = clean_str(module.get('module_catalogue_id'))
+        if not module_id:
+            continue
+        update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
+            'ksb_profile_source_id': f'profile:{source_id}',
+            'updated_at': datetime.utcnow(),
+        })
+        updated += 1
+    return updated
+
+
 def program_config_by_id(program_configs):
     configs = {}
     configs_by_name = {}
@@ -1464,6 +1512,11 @@ STAFF_PROFILE_TABLES = {
     'tutor': 'tutors',
 }
 
+# Legacy table names for staff profiles (may be empty if none).
+STAFF_PROFILE_LEGACY_TABLES = {
+    # example: 'tutor': 'Tutors',
+}
+
 STAFF_PROFILE_ASSIGNMENT_COLUMNS = {
     'coach': 'coach_name',
     'tutor': 'Tutor_name',
@@ -1932,6 +1985,21 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     except Exception:
         logger.debug('Free programme counts are not available yet.', exc_info=True)
 
+    cohort_counts_by_programme_id = defaultdict(int)
+    cohort_counts_by_programme_name = defaultdict(int)
+    try:
+        for detail in cohort_authoring_detail_rows():
+            if detail_is_archived(detail):
+                continue
+            programme_id = clean_str(detail.get('programmeId'))
+            programme_name = normalise(detail.get('programmeName'))
+            if programme_id:
+                cohort_counts_by_programme_id[programme_id] += 1
+            if programme_name:
+                cohort_counts_by_programme_name[programme_name] += 1
+    except Exception:
+        logger.debug('Cohort counts are not available yet.', exc_info=True)
+
     display_program_configs = unique_program_configs_for_display(program_configs)
     row_programme_names = set()
     row_programme_source_ids = set()
@@ -2012,6 +2080,11 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
         structure_type = (config or {}).get('structure_type') or 'scheduled'
         free_counts = free_programme_counts.get(clean_str(source_id), {})
         programme_modules_count = parse_int(free_counts.get('modules'), 0) if structure_type == 'free' else len(delivery_rows)
+        programme_cohorts_count = (
+            cohort_counts_by_programme_id.get(clean_str(source_id))
+            or cohort_counts_by_programme_name.get(normalise(name))
+            or len(cohort_names)
+        )
 
         programmes.append({
             'id': source_id,
@@ -2025,12 +2098,13 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'ksbMapped': ksb_total,
             'ksbTotal': ksb_total,
             'learners': 0,
-            'cohorts': len(cohort_names),
+            'cohorts': programme_cohorts_count,
             'lastUpdated': format_date((profile or config or {}).get('updated_at') or (profile or config or {}).get('created_at')),
             'owner': (config or {}).get('owner') or (config or {}).get('created_by') or (profile or {}).get('created_by') or '',
             'color': (config or {}).get('color') or (rows[0].get('_meta', {}).get('cohort_color') if rows else '#6941c6'),
             'description': (config or {}).get('description') or (profile or {}).get('description') or '',
             'structureType': structure_type,
+            'ksbProfileSourceId': (config or {}).get('ksb_profile_source_id') or '',
             'freeComponents': parse_int(free_counts.get('components'), 0),
         })
     return programmes
@@ -2543,10 +2617,10 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None):
                 'cohort': cohort['name'],
                 'programme': program,
                 'venue': 'LMS',
-                'module': module_title,
+                'module': row.get('module_name') or '',
                 'week': index + 1,
-                'skippedHolidays': planned_session.get('skippedHolidays') or [],
-                'scheduleWarnings': session_plan.get('warnings') or [],
+                'skippedHolidays': row.get('skippedHolidays') or [],
+                'scheduleWarnings': row.get('warnings') or [],
                 'status': 'completed' if session_date and session_date < date.today() else 'scheduled',
                 'ksbCodes': [
                     *ksb_entry.get('knowledgeCodes', []),
@@ -2829,7 +2903,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'frameworkId': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
-            'programmeId': profile.get('programme_id') or f'program-{slugify(profile.get("programme_name") or profile.get("name"))}',
+            'programmeId': profile.get('programme_id') or '',
             'programmeIds': programme_ids,
             'cohortIds': cohort_ids,
             'groupIds': group_ids,
@@ -4189,6 +4263,7 @@ def ensure_module_authoring_tables():
                 quality_score integer not null default 0,
                 source_type varchar(64),
                 source_id varchar(128),
+                ksb_profile_source_id varchar(128),
                 imported_from_training_plan_id varchar(128),
                 session_week_day varchar(255),
                 session_start_time varchar(32),
@@ -4209,6 +4284,7 @@ def ensure_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_name varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(128)')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists imported_from_training_plan_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
@@ -4236,6 +4312,8 @@ def ensure_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_type varchar(64)')
             if 'source_id' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_id varchar(128)')
+            if 'ksb_profile_source_id' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'imported_from_training_plan_id' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column imported_from_training_plan_id varchar(128)')
             if 'session_week_day' not in columns:
@@ -6324,6 +6402,7 @@ def authoring_catalogue_summaries():
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
             'sourceId': row.get('source_id') or '',
+            'ksbProfileSourceId': row.get('ksb_profile_source_id') or '',
             'importedFromTrainingPlanId': row.get('imported_from_training_plan_id') or '',
             'tutor': row.get('tutor_name') or '',
             'coach': row.get('coach_name') or '',
@@ -6443,6 +6522,7 @@ def authoring_summary_catalogue_item(summary):
         'status': summary['status'],
         'authoringStatus': summary['status'],
         'sourceType': summary.get('sourceType') or 'authoring',
+        'ksbProfileSourceId': summary.get('ksbProfileSourceId') or '',
         'deliveryStatus': summary.get('deliveryStatus') or 'unknown',
         'author': '',
         'lastUpdated': summary['lastUpdated'],
@@ -6588,6 +6668,7 @@ def enrich_modules_with_authoring(modules):
                     'status': module_status,
                     'authoringStatus': saved['status'],
                     'sourceType': module_source_type,
+                    'ksbProfileSourceId': saved.get('ksbProfileSourceId') or module.get('ksbProfileSourceId') or '',
                     'deliveryStatus': module.get('deliveryStatus') or saved.get('deliveryStatus') or 'unknown',
                     'notes': saved['description'],
                     'startDate': saved.get('startDate') or module.get('startDate') or '',
@@ -6910,7 +6991,10 @@ def save_module_authoring_structure(module_catalogue_id, payload):
     validation_errors = validate_module_authoring_payload(payload)
     if validation_errors:
         raise ModuleAuthoringValidationError(validation_errors)
+    ensure_module_authoring_tables()
     module_catalogue_id = unique_module_catalogue_id(module_catalogue_id or payload.get('catalogueId') or payload.get('moduleCatalogueId'))
+    existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
+    existing_module_row = existing_module_rows[0] if existing_module_rows else {}
     weeks = without_retired_components(payload.get('weekStructure') or payload.get('weeks') or [])
     checklist, quality_score = module_authoring_quality_check({**payload, 'weekStructure': weeks})
     all_components = [component for week in weeks for component in (week.get('components') or [])]
@@ -6954,6 +7038,7 @@ def save_module_authoring_structure(module_catalogue_id, payload):
             'quality_score': quality_score,
             'source_type': payload.get('sourceType') or payload.get('source_type') or None,
             'source_id': payload.get('sourceId') or payload.get('source_id') or None,
+            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_module_row.get('ksb_profile_source_id'),
             'imported_from_training_plan_id': payload.get('importedFromTrainingPlanId') or payload.get('imported_from_training_plan_id') or None,
             'session_week_day': payload.get('weekDays') or payload.get('sessionWeekDay') or payload.get('session_week_day') or payload.get('deliveryDays') or None,
             'session_start_time': payload.get('startTime') or payload.get('sessionStartTime') or payload.get('session_start_time') or None,
@@ -7615,6 +7700,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or programme.get('color') or '#6941c6',
             'description': payload.get('description') or programme.get('description') or '',
             'structure_type': structure_type,
+            'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or '',
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
         })
@@ -7630,6 +7716,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or config.get('color'),
             'description': payload.get('description'),
             'structure_type': structure_type,
+            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id'),
             'updated_at': datetime.utcnow(),
         }
         try:
@@ -7715,6 +7802,7 @@ def curriculum_programme_collection(request):
             'color': payload.get('color') or existing_config.get('color') or '#6941c6',
             'description': payload.get('description') if 'description' in payload else existing_config.get('description'),
             'structure_type': programme_structure_type(payload, existing_config.get('structure_type') or 'scheduled'),
+            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id'),
             'updated_at': datetime.utcnow(),
         }
         try:
@@ -7740,6 +7828,7 @@ def curriculum_programme_collection(request):
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'structure_type': structure_type,
+        'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '',
         'is_active': True,
         'is_archived': False,
         'created_at': datetime.utcnow(),
@@ -7772,6 +7861,7 @@ def upsert_programme_for_tree(payload):
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'structure_type': structure_type,
+        'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or '',
         'is_active': True,
         'is_archived': False,
         'updated_at': datetime.utcnow(),
@@ -7791,6 +7881,7 @@ def upsert_programme_for_tree(payload):
             'color': updates['color'],
             'description': updates['description'],
             'structureType': structure_type,
+            'ksbProfileSourceId': updates.get('ksb_profile_source_id') or '',
         }
 
     source_id = unique_program_id(requested_id or name, get_program_config_rows())
@@ -7811,6 +7902,7 @@ def upsert_programme_for_tree(payload):
         'color': row.get('color') or updates['color'],
         'description': row.get('description') or updates['description'],
         'structureType': structure_type,
+        'ksbProfileSourceId': row.get('ksb_profile_source_id') or updates.get('ksb_profile_source_id') or '',
     }
 
 
@@ -8967,12 +9059,26 @@ def curriculum_ksb_framework_detail(request, identifier):
             return json_error('KSB framework not found.', status=404)
         return JsonResponse({**framework, 'definitions': (ksb_set or {}).get('ksbs', [])})
     if request.method == 'DELETE':
-        update_rows('ksb_profiles', 'id = %s', [profile_id], archive_payload('ksb_profiles'))
+        delete_rows('ksb_profiles', 'id = %s', [profile_id])
         invalidate_curriculum_cache()
-        return JsonResponse({'archived': True, 'id': identifier})
+        return JsonResponse({'deleted': True, 'id': identifier})
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    if any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme')):
+        next_programme_id = canonical_programme_id(
+            payload.get('programmeId') or payload.get('programme_id'),
+            payload.get('programmeName') or payload.get('programme'),
+        )
+        next_programme_values = payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id'))
+        affected_programme_values = unique([
+            next_programme_id,
+            payload.get('programmeName'),
+            payload.get('programme'),
+            *next_programme_values,
+        ])
+        unlink_programmes_from_other_ksb_profiles(profile_id, affected_programme_values)
+        cascade_ksb_profile_source_to_programme_modules(affected_programme_values, framework_source_id)
     updates = {
         'name': payload.get('name'),
         'ksb_profile_id': unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id'), [row.get('ksb_profile_id') for row in get_ksb_profile_rows() if clean_str(row.get('id')) != profile_id]) if any(key in payload for key in ('ksbProfileId', 'ksb_profile_id')) else None,
@@ -9638,6 +9744,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [],
         'sourceType': source_type,
         'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id),
+        'ksbProfileSourceId': item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or '',
         'importedFromTrainingPlanId': clean_str(item.get('importedFromTrainingPlanId') or (source_id if source_type == 'training_plan' else '')),
     }
 

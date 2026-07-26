@@ -3,7 +3,13 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
+import OTJHTab from './components/OTJHTab';
+import KSBsTab from './components/KSBsTab';
+import EvidenceTab from './components/EvidenceTab';
+import AuditTab from '@/features/audit/AuditTab';
+import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
+import NetworkTab from './components/NetworkTab';
 import LearningPlanTab from './components/OverviewTab';
 import {
   flattenJourney,
@@ -26,6 +32,13 @@ const TABS = [
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'reviews', label: 'Reviews & Meetings', icon: 'ri-calendar-todo-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
+  { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
+  { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
+  { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
+  { id: 'audit', label: 'Audit', icon: 'ri-file-search-line' },
+  { id: 'activity', label: 'Activity', icon: 'ri-history-line' },
+  { id: 'network', label: 'Network', icon: 'ri-user-heart-line' },
+  { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
 ] as const;
 
 type TabId = typeof TABS[number]['id'] | 'coach-notes';
@@ -138,6 +151,20 @@ export default function LearnerCaseFile() {
         return <DocumentsTab data={data} />;
       case 'support':
         return <LearningPlanTab data={data} />;
+      case 'otjh':
+        return <OTJHTab data={data} />;
+      case 'ksbs':
+        return <KSBsTab data={data} />;
+      case 'evidence':
+        return <EvidenceTab data={data} />;
+      case 'audit':
+        return <AuditTab data={data} />;
+      case 'activity':
+        return <ActivityTab data={data} />;
+      case 'network':
+        return <NetworkTab data={data} />;
+      case 'documents':
+        return <DocumentsTab data={data} />;
       default:
         return <ReferenceOverviewContent data={data} />;
     }
@@ -1336,11 +1363,12 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
   return items;
 }
 
-function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted') {
+function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'accent' | 'red' | 'muted') {
   return {
     primary: 'bg-primary-100 text-primary-700',
     emerald: 'bg-emerald-100 text-emerald-700',
     amber: 'bg-amber-100 text-amber-700',
+    accent: 'bg-accent-100 text-accent-700',
     red: 'bg-red-100 text-red-700',
     muted: 'bg-background-100 text-foreground-600',
   }[tone];
