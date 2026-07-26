@@ -42,7 +42,6 @@ export default function ReportAbsencePage() {
   const p = LEARNER_PROFILE;
   const myLearner = useMyLearner();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const previewRequestRef = useRef(0);
   const [sessionId, setSessionId] = useState('');
   const [reasonType, setReasonType] = useState('');
   const [otherReason, setOtherReason] = useState('');
@@ -160,45 +159,35 @@ export default function ReportAbsencePage() {
   };
 
   const closeEvidencePreview = () => {
-    previewRequestRef.current += 1;
-    if (evidencePreview?.objectUrl) URL.revokeObjectURL(evidencePreview.objectUrl);
+    if (evidencePreview?.objectUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(evidencePreview.objectUrl);
+    }
     setEvidencePreview(null);
     setPreviewLoading(false);
     setPreviewError('');
   };
 
-  const openEvidencePreview = async (report: LearnerAbsenceReport) => {
+  const openEvidencePreview = (report: LearnerAbsenceReport) => {
     if (!report.evidenceUrl) return;
-    const requestId = previewRequestRef.current + 1;
-    previewRequestRef.current = requestId;
-    if (evidencePreview?.objectUrl) URL.revokeObjectURL(evidencePreview.objectUrl);
-    const isPdf = report.evidenceUrl.toLowerCase().endsWith('.pdf');
-    setEvidencePreview({ title: `${report.reference} - ${report.sessionTitle}`, objectUrl: '', isPdf });
-    setPreviewLoading(true);
-    setPreviewError('');
-    try {
-      const response = await fetch(report.evidenceUrl);
-      if (!response.ok) throw new Error(`Could not open evidence (${response.status}).`);
-      const objectUrl = URL.createObjectURL(await response.blob());
-      if (previewRequestRef.current !== requestId) {
-        URL.revokeObjectURL(objectUrl);
-        return;
-      }
-      setEvidencePreview({ title: `${report.reference} - ${report.sessionTitle}`, objectUrl, isPdf });
-    } catch (error) {
-      if (previewRequestRef.current === requestId) {
-        setPreviewError(error instanceof Error ? error.message : 'Could not open evidence.');
-      }
-    } finally {
-      if (previewRequestRef.current === requestId) setPreviewLoading(false);
+    if (evidencePreview?.objectUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(evidencePreview.objectUrl);
     }
+    const isPdf = /\.pdf(?:\?|$)/i.test(report.evidenceUrl);
+    setEvidencePreview({
+      title: `${report.reference} - ${report.sessionTitle}`,
+      objectUrl: report.evidenceUrl,
+      isPdf,
+    });
+    setPreviewLoading(false);
+    setPreviewError('');
   };
 
   const openSelectedFilePreview = () => {
     if (!file) return;
     const objectUrl = URL.createObjectURL(file);
-    previewRequestRef.current += 1;
-    if (evidencePreview?.objectUrl) URL.revokeObjectURL(evidencePreview.objectUrl);
+    if (evidencePreview?.objectUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(evidencePreview.objectUrl);
+    }
     setPreviewError('');
     setPreviewLoading(false);
     setEvidencePreview({
@@ -423,7 +412,7 @@ export default function ReportAbsencePage() {
                             className="inline-flex items-center gap-1 font-medium text-primary-600 transition hover:text-primary-700 hover:underline"
                             title="Preview evidence"
                           >
-                            {report.evidenceUrl.toLowerCase().endsWith('.pdf') ? 'View PDF evidence' : 'View image evidence'}
+                            {/\.pdf(?:\?|$)/i.test(report.evidenceUrl) ? 'View PDF evidence' : 'View image evidence'}
                             <i className="ri-eye-line" />
                           </button>
                         ) : (
@@ -459,10 +448,20 @@ export default function ReportAbsencePage() {
               {previewLoading && <div className="text-sm font-medium text-foreground-500"><i className="ri-loader-4-line mr-2 animate-spin text-primary-600" />Loading evidence...</div>}
               {!previewLoading && previewError && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center"><i className="ri-error-warning-line mb-2 block text-2xl text-red-500" /><p className="text-sm font-semibold text-red-700">{previewError}</p></div>}
               {!previewLoading && !previewError && evidencePreview.objectUrl && evidencePreview.isPdf && (
-                <iframe src={evidencePreview.objectUrl} title={evidencePreview.title} className="h-full w-full rounded-lg bg-white" />
+                <iframe
+                  src={evidencePreview.objectUrl}
+                  title={evidencePreview.title}
+                  className="h-full w-full rounded-lg bg-white"
+                  onError={() => setPreviewError('Could not display this PDF evidence.')}
+                />
               )}
               {!previewLoading && !previewError && evidencePreview.objectUrl && !evidencePreview.isPdf && (
-                <img src={evidencePreview.objectUrl} alt={evidencePreview.title} className="max-h-full max-w-full rounded-lg object-contain shadow-sm" />
+                <img
+                  src={evidencePreview.objectUrl}
+                  alt={evidencePreview.title}
+                  className="max-h-full max-w-full rounded-lg object-contain shadow-sm"
+                  onError={() => setPreviewError('Could not display this image evidence.')}
+                />
               )}
             </div>
           </section>

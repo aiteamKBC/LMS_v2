@@ -12,6 +12,7 @@ from urllib import request as urllib_request
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
+from django.conf import settings
 from django.db import connections, router
 from django.db.models import Q
 from django.db.models.functions import Lower, Trim
@@ -21,6 +22,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from learner_api.evidence_storage import (
+    azure_configured,
+    blob_url,
+    move_blob,
+    parse_blob_url,
+    resolve_read_url,
+)
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
 from curriculum_api.views import (
     actual_cohort_identity,
@@ -4377,6 +4385,24 @@ def normalize_absence_report_status(value: str | None) -> str:
     return CoachAbsenceReport.STATUS_PENDING
 
 
+def route_absence_report_evidence(report: CoachAbsenceReport, status: str):
+    """Move cloud evidence to the container matching the coach's decision."""
+    original_blob_location = parse_blob_url(report.evidence_image_url)
+    if not original_blob_location:
+        return None
+    if not azure_configured():
+        raise RuntimeError("Evidence storage is not configured.")
+    destination_container = (
+        settings.AZURE_APPROVED_CONTAINER
+        if status == CoachAbsenceReport.STATUS_APPROVED
+        else settings.AZURE_REJECTED_CONTAINER
+    )
+    source_container, blob_name = original_blob_location
+    move_blob(source_container, destination_container, blob_name)
+    report.evidence_image_url = blob_url(destination_container, blob_name)
+    return source_container, destination_container, blob_name
+
+
 def serialize_absence_report(
     report: CoachAbsenceReport,
     learner=None,
@@ -4391,6 +4417,14 @@ def serialize_absence_report(
     if attendance_rate is None:
         attendance_rate = report.attendance_rate if report.attendance_rate is not None else learner_snapshot.get("attendanceRate") or 0
     status = normalize_absence_report_status(report.status)
+    evidence_url = resolve_read_url(
+        report.evidence_image_url,
+        {
+            settings.AZURE_QUARANTINE_CONTAINER,
+            settings.AZURE_APPROVED_CONTAINER,
+            settings.AZURE_REJECTED_CONTAINER,
+        },
+    )
     return {
         "id": str(report.id),
         "learnerId": str(report.learner_id),
@@ -4413,7 +4447,7 @@ def serialize_absence_report(
         "evidenceKind": report.evidence_kind,
         "evidenceType": "Image" if report.evidence_kind == "image" else "Text" if report.evidence_kind == "text" else None,
         "evidenceText": report.evidence_text or None,
-        "evidenceImageUrl": report.evidence_image_url or None,
+        "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,
         "coachNote": report.coach_note,
@@ -4443,9 +4477,30 @@ def coach_absence_reports(request):
         report = CoachAbsenceReport.objects.filter(id=report_id, owner_email__iexact=owner_email).first()
         if not report or (report.learner_id not in active_ids and normalize_email(report.learner_email) not in active_emails):
             return JsonResponse({"detail": "Absence report not found."}, status=404)
+        moved_blob = None
+        try:
+            moved_blob = route_absence_report_evidence(report, status)
+        except RuntimeError as exc:
+            if str(exc) == "Evidence storage is not configured.":
+                return JsonResponse({"detail": str(exc)}, status=503)
+            return JsonResponse({"detail": "Could not move the evidence file in storage."}, status=502)
+        except Exception:
+            return JsonResponse({"detail": "Could not move the evidence file in storage."}, status=502)
         report.status = status
         report.coach_note = clean_text(payload.get("coachNote"))
-        report.save(update_fields=["status", "coach_note", "updated_at"])
+        update_fields = ["status", "coach_note", "updated_at"]
+        if moved_blob:
+            update_fields.append("evidence_image_url")
+        try:
+            report.save(update_fields=update_fields)
+        except Exception:
+            if moved_blob:
+                source_container, current_container, blob_name = moved_blob
+                try:
+                    move_blob(current_container, source_container, blob_name)
+                except Exception:
+                    pass
+            return JsonResponse({"detail": "Could not save the absence report decision."}, status=502)
         attendance_rates = fetch_absence_report_attendance_rates([report.learner_id], [report.learner_email])
         attendance_rate = attendance_rates["by_id"].get(report.learner_id)
         if attendance_rate is None:
