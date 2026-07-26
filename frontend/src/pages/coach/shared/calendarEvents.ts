@@ -32,6 +32,7 @@ export interface CoachCalendarEvent {
   group?: string;
   module?: string;
   tutor?: string;
+  schedule?: string;
   priority?: 'normal' | 'urgent' | 'high';
   status: CoachCalendarStatus;
   source?: 'mcr' | 'progress-review' | 'catch-up' | string;

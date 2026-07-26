@@ -1,10 +1,21 @@
 import { useEffect, useState } from 'react';
 import {
   fetchLearnerDetail,
+  type LearnerActivityEntry,
   type LearnerDetail,
   type LearnerKind,
   type LearnerQuizAttempt,
 } from '@/api/learnerDetail';
+import {
+  eventDisplayDate,
+  fetchCoachCalendarEvents,
+  formatDateLabel as formatCalendarDateLabel,
+  formatTimeLabel as formatCalendarTimeLabel,
+  parseLocalDate,
+  sortEvents,
+  statusLabel as calendarStatusLabel,
+  type CoachCalendarEvent,
+} from '@/pages/coach/shared/calendarEvents';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 
 const CASELOAD_BASE = '/coach_api/coach/caseload';
@@ -144,6 +155,27 @@ export interface CaseFileActivityItem {
   tone: 'primary' | 'accent' | 'emerald' | 'amber' | 'red';
 }
 
+export interface CaseFileUpcomingSession {
+  id: string;
+  day: string;
+  title: string;
+  date: string;
+  time: string;
+  summary: string;
+  detail: string;
+}
+
+export interface CaseFileReviewMeeting {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  detail: string;
+  status: CoachCalendarEvent['status'];
+  statusLabel: string;
+  isNext: boolean;
+}
+
 export interface CoachLearnerCaseFileData {
   learnerId: string;
   kind: LearnerKind | null;
@@ -178,6 +210,9 @@ export interface CoachLearnerCaseFileData {
   totalExpectedOtjh: number;
   touchedKsbCodes: string[];
   activityItems: CaseFileActivityItem[];
+  upcomingSessions: CaseFileUpcomingSession[];
+  progressReviews: CaseFileReviewMeeting[];
+  monthlyCoachMeetings: CaseFileReviewMeeting[];
 }
 
 export interface CaseFileTabProps {
@@ -216,6 +251,7 @@ export function useCoachLearnerCaseFileData(args: {
         fetchCoachCaseload(),
         fetchCoachAttendance(),
         fetchCoachMarkingQueue(),
+        fetchCoachTimetable(),
       ]);
       const directId = numericId(rawLearnerId);
       const directDetailPromise = directId
@@ -242,6 +278,7 @@ export function useCoachLearnerCaseFileData(args: {
             evidence: null,
             detail,
             caseload: [],
+            timetableEvents: [],
           });
           if (!cancelled && initialData) {
             setData(initialData);
@@ -252,7 +289,7 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      const [caseloadResult, attendanceResult, markingResult] = await coachDataPromise;
+      const [caseloadResult, attendanceResult, markingResult, timetableResult] = await coachDataPromise;
 
       if (cancelled) {
         return;
@@ -261,6 +298,7 @@ export function useCoachLearnerCaseFileData(args: {
       const caseload = caseloadResult.status === 'fulfilled' ? caseloadResult.value : [];
       const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : [];
       const marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
+      const timetableEvents = timetableResult.status === 'fulfilled' ? timetableResult.value : [];
 
       const snapshot = resolveCaseloadLearner(caseload, rawLearnerId, rawLearnerName);
       const attendanceLearner = resolveAttendanceLearner(attendance, rawLearnerId, rawLearnerName);
@@ -291,6 +329,7 @@ export function useCoachLearnerCaseFileData(args: {
         evidence,
         detail,
         caseload,
+        timetableEvents,
       });
 
       if (!finalData) {
@@ -471,6 +510,11 @@ async function fetchCoachMarkingQueue() {
   return data.items || [];
 }
 
+async function fetchCoachTimetable() {
+  const data = await fetchCoachCalendarEvents();
+  return data.events || [];
+}
+
 async function fetchAnyLearnerDetail(id: string, kind?: LearnerKind) {
   if (kind) {
     return { kind, detail: await fetchLearnerDetail(kind, id) };
@@ -559,6 +603,196 @@ function numericId(value?: string | null) {
   return /^\d+$/.test(value.trim()) ? value.trim() : null;
 }
 
+function normalizeMatchValue(value?: string | null) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeEmailMatchValue(value?: string | null) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizePersonName(value?: string | null) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function isUpcomingCalendarEvent(event: CoachCalendarEvent) {
+  const eventDate = parseLocalDate(eventDisplayDate(event));
+  if (!eventDate) {
+    return false;
+  }
+
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return eventDate.getTime() >= start.getTime();
+}
+
+function liveSessionMatchesLearner(
+  event: CoachCalendarEvent,
+  learner: Pick<CoachLearnerCaseFileData, 'programme' | 'cohort' | 'group'>,
+) {
+  if (event.source !== 'live-session') {
+    return false;
+  }
+
+  const learnerGroup = normalizeMatchValue(learner.group);
+  const learnerCohort = normalizeMatchValue(learner.cohort);
+  const learnerProgramme = normalizeMatchValue(learner.programme);
+  const eventGroup = normalizeMatchValue(event.group);
+  const eventCohort = normalizeMatchValue(event.cohort);
+  const eventProgramme = normalizeMatchValue(event.programme);
+
+  if (learnerGroup && eventGroup && learnerGroup === eventGroup) {
+    if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
+      return false;
+    }
+    if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
+      return false;
+    }
+    return true;
+  }
+
+  if (!learnerGroup && learnerCohort && eventCohort && learnerCohort === eventCohort) {
+    return !learnerProgramme || !eventProgramme || learnerProgramme === eventProgramme;
+  }
+
+  return false;
+}
+
+function reviewEventMatchesLearner(
+  event: CoachCalendarEvent,
+  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
+  source: 'mcr' | 'progress-review',
+) {
+  if (event.source !== source || event.status === 'cancelled') {
+    return false;
+  }
+
+  const learnerId = numericId(learner.learnerId) || String(learner.learnerId || '').trim();
+  const eventLearnerId = String(event.learnerId || '').trim();
+  if (learnerId && eventLearnerId && learnerId === eventLearnerId) {
+    return true;
+  }
+
+  const learnerEmail = normalizeEmailMatchValue(learner.email);
+  const eventEmail = normalizeEmailMatchValue(event.email);
+  if (learnerEmail && eventEmail && learnerEmail === eventEmail) {
+    return true;
+  }
+
+  const learnerName = normalizePersonName(learner.displayName);
+  const eventLearnerName = normalizePersonName(event.learner);
+  if (!learnerName || !eventLearnerName || learnerName !== eventLearnerName) {
+    return false;
+  }
+
+  const learnerCohort = normalizeMatchValue(learner.cohort);
+  const learnerProgramme = normalizeMatchValue(learner.programme);
+  const eventCohort = normalizeMatchValue(event.cohort);
+  const eventProgramme = normalizeMatchValue(event.programme);
+  if (learnerCohort && eventCohort && learnerCohort !== eventCohort) {
+    return false;
+  }
+  if (learnerProgramme && eventProgramme && learnerProgramme !== eventProgramme) {
+    return false;
+  }
+
+  return true;
+}
+
+function sortLearnerScheduleEvents(events: CoachCalendarEvent[]) {
+  const upcoming: CoachCalendarEvent[] = [];
+  const past: CoachCalendarEvent[] = [];
+
+  for (const event of events) {
+    if (isUpcomingCalendarEvent(event)) {
+      upcoming.push(event);
+    } else {
+      past.push(event);
+    }
+  }
+
+  return [...sortEvents(upcoming), ...sortEvents(past).reverse()];
+}
+
+function buildReviewMeetingItems(
+  learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'displayName' | 'email' | 'programme' | 'cohort'>,
+  timetableEvents: CoachCalendarEvent[],
+  source: 'mcr' | 'progress-review',
+): CaseFileReviewMeeting[] {
+  const fallbackTitle = source === 'progress-review' ? 'Progress Review' : 'Monthly Coaching';
+  const fallbackDetail = source === 'progress-review'
+    ? 'Progress review from the coach schedule.'
+    : 'Monthly coaching session from the coach schedule.';
+  const matchingEvents = sortLearnerScheduleEvents(
+    timetableEvents.filter((event) => reviewEventMatchesLearner(event, learner, source)),
+  ).slice(0, 6);
+
+  let nextFlagAssigned = false;
+  return matchingEvents.map((event) => {
+    const displayDate = eventDisplayDate(event);
+    const isNext = !nextFlagAssigned && isUpcomingCalendarEvent(event);
+    if (isNext) {
+      nextFlagAssigned = true;
+    }
+
+    return {
+      id: event.eventKey || event.id,
+      title: event.title || fallbackTitle,
+      date: formatCalendarDateLabel(displayDate),
+      time: formatCalendarTimeLabel(event),
+      detail: [
+        event.sequence ? (source === 'progress-review' ? `Review ${event.sequence}` : `Meeting ${event.sequence}`) : '',
+        event.meetingProvider || '',
+        event.targetDate && event.scheduledDate && event.scheduledDate !== event.targetDate
+          ? `Target ${formatCalendarDateLabel(event.targetDate)}`
+          : '',
+      ].filter(Boolean).join(' - ') || fallbackDetail,
+      status: event.status,
+      statusLabel: calendarStatusLabel(event.status),
+      isNext,
+    };
+  });
+}
+
+function buildUpcomingLiveSessions(
+  learner: Pick<CoachLearnerCaseFileData, 'programme' | 'cohort' | 'group'>,
+  timetableEvents: CoachCalendarEvent[],
+): CaseFileUpcomingSession[] {
+  if (!learner.group && !learner.cohort) {
+    return [];
+  }
+
+  return sortEvents(
+    timetableEvents.filter((event) =>
+      liveSessionMatchesLearner(event, learner)
+      && isUpcomingCalendarEvent(event)
+      && event.status !== 'cancelled'
+      && event.status !== 'completed',
+    ),
+  )
+    .slice(0, 3)
+    .map((event) => {
+      const displayDate = eventDisplayDate(event);
+      const day = formatUpcomingWeekday(displayDate);
+      const dayShort = formatUpcomingWeekday(displayDate, true);
+      const date = formatCalendarDateLabel(displayDate);
+      const dateShort = formatUpcomingDateShort(displayDate);
+      const time = formatCalendarTimeLabel(event);
+      return {
+        id: event.eventKey || event.id,
+        day,
+        title: event.title || event.module || 'Live session',
+        date,
+        time,
+        summary: `${dayShort} ${dateShort} · ${time}`,
+        detail: [
+          event.tutor ? `Tutor: ${event.tutor}` : '',
+          event.group ? `Group: ${event.group}` : '',
+        ].filter(Boolean).join(' - ') || 'Live session from the learner delivery plan.',
+      };
+    });
+}
+
 function buildCaseFileData(args: {
   learnerId: string;
   kind: LearnerKind | null;
@@ -567,6 +801,7 @@ function buildCaseFileData(args: {
   evidence: CoachMarkingQueueItem | null;
   detail: LearnerDetail | null;
   caseload: CoachCaseloadLearner[];
+  timetableEvents: CoachCalendarEvent[];
 }): CoachLearnerCaseFileData | null {
   const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
   if (!displayName) {
@@ -583,6 +818,26 @@ function buildCaseFileData(args: {
       (args.detail?.quizAttempts || []).flatMap((attempt) => attempt.ksbs || []),
     ),
   ).sort();
+  const programme = args.detail?.programme || args.snapshot?.cohortName || args.attendance?.programme || '';
+  const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
+  const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
+  const upcomingSessions = buildUpcomingLiveSessions(
+    {
+      programme,
+      cohort,
+      group,
+    },
+    args.timetableEvents,
+  );
+  const reviewEventContext = {
+    learnerId: args.learnerId,
+    displayName,
+    email,
+    programme,
+    cohort,
+  };
+  const progressReviews = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
+  const monthlyCoachMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
 
   return {
     learnerId: args.learnerId,
@@ -595,11 +850,11 @@ function buildCaseFileData(args: {
     peers,
     displayName,
     initials: getInitials(displayName),
-    programme: args.detail?.programme || args.snapshot?.cohortName || args.attendance?.programme || '',
+    programme,
     employer: args.detail?.employer || args.snapshot?.employer || args.attendance?.employer || '',
     cohort,
-    group: args.detail?.group || args.snapshot?.group || args.attendance?.group || '',
-    email: args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '',
+    group,
+    email,
     programStatus: args.detail?.programmeStatus || args.snapshot?.rawProgramStatus || args.attendance?.programStatus || '',
     coachName: args.snapshot?.coachName || '',
     coachEmail: args.snapshot?.coachEmail || '',
@@ -618,6 +873,9 @@ function buildCaseFileData(args: {
     totalExpectedOtjh: args.detail?.totalExpectedOtjh || 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
+    upcomingSessions,
+    progressReviews,
+    monthlyCoachMeetings,
   };
 }
 
@@ -648,19 +906,80 @@ function buildActivityItems(
     });
   }
 
-  for (const attempt of sortAttemptsNewestFirst(detail?.quizAttempts || []).slice(0, 6)) {
-    items.push({
-      id: `quiz-${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}`,
-      date: formatDisplayDate(attempt.submittedAt),
-      event: attempt.passed ? 'Quiz passed' : 'Quiz submitted',
-      detail: `${attempt.quizName} - ${attempt.grade}${attempt.Score ? ` (${attempt.Score})` : ''}`,
-      tone: attempt.passed ? 'emerald' : 'accent',
-    });
+  if ((detail?.activityFeed || []).length > 0) {
+    for (const entry of detail?.activityFeed || []) {
+      items.push({
+        id: `feed-${entry.kind}-${entry.quizId ?? entry.componentId ?? entry.at}`,
+        date: formatDisplayDate(entry.at),
+        event: entry.action || activityEventLabel(entry),
+        detail: activityDetail(entry),
+        tone: activityTone(entry),
+      });
+    }
+  } else {
+    for (const attempt of sortAttemptsNewestFirst(detail?.quizAttempts || []).slice(0, 6)) {
+      items.push({
+        id: `quiz-${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}`,
+        date: formatDisplayDate(attempt.submittedAt),
+        event: attempt.passed ? 'Quiz passed' : 'Quiz submitted',
+        detail: fallbackQuizAttemptDetail(detail, attempt),
+        tone: attempt.passed ? 'emerald' : 'accent',
+      });
+    }
   }
 
   return items
     .sort((a, b) => sortableDate(b.date) - sortableDate(a.date))
     .slice(0, 8);
+}
+
+function activityEventLabel(entry: LearnerActivityEntry) {
+  if (entry.kind === 'quiz') {
+    return entry.passed ? 'Quiz passed' : 'Quiz submitted';
+  }
+  if (entry.kind === 'video') {
+    return 'Video watched';
+  }
+  return 'Activity completed';
+}
+
+function activityDetail(entry: LearnerActivityEntry) {
+  const segments = [
+    entry.title,
+    entry.detail,
+    entry.module,
+    entry.week,
+  ].filter((value) => Boolean(String(value || '').trim()));
+
+  return segments.join(' - ') || 'Learner activity recorded.';
+}
+
+function activityTone(entry: LearnerActivityEntry): CaseFileActivityItem['tone'] {
+  if (entry.kind === 'quiz') {
+    return entry.passed ? 'emerald' : 'accent';
+  }
+  if (entry.kind === 'video') {
+    return 'primary';
+  }
+  return 'amber';
+}
+
+function fallbackQuizAttemptDetail(detail: LearnerDetail | null, attempt: LearnerQuizAttempt) {
+  const title = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId)?.component || `Quiz ${attempt.quizId}`;
+  const grade = formatAttemptGrade(attempt);
+  const score = attempt.achievedScore != null && attempt.totalScore != null
+    ? `${roundNumber(attempt.achievedScore)}/${roundNumber(attempt.totalScore)}`
+    : '';
+  return [title, grade, score].filter(Boolean).join(' - ');
+}
+
+function formatAttemptGrade(attempt: LearnerQuizAttempt) {
+  const rawGrade = Number(attempt.grade);
+  if (Number.isNaN(rawGrade)) {
+    return '--';
+  }
+  const percent = rawGrade <= 1 ? Math.round(rawGrade * 100) : Math.round(rawGrade);
+  return `${percent}%`;
 }
 
 function sortAttemptsNewestFirst(attempts: LearnerQuizAttempt[]) {
@@ -670,6 +989,25 @@ function sortAttemptsNewestFirst(attempts: LearnerQuizAttempt[]) {
 function sortableDate(value?: string | null) {
   const parsed = new Date(String(value || ''));
   return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
+function formatUpcomingWeekday(value?: string | null, short = false) {
+  const parsed = parseLocalDate(value);
+  if (!parsed) {
+    return '--';
+  }
+  return new Intl.DateTimeFormat('en-GB', { weekday: short ? 'short' : 'long' }).format(parsed);
+}
+
+function formatUpcomingDateShort(value?: string | null) {
+  const parsed = parseLocalDate(value);
+  if (!parsed) {
+    return '--';
+  }
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+  }).format(parsed);
 }
 
 function roundNumber(value: number) {
