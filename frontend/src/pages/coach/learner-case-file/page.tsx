@@ -13,6 +13,7 @@ import {
   formatPercent,
   toneFromPercent,
   useCoachLearnerCaseFileData,
+  type CaseFileReviewMeeting,
   type CoachLearnerCaseFileData,
 } from './data';
 
@@ -105,6 +106,8 @@ export default function LearnerCaseFile() {
   const latestQuiz = [...quizAttempts].sort((left, right) => {
     return new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime();
   })[0];
+  const latestQuizSummary = latestQuiz ? formatLatestQuizSummary(data?.detail ?? null, latestQuiz) : '--';
+  const nextLiveSession = data?.upcomingSessions[0] || null;
 
   const handleOpenTrainingPlan = () => {
     if (!data?.kind || !data.learnerId) {
@@ -145,7 +148,7 @@ export default function LearnerCaseFile() {
   };
 
   const expectedProgress = data?.overallProgress !== null && data?.overallProgress !== undefined
-    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot.progressVariance)))
+    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot?.progressVariance)))
     : null;
   return (
     <WorkspaceShell
@@ -211,7 +214,7 @@ export default function LearnerCaseFile() {
               <ProfileTopStat label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
               <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone="emerald" dot />
               <ProfileTopStat label="Gateway" value={data?.gatewayReviewDate || '--'} tone="primary" />
-              <ProfileTopStat label="Next Session" value={data?.snapshot?.nextCoaching || '--'} tone="muted" />
+              <ProfileTopStat label="Next Session" value={nextLiveSession?.summary || '--'} tone="muted" wrap />
             </div>
           </section>
 
@@ -488,7 +491,7 @@ export default function LearnerCaseFile() {
                     <p className="text-[11px] text-foreground-500">
                       Latest:{' '}
                       <span className="font-semibold text-foreground-900">
-                        {latestQuiz ? `${latestQuiz.quizName} - ${latestQuiz.grade}` : '--'}
+                        {latestQuizSummary}
                       </span>
                     </p>
                     <p className="text-[10px] text-foreground-400">
@@ -514,6 +517,7 @@ export default function LearnerCaseFile() {
 function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) {
   const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
   const activities = data.activityItems.slice(0, 6);
+  const upcomingSessions = data.upcomingSessions;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 lg:grid-cols-3">
@@ -544,27 +548,35 @@ function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) 
           ))}
         </ReferencePanel>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
-          {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
-            <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-primary-600"><i className="ri-history-line text-xs"></i></span>
-              <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail}</p></div>
-              <span className="text-[9px] text-foreground-300">{item.date}</span>
-            </div>
-          ))}
-        </ReferencePanel>
-        <ReferencePanel title="Outstanding Tasks" icon="ri-checkbox-line" tone="muted">
-          <ProfileEmpty text="No outstanding task data is available for this learner." />
-        </ReferencePanel>
-      </div>
-      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
-        {data.snapshot?.nextCoaching && data.snapshot.nextCoaching !== '--' ? (
-          <div className="max-w-lg rounded-xl border border-primary-100 bg-primary-50/40 p-3">
-            <p className="text-[11px] font-bold text-foreground-800">Next coaching session</p>
-            <p className="mt-1 text-[10px] text-primary-700">{data.snapshot.nextCoaching}</p>
+      <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
+        {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
+          <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${overviewToneClasses(item.tone)}`}><i className="ri-history-line text-xs"></i></span>
+            <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
+            <span className="text-[9px] text-foreground-300">{item.date}</span>
           </div>
-        ) : <ProfileEmpty text="No upcoming coaching session is recorded." />}
+        ))}
+      </ReferencePanel>
+      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
+        {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming live session is scheduled." /> : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {upcomingSessions.map((session) => (
+              <div key={session.id} className="rounded-xl border border-primary-100 bg-primary-50/35 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold text-foreground-800">{session.title}</p>
+                    <p className="mt-1 text-[10px] text-primary-700">{session.day} · {session.date}</p>
+                    <p className="mt-1 text-[10px] font-medium text-foreground-500">{session.time}</p>
+                  </div>
+                  <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[9px] font-semibold text-primary-700">
+                    Live
+                  </span>
+                </div>
+                <p className="mt-2 text-[10px] text-foreground-500">{session.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </ReferencePanel>
     </div>
   );
@@ -611,15 +623,43 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
 }
 
 function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const [activeKsbCategory, setActiveKsbCategory] = useState<'All' | 'Knowledge' | 'Skills' | 'Behaviours'>('All');
+  const [ksbSearch, setKsbSearch] = useState('');
   const completed = data.otjhCompleted;
   const target = data.otjhTarget;
   const remaining = completed !== null && target !== null ? Math.max(0, target - completed) : null;
   const otjhPercent = completed !== null && target !== null && target > 0
     ? Math.min(100, Math.round((completed / target) * 100))
     : null;
-  const ksbs = data.detail?.ksbs || [];
-  const touched = new Set(data.touchedKsbCodes);
-  const groups = ['K', 'S', 'B'].map((prefix) => ({ prefix, items: ksbs.filter((item) => item.code.toUpperCase().startsWith(prefix)) }));
+  const touched = new Set(data.touchedKsbCodes.map((code) => code.toUpperCase()));
+  const sourceKsbs = buildDisplayKsbs(data);
+  const ksbs = sourceKsbs
+    .map((item) => {
+      const code = String(item.code || '').toUpperCase();
+      return {
+        ...item,
+        code,
+        category: ksbCategoryFromCode(code),
+        linked: touched.has(code),
+      };
+    })
+    .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
+  const linkedCount = ksbs.filter((item) => item.linked).length;
+  const unlinkedCount = Math.max(0, ksbs.length - linkedCount);
+  const categorySummary = ['Knowledge', 'Skills', 'Behaviours'].map((category) => {
+    const items = ksbs.filter((item) => item.category === category);
+    const linked = items.filter((item) => item.linked).length;
+    return { category, total: items.length, linked };
+  });
+  const normalizedSearch = ksbSearch.trim().toLowerCase();
+  const filteredKsbs = ksbs.filter((item) => {
+    const matchesCategory = activeKsbCategory === 'All' || item.category === activeKsbCategory;
+    const matchesSearch = !normalizedSearch
+      || item.code.toLowerCase().includes(normalizedSearch)
+      || item.description.toLowerCase().includes(normalizedSearch)
+      || item.category.toLowerCase().includes(normalizedSearch);
+    return matchesCategory && matchesSearch;
+  });
   return (
     <div className="space-y-5">
       <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
@@ -638,21 +678,204 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
         {ksbs.length === 0 ? <ProfileEmpty text="No KSB framework data is available." /> : (
-          <div className="grid gap-4 lg:grid-cols-3">
-            {groups.map((group) => (
-              <div key={group.prefix} className="rounded-xl bg-background-100/65 p-3">
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary-700">{group.prefix === 'K' ? 'Knowledge' : group.prefix === 'S' ? 'Skills' : 'Behaviours'}</h4>
-                {group.items.length === 0 ? <ProfileEmpty text="No items." /> : group.items.map((item) => (
-                  <div key={item.code} className="border-b border-foreground-100 py-2 last:border-0">
-                    <div className="flex items-start gap-2"><span className="text-[9px] font-bold text-foreground-400">{item.code}</span><p className="flex-1 text-[10px] text-foreground-700">{item.description}</p></div>
-                    <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[8px] font-semibold ${touched.has(item.code) ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>{touched.has(item.code) ? 'Evidence linked' : 'Not evidenced'}</span>
-                  </div>
-                ))}
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
+              <KsbOverviewCard icon="ri-links-line" label="Evidence linked" value={String(linkedCount)} tone="emerald" />
+              <KsbOverviewCard icon="ri-focus-3-line" label="Not evidenced" value={String(unlinkedCount)} tone="muted" />
+            </div>
+
+            <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[12px] font-bold text-foreground-900">Browse all programme KSBs</p>
+                  <p className="mt-1 text-[11px] text-foreground-500">
+                    Filter by category or search by code and description while keeping the live evidence status visible.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                  {linkedCount} of {ksbs.length} currently show Evidence linked
+                </div>
               </div>
-            ))}
+
+              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {categorySummary.map((group) => (
+                    <div key={group.category} className="rounded-xl border border-foreground-200/60 bg-white/80 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(group.category)}`}>
+                          {group.category}
+                        </span>
+                        <span className="text-[10px] font-semibold text-foreground-500">{group.linked}/{group.total}</span>
+                      </div>
+                      <p className="mt-3 text-[11px] text-foreground-600">
+                        {group.linked} linked and {Math.max(0, group.total - group.linked)} not evidenced
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-foreground-200/60 bg-white/80 p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setActiveKsbCategory(category)}
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[10px] font-semibold transition ${
+                          activeKsbCategory === category
+                            ? 'bg-primary-700 text-white shadow-sm'
+                            : 'bg-background-100 text-foreground-600 hover:bg-background-200'
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative">
+                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                    <input
+                      type="text"
+                      value={ksbSearch}
+                      onChange={(event) => setKsbSearch(event.target.value)}
+                      placeholder="Search code or description..."
+                      className="w-full rounded-xl border border-foreground-200/60 bg-background-50 py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-foreground-200/60 pt-4">
+                <p className="text-[11px] font-semibold text-foreground-700">Showing {filteredKsbs.length} of {ksbs.length} KSBs</p>
+                {(activeKsbCategory !== 'All' || normalizedSearch) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveKsbCategory('All');
+                      setKsbSearch('');
+                    }}
+                    className="text-[10px] font-semibold text-primary-700 transition hover:text-primary-800"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+
+              {filteredKsbs.length === 0 ? <div className="mt-4"><ProfileEmpty text="No KSBs matched the current filter." /></div> : (
+                <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                  {filteredKsbs.map((item) => (
+                    <article key={item.code} className="rounded-2xl border border-foreground-200/60 bg-white p-4 shadow-[0_8px_22px_rgba(31,14,59,0.04)]">
+                      <div className="flex flex-wrap items-start gap-2">
+                        <span className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-2 text-[11px] font-bold ${ksbCodeTone(item.category)}`}>
+                          {item.code}
+                        </span>
+                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(item.category)}`}>
+                            {item.category}
+                          </span>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.linked ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>
+                            {item.linked ? 'Evidence linked' : 'Not evidenced'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-[12px] font-semibold leading-5 text-foreground-900">{item.description}</p>
+                      <p className="mt-2 text-[10px] text-foreground-500">
+                        {item.linked
+                          ? 'This KSB has been surfaced in the learner evidence snapshot.'
+                          : 'No linked evidence has surfaced for this KSB yet.'}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </ReferencePanel>
+    </div>
+  );
+}
+
+function buildDisplayKsbs(data: CoachLearnerCaseFileData) {
+  const detailKsbs = data.detail?.ksbs || [];
+  if (detailKsbs.length > 0) {
+    return detailKsbs;
+  }
+
+  const itemsByCode = new Map<string, { code: string; type: string; number: string; description: string }>();
+  for (const component of data.detail?.components || []) {
+    for (const mapping of component.ksbMappings || []) {
+      const code = String(mapping.code || '').trim().toUpperCase();
+      if (!code) {
+        continue;
+      }
+      const existing = itemsByCode.get(code);
+      const description = String(mapping.description || '').trim() || `Mapped KSB ${code}`;
+      if (!existing) {
+        itemsByCode.set(code, {
+          code,
+          type: ksbCategoryFromCode(code),
+          number: code.replace(/^[A-Z]+/i, ''),
+          description,
+        });
+        continue;
+      }
+      if (!existing.description && description) {
+        existing.description = description;
+      }
+    }
+  }
+
+  return Array.from(itemsByCode.values());
+}
+
+function ksbCategoryFromCode(code: string) {
+  if (code.startsWith('K')) return 'Knowledge';
+  if (code.startsWith('S')) return 'Skills';
+  if (code.startsWith('B')) return 'Behaviours';
+  return 'Other';
+}
+
+function ksbCategoryBadge(category: string) {
+  if (category === 'Knowledge') return 'bg-primary-50 text-primary-700';
+  if (category === 'Skills') return 'bg-sky-50 text-sky-700';
+  if (category === 'Behaviours') return 'bg-amber-50 text-amber-700';
+  return 'bg-background-100 text-foreground-600';
+}
+
+function ksbCodeTone(category: string) {
+  if (category === 'Knowledge') return 'bg-primary-100 text-primary-700';
+  if (category === 'Skills') return 'bg-sky-100 text-sky-700';
+  if (category === 'Behaviours') return 'bg-amber-100 text-amber-700';
+  return 'bg-background-100 text-foreground-600';
+}
+
+function KsbOverviewCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  tone: 'primary' | 'emerald' | 'muted';
+}) {
+  const toneMap = {
+    primary: 'bg-primary-100 text-primary-700',
+    emerald: 'bg-emerald-100 text-emerald-700',
+    muted: 'bg-background-100 text-foreground-600',
+  } as const;
+
+  return (
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
+      <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneMap[tone]}`}>
+        <i className={`${icon} text-base`}></i>
+      </div>
+      <p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p>
+      <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
     </div>
   );
 }
@@ -835,25 +1058,47 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 }
 
 function ReferenceReviewsContent({ data }: { data: CoachLearnerCaseFileData }) {
-  const reviews = data.activityItems.filter((item) => /review|coaching|session|meeting/i.test(`${item.event} ${item.detail}`));
   return (
     <div className="space-y-5">
       <ReferencePanel title="Progress Reviews" icon="ri-file-chart-line" tone="primary">
-        {reviews.length === 0 ? <ProfileEmpty text="No review records are available." /> : reviews.map((review, index) => (
-          <div key={review.id} className="border-b border-foreground-100 py-3 last:border-0">
-            <div className="flex items-center gap-2"><p className="text-[11px] font-bold text-foreground-800">{review.event}</p>{index === 0 && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[8px] font-semibold text-primary-700">Latest</span>}<span className="ml-auto text-[9px] text-foreground-300">{review.date}</span></div>
-            <p className="mt-1 text-[10px] text-foreground-500">{review.detail}</p>
-          </div>
-        ))}
+        {data.progressReviews.length === 0
+          ? <ProfileEmpty text="No progress review records are available." />
+          : <ReviewMeetingList items={data.progressReviews} />}
       </ReferencePanel>
       <ReferencePanel title="Monthly Coach Meetings" icon="ri-calendar-todo-line" tone="primary">
-        {reviews.length === 0 ? <ProfileEmpty text="No coaching meeting data is available." /> : reviews.map((meeting) => (
-          <div key={`meeting-${meeting.id}`} className="flex gap-3 border-b border-foreground-100 py-4 last:border-0">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><i className="ri-checkbox-circle-line"></i></span>
-            <div><p className="text-[11px] font-bold text-foreground-800">{meeting.event} <span className="ml-2 text-[9px] font-normal text-foreground-300">{meeting.date}</span></p><p className="mt-1 text-[10px] text-foreground-500">{meeting.detail}</p></div>
-          </div>
-        ))}
+        {data.monthlyCoachMeetings.length === 0
+          ? <ProfileEmpty text="No monthly coaching meeting data is available." />
+          : <ReviewMeetingList items={data.monthlyCoachMeetings} />}
       </ReferencePanel>
+    </div>
+  );
+}
+
+function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
+  return (
+    <div>
+      {items.map((item) => (
+        <div key={item.id} className="flex items-start gap-3 border-b border-foreground-100 py-4 last:border-0">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+            <i className="ri-calendar-event-line"></i>
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[11px] font-bold text-foreground-800">{item.title}</p>
+              {item.isNext && (
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[8px] font-semibold text-emerald-700">
+                  Next
+                </span>
+              )}
+              <span className={`rounded-full px-2 py-0.5 text-[8px] font-semibold ${reviewStatusPillClass(item.status)}`}>
+                {item.statusLabel}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] font-medium text-foreground-500">{item.date} - {item.time}</p>
+            <p className="mt-1 text-[10px] text-foreground-400">{item.detail}</p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -874,6 +1119,14 @@ function ProfileProgress({ label, value, color }: { label: string; value: number
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
   return <div className="rounded-2xl border border-foreground-100 bg-background-100/55 p-4 text-center"><p className={`text-2xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p></div>;
+}
+
+function reviewStatusPillClass(status: CaseFileReviewMeeting['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'scheduled') return 'bg-primary-50 text-primary-700';
+  if (status === 'in-progress') return 'bg-amber-50 text-amber-700';
+  if (status === 'cancelled') return 'bg-red-50 text-red-700';
+  return 'bg-orange-50 text-orange-700';
 }
 
 function displayInline(value?: string | null, fallback = '--') {
@@ -906,11 +1159,13 @@ function ProfileTopStat({
   value,
   tone,
   dot = false,
+  wrap = false,
 }: {
   label: string;
   value: string;
   tone: 'primary' | 'emerald' | 'red' | 'muted';
   dot?: boolean;
+  wrap?: boolean;
 }) {
   const toneClass = {
     primary: 'text-primary-700',
@@ -920,7 +1175,7 @@ function ProfileTopStat({
   }[tone];
   return (
     <div className="min-w-0 px-3 py-4 text-center">
-      <p className={`truncate text-[14px] font-bold ${toneClass}`}>
+      <p className={`${wrap ? 'text-[11px] leading-tight' : 'truncate text-[14px]'} font-bold ${toneClass}`}>
         {dot && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500"></span>}
         {value}
       </p>
@@ -1075,6 +1330,26 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
   }
 
   return items;
+}
+
+function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted') {
+  return {
+    primary: 'bg-primary-100 text-primary-700',
+    emerald: 'bg-emerald-100 text-emerald-700',
+    amber: 'bg-amber-100 text-amber-700',
+    red: 'bg-red-100 text-red-700',
+    muted: 'bg-background-100 text-foreground-600',
+  }[tone];
+}
+
+function formatLatestQuizSummary(
+  detail: CoachLearnerCaseFileData['detail'] | null,
+  attempt: NonNullable<CoachLearnerCaseFileData['detail']>['quizAttempts'][number],
+) {
+  const title = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId)?.component || `Quiz ${attempt.quizId}`;
+  const rawGrade = Number(attempt.grade);
+  const percent = Number.isNaN(rawGrade) ? '--' : `${rawGrade <= 1 ? Math.round(rawGrade * 100) : Math.round(rawGrade)}%`;
+  return `${title} - ${percent}`;
 }
 
 function buildContacts(data: CoachLearnerCaseFileData) {
