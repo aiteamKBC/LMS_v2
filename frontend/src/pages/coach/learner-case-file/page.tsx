@@ -13,6 +13,7 @@ import {
   formatPercent,
   toneFromPercent,
   useCoachLearnerCaseFileData,
+  type CaseFileReviewMeeting,
   type CoachLearnerCaseFileData,
 } from './data';
 
@@ -105,6 +106,8 @@ export default function LearnerCaseFile() {
   const latestQuiz = [...quizAttempts].sort((left, right) => {
     return new Date(right.submittedAt).getTime() - new Date(left.submittedAt).getTime();
   })[0];
+  const latestQuizSummary = latestQuiz ? formatLatestQuizSummary(data?.detail ?? null, latestQuiz) : '--';
+  const nextLiveSession = data?.upcomingSessions[0] || null;
 
   const handleOpenTrainingPlan = () => {
     if (!data?.kind || !data.learnerId) {
@@ -145,7 +148,7 @@ export default function LearnerCaseFile() {
   };
 
   const expectedProgress = data?.overallProgress !== null && data?.overallProgress !== undefined
-    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot.progressVariance)))
+    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot?.progressVariance)))
     : null;
   return (
     <WorkspaceShell
@@ -211,7 +214,7 @@ export default function LearnerCaseFile() {
               <ProfileTopStat label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
               <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone="emerald" dot />
               <ProfileTopStat label="Gateway" value={data?.gatewayReviewDate || '--'} tone="primary" />
-              <ProfileTopStat label="Next Session" value={data?.snapshot?.nextCoaching || '--'} tone="muted" />
+              <ProfileTopStat label="Next Session" value={nextLiveSession?.summary || '--'} tone="muted" wrap />
             </div>
           </section>
 
@@ -488,7 +491,7 @@ export default function LearnerCaseFile() {
                     <p className="text-[11px] text-foreground-500">
                       Latest:{' '}
                       <span className="font-semibold text-foreground-900">
-                        {latestQuiz ? `${latestQuiz.quizName} - ${latestQuiz.grade}` : '--'}
+                        {latestQuizSummary}
                       </span>
                     </p>
                     <p className="text-[10px] text-foreground-400">
@@ -514,6 +517,7 @@ export default function LearnerCaseFile() {
 function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) {
   const risks = buildRiskItems(data).filter((item) => item.tone === 'red' || item.tone === 'amber');
   const activities = data.activityItems.slice(0, 6);
+  const upcomingSessions = data.upcomingSessions;
   return (
     <div className="space-y-5">
       <div className="grid gap-4 lg:grid-cols-3">
@@ -544,27 +548,35 @@ function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) 
           ))}
         </ReferencePanel>
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
-          {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
-            <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-primary-600"><i className="ri-history-line text-xs"></i></span>
-              <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail}</p></div>
-              <span className="text-[9px] text-foreground-300">{item.date}</span>
-            </div>
-          ))}
-        </ReferencePanel>
-        <ReferencePanel title="Outstanding Tasks" icon="ri-checkbox-line" tone="muted">
-          <ProfileEmpty text="No outstanding task data is available for this learner." />
-        </ReferencePanel>
-      </div>
-      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
-        {data.snapshot?.nextCoaching && data.snapshot.nextCoaching !== '--' ? (
-          <div className="max-w-lg rounded-xl border border-primary-100 bg-primary-50/40 p-3">
-            <p className="text-[11px] font-bold text-foreground-800">Next coaching session</p>
-            <p className="mt-1 text-[10px] text-primary-700">{data.snapshot.nextCoaching}</p>
+      <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
+        {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
+          <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${overviewToneClasses(item.tone)}`}><i className="ri-history-line text-xs"></i></span>
+            <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
+            <span className="text-[9px] text-foreground-300">{item.date}</span>
           </div>
-        ) : <ProfileEmpty text="No upcoming coaching session is recorded." />}
+        ))}
+      </ReferencePanel>
+      <ReferencePanel title="Upcoming Sessions" icon="ri-calendar-event-line" tone="primary">
+        {upcomingSessions.length === 0 ? <ProfileEmpty text="No upcoming live session is scheduled." /> : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {upcomingSessions.map((session) => (
+              <div key={session.id} className="rounded-xl border border-primary-100 bg-primary-50/35 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold text-foreground-800">{session.title}</p>
+                    <p className="mt-1 text-[10px] text-primary-700">{session.day} · {session.date}</p>
+                    <p className="mt-1 text-[10px] font-medium text-foreground-500">{session.time}</p>
+                  </div>
+                  <span className="rounded-full bg-primary-100 px-2 py-0.5 text-[9px] font-semibold text-primary-700">
+                    Live
+                  </span>
+                </div>
+                <p className="mt-2 text-[10px] text-foreground-500">{session.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </ReferencePanel>
     </div>
   );
@@ -1046,25 +1058,47 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 }
 
 function ReferenceReviewsContent({ data }: { data: CoachLearnerCaseFileData }) {
-  const reviews = data.activityItems.filter((item) => /review|coaching|session|meeting/i.test(`${item.event} ${item.detail}`));
   return (
     <div className="space-y-5">
       <ReferencePanel title="Progress Reviews" icon="ri-file-chart-line" tone="primary">
-        {reviews.length === 0 ? <ProfileEmpty text="No review records are available." /> : reviews.map((review, index) => (
-          <div key={review.id} className="border-b border-foreground-100 py-3 last:border-0">
-            <div className="flex items-center gap-2"><p className="text-[11px] font-bold text-foreground-800">{review.event}</p>{index === 0 && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[8px] font-semibold text-primary-700">Latest</span>}<span className="ml-auto text-[9px] text-foreground-300">{review.date}</span></div>
-            <p className="mt-1 text-[10px] text-foreground-500">{review.detail}</p>
-          </div>
-        ))}
+        {data.progressReviews.length === 0
+          ? <ProfileEmpty text="No progress review records are available." />
+          : <ReviewMeetingList items={data.progressReviews} />}
       </ReferencePanel>
       <ReferencePanel title="Monthly Coach Meetings" icon="ri-calendar-todo-line" tone="primary">
-        {reviews.length === 0 ? <ProfileEmpty text="No coaching meeting data is available." /> : reviews.map((meeting) => (
-          <div key={`meeting-${meeting.id}`} className="flex gap-3 border-b border-foreground-100 py-4 last:border-0">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><i className="ri-checkbox-circle-line"></i></span>
-            <div><p className="text-[11px] font-bold text-foreground-800">{meeting.event} <span className="ml-2 text-[9px] font-normal text-foreground-300">{meeting.date}</span></p><p className="mt-1 text-[10px] text-foreground-500">{meeting.detail}</p></div>
-          </div>
-        ))}
+        {data.monthlyCoachMeetings.length === 0
+          ? <ProfileEmpty text="No monthly coaching meeting data is available." />
+          : <ReviewMeetingList items={data.monthlyCoachMeetings} />}
       </ReferencePanel>
+    </div>
+  );
+}
+
+function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
+  return (
+    <div>
+      {items.map((item) => (
+        <div key={item.id} className="flex items-start gap-3 border-b border-foreground-100 py-4 last:border-0">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+            <i className="ri-calendar-event-line"></i>
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[11px] font-bold text-foreground-800">{item.title}</p>
+              {item.isNext && (
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[8px] font-semibold text-emerald-700">
+                  Next
+                </span>
+              )}
+              <span className={`rounded-full px-2 py-0.5 text-[8px] font-semibold ${reviewStatusPillClass(item.status)}`}>
+                {item.statusLabel}
+              </span>
+            </div>
+            <p className="mt-1 text-[10px] font-medium text-foreground-500">{item.date} - {item.time}</p>
+            <p className="mt-1 text-[10px] text-foreground-400">{item.detail}</p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1085,6 +1119,14 @@ function ProfileProgress({ label, value, color }: { label: string; value: number
 function BigMetric({ value, label, tone }: { value: string; label: string; tone: 'primary' | 'emerald' | 'red' | 'amber' | 'muted' }) {
   const color = { primary: 'text-primary-700', emerald: 'text-emerald-600', red: 'text-red-600', amber: 'text-amber-600', muted: 'text-foreground-700' }[tone];
   return <div className="rounded-2xl border border-foreground-100 bg-background-100/55 p-4 text-center"><p className={`text-2xl font-bold ${color}`}>{value}</p><p className="mt-1 text-[8px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p></div>;
+}
+
+function reviewStatusPillClass(status: CaseFileReviewMeeting['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'scheduled') return 'bg-primary-50 text-primary-700';
+  if (status === 'in-progress') return 'bg-amber-50 text-amber-700';
+  if (status === 'cancelled') return 'bg-red-50 text-red-700';
+  return 'bg-orange-50 text-orange-700';
 }
 
 function displayInline(value?: string | null, fallback = '--') {
@@ -1117,11 +1159,13 @@ function ProfileTopStat({
   value,
   tone,
   dot = false,
+  wrap = false,
 }: {
   label: string;
   value: string;
   tone: 'primary' | 'emerald' | 'red' | 'muted';
   dot?: boolean;
+  wrap?: boolean;
 }) {
   const toneClass = {
     primary: 'text-primary-700',
@@ -1131,7 +1175,7 @@ function ProfileTopStat({
   }[tone];
   return (
     <div className="min-w-0 px-3 py-4 text-center">
-      <p className={`truncate text-[14px] font-bold ${toneClass}`}>
+      <p className={`${wrap ? 'text-[11px] leading-tight' : 'truncate text-[14px]'} font-bold ${toneClass}`}>
         {dot && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500"></span>}
         {value}
       </p>
@@ -1286,6 +1330,26 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
   }
 
   return items;
+}
+
+function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted') {
+  return {
+    primary: 'bg-primary-100 text-primary-700',
+    emerald: 'bg-emerald-100 text-emerald-700',
+    amber: 'bg-amber-100 text-amber-700',
+    red: 'bg-red-100 text-red-700',
+    muted: 'bg-background-100 text-foreground-600',
+  }[tone];
+}
+
+function formatLatestQuizSummary(
+  detail: CoachLearnerCaseFileData['detail'] | null,
+  attempt: NonNullable<CoachLearnerCaseFileData['detail']>['quizAttempts'][number],
+) {
+  const title = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId)?.component || `Quiz ${attempt.quizId}`;
+  const rawGrade = Number(attempt.grade);
+  const percent = Number.isNaN(rawGrade) ? '--' : `${rawGrade <= 1 ? Math.round(rawGrade * 100) : Math.round(rawGrade)}%`;
+  return `${title} - ${percent}`;
 }
 
 function buildContacts(data: CoachLearnerCaseFileData) {

@@ -38,6 +38,7 @@ from curriculum_api.views import (
     parse_json_value,
     program_config_by_id,
     programme_identity,
+    schedule_time_parts,
 )
 
 
@@ -3190,9 +3191,11 @@ def build_live_session_calendar_event(
     module_name = clean_text(row.get("module_name")) or "Live Session"
     session_title = f"{module_name} — {week_title}" if week_title else f"{module_name} — Week {session['sessionNumber']}"
 
+    schedule_value = clean_text(row.get("session_week_day"))
+    fallback_start_text, fallback_end_text = schedule_time_parts(schedule_value)
     start_hour, end_hour, time_label, duration_minutes, is_time_estimated = 9, 10, "Time TBC", TIMETABLE_DEFAULT_DURATION_MINUTES, True
-    start_time = parse_time_value(row.get("session_start_time"))
-    end_time = parse_time_value(row.get("session_end_time"))
+    start_time = parse_time_value(row.get("session_start_time") or fallback_start_text)
+    end_time = parse_time_value(row.get("session_end_time") or fallback_end_text)
     if start_time:
         start_hour = start_time.hour + start_time.minute / 60
         is_time_estimated = False
@@ -3216,6 +3219,7 @@ def build_live_session_calendar_event(
         "group": group or "--",
         "module": module_name,
         "tutor": clean_text(row.get("Tutor_name")) or "Unassigned",
+        "schedule": schedule_value,
         "source": "live-session",
         "sequence": session["sessionNumber"],
         "title": session_title,
@@ -3287,6 +3291,8 @@ def collect_live_session_events(
             continue
         if not clean_text(row.get("module_name")):
             continue
+        if clean_text(row.get("status")).lower() in {"draft", "archived"}:
+            continue
 
         group_id = clean_text(row.get("_meta", {}).get("group_id"))
         if not group_id or group_id not in assigned_group_ids:
@@ -3316,7 +3322,7 @@ def collect_live_session_events(
             holidays_by_cohort_id[cohort_id] = fetch_cohort_holidays_in_range(cohort_id)
         cohort_holidays = holidays_by_cohort_id[cohort_id]
 
-        delivery_day_name = parse_date(module_start).strftime("%A")
+        delivery_day_name = clean_text(row.get("session_week_day")) or parse_date(module_start).strftime("%A")
         plan = build_module_session_plan(module_start, session_count, delivery_day_name, cohort_holidays)
         if plan["warnings"]:
             continue
