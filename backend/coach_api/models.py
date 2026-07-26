@@ -5,6 +5,7 @@ class CoachCalendarEvent(models.Model):
     STATUS_NOT_SCHEDULED = "not-scheduled"
     STATUS_SCHEDULED = "scheduled"
     STATUS_IN_PROGRESS = "in-progress"
+    STATUS_AWAITING_SIGNATURE = "awaiting-signature"
     STATUS_COMPLETED = "completed"
     STATUS_CANCELLED = "cancelled"
 
@@ -12,7 +13,10 @@ class CoachCalendarEvent(models.Model):
         (STATUS_NOT_SCHEDULED, "Not Scheduled"),
         (STATUS_SCHEDULED, "Scheduled"),
         (STATUS_IN_PROGRESS, "In Progress"),
+        (STATUS_AWAITING_SIGNATURE, "Awaiting Signature"),
         (STATUS_COMPLETED, "Completed"),
+        # Legacy value retained for reading old deployments. Application
+        # actions normalise it to Not Scheduled and never create new rows.
         (STATUS_CANCELLED, "Cancelled"),
     ]
 
@@ -36,6 +40,8 @@ class CoachCalendarEvent(models.Model):
     notes = models.TextField(blank=True)
     review_responses = models.JSONField(default=dict, blank=True)
     review_completed_at = models.DateTimeField(null=True, blank=True)
+    manager_signed_at = models.DateTimeField(null=True, blank=True)
+    manager_signed_by = models.CharField(max_length=255, blank=True)
     last_graph_sync_error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

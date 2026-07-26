@@ -52,46 +52,158 @@ from curriculum_api.views import (
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
 PROGRESS_REVIEW_RESPONSE_IDS = {
-    "learning_summary",
-    "key_achievements",
-    "progress_checks",
-    "attendance_progress",
-    "otjh_progress",
-    "learner_reflection",
-    "learner_rating",
-    "manager_reflection",
-    "manager_rating",
-    "tutor_reflection",
-    "tutor_rating",
-    "safeguarding_discussion",
-    "key_themes",
-    "support_required",
-    "support_plan",
+    "attendance_issues",
+    "workplace_training_since_review",
+    "ksb_learning_activities",
+    "evidence_timely",
+    "other_progress_issues",
+    "other_progress_issues_detail",
+    "learner_attitude_pride_rating",
+    "learner_collaboration_rating",
+    "learner_time_management_rating",
+    "learner_respect_empathy_rating",
+    "learner_english_confidence_rating",
+    "learner_maths_confidence_rating",
+    "learner_wider_skills_rating",
+    "learner_workplace_behaviours_rating",
+    "learner_provider_safeguarding_confidence_rating",
+    "learner_employer_safeguarding_confidence_rating",
+    "learner_provider_support_rating",
+    "learner_manager_support_rating",
+    "learner_additional_comments",
+    "manager_learning_application_rating",
+    "manager_wider_skills_rating",
+    "manager_workplace_behaviours_rating",
+    "manager_valued_application",
+    "manager_progress_summary",
+    "tutor_learning_attitude_rating",
+    "tutor_time_management_rating",
+    "tutor_respect_empathy_rating",
+    "tutor_english_maths_rating",
+    "tutor_workplace_behaviours_rating",
+    "tutor_strengths",
+    "tutor_progress_summary",
+    "safeguarding_understood",
+    "prevent_understood",
+    "safeguarding_reporting_understood",
+    "safeguarding_reporting_process",
+    "safeguarding_concerns",
+    "safeguarding_concerns_detail",
+    "key_theme",
+    "key_theme_other",
+    "key_theme_comments",
+    "additional_learning_support",
+    "additional_learning_support_detail",
+    "health_adjustments",
+    "health_adjustments_detail",
+    "other_support_circumstances",
+    "other_support_detail",
+    "previous_targets_achieved",
+    "previous_targets_detail",
     "targets_actions",
     "action_owners_dates",
     "rag_status",
     "rag_reason",
 }
+PROGRESS_REVIEW_OPTIONAL_RESPONSE_IDS = {
+    "other_progress_issues_detail",
+    "learner_additional_comments",
+    "safeguarding_concerns_detail",
+    "key_theme_other",
+    "additional_learning_support_detail",
+    "health_adjustments_detail",
+    "other_support_detail",
+    "previous_targets_detail",
+}
+PROGRESS_REVIEW_REQUIRED_RESPONSE_IDS = (
+    PROGRESS_REVIEW_RESPONSE_IDS - PROGRESS_REVIEW_OPTIONAL_RESPONSE_IDS
+)
+PROGRESS_REVIEW_RATING_RESPONSE_IDS = {
+    response_id
+    for response_id in PROGRESS_REVIEW_RESPONSE_IDS
+    if response_id.endswith("_rating")
+}
+PROGRESS_REVIEW_YES_NO_RESPONSE_IDS = {
+    "attendance_issues",
+    "workplace_training_since_review",
+    "ksb_learning_activities",
+    "evidence_timely",
+    "other_progress_issues",
+    "safeguarding_understood",
+    "prevent_understood",
+    "safeguarding_reporting_understood",
+    "safeguarding_concerns",
+    "additional_learning_support",
+    "health_adjustments",
+    "other_support_circumstances",
+    "previous_targets_achieved",
+}
+PROGRESS_REVIEW_KEY_THEMES = {
+    "Health & Safety",
+    "Prevent",
+    "British Values",
+    "Equality, Diversity & Inclusion",
+    "Online Safety",
+    "Wellbeing",
+    "Other",
+}
 MONTHLY_COACHING_RESPONSE_IDS = {
+    "mcm_previous_meeting",
     "mcm_previous_summary",
-    "mcm_previous_barriers",
-    "mcm_opening_checkin",
-    "mcm_agenda_agreed",
     "mcm_presentation_summary",
-    "mcm_presentation_feedback",
-    "mcm_ksb_reflection",
-    "mcm_workplace_application",
-    "mcm_next_month_targets",
-    "mcm_next_month_actions",
-    "mcm_resources_guidance",
-    "mcm_wellbeing_check",
-    "mcm_safeguarding_action",
+    "mcm_knowledge_reflection",
+    "mcm_skills_reflection",
+    "mcm_behaviour_reflection",
+    "mcm_behaviour_next_step",
+    "mcm_next_month_focus",
+    "mcm_expected_evidence",
+    "mcm_learning_resources",
+    "mcm_resources_read",
+    "mcm_paid_hours_confirmed",
+    "mcm_workload_manageable",
+    "mcm_wellbeing_impact",
+    "mcm_wellbeing_outcome",
+    "mcm_safeguarding_contact_confidence",
+    "mcm_wellbeing_support_confidence",
+    "mcm_safe_and_respected",
+    "mcm_online_safety_prevent",
+    "mcm_raise_concerns_confidence",
+    "mcm_provider_safeguarding_confidence",
     "mcm_learner_feedback",
-    "mcm_learning_rating",
-    "mcm_next_meeting",
-    "mcm_close_confirmation",
+    "mcm_curriculum_planned",
+    "mcm_teaching_well_delivered",
+    "mcm_resources_accessible",
+    "mcm_assessment_feedback_helpful",
+    "mcm_tutor_support",
+    "mcm_overall_learning_progress",
+    "mcm_next_meeting_booked",
+    "mcm_next_meeting_date",
     "mcm_meeting_summary",
+    "mcm_meeting_notes",
     "mcm_outcome",
+}
+MONTHLY_COACHING_REQUIRED_RESPONSE_IDS = (
+    MONTHLY_COACHING_RESPONSE_IDS - {"mcm_meeting_notes"}
+)
+MONTHLY_COACHING_YES_NO_RESPONSE_IDS = {
+    "mcm_paid_hours_confirmed",
+    "mcm_next_meeting_booked",
+}
+MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS = {
+    "mcm_workload_manageable",
+    "mcm_wellbeing_impact",
+    "mcm_safeguarding_contact_confidence",
+    "mcm_wellbeing_support_confidence",
+    "mcm_safe_and_respected",
+    "mcm_online_safety_prevent",
+    "mcm_raise_concerns_confidence",
+    "mcm_provider_safeguarding_confidence",
+    "mcm_curriculum_planned",
+    "mcm_teaching_well_delivered",
+    "mcm_resources_accessible",
+    "mcm_assessment_feedback_helpful",
+    "mcm_tutor_support",
+    "mcm_overall_learning_progress",
 }
 DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
@@ -347,8 +459,9 @@ def schedule_status_label(value: str | None) -> str:
         "not-scheduled": "Not Scheduled",
         "scheduled": "Scheduled",
         "in-progress": "In Progress",
+        "awaiting-signature": "Awaiting Signature",
         "completed": "Completed",
-        "cancelled": "Cancelled",
+        "cancelled": "Not Scheduled",
     }
     return labels.get(normalized, clean_text(value) or "Not Scheduled")
 
@@ -3055,6 +3168,8 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "notes": " ".join(event_note_lines(base_event, record)),
             "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
             "reviewCompletedAt": record.review_completed_at.isoformat() if record and record.review_completed_at else None,
+            "managerSignedAt": record.manager_signed_at.isoformat() if record and record.manager_signed_at else None,
+            "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
             "syncWarning": clean_text(record.last_graph_sync_error) if record else "",
         }
@@ -3673,6 +3788,14 @@ def coach_timetable_schedule_event(request):
             "target_date": target_date,
         },
     )
+    if record.status in {
+        CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        CoachCalendarEvent.STATUS_COMPLETED,
+    }:
+        return JsonResponse(
+            {"detail": "A submitted or completed review cannot be scheduled again."},
+            status=409,
+        )
     record.owner_email = owner_email
     record.owner_name = owner_name
     record.learner_id = int(base_event["learnerId"])
@@ -3713,21 +3836,31 @@ def coach_timetable_event_action(request):
     action = clean_text(payload.get("action")).lower()
     if not event_key:
         return JsonResponse({"detail": "eventKey is required."}, status=400)
-    if action not in {"start", "complete", "cancel"}:
-        return JsonResponse({"detail": "action must be one of: start, complete, cancel."}, status=400)
+    if action not in {"start", "complete", "sign", "cancel"}:
+        return JsonResponse({"detail": "action must be one of: start, complete, sign, cancel."}, status=400)
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
         warning = ""
+        if action == "sign":
+            return JsonResponse({"detail": "Only progress reviews can be signed off."}, status=400)
         if action == "start" and not calendar_record_has_launch_url(catchup_record):
             return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
+        if action == "start" and catchup_record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+            return JsonResponse({"detail": "Only a scheduled event can be started."}, status=409)
+        if action == "start" and catchup_record.scheduled_date and catchup_record.scheduled_date > date.today():
+            return JsonResponse({"detail": "Join Meeting becomes available on the scheduled day."}, status=409)
+        if action == "complete" and catchup_record.status != CoachCalendarEvent.STATUS_IN_PROGRESS:
+            return JsonResponse({"detail": "Start the event before completing it."}, status=409)
         if action == "start":
             catchup_record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
         elif action == "complete":
             catchup_record.status = CoachCalendarEvent.STATUS_COMPLETED
         elif action == "cancel":
             warning = delete_calendar_event_from_graph(catchup_record)
-            catchup_record.status = CoachCalendarEvent.STATUS_CANCELLED
+            catchup_record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+            catchup_record.scheduled_date = None
+            catchup_record.scheduled_time = None
             catchup_record.meeting_link = ""
             catchup_record.graph_web_link = ""
             catchup_record.graph_event_id = ""
@@ -3771,6 +3904,13 @@ def coach_timetable_event_action(request):
         if completion_source == "mcr"
         else None
     )
+    required_response_ids = (
+        PROGRESS_REVIEW_REQUIRED_RESPONSE_IDS
+        if completion_source == "progress-review"
+        else MONTHLY_COACHING_REQUIRED_RESPONSE_IDS
+        if completion_source == "mcr"
+        else response_ids
+    )
     if action == "complete" and response_ids:
         submitted_responses = payload.get("reviewResponses")
         if not isinstance(submitted_responses, dict):
@@ -3780,28 +3920,128 @@ def coach_timetable_event_action(request):
             key: clean_text(submitted_responses.get(key))[:4000]
             for key in response_ids
         }
-        missing = sorted(key for key, value in review_responses.items() if not value)
+        missing = sorted(
+            key
+            for key in (required_response_ids or set())
+            if not review_responses.get(key)
+        )
         if missing:
             return JsonResponse(
                 {"detail": "Please answer every question before completing the session.", "missing": missing},
                 status=400,
             )
+        if completion_source == "progress-review":
+            invalid_ratings = sorted(
+                key
+                for key in PROGRESS_REVIEW_RATING_RESPONSE_IDS
+                if not review_responses.get(key, "").isdigit()
+                or not 1 <= int(review_responses[key]) <= 10
+            )
+            if invalid_ratings:
+                return JsonResponse(
+                    {"detail": "Every progress review rating must be between 1 and 10.", "invalid": invalid_ratings},
+                    status=400,
+                )
+            invalid_yes_no = sorted(
+                key
+                for key in PROGRESS_REVIEW_YES_NO_RESPONSE_IDS
+                if review_responses.get(key) not in {"Yes", "No"}
+            )
+            if invalid_yes_no:
+                return JsonResponse(
+                    {"detail": "Every Yes/No progress review question must be answered.", "invalid": invalid_yes_no},
+                    status=400,
+                )
+            if review_responses.get("key_theme") not in PROGRESS_REVIEW_KEY_THEMES:
+                return JsonResponse({"detail": "Select a valid key theme."}, status=400)
+            conditional_requirements = {
+                ("other_progress_issues", "Yes"): "other_progress_issues_detail",
+                ("safeguarding_concerns", "Yes"): "safeguarding_concerns_detail",
+                ("key_theme", "Other"): "key_theme_other",
+                ("additional_learning_support", "Yes"): "additional_learning_support_detail",
+                ("health_adjustments", "Yes"): "health_adjustments_detail",
+                ("other_support_circumstances", "Yes"): "other_support_detail",
+                ("previous_targets_achieved", "No"): "previous_targets_detail",
+            }
+            missing_conditional = sorted(
+                detail_id
+                for (answer_id, trigger_value), detail_id in conditional_requirements.items()
+                if review_responses.get(answer_id) == trigger_value
+                and not review_responses.get(detail_id)
+            )
+            if missing_conditional:
+                return JsonResponse(
+                    {"detail": "Complete the required follow-up details.", "missing": missing_conditional},
+                    status=400,
+                )
+        if completion_source == "mcr":
+            invalid_yes_no = sorted(
+                key
+                for key in MONTHLY_COACHING_YES_NO_RESPONSE_IDS
+                if review_responses.get(key) not in {"Yes", "No"}
+            )
+            if invalid_yes_no:
+                return JsonResponse(
+                    {"detail": "Every Yes/No MCM question must be answered.", "invalid": invalid_yes_no},
+                    status=400,
+                )
+            valid_agreement_values = {"Agree", "Neutral", "Disagree", "Not discussed"}
+            invalid_agreements = sorted(
+                key
+                for key in MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS
+                if review_responses.get(key) not in valid_agreement_values
+            )
+            if invalid_agreements:
+                return JsonResponse(
+                    {"detail": "Select a valid response for every MCM agreement statement.", "invalid": invalid_agreements},
+                    status=400,
+                )
+            if review_responses.get("mcm_previous_meeting") not in {
+                "Previous Monthly Coaching Meeting",
+                "No previous meeting",
+            }:
+                return JsonResponse({"detail": "Select a valid previous meeting."}, status=400)
+            try:
+                date.fromisoformat(review_responses.get("mcm_next_meeting_date", ""))
+            except ValueError:
+                return JsonResponse({"detail": "Enter a valid next coaching meeting date."}, status=400)
         outcome_key = "rag_status" if completion_source == "progress-review" else "mcm_outcome"
         if review_responses[outcome_key].lower() not in {"green", "amber", "red"}:
             return JsonResponse({"detail": "RAG status must be Green, Amber or Red."}, status=400)
 
     if action == "start" and not calendar_record_has_launch_url(record):
         return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
+    if action == "start" and record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+        return JsonResponse({"detail": "Only a scheduled event can be started."}, status=409)
+    if action == "start" and record.scheduled_date and record.scheduled_date > date.today():
+        return JsonResponse({"detail": "Join Meeting becomes available on the scheduled day."}, status=409)
+    if action == "complete" and record.status != CoachCalendarEvent.STATUS_IN_PROGRESS:
+        return JsonResponse({"detail": "Start the review before completing it."}, status=409)
+    if action == "sign":
+        if completion_source != "progress-review":
+            return JsonResponse({"detail": "Only progress reviews require a manager signature."}, status=400)
+        if record.status != CoachCalendarEvent.STATUS_AWAITING_SIGNATURE:
+            return JsonResponse({"detail": "This progress review is not awaiting a manager signature."}, status=409)
     if action == "start":
         record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
     elif action == "complete":
-        record.status = CoachCalendarEvent.STATUS_COMPLETED
+        record.status = (
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
+            if completion_source == "progress-review"
+            else CoachCalendarEvent.STATUS_COMPLETED
+        )
         if review_responses is not None:
             record.review_responses = review_responses
             record.review_completed_at = timezone.now()
+    elif action == "sign":
+        record.status = CoachCalendarEvent.STATUS_COMPLETED
+        record.manager_signed_at = timezone.now()
+        record.manager_signed_by = clean_text(payload.get("managerName")) or "Line Manager"
     elif action == "cancel":
         warning = delete_calendar_event_from_graph(record)
-        record.status = CoachCalendarEvent.STATUS_CANCELLED
+        record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        record.scheduled_date = None
+        record.scheduled_time = None
         record.meeting_link = ""
         record.graph_web_link = ""
         record.graph_event_id = ""
