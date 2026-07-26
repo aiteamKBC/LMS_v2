@@ -211,6 +211,12 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(payload['items'][0]['code'], 'K1')
         self.assertEqual(payload['items'][0]['source_id'], 'KSBP-DATA')
 
+    def test_delete_ksb_framework_removes_profile_row(self):
+        response = self.client.delete('/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()['deleted'])
+        self.assertFalse(views.authoring_fetch_all('ksb_profiles', 'id = %s', ['KSBP-DATA']))
+
     def test_required_count_can_exclude_mapping_only_ksbs(self):
         coverage = build_coverage(
             [{'code': 'K1', 'type': 'knowledge', 'source_type': 'framework', 'source_id': 'KSBP-DATA'}],
@@ -238,6 +244,41 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertNotEqual(self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')['status'], 'archived')
         self.assertNotEqual(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')['status'], 'archived')
+
+    def test_programme_card_counts_cohorts_without_delivery_modules(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': 'COHORT-DATA-2',
+            'cohort_name': 'October 2026',
+            'programme_id': 'PROG-DATA',
+            'programme_name': 'Data Analyst',
+            'start_date': '2026-10-01',
+            'end_date': '2027-09-30',
+            'status': 'planned',
+            'group_ids': views.json_db_value([]),
+            'module_names': views.json_db_value([]),
+            'holiday_ids': views.json_db_value([]),
+        })
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': 'COHORT-DATA-ARCHIVED',
+            'cohort_name': 'Archived Cohort',
+            'programme_id': 'PROG-DATA',
+            'programme_name': 'Data Analyst',
+            'status': 'archived',
+            'group_ids': views.json_db_value([]),
+            'module_names': views.json_db_value([]),
+            'holiday_ids': views.json_db_value([]),
+        })
+
+        programmes = views.build_programmes(
+            views.get_training_rows(),
+            views.get_program_config_rows(),
+            views.get_ksb_profile_rows(),
+        )
+        programme = next(item for item in programmes if item['id'] == 'PROG-DATA')
+
+        self.assertEqual(programme['cohorts'], 2)
+        self.assertEqual(programme['modules'], 1)
 
     def test_programme_detail_only_returns_the_selected_programme_tree(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())

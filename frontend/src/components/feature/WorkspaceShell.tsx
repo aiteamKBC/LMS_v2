@@ -1,5 +1,5 @@
 import { useState, type ReactNode, useEffect, useRef } from 'react';
-import { useLocation, Link } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, type SidebarNavItem } from './Sidebar';
 import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
@@ -21,6 +21,21 @@ interface BreadcrumbItem {
   label: string;
   href: string;
   isLink: boolean;
+}
+
+const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
+
+function readRouteHistory() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(ROUTE_HISTORY_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.map(item => String(item || '')).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRouteHistory(history: string[]) {
+  sessionStorage.setItem(ROUTE_HISTORY_KEY, JSON.stringify(history.slice(-30)));
 }
 
 function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNavItem[], workspaceLabel: string, roleLabel: string): BreadcrumbItem[] {
@@ -106,10 +121,12 @@ export function WorkspaceShell({
   workspaceLabel,
 }: WorkspaceShellProps) {
   const location = useLocation();
+  const navigate = useNavigate();
   const { auth } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [displayKey, setDisplayKey] = useState(location.pathname);
+  const [previousRoute, setPreviousRoute] = useState('');
   const prevPathRef = useRef(location.pathname);
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -136,10 +153,33 @@ export function WorkspaceShell({
     setMobileSidebarOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    const currentRoute = `${location.pathname}${location.search}${location.hash}`;
+    const storedHistory = readRouteHistory();
+    const nextHistory = storedHistory.at(-1) === currentRoute ? storedHistory : [...storedHistory, currentRoute].slice(-30);
+    const previous = [...nextHistory].reverse().find(route => route !== currentRoute) || '';
+    setPreviousRoute(previous);
+    writeRouteHistory(nextHistory);
+  }, [location.hash, location.pathname, location.search]);
+
   const breadcrumbs = buildBreadcrumbs(location.pathname, location.search, navItems, defaultWorkspaceLabel, roleLabel);
 
   const handleToggleMobileSidebar = () => {
     setMobileSidebarOpen(prev => !prev);
+  };
+
+  const handleReturnToPreviousWindow = () => {
+    const currentRoute = `${location.pathname}${location.search}${location.hash}`;
+    const history = readRouteHistory();
+    while (history.length && history.at(-1) === currentRoute) history.pop();
+    const targetRoute = history.pop() || previousRoute;
+    if (targetRoute) {
+      writeRouteHistory(history);
+      navigate(targetRoute);
+      return;
+    }
+    const fallbackRoute = breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';
+    navigate(fallbackRoute);
   };
 
   return (
@@ -201,6 +241,16 @@ export function WorkspaceShell({
           {children}
         </main>
       </div>
+
+      <button
+        type="button"
+        onClick={handleReturnToPreviousWindow}
+        className="fixed right-4 top-20 z-50 inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
+        title={previousRoute ? 'Back to the previous screen' : 'Back'}
+      >
+        <i className="ri-arrow-go-back-line text-base"></i>
+        <span className="hidden sm:inline">Back</span>
+      </button>
 
       {/* Global Search Modal */}
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />

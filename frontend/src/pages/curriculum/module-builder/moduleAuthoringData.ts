@@ -209,7 +209,7 @@ export function createEmptyWeek(moduleId: string, weekNumber: number): ModuleWee
   };
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -226,6 +226,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
     title: input.title,
     description: input.description,
     status: input.status || 'draft',
+    ksbProfileSourceId: input.ksbProfileSourceId || '',
     sessionsNumber: Math.max(0, Math.round(Number(input.sessionsNumber ?? input.weeks) || 0)),
     startDate: input.startDate || '',
     endDate: input.endDate || '',
@@ -251,7 +252,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
