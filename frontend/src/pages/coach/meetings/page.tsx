@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -15,7 +15,6 @@ import {
   formatTimeLabel,
   initialsFor,
   isAtRiskEvent,
-  isCancelledEvent,
   isCompletedEvent,
   isDueSoonEvent,
   isEventThisMonth,
@@ -33,7 +32,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type MeetingFilter = 'this-month' | 'at-risk' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'all';
+type MeetingFilter = 'this-month' | 'at-risk' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'all';
 
 const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }> = {
   'this-month': {
@@ -49,7 +48,7 @@ const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }>
     description: 'Monthly coaching meetings not scheduled yet and due within the next 14 days.',
   },
   'needs-schedule': {
-    label: 'Needs Schedule',
+    label: 'Not Scheduled',
     description: 'Monthly coaching meetings that still need a first calendar booking.',
   },
   scheduled: {
@@ -63,10 +62,6 @@ const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }>
   completed: {
     label: 'Completed',
     description: 'Monthly coaching meetings marked as completed or confirmed.',
-  },
-  cancelled: {
-    label: 'Cancelled',
-    description: 'Monthly coaching meetings that were cancelled and can be scheduled again if needed.',
   },
   all: {
     label: 'All',
@@ -127,7 +122,6 @@ export default function CoachMeetings() {
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const inProgressEvents = events.filter(event => isInProgressEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
-  const cancelledEvents = events.filter(event => isCancelledEvent(event));
   const filtered = events.filter(event => {
     if (filter === 'this-month') return isEventThisMonth(event);
     if (filter === 'at-risk') return isAtRiskEvent(event);
@@ -136,7 +130,6 @@ export default function CoachMeetings() {
     if (filter === 'scheduled') return isScheduledEvent(event);
     if (filter === 'in-progress') return isInProgressEvent(event);
     if (filter === 'completed') return isCompletedEvent(event);
-    if (filter === 'cancelled') return isCancelledEvent(event);
     return true;
   });
   const pageCount = Math.ceil(filtered.length / MEETINGS_PER_PAGE);
@@ -235,20 +228,18 @@ export default function CoachMeetings() {
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Coaching Meetings" pageSubtitle="Schedule and manage coaching sessions" userName={ownerName} userRole="Progress Coach">
       <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
         <section
-          className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
+          className="rounded-2xl border border-white/10 px-5 py-5 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-6"
           style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
         >
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
-                <span>Coach Workspace</span>
-                <i className="ri-arrow-right-s-line"></i>
-                <span className="font-semibold text-white">Coaching Meetings</span>
+            <div className="flex items-center gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-xl text-white"><i className="ri-calendar-event-line"></i></span>
+              <div>
+                <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Coaching Meetings</h1>
+                <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
+                  Plan, run and follow up on monthly coaching meetings for {ownerName}'s active learners.
+                </p>
               </div>
-              <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Coaching Meetings</h1>
-              <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
-                Plan, run and follow up on monthly coaching meetings for {ownerName}'s active learners.
-              </p>
             </div>
             <button
               type="button"
@@ -263,24 +254,31 @@ export default function CoachMeetings() {
           </div>
         </section>
 
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MeetingSummaryCard label="This month" value={thisMonthEvents.length} icon="ri-calendar-line" active={filter === 'this-month'} onClick={() => changeFilter('this-month')} />
+          <MeetingSummaryCard label="Overdue" value={atRiskEvents.length} icon="ri-alarm-warning-line" tone="red" active={filter === 'at-risk'} onClick={() => changeFilter('at-risk')} />
+          <MeetingSummaryCard label="Needs scheduling" value={needsScheduleEvents.length} icon="ri-calendar-2-line" tone="amber" active={filter === 'needs-schedule'} onClick={() => changeFilter('needs-schedule')} />
+          <MeetingSummaryCard label="Scheduled" value={scheduledEvents.length} icon="ri-calendar-check-line" tone="emerald" active={filter === 'scheduled'} onClick={() => changeFilter('scheduled')} />
+        </section>
+
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_12px_40px_-30px_oklch(var(--foreground-950)/0.35)]">
+        <section className="rounded-2xl border border-background-200 bg-background-50 shadow-[0_12px_40px_-30px_oklch(var(--foreground-950)/0.35)]">
           <div className="border-b border-background-200 px-4 pt-5 sm:px-6">
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <h3 className="text-base font-bold text-foreground-900">{FILTER_COPY[filter].label} meetings</h3>
+                <h3 className="text-base font-bold text-foreground-900">{FILTER_COPY[filter].label} coaching meetings</h3>
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-foreground-400">{FILTER_COPY[filter].description}</p>
               </div>
               <span className="w-fit rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">
                 {filtered.length} {filtered.length === 1 ? 'meeting' : 'meetings'}
               </span>
             </div>
-            <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-3">
+            <div className="-mx-1 flex flex-wrap items-center gap-1 px-1 pb-3">
               <FilterButton active={filter === 'this-month'} onClick={() => changeFilter('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonthEvents.length} description={FILTER_COPY['this-month'].description} />
               <FilterButton active={filter === 'at-risk'} onClick={() => changeFilter('at-risk')} label={FILTER_COPY['at-risk'].label} count={atRiskEvents.length} description={FILTER_COPY['at-risk'].description} />
               <FilterButton active={filter === 'due-soon'} onClick={() => changeFilter('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoonEvents.length} description={FILTER_COPY['due-soon'].description} />
@@ -288,11 +286,10 @@ export default function CoachMeetings() {
               <FilterButton active={filter === 'scheduled'} onClick={() => changeFilter('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
               <FilterButton active={filter === 'in-progress'} onClick={() => changeFilter('in-progress')} label={FILTER_COPY['in-progress'].label} count={inProgressEvents.length} description={FILTER_COPY['in-progress'].description} />
               <FilterButton active={filter === 'completed'} onClick={() => changeFilter('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
-              <FilterButton active={filter === 'cancelled'} onClick={() => changeFilter('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
               <FilterButton active={filter === 'all'} onClick={() => changeFilter('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
             </div>
           </div>
-          <div className="space-y-3 bg-background-100/55 p-3 sm:p-5">
+          <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
           {loading && <EmptyState icon="ri-loader-4-line" title="Loading coaching meetings..." />}
           {!loading && !error && filtered.length === 0 && <EmptyState icon="ri-calendar-check-line" title="No coaching meetings found." />}
 
@@ -301,12 +298,8 @@ export default function CoachMeetings() {
             const isBusy = busyEventId === eventIdentity(event);
             const url = meetingUrl(event);
             return (
-              <article key={eventIdentity(event)} className={`group overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)]' : 'border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
+              <article key={eventIdentity(event)} className={`group rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'overflow-visible border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)] xl:col-span-2' : 'overflow-hidden border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
                 <div className="flex cursor-pointer items-center gap-3 p-4 sm:gap-4 sm:p-5" onClick={() => toggleExpanded(event)}>
-                  <div className="hidden h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl border border-background-200 bg-background-100 sm:flex">
-                    <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-300">Meeting</span>
-                    <i className="ri-calendar-line mt-1 text-lg text-primary-600"></i>
-                  </div>
                   <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-background-50 ${avatarClass(event)}`}>
                     <span className="text-sm font-bold">{initialsFor(event.learner)}</span>
                   </div>
@@ -324,10 +317,10 @@ export default function CoachMeetings() {
                       {event.cohort && <span className="hidden lg:inline"><i className="ri-group-line mr-1 text-primary-500"></i>{event.cohort}</span>}
                     </div>
                   </div>
-                  <div className="hidden shrink-0 items-center gap-2 md:flex">
+                  <div className="hidden shrink-0 items-center gap-2 lg:flex">
                     {url && (
                       <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(event); }} disabled={isBusy} className="cursor-pointer whitespace-nowrap rounded-xl bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:opacity-60">
-                        <i className="ri-video-on-line mr-1.5"></i>Join
+                        <i className="ri-video-on-line mr-1.5"></i>Join Meeting
                       </button>
                     )}
                     <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(event); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50">
@@ -340,7 +333,7 @@ export default function CoachMeetings() {
                 </div>
 
                 {isOpen && (
-                  <div className="space-y-4 border-t border-background-200 bg-white/60 p-4 sm:p-5 sm:pl-[9.25rem]" onClick={(e) => e.stopPropagation()}>
+                  <div className="space-y-4 border-t border-background-200 bg-white/60 p-4 sm:p-5" onClick={(e) => e.stopPropagation()}>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <InfoBox label="Target date" value={formatDateLabel(event.targetDate)} />
                       <InfoBox label="Scheduled date" value={event.scheduledDate ? formatDateLabel(event.scheduledDate) : '--'} />
@@ -363,16 +356,14 @@ export default function CoachMeetings() {
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <ScheduleInput label="Date" type="date" value={scheduleForm.date} onChange={(value) => setScheduleForm(prev => ({ ...prev, date: value }))} />
                           <ScheduleInput label="Time" type="time" value={scheduleForm.time} onChange={(value) => setScheduleForm(prev => ({ ...prev, time: value }))} />
-                          <label className="block">
+                          <div className="block">
                             <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Duration</span>
-                            <select value={scheduleForm.durationMinutes} onChange={(e) => setScheduleForm(prev => ({ ...prev, durationMinutes: Number(e.target.value) }))} className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300">
-                              {[30, 45, 60, 90].map(minutes => <option key={minutes} value={minutes}>{minutes} min</option>)}
-                            </select>
-                          </label>
+                            <ModernDurationPicker value={scheduleForm.durationMinutes} onChange={(durationMinutes) => setScheduleForm(prev => ({ ...prev, durationMinutes }))} />
+                          </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 mt-3">
                           <button type="button" onClick={() => handleSchedule(event)} disabled={isBusy} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                            <i className="ri-calendar-check-line mr-1"></i>{event.status === 'cancelled' ? 'Schedule Again' : event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                            <i className="ri-calendar-check-line mr-1"></i>{event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                           </button>
                           {(event.status === 'scheduled' || event.status === 'in-progress') && (
                             <button type="button" onClick={() => handleAction(event, 'start')} disabled={isBusy || !url} className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
@@ -382,11 +373,6 @@ export default function CoachMeetings() {
                           {event.status === 'in-progress' && (
                             <button type="button" onClick={() => openCompletionForm(event)} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
                               <i className="ri-check-double-line mr-1"></i>Complete
-                            </button>
-                          )}
-                          {(event.status === 'scheduled' || event.status === 'in-progress') && (
-                            <button type="button" onClick={() => handleAction(event, 'cancel')} disabled={isBusy} className="px-3 py-2 bg-background-50 border border-red-200 text-red-700 rounded-lg text-[11px] font-medium hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-close-circle-line mr-1"></i>Cancel
                             </button>
                           )}
                         </div>
@@ -427,6 +413,54 @@ export default function CoachMeetings() {
   );
 }
 
+function MeetingSummaryCard({
+  label,
+  value,
+  icon,
+  tone = 'primary',
+  active,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  icon: string;
+  tone?: 'primary' | 'red' | 'amber' | 'emerald';
+  active: boolean;
+  onClick: () => void;
+}) {
+  const toneClass = tone === 'red'
+    ? 'bg-red-50 text-red-600'
+    : tone === 'amber'
+      ? 'bg-amber-50 text-amber-600'
+      : tone === 'emerald'
+        ? 'bg-emerald-50 text-emerald-600'
+        : 'bg-primary-50 text-primary-700';
+  const valueClass = tone === 'red'
+    ? 'text-red-600'
+    : tone === 'amber'
+      ? 'text-amber-600'
+      : tone === 'emerald'
+        ? 'text-emerald-600'
+        : 'text-primary-800';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`group flex items-center gap-3 rounded-xl border bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+        active ? 'border-primary-300 ring-2 ring-primary-100' : 'border-foreground-200/60 hover:border-primary-200'
+      }`}
+    >
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${toneClass}`}><i className={icon}></i></span>
+      <span className="min-w-0 flex-1">
+        <span className={`block text-xl font-bold ${valueClass}`}>{value}</span>
+        <span className="block truncate text-[10px] font-medium text-foreground-500">{label}</span>
+      </span>
+      <i className="ri-arrow-right-s-line text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600"></i>
+    </button>
+  );
+}
+
 function FilterButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
   return (
     <button type="button" onClick={onClick} title={description} className={`cursor-pointer whitespace-nowrap rounded-xl px-3.5 py-2 text-[11px] font-semibold transition-smooth ${active ? 'bg-primary-900 text-white shadow-sm' : 'text-foreground-400 hover:bg-background-100 hover:text-foreground-700'}`}>
@@ -441,7 +475,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
   ).filter(page => page > 0 && page <= pageCount).sort((a, b) => a - b);
 
   return (
-    <nav className="flex flex-col items-center justify-between gap-3 border-t border-background-200 pt-4 sm:flex-row" aria-label="Meeting pages">
+    <nav className="flex flex-col items-center justify-between gap-3 border-t border-background-200 pt-4 sm:flex-row xl:col-span-2" aria-label="Meeting pages">
       <p className="text-[11px] font-medium text-foreground-400">
         Showing {(currentPage - 1) * MEETINGS_PER_PAGE + 1}–{Math.min(currentPage * MEETINGS_PER_PAGE, totalItems)} of {totalItems}
       </p>
@@ -491,16 +525,221 @@ function InfoBox({ label, value }: { label: string; value: string }) {
 
 function ScheduleInput({ label, type, value, onChange }: { label: string; type: string; value: string; onChange: (value: string) => void }) {
   return (
-    <label className="block">
+    <div className="block">
       <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{label}</span>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300" />
-    </label>
+      {type === 'date' ? (
+        <ModernDatePicker value={value} onChange={onChange} />
+      ) : (
+        <input type={type} value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] text-foreground-900 transition focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100" />
+      )}
+    </div>
+  );
+}
+
+function parseCalendarDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return new Date();
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function calendarIso(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function ModernDatePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selectedDate = value ? parseCalendarDate(value) : null;
+  const [open, setOpen] = useState(false);
+  const [viewMonth, setViewMonth] = useState(() => {
+    const initial = parseCalendarDate(value);
+    return new Date(initial.getFullYear(), initial.getMonth(), 1);
+  });
+
+  useEffect(() => {
+    if (!value) return;
+    const next = parseCalendarDate(value);
+    setViewMonth(new Date(next.getFullYear(), next.getMonth(), 1));
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+  }, [open]);
+
+  const firstVisibleDay = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1 - viewMonth.getDay());
+  const calendarDays = Array.from({ length: 42 }, (_, index) => (
+    new Date(firstVisibleDay.getFullYear(), firstVisibleDay.getMonth(), firstVisibleDay.getDate() + index)
+  ));
+  const todayIso = calendarIso(new Date());
+  const selectedIso = selectedDate ? calendarIso(selectedDate) : '';
+  const displayValue = selectedDate
+    ? selectedDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'Select a date';
+
+  const moveMonth = (offset: number) => {
+    setViewMonth(current => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  };
+
+  const chooseDate = (date: Date) => {
+    onChange(calendarIso(date));
+    setOpen(false);
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(current => !current)}
+        aria-expanded={open}
+        className={`flex w-full items-center justify-between rounded-xl border bg-background-50 px-3 py-2.5 text-left text-[11px] transition ${
+          open ? 'border-primary-300 ring-2 ring-primary-100' : 'border-background-200 hover:border-primary-200'
+        }`}
+      >
+        <span className={`flex items-center gap-2 ${selectedDate ? 'font-semibold text-foreground-800' : 'text-foreground-400'}`}>
+          <i className="ri-calendar-line text-primary-600"></i>
+          {displayValue}
+        </span>
+        <i className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></i>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-[80] mt-2 w-[310px] rounded-2xl border border-foreground-200/70 bg-white p-4 shadow-[0_20px_60px_-18px_rgba(30,14,62,0.35)]">
+          <div className="mb-4 flex items-center justify-between">
+            <button type="button" onClick={() => moveMonth(-1)} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 hover:bg-primary-50 hover:text-primary-700" aria-label="Previous month">
+              <i className="ri-arrow-left-s-line text-lg"></i>
+            </button>
+            <div className="text-center">
+              <p className="text-[12px] font-bold text-foreground-900">{viewMonth.toLocaleDateString('en-GB', { month: 'long' })}</p>
+              <p className="text-[9px] text-foreground-400">{viewMonth.getFullYear()}</p>
+            </div>
+            <button type="button" onClick={() => moveMonth(1)} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 hover:bg-primary-50 hover:text-primary-700" aria-label="Next month">
+              <i className="ri-arrow-right-s-line text-lg"></i>
+            </button>
+          </div>
+
+          <div className="mb-1 grid grid-cols-7">
+            {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+              <span key={day} className="py-1 text-center text-[8px] font-bold uppercase text-foreground-300">{day}</span>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {calendarDays.map(day => {
+              const iso = calendarIso(day);
+              const inCurrentMonth = day.getMonth() === viewMonth.getMonth();
+              const selected = iso === selectedIso;
+              const today = iso === todayIso;
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => chooseDate(day)}
+                  className={`flex h-9 w-9 items-center justify-center rounded-xl text-[10px] font-semibold transition ${
+                    selected
+                      ? 'bg-primary-700 text-white shadow-sm'
+                      : today
+                        ? 'bg-primary-50 text-primary-700 ring-1 ring-primary-200'
+                        : inCurrentMonth
+                          ? 'text-foreground-700 hover:bg-primary-50 hover:text-primary-700'
+                          : 'text-foreground-300 hover:bg-background-100'
+                  }`}
+                >
+                  {day.getDate()}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between border-t border-foreground-100 pt-3">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); }} className="rounded-lg px-2 py-1.5 text-[9px] font-semibold text-foreground-400 hover:bg-background-100 hover:text-foreground-700">Clear</button>
+            <button type="button" onClick={() => chooseDate(new Date())} className="rounded-lg bg-primary-50 px-3 py-1.5 text-[9px] font-bold text-primary-700 hover:bg-primary-100">Today</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModernDurationPicker({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const options = [
+    { value: 30, label: '30 minutes', hint: 'Quick check-in' },
+    { value: 45, label: '45 minutes', hint: 'Focused session' },
+    { value: 60, label: '60 minutes', hint: 'Standard meeting' },
+    { value: 90, label: '90 minutes', hint: 'Extended review' },
+  ];
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    return () => document.removeEventListener('pointerdown', closeOnOutsideClick);
+  }, [open]);
+
+  const selected = options.find(option => option.value === value) || options[2];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(current => !current)}
+        aria-expanded={open}
+        className={`flex w-full items-center justify-between rounded-xl border bg-background-50 px-3 py-2.5 text-left transition ${
+          open ? 'border-primary-300 ring-2 ring-primary-100' : 'border-background-200 hover:border-primary-200'
+        }`}
+      >
+        <span className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className="ri-timer-line text-[12px]"></i></span>
+          <span>
+            <span className="block text-[11px] font-semibold text-foreground-800">{selected.label}</span>
+            <span className="block text-[8px] text-foreground-400">{selected.hint}</span>
+          </span>
+        </span>
+        <i className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></i>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-[80] mt-2 w-full min-w-[230px] overflow-hidden rounded-2xl border border-foreground-200/70 bg-white p-1.5 shadow-[0_18px_50px_-18px_rgba(30,14,62,0.35)]">
+          {options.map(option => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => { onChange(option.value); setOpen(false); }}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition ${
+                  active ? 'bg-primary-50 text-primary-800' : 'text-foreground-700 hover:bg-background-100'
+                }`}
+              >
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ${
+                  active ? 'bg-primary-700 text-white' : 'bg-background-100 text-foreground-500'
+                }`}>{option.value}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] font-semibold">{option.label}</span>
+                  <span className="block text-[8px] text-foreground-400">{option.hint}</span>
+                </span>
+                {active && <i className="ri-check-line text-primary-700"></i>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
 function EmptyState({ icon, title }: { icon: string; title: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 p-12 text-center">
+    <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 p-12 text-center xl:col-span-2">
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
         <i className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></i>
       </span>
