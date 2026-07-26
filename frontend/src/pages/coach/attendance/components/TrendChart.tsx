@@ -342,7 +342,7 @@ export default function TrendChart({
             <div className="px-3.5 py-3">
               {/* Header row */}
               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-foreground-200">
-                <span className="text-[10px] font-semibold bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full">
+                <span className="text-[10px] font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
                   {getTooltipPeriodLabel(tooltip)}
                 </span>
                 <span className="text-[10px] text-foreground-500">
@@ -351,13 +351,13 @@ export default function TrendChart({
                 </span>
               </div>
 
-              {/* Main stat: Attendance % */}
+              {/* Main stat: Absence % */}
               <div className="flex items-baseline gap-1.5 mb-2">
-                <span className="text-[22px] font-bold text-primary-600">
+                <span className="text-[22px] font-bold text-red-600">
                   {tooltip.value}%
                 </span>
                 <span className="text-[11px] text-foreground-500 font-medium">
-                  attendance rate
+                  absence rate
                 </span>
               </div>
 
