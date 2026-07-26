@@ -809,6 +809,10 @@ def find_existing_relation(connection, relation_candidates: tuple[str, ...]) -> 
     return None
 
 
+def find_learner_absence_relation(connection) -> str | None:
+    return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
+
+
 def relation_schema_and_table(relation: str) -> tuple[str, str]:
     parts = [part.strip('"') for part in relation.split(".")]
     if len(parts) != 2:

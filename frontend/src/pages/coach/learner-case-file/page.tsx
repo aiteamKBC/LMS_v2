@@ -611,15 +611,43 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
 }
 
 function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
+  const [activeKsbCategory, setActiveKsbCategory] = useState<'All' | 'Knowledge' | 'Skills' | 'Behaviours'>('All');
+  const [ksbSearch, setKsbSearch] = useState('');
   const completed = data.otjhCompleted;
   const target = data.otjhTarget;
   const remaining = completed !== null && target !== null ? Math.max(0, target - completed) : null;
   const otjhPercent = completed !== null && target !== null && target > 0
     ? Math.min(100, Math.round((completed / target) * 100))
     : null;
-  const ksbs = data.detail?.ksbs || [];
-  const touched = new Set(data.touchedKsbCodes);
-  const groups = ['K', 'S', 'B'].map((prefix) => ({ prefix, items: ksbs.filter((item) => item.code.toUpperCase().startsWith(prefix)) }));
+  const touched = new Set(data.touchedKsbCodes.map((code) => code.toUpperCase()));
+  const sourceKsbs = buildDisplayKsbs(data);
+  const ksbs = sourceKsbs
+    .map((item) => {
+      const code = String(item.code || '').toUpperCase();
+      return {
+        ...item,
+        code,
+        category: ksbCategoryFromCode(code),
+        linked: touched.has(code),
+      };
+    })
+    .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
+  const linkedCount = ksbs.filter((item) => item.linked).length;
+  const unlinkedCount = Math.max(0, ksbs.length - linkedCount);
+  const categorySummary = ['Knowledge', 'Skills', 'Behaviours'].map((category) => {
+    const items = ksbs.filter((item) => item.category === category);
+    const linked = items.filter((item) => item.linked).length;
+    return { category, total: items.length, linked };
+  });
+  const normalizedSearch = ksbSearch.trim().toLowerCase();
+  const filteredKsbs = ksbs.filter((item) => {
+    const matchesCategory = activeKsbCategory === 'All' || item.category === activeKsbCategory;
+    const matchesSearch = !normalizedSearch
+      || item.code.toLowerCase().includes(normalizedSearch)
+      || item.description.toLowerCase().includes(normalizedSearch)
+      || item.category.toLowerCase().includes(normalizedSearch);
+    return matchesCategory && matchesSearch;
+  });
   return (
     <div className="space-y-5">
       <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
@@ -638,21 +666,204 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
         {ksbs.length === 0 ? <ProfileEmpty text="No KSB framework data is available." /> : (
-          <div className="grid gap-4 lg:grid-cols-3">
-            {groups.map((group) => (
-              <div key={group.prefix} className="rounded-xl bg-background-100/65 p-3">
-                <h4 className="mb-2 text-[10px] font-bold uppercase tracking-wider text-primary-700">{group.prefix === 'K' ? 'Knowledge' : group.prefix === 'S' ? 'Skills' : 'Behaviours'}</h4>
-                {group.items.length === 0 ? <ProfileEmpty text="No items." /> : group.items.map((item) => (
-                  <div key={item.code} className="border-b border-foreground-100 py-2 last:border-0">
-                    <div className="flex items-start gap-2"><span className="text-[9px] font-bold text-foreground-400">{item.code}</span><p className="flex-1 text-[10px] text-foreground-700">{item.description}</p></div>
-                    <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[8px] font-semibold ${touched.has(item.code) ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>{touched.has(item.code) ? 'Evidence linked' : 'Not evidenced'}</span>
-                  </div>
-                ))}
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
+              <KsbOverviewCard icon="ri-links-line" label="Evidence linked" value={String(linkedCount)} tone="emerald" />
+              <KsbOverviewCard icon="ri-focus-3-line" label="Not evidenced" value={String(unlinkedCount)} tone="muted" />
+            </div>
+
+            <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="text-[12px] font-bold text-foreground-900">Browse all programme KSBs</p>
+                  <p className="mt-1 text-[11px] text-foreground-500">
+                    Filter by category or search by code and description while keeping the live evidence status visible.
+                  </p>
+                </div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
+                  {linkedCount} of {ksbs.length} currently show Evidence linked
+                </div>
               </div>
-            ))}
+
+              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {categorySummary.map((group) => (
+                    <div key={group.category} className="rounded-xl border border-foreground-200/60 bg-white/80 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(group.category)}`}>
+                          {group.category}
+                        </span>
+                        <span className="text-[10px] font-semibold text-foreground-500">{group.linked}/{group.total}</span>
+                      </div>
+                      <p className="mt-3 text-[11px] text-foreground-600">
+                        {group.linked} linked and {Math.max(0, group.total - group.linked)} not evidenced
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-3 rounded-xl border border-foreground-200/60 bg-white/80 p-3">
+                  <div className="flex flex-wrap gap-2">
+                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setActiveKsbCategory(category)}
+                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[10px] font-semibold transition ${
+                          activeKsbCategory === category
+                            ? 'bg-primary-700 text-white shadow-sm'
+                            : 'bg-background-100 text-foreground-600 hover:bg-background-200'
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative">
+                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                    <input
+                      type="text"
+                      value={ksbSearch}
+                      onChange={(event) => setKsbSearch(event.target.value)}
+                      placeholder="Search code or description..."
+                      className="w-full rounded-xl border border-foreground-200/60 bg-background-50 py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-foreground-200/60 pt-4">
+                <p className="text-[11px] font-semibold text-foreground-700">Showing {filteredKsbs.length} of {ksbs.length} KSBs</p>
+                {(activeKsbCategory !== 'All' || normalizedSearch) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveKsbCategory('All');
+                      setKsbSearch('');
+                    }}
+                    className="text-[10px] font-semibold text-primary-700 transition hover:text-primary-800"
+                  >
+                    Clear filters
+                  </button>
+                )}
+              </div>
+
+              {filteredKsbs.length === 0 ? <div className="mt-4"><ProfileEmpty text="No KSBs matched the current filter." /></div> : (
+                <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+                  {filteredKsbs.map((item) => (
+                    <article key={item.code} className="rounded-2xl border border-foreground-200/60 bg-white p-4 shadow-[0_8px_22px_rgba(31,14,59,0.04)]">
+                      <div className="flex flex-wrap items-start gap-2">
+                        <span className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-2 text-[11px] font-bold ${ksbCodeTone(item.category)}`}>
+                          {item.code}
+                        </span>
+                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(item.category)}`}>
+                            {item.category}
+                          </span>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.linked ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>
+                            {item.linked ? 'Evidence linked' : 'Not evidenced'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-[12px] font-semibold leading-5 text-foreground-900">{item.description}</p>
+                      <p className="mt-2 text-[10px] text-foreground-500">
+                        {item.linked
+                          ? 'This KSB has been surfaced in the learner evidence snapshot.'
+                          : 'No linked evidence has surfaced for this KSB yet.'}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </ReferencePanel>
+    </div>
+  );
+}
+
+function buildDisplayKsbs(data: CoachLearnerCaseFileData) {
+  const detailKsbs = data.detail?.ksbs || [];
+  if (detailKsbs.length > 0) {
+    return detailKsbs;
+  }
+
+  const itemsByCode = new Map<string, { code: string; type: string; number: string; description: string }>();
+  for (const component of data.detail?.components || []) {
+    for (const mapping of component.ksbMappings || []) {
+      const code = String(mapping.code || '').trim().toUpperCase();
+      if (!code) {
+        continue;
+      }
+      const existing = itemsByCode.get(code);
+      const description = String(mapping.description || '').trim() || `Mapped KSB ${code}`;
+      if (!existing) {
+        itemsByCode.set(code, {
+          code,
+          type: ksbCategoryFromCode(code),
+          number: code.replace(/^[A-Z]+/i, ''),
+          description,
+        });
+        continue;
+      }
+      if (!existing.description && description) {
+        existing.description = description;
+      }
+    }
+  }
+
+  return Array.from(itemsByCode.values());
+}
+
+function ksbCategoryFromCode(code: string) {
+  if (code.startsWith('K')) return 'Knowledge';
+  if (code.startsWith('S')) return 'Skills';
+  if (code.startsWith('B')) return 'Behaviours';
+  return 'Other';
+}
+
+function ksbCategoryBadge(category: string) {
+  if (category === 'Knowledge') return 'bg-primary-50 text-primary-700';
+  if (category === 'Skills') return 'bg-sky-50 text-sky-700';
+  if (category === 'Behaviours') return 'bg-amber-50 text-amber-700';
+  return 'bg-background-100 text-foreground-600';
+}
+
+function ksbCodeTone(category: string) {
+  if (category === 'Knowledge') return 'bg-primary-100 text-primary-700';
+  if (category === 'Skills') return 'bg-sky-100 text-sky-700';
+  if (category === 'Behaviours') return 'bg-amber-100 text-amber-700';
+  return 'bg-background-100 text-foreground-600';
+}
+
+function KsbOverviewCard({
+  icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  tone: 'primary' | 'emerald' | 'muted';
+}) {
+  const toneMap = {
+    primary: 'bg-primary-100 text-primary-700',
+    emerald: 'bg-emerald-100 text-emerald-700',
+    muted: 'bg-background-100 text-foreground-600',
+  } as const;
+
+  return (
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
+      <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneMap[tone]}`}>
+        <i className={`${icon} text-base`}></i>
+      </div>
+      <p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p>
+      <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
     </div>
   );
 }
