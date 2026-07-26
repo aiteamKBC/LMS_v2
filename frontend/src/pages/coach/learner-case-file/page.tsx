@@ -3,9 +3,8 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
-import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
-import NetworkTab from './components/NetworkTab';
+import LearningPlanTab from './components/OverviewTab';
 import {
   flattenJourney,
   formatFraction,
@@ -26,8 +25,7 @@ const TABS = [
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'reviews', label: 'Reviews & Meetings', icon: 'ri-calendar-todo-line' },
-  { id: 'support', label: 'Support Plans', icon: 'ri-shield-heart-line' },
-  { id: 'timeline', label: 'Timeline & Audit', icon: 'ri-history-line' },
+  { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
 ] as const;
 
 type TabId = typeof TABS[number]['id'] | 'coach-notes';
@@ -139,17 +137,12 @@ export default function LearnerCaseFile() {
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <NetworkTab data={data} />;
-      case 'timeline':
-        return <ActivityTab data={data} />;
+        return <LearningPlanTab data={data} />;
       default:
         return <ReferenceOverviewContent data={data} />;
     }
   };
 
-  const expectedProgress = data?.overallProgress !== null && data?.overallProgress !== undefined
-    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot?.progressVariance)))
-    : null;
   return (
     <WorkspaceShell
       role="coach"
@@ -180,27 +173,27 @@ export default function LearnerCaseFile() {
 
           <section className="overflow-hidden rounded-2xl border border-primary-800/15 bg-white shadow-[0_12px_34px_rgba(48,24,90,0.1)]">
             <div
-              className="px-5 py-6 text-white md:px-7"
+              className="px-6 py-7 text-white md:px-8 md:py-8"
               style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
             >
-              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                <div className="flex min-w-0 items-center gap-4">
-                  <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 border-white/30 bg-white/15 text-lg font-bold shadow-lg">
+              <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-center gap-5">
+                  <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-white/30 bg-white/15 text-[22px] font-bold shadow-lg">
                     {data?.initials || '--'}
                   </span>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h1 className="text-2xl font-heading font-bold text-white">{pageTitle}</h1>
-                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
+                      <h1 className="text-[30px] font-heading font-bold leading-tight text-white md:text-[34px]">{pageTitle}</h1>
+                      <span className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-white/75">
+                    <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-white/75">
                       {data?.email && <span className="inline-flex items-center gap-1.5"><i className="ri-mail-line"></i>{data.email}</span>}
                       {data?.detail?.phone && <span className="inline-flex items-center gap-1.5"><i className="ri-phone-line"></i>{data.detail.phone}</span>}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
+                  <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-11 items-center gap-2 rounded-xl bg-white px-5 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
                     <i className="ri-calendar-line"></i> Schedule
                   </button>
                 </div>
@@ -209,10 +202,10 @@ export default function LearnerCaseFile() {
 
             <div className="grid grid-cols-2 divide-x divide-y divide-foreground-100 sm:grid-cols-4 xl:grid-cols-7 xl:divide-y-0">
               <ProfileTopStat label="Overall" value={formatPercent(data?.overallProgress ?? null)} tone="primary" />
-              <ProfileTopStat label="Expected" value={formatPercent(expectedProgress)} tone="muted" />
               <ProfileTopStat label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} tone="primary" />
+              <ProfileTopStat label="KSB" value={formatPercent(data?.ksbProgress ?? null)} tone="emerald" />
               <ProfileTopStat label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
-              <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone="emerald" dot />
+              <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone={profileRagTone(data?.snapshot?.coachRag)} dot />
               <ProfileTopStat label="Gateway" value={data?.gatewayReviewDate || '--'} tone="primary" />
               <ProfileTopStat label="Next Session" value={nextLiveSession?.summary || '--'} tone="muted" wrap />
             </div>
@@ -1149,9 +1142,12 @@ function ProfileEmpty({ text }: { text: string }) {
   return <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100/45 px-4 py-6 text-center text-[10px] text-foreground-400">{text}</div>;
 }
 
-function parseProfileVariance(value?: string | null) {
-  const match = String(value || '').match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
+function profileRagTone(value?: string | null): 'primary' | 'emerald' | 'amber' | 'red' | 'muted' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'green') return 'emerald';
+  if (normalized === 'amber') return 'amber';
+  if (normalized === 'red') return 'red';
+  return 'muted';
 }
 
 function ProfileTopStat({
@@ -1163,23 +1159,31 @@ function ProfileTopStat({
 }: {
   label: string;
   value: string;
-  tone: 'primary' | 'emerald' | 'red' | 'muted';
+  tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted';
   dot?: boolean;
   wrap?: boolean;
 }) {
   const toneClass = {
     primary: 'text-primary-700',
     emerald: 'text-emerald-600',
+    amber: 'text-amber-600',
     red: 'text-red-600',
     muted: 'text-foreground-500',
   }[tone];
+  const dotClass = {
+    primary: 'bg-primary-600',
+    emerald: 'bg-emerald-500',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+    muted: 'bg-foreground-300',
+  }[tone];
   return (
-    <div className="min-w-0 px-3 py-4 text-center">
-      <p className={`${wrap ? 'text-[11px] leading-tight' : 'truncate text-[14px]'} font-bold ${toneClass}`}>
-        {dot && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500"></span>}
+    <div className="min-w-0 px-3 py-5 md:px-4 md:py-6 text-center">
+      <p className={`${wrap ? 'text-[12px] leading-tight' : 'truncate text-[16px]'} font-bold ${toneClass}`}>
+        {dot && <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${dotClass}`}></span>}
         {value}
       </p>
-      <p className="mt-1 text-[8px] font-semibold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
+      <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
     </div>
   );
 }
