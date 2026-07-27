@@ -30,6 +30,16 @@ class SafeJSONField(models.JSONField):
             return value
 
 
+def _serialise_quiz_ref(value):
+    """Keep the learner-detail API's quizId numeric when the DB stores text."""
+    if value in (None, ""):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 class EnrolmentUser(models.Model):
     id = models.AutoField(primary_key=True, db_column="id")
 
@@ -247,7 +257,7 @@ class LearnerProfile(models.Model):
                 "componentId": entry.component_ref,
                 "componentTitle": entry.component_title,
                 "componentType": entry.component_type,
-                "quizId": entry.quiz_ref,
+                "quizId": _serialise_quiz_ref(entry.quiz_ref),
                 "attempt": entry.attempt,
                 "grade": float(entry.grade) if entry.grade is not None else None,
                 "achievedScore": float(entry.achieved_score) if entry.achieved_score is not None else None,
@@ -297,7 +307,7 @@ class LearnerProfile(models.Model):
                 "detail": event.detail,
                 "componentId": event.component_ref,
                 "componentType": event.component_type,
-                "quizId": event.quiz_ref,
+                "quizId": _serialise_quiz_ref(event.quiz_ref),
                 "module": event.module_title,
                 "week": event.week_title,
                 "passed": event.passed,

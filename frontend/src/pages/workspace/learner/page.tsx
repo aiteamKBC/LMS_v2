@@ -6,8 +6,9 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
@@ -44,14 +45,59 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
+const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: string }> = {
+  accepted: { label: 'Reflection accepted', style: 'bg-emerald-100 text-emerald-700', icon: 'ri-check-double-line' },
+  submitted_for_tutor_review: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  pending: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  referred: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  reject: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  rejected: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+};
+
 /** One component row inside the current-week card. */
-function CurrentWeekRow({ c, videos, onOpen }: {
-  c: JourneyComponent; videos: LearnerVideoProgress[]; onOpen?: () => void;
+function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
+  c: JourneyComponent;
+  videos: LearnerVideoProgress[];
+  learnerKind?: string;
+  learnerId?: string;
+  onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
+  const [reflectionStatus, setReflectionStatus] = useState('');
+
+  useEffect(() => {
+    const validKind = learnerKind === 'commercial' || learnerKind === 'apprenticeship';
+    const activityId = c.isQuiz && c.quizMeta?.quizId != null
+      ? `quiz-${c.quizMeta.quizId}`
+      : c.componentId;
+    if (!validKind || !learnerId || !activityId) {
+      setReflectionStatus('');
+      return;
+    }
+
+    let cancelled = false;
+    void loadLearningReflectionSubmission({
+      learnerKind: learnerKind as LearnerKind,
+      learnerId,
+      activityType: c.isQuiz ? 'quiz' : componentNoun(c.type),
+      activityId,
+    })
+      .then((submission) => {
+        if (!cancelled) setReflectionStatus(submission?.status || '');
+      })
+      .catch(() => {
+        if (!cancelled) setReflectionStatus('');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [c.componentId, c.isQuiz, c.quizMeta?.quizId, c.type, learnerId, learnerKind]);
+
+  const reflection = REFLECTION_STATUS[reflectionStatus];
   return (
     <button
       type="button"
@@ -82,6 +128,12 @@ function CurrentWeekRow({ c, videos, onOpen }: {
           {prog.state === 'watched' && <i className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
+        {reflection && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
+            <i className={`${reflection.icon} text-[10px]`} />
+            {reflection.label}
+          </span>
+        )}
         {c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><i className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
@@ -142,7 +194,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
         ) : (
           <div className="space-y-2">
             {components.map((c, i) => (
-              <CurrentWeekRow key={c.componentId || `${c.title}-${i}`} c={c} videos={videos} onOpen={openFor(c)} />
+              <CurrentWeekRow
+                key={c.componentId || `${c.title}-${i}`}
+                c={c}
+                videos={videos}
+                learnerKind={kind}
+                learnerId={learnerId}
+                onOpen={openFor(c)}
+              />
             ))}
           </div>
         )}

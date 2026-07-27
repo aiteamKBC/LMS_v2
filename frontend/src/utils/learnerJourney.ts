@@ -419,7 +419,11 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
             quizAttempts: c.isQuiz && c.quizMeta
-              ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
+              // Normalised progress rows store quiz_ref as text, while the
+              // curriculum API exposes quiz ids as numbers. Compare their
+              // canonical string values so saved attempts still decorate the
+              // learner-facing quiz card with its Passed/Attempted status.
+              ? real.quizAttempts.filter((a) => String(a.quizId) === String(c.quizMeta!.quizId))
               : undefined,
           }));
         return {
