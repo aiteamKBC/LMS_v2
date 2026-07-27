@@ -13,6 +13,11 @@ export function formatClock(totalSeconds: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatKsbWeight(weight: number): string {
+  const rounded = Math.round((Number(weight) || 0) * 10) / 10;
+  return `${rounded}%`;
+}
+
 const TABS = [
   { id: 'learning', label: 'Learning' },
   { id: 'ksbs', label: 'KSBs' },
@@ -139,7 +144,21 @@ export function ReflectionWindow({
       .map(item => ({ code: item.code, description: item.description, weight: 0, classification: 'possible' }));
   }, [autoKsbs, learnerKsbs, selectedKsbs]);
 
+  const mappedKsbWeightSummary = useMemo(() => mappedKsbs.reduce(
+    (summary, item) => {
+      const weight = Number(item.weight) || 0;
+      const kind = String(item.code || '').trim().charAt(0).toUpperCase();
+      summary.total += weight;
+      if (kind === 'K' || kind === 'S' || kind === 'B') summary[kind] += weight;
+      return summary;
+    },
+    { total: 0, K: 0, S: 0, B: 0 },
+  ), [mappedKsbs]);
+
   const ksbCodes = Array.isArray(autoKsbs) ? autoKsbs.map(item => item.code) : selectedKsbs;
+  const ksbWeights = Object.fromEntries(
+    mappedKsbs.map(item => [item.code, Number(item.weight) || 0]),
+  );
   const wordCount = reflection.trim().split(/\s+/).filter(Boolean).length;
   const learningReady = wordCount >= 100;
   const ksbReady = ksbCodes.length === 0 || ksbCodes.every(code =>
@@ -321,6 +340,7 @@ export function ReflectionWindow({
         plannedOtjh: plannedTimeLabel,
         learningReflection: reflection.trim(),
         ksbCodes,
+        ksbWeights,
         ksbExplanations,
         confidenceBefore,
         confidenceAfter,
@@ -643,6 +663,32 @@ export function ReflectionWindow({
               Explain each mapped KSB, then rate your confidence before and after this {noun}.
             </p>
 
+            {mappedKsbs.length > 0 && (
+              <div className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-white shadow-sm">
+                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-500">Curriculum mapping</p>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <span className="text-2xl font-bold text-primary-800">{formatKsbWeight(mappedKsbWeightSummary.total)}</span>
+                      <span className="text-xs font-medium text-foreground-500">total mapped weight</span>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { key: 'K' as const, label: 'Knowledge', className: 'bg-violet-50 text-violet-700 ring-violet-100' },
+                      { key: 'S' as const, label: 'Skills', className: 'bg-sky-50 text-sky-700 ring-sky-100' },
+                      { key: 'B' as const, label: 'Behaviours', className: 'bg-emerald-50 text-emerald-700 ring-emerald-100' },
+                    ].map(group => (
+                      <div key={group.key} className={`min-w-[88px] rounded-xl px-3 py-2 ring-1 ${group.className}`}>
+                        <p className="text-[10px] font-semibold">{group.label}</p>
+                        <p className="mt-0.5 text-base font-bold">{formatKsbWeight(mappedKsbWeightSummary[group.key])}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!Array.isArray(autoKsbs) && (
               <div className="mt-4 rounded-xl border border-foreground-200 bg-white p-3">
                 <p className="mb-2 text-xs font-semibold text-foreground-700">Select the KSBs this activity developed</p>
@@ -669,12 +715,36 @@ export function ReflectionWindow({
             )}
 
             <div className="mt-4 space-y-3">
-              {mappedKsbs.map(item => (
-                <div key={item.code} className="rounded-xl border border-foreground-200 bg-white p-4 shadow-sm">
-                  <div className="flex items-start gap-2">
-                    <span className="rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold text-primary-700">{item.code}</span>
-                    <p className="text-xs leading-relaxed text-foreground-600">{item.description}</p>
-                  </div>
+              {mappedKsbs.map(item => {
+                const hasExplanation = Boolean(ksbExplanations[item.code]?.trim());
+                const hasRatings = confidenceBefore[item.code] !== undefined && confidenceAfter[item.code] !== undefined;
+                const requirementsComplete = hasExplanation && hasRatings;
+
+                return (
+                <div key={item.code} className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition ${
+                  requirementsComplete ? 'border-emerald-200' : 'border-foreground-200'
+                }`}>
+                  <div className={`h-1 ${requirementsComplete ? 'bg-emerald-400' : 'bg-primary-400'}`} />
+                  <div className="p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <span className="shrink-0 rounded-full bg-primary-100 px-2 py-1 text-xs font-semibold text-primary-700">{item.code}</span>
+                        <p className="text-xs leading-relaxed text-foreground-600">{item.description}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">
+                          {formatKsbWeight(item.weight)} weight
+                        </span>
+                        <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${
+                          requirementsComplete
+                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                            : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'
+                        }`}>
+                          <i className={requirementsComplete ? 'ri-check-line' : 'ri-time-line'} />
+                          {requirementsComplete ? 'Evidence complete' : 'Needs input'}
+                        </span>
+                      </div>
+                    </div>
                   <textarea
                     value={ksbExplanations[item.code] || ''}
                     onChange={event => setKsbExplanations(previous => ({ ...previous, [item.code]: event.target.value }))}
@@ -695,7 +765,9 @@ export function ReflectionWindow({
                     />
                   </div>
                 </div>
-              ))}
+                </div>
+                );
+              })}
               {mappedKsbs.length === 0 && (
                 <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">No KSBs are mapped to this activity.</p>
               )}
