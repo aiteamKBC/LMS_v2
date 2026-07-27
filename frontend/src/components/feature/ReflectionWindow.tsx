@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentKsbMapping, LearnerKind, LearnerKsbItem } from '@/api/learnerDetail';
 import { uploadEvidence } from '@/api/evidence';
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
-import { saveLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import {
+  loadLearningReflectionSubmission,
+  saveLearningReflectionSubmission,
+} from '@/api/reflectionSubmission';
 
 export function formatClock(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60);
@@ -101,6 +104,7 @@ export function ReflectionWindow({
   const [applicationType, setApplicationType] = useState('');
   const [applicationText, setApplicationText] = useState('');
   const [evidenceFiles, setEvidenceFiles] = useState<File[]>([]);
+  const [storedEvidenceFileNames, setStoredEvidenceFileNames] = useState<string[]>([]);
   const [coachVisibilityConfirmed, setCoachVisibilityConfirmed] = useState(false);
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [benefitExplanation, setBenefitExplanation] = useState('');
@@ -119,6 +123,9 @@ export function ReflectionWindow({
   const [evidenceUploadError, setEvidenceUploadError] = useState('');
   const [reflectionSaving, setReflectionSaving] = useState(false);
   const [reflectionSaveError, setReflectionSaveError] = useState('');
+  const [submissionStatus, setSubmissionStatus] = useState('');
+  const [coachFeedback, setCoachFeedback] = useState<string | null>(null);
+  const [loadingExisting, setLoadingExisting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const microphoneStreamRef = useRef<MediaStream | null>(null);
@@ -141,7 +148,11 @@ export function ReflectionWindow({
     && confidenceAfter[code] !== undefined
   );
   const applicationReady = Boolean(applicationType && applicationText.trim());
-  const evidenceReady = evidenceFiles.length === 0 || coachVisibilityConfirmed;
+  const allEvidenceFileNames = [
+    ...storedEvidenceFileNames,
+    ...evidenceFiles.map(file => file.name),
+  ];
+  const evidenceReady = allEvidenceFileNames.length === 0 || coachVisibilityConfirmed;
   const benefitReady = selectedBenefits.length > 0 && Boolean(benefitExplanation.trim());
   const otjhReady = Boolean(actualTime.trim() && dateCompleted && paidHours && otjhConfirmed);
   const canSubmit = learningReady && ksbReady && applicationReady && evidenceReady
@@ -188,7 +199,7 @@ export function ReflectionWindow({
     ...(!applicationReady ? ['Describe workplace application or the support you need'] : []),
     ...(!benefitReady ? ['Select and explain an employer or business benefit'] : []),
     ...(!otjhReady ? ['Complete and confirm the OTJH record'] : []),
-    ...(evidenceFiles.length > 0 && !coachVisibilityConfirmed
+    ...(allEvidenceFileNames.length > 0 && !coachVisibilityConfirmed
       ? ['Confirm permission and consent for the uploaded evidence']
       : []),
     ...(!signedDeclaration ? ['Confirm the learner declaration and signature'] : []),
@@ -202,6 +213,58 @@ export function ReflectionWindow({
   const activeIndex = TABS.findIndex(item => item.id === tab);
   const completedSections = TABS.filter(item => readiness[item.id]).length;
   const progress = Math.round((completedSections / TABS.length) * 100);
+  const submissionLocked = submissionStatus === 'accepted';
+
+  useEffect(() => {
+    if (!learnerKind || !learnerId || !evidenceSectionRef) return;
+
+    let cancelled = false;
+    setLoadingExisting(true);
+    setReflectionSaveError('');
+
+    void loadLearningReflectionSubmission({
+      learnerKind,
+      learnerId,
+      activityType: noun,
+      activityId: evidenceSectionRef,
+    })
+      .then(saved => {
+        if (cancelled || !saved) return;
+        setSubmissionStatus(saved.status || '');
+        setCoachFeedback(saved.coachFeedback);
+        setReflection(saved.learningReflection || '');
+        setSelectedKsbs(Array.isArray(saved.ksbCodes) ? saved.ksbCodes : []);
+        setKsbExplanations(saved.ksbExplanations || {});
+        setConfidenceBefore(saved.confidenceBefore || {});
+        setConfidenceAfter(saved.confidenceAfter || {});
+        setApplicationType(saved.applicationType || '');
+        setApplicationText(saved.applicationText || '');
+        setStoredEvidenceFileNames(Array.isArray(saved.evidenceFiles) ? saved.evidenceFiles : []);
+        setCoachVisibilityConfirmed(Boolean(saved.evidenceConsentConfirmed));
+        setSelectedBenefits(Array.isArray(saved.selectedBenefits) ? saved.selectedBenefits : []);
+        setBenefitExplanation(saved.benefitExplanation || '');
+        setActualTime(saved.actualTimeHours || plannedHours);
+        setPaidHours(saved.completedDuringPaidHours || 'yes');
+        setDateCompleted(saved.dateCompleted || new Date().toISOString().split('T')[0]);
+        setOtjhConfirmed(Boolean(saved.otjhConfirmed));
+        setSignedDeclaration(Boolean(saved.signedDeclaration));
+        setAiChecked(saved.qualityScore > 0);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setReflectionSaveError(
+            error instanceof Error ? error.message : 'Could not load the saved reflection.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingExisting(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours]);
 
   const handleNext = () => {
     const nextTab = TABS[activeIndex + 1];
@@ -209,6 +272,10 @@ export function ReflectionWindow({
   };
 
   const handleSubmit = async () => {
+    if (submissionLocked) {
+      setReflectionSaveError('This reflection has already been accepted and can no longer be changed.');
+      return;
+    }
     if (!canSubmit) {
       const firstIncomplete = TABS.find(item => !readiness[item.id]);
       if (firstIncomplete && firstIncomplete.id !== 'review') setTab(firstIncomplete.id);
@@ -229,7 +296,7 @@ export function ReflectionWindow({
       ksbExplanations,
       applicationType,
       applicationText: applicationText.trim(),
-      evidenceFiles: evidenceFiles.map(file => file.name),
+      evidenceFiles: allEvidenceFileNames,
       coachVisibilityConfirmed,
       selectedBenefits,
       benefitExplanation: benefitExplanation.trim(),
@@ -259,7 +326,7 @@ export function ReflectionWindow({
         confidenceAfter,
         applicationType,
         applicationText: applicationText.trim(),
-        evidenceFiles: evidenceFiles.map(file => file.name),
+        evidenceFiles: allEvidenceFileNames,
         evidenceConsentConfirmed: coachVisibilityConfirmed,
         selectedBenefits,
         benefitExplanation: benefitExplanation.trim(),
@@ -482,7 +549,38 @@ export function ReflectionWindow({
         </div>
       </div>
 
-      <div className="border-t border-[#d7e0e8] px-5 py-5 md:px-8 md:py-6">
+      {loadingExisting && (
+        <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8">
+          <i className="ri-loader-4-line mr-2 animate-spin" />
+          Loading your saved reflection...
+        </div>
+      )}
+
+      {submissionLocked && (
+        <div className="border-t border-emerald-200 bg-emerald-50 px-5 py-4 md:px-8">
+          <div className="flex items-start gap-3">
+            <i className="ri-lock-2-line mt-0.5 text-lg text-emerald-700" />
+            <div>
+              <p className="text-sm font-semibold text-emerald-900">
+                Accepted by your coach — this submission is now locked.
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-emerald-800">
+                You can review the submitted information, but you cannot edit it, upload more evidence or submit it again.
+              </p>
+              {coachFeedback && (
+                <p className="mt-2 rounded-lg border border-emerald-200 bg-white/70 px-3 py-2 text-sm text-emerald-900">
+                  <strong>Coach feedback:</strong> {coachFeedback}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <fieldset
+        disabled={submissionLocked || loadingExisting}
+        className="border-t border-[#d7e0e8] px-5 py-5 disabled:cursor-not-allowed md:px-8 md:py-6"
+      >
         {tab === 'learning' && (
           <section>
             <h2 className="text-base font-semibold text-[#142033]">What have you learnt from this activity?</h2>
@@ -678,11 +776,11 @@ export function ReflectionWindow({
                 {evidenceUploadError}
               </p>
             )}
-            {evidenceFiles.length > 0 && (
+            {allEvidenceFileNames.length > 0 && (
               <div className="mt-3 space-y-2">
-                {evidenceFiles.map(file => (
-                  <div key={`${file.name}-${file.size}`} className="flex items-center justify-between rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700">
-                    <span className="truncate"><i className="ri-file-line mr-2" />{file.name}</span>
+                {allEvidenceFileNames.map((fileName, index) => (
+                  <div key={`${fileName}-${index}`} className="flex items-center justify-between rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700">
+                    <span className="truncate"><i className="ri-file-line mr-2" />{fileName}</span>
                     <span className="ml-3 inline-flex shrink-0 items-center gap-1 font-medium text-emerald-700">
                       <i className="ri-checkbox-circle-line" /> Uploaded
                     </span>
@@ -858,36 +956,50 @@ export function ReflectionWindow({
             {reflectionSaveError || submitError}
           </p>
         )}
-      </div>
+      </fieldset>
 
       <div className="flex flex-col gap-4 border-t border-[#bfc9d3] bg-[#f7fbff] px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-8 md:py-5">
         <p className="max-w-xl text-sm leading-relaxed text-[#607086]">
-          Status on submit: <strong>Submitted for tutor review</strong> — KSBs &amp; OTJH stay pending until validated.
+          {submissionLocked ? (
+            <>Marking status: <strong className="text-emerald-700">Accepted</strong> — this submission is read-only.</>
+          ) : (
+            <>Status on submit: <strong>Submitted for tutor review</strong> — KSBs &amp; OTJH stay pending until validated.</>
+          )}
         </p>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
-          <button
-            onClick={() => setDraftSaved(true)}
-            className="rounded-xl border border-[#cbd5df] bg-[#f8fcff] px-5 py-2.5 text-sm font-medium text-[#142033] shadow-sm"
-          >
-            {draftSaved ? 'Draft saved' : 'Save draft'}
-          </button>
-          {tab === 'review' ? (
-            <button
-              onClick={handleSubmit}
-              disabled={submitting || reflectionSaving || !canSubmit}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
-            >
-              {submitting || reflectionSaving
-                ? <><i className="ri-loader-4-line animate-spin" /> Saving...</>
-                : <><i className="ri-edit-line" /> Submit for tutor review</>}
-            </button>
+          {submissionLocked ? (
+            <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-100 px-5 py-2.5 text-sm font-semibold text-emerald-800">
+              <i className="ri-lock-2-line" /> Accepted &amp; locked
+            </span>
           ) : (
-            <button
-              onClick={handleNext}
-              className="rounded-xl bg-[#102d52] px-6 py-2.5 text-sm font-semibold text-white"
-            >
-              Next
-            </button>
+            <>
+              <button
+                onClick={() => setDraftSaved(true)}
+                disabled={loadingExisting}
+                className="rounded-xl border border-[#cbd5df] bg-[#f8fcff] px-5 py-2.5 text-sm font-medium text-[#142033] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {draftSaved ? 'Draft saved' : 'Save draft'}
+              </button>
+              {tab === 'review' ? (
+                <button
+                  onClick={handleSubmit}
+                  disabled={submitting || reflectionSaving || loadingExisting || !canSubmit}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
+                >
+                  {submitting || reflectionSaving
+                    ? <><i className="ri-loader-4-line animate-spin" /> Saving...</>
+                    : <><i className="ri-edit-line" /> Submit for tutor review</>}
+                </button>
+              ) : (
+                <button
+                  onClick={handleNext}
+                  disabled={loadingExisting}
+                  className="rounded-xl bg-[#102d52] px-6 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

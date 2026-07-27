@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import date
 
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -34,6 +34,8 @@ def _list(value):
 
 @csrf_exempt
 def create_reflection_submission(request):
+    if request.method == "GET":
+        return get_reflection_submission(request)
     if request.method != "POST":
         return _error("Method not allowed.", 405)
 
@@ -74,8 +76,28 @@ def create_reflection_submission(request):
 
     try:
         ensure_learning_reflection_submissions_table()
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
+        with transaction.atomic(using="enrolment"):
+            with connections["enrolment"].cursor() as cur:
+                cur.execute(
+                    """
+                    select status
+                    from "Learner"."learning_reflection_submissions"
+                    where learner_kind = %s
+                      and learner_id = %s
+                      and activity_type = %s
+                      and activity_id = %s
+                    for update
+                    """,
+                    [learner_kind, learner_id, activity_type, activity_id],
+                )
+                existing = cur.fetchone()
+                if existing and existing[0] == "accepted":
+                    return _error(
+                        "This reflection has been accepted by the coach and can no longer be changed.",
+                        409,
+                    )
+
+                cur.execute(
                 """
                 insert into "Learner"."learning_reflection_submissions" (
                     id, learner_kind, learner_id, learner_name, programme_name,
@@ -128,7 +150,7 @@ def create_reflection_submission(request):
                     submitted_at = now()
                 returning id
                 """,
-                [
+                    [
                     str(submission_id),
                     learner_kind,
                     learner_id,
@@ -158,9 +180,9 @@ def create_reflection_submission(request):
                     bool(payload.get("signedDeclaration")),
                     quality_score,
                     json.dumps(full_submission),
-                ],
-            )
-            stored_id = cur.fetchone()[0]
+                    ],
+                )
+                stored_id = cur.fetchone()[0]
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
         return _error("Could not save the reflection for tutor review.", 502)
@@ -171,4 +193,64 @@ def create_reflection_submission(request):
             "status": "submitted_for_tutor_review",
         },
         status=201,
+    )
+
+
+def get_reflection_submission(request):
+    learner_kind = _text(request.GET.get("learnerKind"))
+    learner_id = _text(request.GET.get("learnerId"))
+    activity_type = _text(request.GET.get("activityType"))
+    activity_id = _text(request.GET.get("activityId"))
+
+    if learner_kind not in VALID_KINDS:
+        return _error("A valid learnerKind is required.")
+    if not learner_id or not activity_type or not activity_id:
+        return _error("learnerId, activityType and activityId are required.")
+
+    try:
+        ensure_learning_reflection_submissions_table()
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                select id, status, full_submission, coach_feedback,
+                       reviewed_by, reviewed_at, submitted_at
+                from "Learner"."learning_reflection_submissions"
+                where learner_kind = %s
+                  and learner_id = %s
+                  and activity_type = %s
+                  and activity_id = %s
+                limit 1
+                """,
+                [learner_kind, learner_id, activity_type, activity_id],
+            )
+            row = cur.fetchone()
+    except DatabaseError:
+        logger.exception("Could not load learner reflection submission.")
+        return _error("Could not load the saved reflection.", 502)
+
+    if not row:
+        return JsonResponse({"submission": None})
+
+    full_submission = row[2]
+    if isinstance(full_submission, str):
+        try:
+            full_submission = json.loads(full_submission)
+        except (TypeError, ValueError):
+            full_submission = {}
+    if not isinstance(full_submission, dict):
+        full_submission = {}
+
+    return JsonResponse(
+        {
+            "submission": {
+                **full_submission,
+                "id": str(row[0]),
+                "status": row[1],
+                "coachFeedback": row[3],
+                "reviewedBy": row[4],
+                "reviewedAt": row[5].isoformat() if row[5] else None,
+                "submittedAt": row[6].isoformat() if row[6] else None,
+                "locked": row[1] == "accepted",
+            }
+        }
     )

@@ -28,6 +28,43 @@ export interface LearningReflectionSubmissionInput {
   qualityScore: number;
 }
 
+export interface StoredLearningReflectionSubmission extends LearningReflectionSubmissionInput {
+  id: string;
+  status: string;
+  coachFeedback: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  submittedAt: string | null;
+  locked: boolean;
+}
+
+export async function loadLearningReflectionSubmission(input: {
+  learnerKind: 'commercial' | 'apprenticeship';
+  learnerId: string;
+  activityType: string;
+  activityId: string;
+}): Promise<StoredLearningReflectionSubmission | null> {
+  const params = new URLSearchParams(input);
+  let response: Response;
+  try {
+    response = await fetch(`/learner_api/reflection/submissions/?${params.toString()}`);
+  } catch {
+    throw new Error('Could not reach the server to load this reflection.');
+  }
+
+  const text = await response.text();
+  let data: { submission?: StoredLearningReflectionSubmission | null; error?: string };
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Unexpected response (${response.status}).`);
+  }
+  if (!response.ok) {
+    throw new Error(data.error || `Could not load the reflection (${response.status}).`);
+  }
+  return data.submission || null;
+}
+
 export async function saveLearningReflectionSubmission(
   input: LearningReflectionSubmissionInput,
 ): Promise<{ id: string; status: string }> {
