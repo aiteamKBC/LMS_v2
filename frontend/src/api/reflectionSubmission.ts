@@ -11,6 +11,7 @@ export interface LearningReflectionSubmissionInput {
   plannedOtjh: string;
   learningReflection: string;
   ksbCodes: string[];
+  ksbWeights: Record<string, number>;
   ksbExplanations: Record<string, string>;
   confidenceBefore: Record<string, number>;
   confidenceAfter: Record<string, number>;

@@ -24,6 +24,7 @@ interface Submission {
   status: string;
   learningReflection: string;
   ksbCodes: string[];
+  ksbWeights: Record<string, number>;
   ksbExplanations: Record<string, string>;
   confidenceBefore: Record<string, number>;
   confidenceAfter: Record<string, number>;
@@ -268,13 +269,23 @@ export default function CoachMarkingReviewPage() {
                 <div className="mt-5">
                   <p className="text-sm font-semibold uppercase tracking-wider text-foreground-400">KSBs claimed by learner</p>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {selected.ksbCodes.map(code => <span key={code} className="rounded-lg bg-primary-50 px-3.5 py-1.5 text-sm font-semibold text-primary-800">{code}</span>)}
+                    {selected.ksbCodes.map(code => (
+                      <span key={code} className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3.5 py-1.5 text-sm font-semibold text-primary-800">
+                        {code}
+                        <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] text-primary-600 shadow-sm">
+                          {selected.ksbWeights?.[code] ?? 0}% weight
+                        </span>
+                      </span>
+                    ))}
                   </div>
                 </div>
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <ReviewMetric label="Quality score" value={`${selected.qualityScore}/100`} />
-                  <ReviewMetric label="KSBs claimed" value={String(selected.ksbCodes.length)} />
+                  <ReviewMetric
+                    label="Mapped KSB weight"
+                    value={`${Object.values(selected.ksbWeights || {}).reduce((total, weight) => total + Number(weight || 0), 0)}%`}
+                  />
                   <ReviewMetric label="Actual OTJH" value={`${selected.actualTimeHours || '0'}h`} />
                   <ReviewMetric label="Marking status" value={statusLabel(selected.status)} />
                 </div>
@@ -331,6 +342,7 @@ export default function CoachMarkingReviewPage() {
                     </ReviewBlock>
                     {selected.ksbCodes.map(code => (
                       <ReviewBlock key={code} title={code} icon="ri-links-line">
+                        <p className="mb-2 text-xs font-bold text-primary-700">{selected.ksbWeights?.[code] ?? 0}% curriculum weight</p>
                         <p className="text-xs font-semibold text-foreground-500">Confidence {selected.confidenceBefore[code] || 1}/5 → {selected.confidenceAfter[code] || 1}/5</p>
                         <p className="mt-2 text-sm leading-6 text-foreground-700">{selected.ksbExplanations[code]}</p>
                       </ReviewBlock>

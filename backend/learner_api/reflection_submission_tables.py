@@ -29,6 +29,7 @@ def ensure_learning_reflection_submissions_table():
                 status                      varchar(64) not null default 'submitted_for_tutor_review',
                 learning_reflection         text not null,
                 ksb_codes                   jsonb not null default '[]'::jsonb,
+                ksb_weights                 jsonb not null default '{}'::jsonb,
                 ksb_explanations            jsonb not null default '{}'::jsonb,
                 confidence_before           jsonb not null default '{}'::jsonb,
                 confidence_after            jsonb not null default '{}'::jsonb,
@@ -50,6 +51,28 @@ def ensure_learning_reflection_submissions_table():
                 reviewed_at                   timestamptz,
                 submitted_at                  timestamptz not null default now()
             )
+            """
+        )
+        cur.execute(
+            'alter table "Learner"."learning_reflection_submissions" '
+            "add column if not exists ksb_weights jsonb not null default '{}'::jsonb"
+        )
+        cur.execute(
+            """
+            update "Learner"."learning_reflection_submissions" as submission
+            set ksb_weights = mapping.weights
+            from (
+                select
+                    component_id::text as activity_id,
+                    jsonb_object_agg(ksb_code, weight order by ksb_code) as weights
+                from curriculum.ksb_mappings
+                where component_id is not null
+                  and ksb_code is not null
+                  and ksb_code <> ''
+                group by component_id
+            ) as mapping
+            where submission.activity_id = mapping.activity_id
+              and submission.ksb_weights = '{}'::jsonb
             """
         )
         cur.execute(
