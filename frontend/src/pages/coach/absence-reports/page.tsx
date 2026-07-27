@@ -11,8 +11,8 @@ type ReportStatusKey = 'pending' | 'approved' | 'declined';
 
 function FilterDropdown({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; allLabel?: string }) {
   return (
-    <div className="relative">
-      <select value={value} onChange={e => onChange(e.target.value)} className="appearance-none pl-3 pr-8 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs font-medium text-foreground-700 cursor-pointer focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 min-w-[140px]">
+    <div className="relative min-w-[145px] flex-1 sm:flex-none">
+      <select value={value} onChange={e => onChange(e.target.value)} className="h-10 w-full appearance-none rounded-xl border border-foreground-200 bg-white pl-3 pr-8 text-[11px] font-semibold text-foreground-700 shadow-sm outline-none transition hover:border-primary-200 focus:border-primary-400 focus:ring-2 focus:ring-primary-100">
         <option value="all">{allLabel || `All ${label}s`}</option>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -230,23 +230,37 @@ export default function CoachAbsenceReports() {
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Absence Reports" pageSubtitle="Review, approve or decline learner absence reports" userName="Med Maher" userRole="Progress Coach">
-      <div className="p-4 md:p-6 space-y-6">
+      <div className="min-h-screen space-y-4 bg-[#f7f6fb] p-3 md:p-5">
 
         {/* ===== Hero Banner ===== */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8">
-            <div className="flex flex-col lg:flex-row items-start lg:items-center gap-5">
-              <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-                <i className="ri-file-list-3-line text-white text-2xl"></i>
+        <div className="relative overflow-hidden rounded-2xl border border-primary-800/20 shadow-[0_16px_35px_-24px_rgba(61,20,115,0.75)]" style={{ background: 'linear-gradient(115deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 58%, oklch(var(--primary-700)) 100%)' }}>
+          <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+          <div className="absolute -bottom-28 left-1/3 h-48 w-48 rounded-full bg-primary-300/20 blur-3xl" />
+          <div className="relative flex flex-col gap-5 p-5 sm:p-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-inner backdrop-blur-sm">
+                <i className="ri-file-list-3-line text-xl text-white"></i>
               </span>
-              <div className="flex-1">
-                <h2 className="text-lg font-heading font-bold text-white mb-1">Absence Reports</h2>
-                <p className="text-[13px] text-white/80 leading-relaxed">
-                  <strong>{pending} pending</strong> reports need your review. {approved} approved, {declined} declined out of {total} total reports.
-                  {withEvidence} reports have supporting evidence.
+              <div>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-primary-200">Attendance management</p>
+                <h2 className="text-xl font-heading font-bold text-white">Absence Reports</h2>
+                <p className="mt-1 max-w-2xl text-[12px] leading-relaxed text-white/70">
+                  Review evidence and make clear, consistent attendance decisions.
                 </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2 sm:min-w-[330px]">
+              <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 backdrop-blur-sm">
+                <p className="text-lg font-bold text-white">{pending}</p>
+                <p className="text-[9px] font-medium uppercase tracking-wider text-white/60">To review</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 backdrop-blur-sm">
+                <p className="text-lg font-bold text-white">{withEvidence}</p>
+                <p className="text-[9px] font-medium uppercase tracking-wider text-white/60">Evidence</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/10 px-3 py-2.5 backdrop-blur-sm">
+                <p className="text-lg font-bold text-white">{total}</p>
+                <p className="text-[9px] font-medium uppercase tracking-wider text-white/60">Total</p>
               </div>
             </div>
           </div>
@@ -255,18 +269,19 @@ export default function CoachAbsenceReports() {
         {/* ===== Review Queue Snapshot ===== */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
-            { label: 'Needs review', value: pending, sub: 'Pending decisions', icon: 'ri-time-line', color: 'amber', onClick: () => { setStatusFilter('pending'); setQueueFilter('all'); } },
-            { label: 'High priority', value: highPriority, sub: 'Low attendance or repeat absence', icon: 'ri-alarm-warning-line', color: 'red', onClick: () => { setStatusFilter('pending'); setQueueFilter('high-priority'); } },
-            { label: 'Approved', value: approved, sub: 'Confirmed absences', icon: 'ri-check-line', color: 'emerald', onClick: () => { setStatusFilter('approved'); setQueueFilter('all'); } },
-            { label: 'Declined', value: declined, sub: 'Rejected requests', icon: 'ri-close-line', color: 'red', onClick: () => { setStatusFilter('declined'); setQueueFilter('all'); } },
+            { label: 'Needs review', value: pending, sub: 'Pending decisions', icon: 'ri-time-line', color: 'amber', accent: 'bg-amber-400', onClick: () => { setStatusFilter('pending'); setQueueFilter('all'); } },
+            { label: 'High priority', value: highPriority, sub: 'Low attendance or repeat absence', icon: 'ri-alarm-warning-line', color: 'red', accent: 'bg-red-400', onClick: () => { setStatusFilter('pending'); setQueueFilter('high-priority'); } },
+            { label: 'Approved', value: approved, sub: 'Confirmed absences', icon: 'ri-check-line', color: 'emerald', accent: 'bg-emerald-400', onClick: () => { setStatusFilter('approved'); setQueueFilter('all'); } },
+            { label: 'Declined', value: declined, sub: 'Rejected requests', icon: 'ri-close-line', color: 'red', accent: 'bg-rose-400', onClick: () => { setStatusFilter('declined'); setQueueFilter('all'); } },
           ].map(card => (
             <button
               key={card.label}
               type="button"
               onClick={() => { card.onClick(); setCurrentPage(1); }}
-              className="group rounded-xl border border-foreground-200/60 bg-background-50 p-4 text-left shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md"
+              className="group relative overflow-hidden rounded-2xl border border-foreground-200/60 bg-white p-4 text-left shadow-[0_8px_24px_-20px_rgba(33,20,65,0.7)] transition duration-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-[0_14px_30px_-20px_rgba(82,35,145,0.55)]"
             >
-              <div className="flex items-start justify-between gap-3">
+              <span className={`absolute inset-x-0 top-0 h-1 ${card.accent}`} />
+              <div className="flex items-center justify-between gap-3">
                 <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${
                   card.color === 'amber' ? 'bg-amber-50 text-amber-600' :
                   card.color === 'red' ? 'bg-red-50 text-red-600' :
@@ -275,26 +290,42 @@ export default function CoachAbsenceReports() {
                 }`}>
                   <i className={`${card.icon} text-lg`}></i>
                 </span>
+                <i className="ri-arrow-right-line text-sm text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500"></i>
+              </div>
+              <div className="mt-3 flex items-end justify-between gap-2">
+                <div>
+                  <p className="text-[12px] font-semibold text-foreground-900">{card.label}</p>
+                  <p className="mt-0.5 text-[10px] text-foreground-400">{card.sub}</p>
+                </div>
                 <span className="text-2xl font-heading font-bold text-foreground-900">{card.value}</span>
               </div>
-              <p className="mt-3 text-[12px] font-semibold text-foreground-900">{card.label}</p>
-              <p className="mt-0.5 text-[10px] text-foreground-400">{card.sub}</p>
             </button>
           ))}
         </div>
 
         {/* ===== Search + Filters Bar ===== */}
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
+        <div className="rounded-2xl border border-foreground-200/60 bg-white p-4 shadow-[0_8px_24px_-22px_rgba(33,20,65,0.65)]">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-[12px] font-semibold text-foreground-900">Find a report</p>
+              <p className="mt-0.5 text-[10px] text-foreground-400">Search and narrow the review queue</p>
+            </div>
+            {hasActiveFilters && (
+              <button onClick={clearFilters} className="rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-primary-600 transition hover:bg-primary-50">
+                Reset filters
+              </button>
+            )}
+          </div>
+          <div className="flex flex-col gap-3">
             {/* Search */}
             <div className="relative flex-1 w-full">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
                 placeholder="Search by learner, session, module, reason..."
-                className="w-full pl-9 pr-3 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50"
+                className="h-11 w-full rounded-xl border border-foreground-200 bg-[#faf9fc] pl-10 pr-10 text-xs text-foreground-700 outline-none transition placeholder:text-foreground-400 hover:border-primary-200 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-100"
               />
               {searchQuery && (
                 <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 cursor-pointer">
@@ -303,7 +334,7 @@ export default function CoachAbsenceReports() {
               )}
             </div>
             {/* Filter Dropdowns */}
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
               <FilterDropdown
                 label="Status"
                 allLabel="All Statuses"
@@ -344,12 +375,12 @@ export default function CoachAbsenceReports() {
                 options={reasonCategories.map(r => ({ value: r, label: reasonCategoryLabel[r] || r }))}
               />
               {/* Date Range */}
-              <div className="flex items-center gap-1">
+              <div className="col-span-2 flex items-center gap-1 sm:col-span-1">
                 <input
                   type="date"
                   value={dateFrom}
                   onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }}
-                  className="px-2 py-2 bg-background-100 border border-foreground-200 rounded-lg text-[10px] text-foreground-700 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 w-[115px]"
+                  className="h-10 min-w-0 flex-1 rounded-xl border border-foreground-200 bg-white px-2 text-[10px] text-foreground-700 shadow-sm outline-none transition hover:border-primary-200 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 sm:w-[125px] sm:flex-none"
                   placeholder="From"
                 />
                 <span className="text-[10px] text-foreground-400">to</span>
@@ -357,18 +388,10 @@ export default function CoachAbsenceReports() {
                   type="date"
                   value={dateTo}
                   onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }}
-                  className="px-2 py-2 bg-background-100 border border-foreground-200 rounded-lg text-[10px] text-foreground-700 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 w-[115px]"
+                  className="h-10 min-w-0 flex-1 rounded-xl border border-foreground-200 bg-white px-2 text-[10px] text-foreground-700 shadow-sm outline-none transition hover:border-primary-200 focus:border-primary-400 focus:ring-2 focus:ring-primary-100 sm:w-[125px] sm:flex-none"
                   placeholder="To"
                 />
               </div>
-              {hasActiveFilters && (
-                <button
-                  onClick={clearFilters}
-                  className="px-2 py-2 rounded-lg text-[11px] text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
-                >
-                  <i className="ri-close-line mr-1"></i>Clear All
-                </button>
-              )}
             </div>
           </div>
 
@@ -423,13 +446,18 @@ export default function CoachAbsenceReports() {
         </div>
 
         {/* ===== Reports Table ===== */}
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="flex flex-col gap-3 border-b border-foreground-200/60 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Review queue</p>
-              <h3 className="mt-0.5 text-sm font-heading font-bold text-foreground-900">
+        <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-[0_12px_30px_-24px_rgba(33,20,65,0.75)]">
+          <div className="flex flex-col gap-3 border-b border-foreground-200/60 bg-gradient-to-r from-white via-white to-primary-50/40 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+                <i className="ri-list-check-3 text-lg"></i>
+              </span>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Review queue</p>
+                <h3 className="mt-0.5 text-sm font-heading font-bold text-foreground-900">
                 {filteredData.length} report{filteredData.length === 1 ? '' : 's'} in view
-              </h3>
+                </h3>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-[10px] text-foreground-400">
               <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">{pending} pending</span>
@@ -438,8 +466,8 @@ export default function CoachAbsenceReports() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
+            <table className="w-full min-w-[1180px] text-left">
+              <thead className="bg-[#faf9fc]">
                 <tr className="border-b border-foreground-200/60">
                   <th className="pl-4 pr-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Learner</th>
                   <th className="px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Session</th>
@@ -452,7 +480,7 @@ export default function CoachAbsenceReports() {
                   <th className="pr-4 pl-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-background-200/30">
+              <tbody className="divide-y divide-foreground-100">
                 {paginatedData.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-16 text-center">
@@ -478,11 +506,11 @@ export default function CoachAbsenceReports() {
                       <tr
                         key={row.id}
                         onClick={() => setSelectedReportId(isSel ? null : row.id)}
-                        className={`transition-smooth cursor-pointer ${isSel ? 'bg-primary-50/30' : 'hover:bg-background-100/50'}`}
+                        className={`cursor-pointer border-l-2 transition duration-150 ${isSel ? 'border-primary-500 bg-primary-50/50' : 'border-transparent hover:bg-[#faf9fc]'}`}
                       >
                         <td className="pl-4 pr-3 py-3">
                           <div className="flex items-center gap-2.5">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ring-1.5 ${row.attendanceRate >= 90 ? 'bg-emerald-100 text-emerald-700 ring-emerald-200' : row.attendanceRate >= 80 ? 'bg-amber-100 text-amber-700 ring-amber-200' : 'bg-red-100 text-red-700 ring-red-200'}`}>
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ring-1 ${row.attendanceRate >= 90 ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : row.attendanceRate >= 80 ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-red-50 text-red-700 ring-red-200'}`}>
                               <span className="text-[11px] font-bold">{row.initials}</span>
                             </div>
                             <div className="min-w-0">
@@ -598,7 +626,7 @@ export default function CoachAbsenceReports() {
 
           {/* Pagination */}
           {filteredData.length > 0 && (
-            <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 bg-[#faf9fc] px-4 py-3 sm:flex-row">
               <div className="flex items-center gap-2 text-[11px] text-foreground-400">
                 <span>Showing {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–{Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} reports</span>
                 <span className="text-foreground-300">|</span>

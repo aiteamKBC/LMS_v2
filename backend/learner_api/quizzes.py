@@ -369,7 +369,14 @@ def submit_quiz_attempt(request, quiz_id):
 
     history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
     # 1-based attempt number for THIS quiz — count prior quiz-kind records for it.
-    prior = sum(1 for a in history if a.get("kind") == "quiz" and a.get("quizId") == quiz["id"])
+    # Normalised progress rows expose the CharField quiz_ref as text, whereas
+    # curriculum quiz ids are integers. Canonicalise both sides so retakes are
+    # numbered correctly after progress was moved out of the legacy JSON field.
+    prior = sum(
+        1
+        for a in history
+        if a.get("kind") == "quiz" and str(a.get("quizId")) == str(quiz["id"])
+    )
     attempt_number = prior + 1
 
     submitted_at = timezone.now().isoformat()
