@@ -2,16 +2,21 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import type { LearnerKind } from '@/api/learnerDetail';
+import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
 
 interface Submission {
   id: string;
+  learnerKind: LearnerKind;
+  learnerId: string;
   learner: string;
   initials: string;
   programme: string;
   activityType: string;
+  activityId: string;
   activityTitle: string;
   module: string;
   week: string;
@@ -52,6 +57,13 @@ function statusLabel(status: string) {
   return 'Pending review';
 }
 
+function formatFileSize(bytes: number) {
+  if (!bytes) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function CoachMarkingReviewPage() {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
@@ -61,6 +73,10 @@ export default function CoachMarkingReviewPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState('');
+  const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -86,12 +102,65 @@ export default function CoachMarkingReviewPage() {
     () => items.find(item => item.id === submissionId) || null,
     [items, submissionId],
   );
+  const submissionEvidenceRecords = useMemo(() => {
+    if (!selected?.evidenceFiles.length) return [];
+    const submittedNames = new Set(selected.evidenceFiles);
+    const seenNames = new Set<string>();
+    return evidenceRecords.filter(record => {
+      if (!submittedNames.has(record.filename) || seenNames.has(record.filename)) return false;
+      seenNames.add(record.filename);
+      return true;
+    });
+  }, [evidenceRecords, selected]);
 
   useEffect(() => {
     if (selected) {
       setFeedback(selected.coachFeedback ?? '');
     }
   }, [selected]);
+
+  useEffect(() => {
+    if (!selected) {
+      setEvidenceRecords([]);
+      return;
+    }
+
+    let cancelled = false;
+    setEvidenceRecords([]);
+    setEvidenceLoading(true);
+    setEvidenceError('');
+    fetchEvidence(selected.learnerKind, selected.learnerId, { sectionRef: selected.activityId })
+      .then(records => {
+        if (!cancelled) setEvidenceRecords(records);
+      })
+      .catch(loadError => {
+        if (!cancelled) {
+          setEvidenceRecords([]);
+          setEvidenceError(loadError instanceof Error ? loadError.message : 'Could not load the uploaded evidence.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setEvidenceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  const openEvidence = async (record: EvidenceRecord) => {
+    if (record.status !== 'approved' || openingEvidenceId) return;
+    setOpeningEvidenceId(record.id);
+    setEvidenceError('');
+    try {
+      const url = await getEvidenceDownloadUrl(selected!.learnerKind, selected!.learnerId, record.id);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (openError) {
+      setEvidenceError(openError instanceof Error ? openError.message : 'Could not open the uploaded file.');
+    } finally {
+      setOpeningEvidenceId(null);
+    }
+  };
 
   const saveDecision = async (decision: ReviewDecision) => {
     if (!selected || saving) return;
@@ -123,6 +192,9 @@ export default function CoachMarkingReviewPage() {
       ? `The learner completed all required sections and claimed ${selected.ksbCodes.length} mapped KSBs. Review the explanations and evidence before accepting the submission.`
       : `The learner's quality score is ${selected.qualityScore}/100. Check the incomplete or weak sections before making a final decision.`
     : '';
+  const unresolvedEvidenceFiles = selected
+    ? selected.evidenceFiles.filter(name => !submissionEvidenceRecords.some(record => record.filename === name))
+    : [];
 
   return (
     <WorkspaceShell
@@ -269,9 +341,56 @@ export default function CoachMarkingReviewPage() {
                 {tab === 'evidence' && (
                   <div className="mt-5 grid gap-4 md:grid-cols-2">
                     <ReviewBlock title="Uploaded evidence" icon="ri-attachment-2">
-                      {selected.evidenceFiles.length
-                        ? selected.evidenceFiles.map(file => <p key={file} className="mb-2 rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700"><i className="ri-file-line mr-2" />{file}</p>)
-                        : <p className="text-sm text-foreground-400">No file uploaded.</p>}
+                      {evidenceLoading && (
+                        <div className="flex items-center gap-2 rounded-xl bg-background-100 px-3 py-3 text-xs text-foreground-500">
+                          <i className="ri-loader-4-line animate-spin" /> Loading uploaded evidence...
+                        </div>
+                      )}
+                      {!evidenceLoading && submissionEvidenceRecords.map(record => {
+                        const canOpen = record.status === 'approved';
+                        const isOpening = openingEvidenceId === record.id;
+                        return (
+                          <button
+                            type="button"
+                            key={record.id}
+                            disabled={!canOpen || isOpening}
+                            onClick={() => void openEvidence(record)}
+                            className={`mb-2 flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                              canOpen
+                                ? 'border-primary-100 bg-primary-50/50 hover:border-primary-300 hover:bg-primary-50 hover:shadow-sm'
+                                : 'cursor-not-allowed border-foreground-100 bg-background-100 opacity-70'
+                            }`}
+                          >
+                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${canOpen ? 'bg-white text-primary-700 shadow-sm' : 'bg-background-200 text-foreground-400'}`}>
+                              <i className={isOpening ? 'ri-loader-4-line animate-spin' : 'ri-file-line'} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-xs font-semibold text-foreground-800">{record.filename}</span>
+                              <span className="mt-0.5 block text-[10px] text-foreground-400">
+                                {[formatFileSize(record.sizeBytes), canOpen ? 'Ready to view' : record.status === 'pending' ? 'Security scan in progress' : 'File unavailable'].filter(Boolean).join(' · ')}
+                              </span>
+                            </span>
+                            {canOpen && (
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-bold text-primary-700 shadow-sm">
+                                View <i className="ri-external-link-line" />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                      {!evidenceLoading && unresolvedEvidenceFiles.map(file => (
+                        <div key={file} className="mb-2 flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-amber-600 shadow-sm"><i className="ri-file-warning-line" /></span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-semibold text-foreground-800">{file}</span>
+                            <span className="mt-0.5 block text-[10px] text-amber-700">The file record could not be found.</span>
+                          </span>
+                        </div>
+                      ))}
+                      {!evidenceLoading && !submissionEvidenceRecords.length && !unresolvedEvidenceFiles.length && (
+                        <p className="text-sm text-foreground-400">No file uploaded.</p>
+                      )}
+                      {evidenceError && <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{evidenceError}</p>}
                       <p className="mt-2 text-xs text-emerald-700">{selected.evidenceConsentConfirmed ? 'Consent confirmed' : 'No consent confirmation required'}</p>
                     </ReviewBlock>
                     <ReviewBlock title="OTJH declaration" icon="ri-time-line">
