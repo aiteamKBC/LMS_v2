@@ -123,7 +123,7 @@ export const coachNavItems: SidebarNavItem[] = [
     icon: 'ri-edit-line',
     href: '',
     children: [
-      { id: 'coach-marking-coming-soon', label: 'Coming Soon', icon: 'ri-edit-line', href: '/coach/marking-queue' },
+      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue' },
     ],
   },
   {

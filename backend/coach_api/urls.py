@@ -23,6 +23,7 @@ urlpatterns = [
     path('coach/absence-reports', coach_absence_reports, name='coach-absence-reports'),
     path('coach/evidence-awaiting-review', coach_evidence_awaiting_review, name='coach-evidence-awaiting-review'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
+    path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
     path('coach/monthly-activity', coach_monthly_activity, name='coach-monthly-activity'),
     path('coach/timetable', coach_timetable, name='coach-timetable'),
     path('coach/timetable/events/schedule', coach_timetable_schedule_event, name='coach-timetable-event-schedule'),

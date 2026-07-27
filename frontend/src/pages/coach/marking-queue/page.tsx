@@ -1,375 +1,419 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
-const MARKING_DATA_COMING_SOON = true;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
-const MISSING_VALUE = '--';
 
-type FilterKey = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
+type QueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
+type ReviewDecision = 'accepted' | 'referred';
 
-interface MarkingQueueItem {
+interface MarkingSubmission {
   id: string;
+  learnerKind: string;
   learnerId: string;
   learner: string;
   initials: string;
-  email?: string | null;
-  programme?: string | null;
-  group?: string | null;
-  status?: string | null;
-  enrollmentStatus?: string;
-  isOnBreak?: boolean;
-  pendingEvidence: number;
-  acceptedEvidence: number;
-  referredEvidence: number;
-  totalEvidence: number;
+  programme: string;
+  activityType: string;
+  activityId: string;
+  activityTitle: string;
+  module: string;
+  week: string;
+  plannedOtjh: string;
+  status: 'pending' | 'accepted' | 'referred' | string;
+  learningReflection: string;
+  ksbCodes: string[];
+  ksbExplanations: Record<string, string>;
+  confidenceBefore: Record<string, number>;
+  confidenceAfter: Record<string, number>;
+  applicationType: string;
+  applicationText: string;
+  evidenceFiles: string[];
+  evidenceConsentConfirmed: boolean;
+  selectedBenefits: string[];
+  benefitExplanation: string;
+  actualTimeHours: string;
+  completedDuringPaidHours: string;
+  dateCompleted: string | null;
+  otjhConfirmed: boolean;
+  signedDeclaration: boolean;
+  qualityScore: number;
+  coachFeedback: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  submittedAt: string | null;
+  submittedDisplay: string;
   elapsedDays: number;
   isOverdue: boolean;
-  lastSubmission?: string | null;
-  lastSubmissionIso?: string | null;
-  startDate?: string | null;
-  module?: string | null;
-  title?: string | null;
-  type?: string | null;
-  due?: string | null;
-  words?: number | null;
 }
 
-interface MarkingQueueSummary {
-  caseloadLearners: number;
-  queueLearners: number;
+interface QueueSummary {
+  totalItems: number;
   activeLearners: number;
-  queueActiveLearners: number;
-  onBreakLearners: number;
-  queueOnBreakLearners: number;
   pendingItems: number;
-  overdueLearners: number;
+  acceptedItems: number;
+  referredItems: number;
   overdueItems: number;
-  inProgressItems: number | null;
-  acceptedEvidence: number;
-  referredEvidence: number;
-  totalEvidence: number;
   oldestSubmission: string;
   overdueThresholdDays: number;
-  unavailableFields?: string[];
 }
 
-interface MarkingQueueResponse {
-  summary?: MarkingQueueSummary;
-  items?: MarkingQueueItem[];
-}
-
-const EMPTY_SUMMARY: MarkingQueueSummary = {
-  caseloadLearners: 0,
-  queueLearners: 0,
+const EMPTY_SUMMARY: QueueSummary = {
+  totalItems: 0,
   activeLearners: 0,
-  queueActiveLearners: 0,
-  onBreakLearners: 0,
-  queueOnBreakLearners: 0,
   pendingItems: 0,
-  overdueLearners: 0,
+  acceptedItems: 0,
+  referredItems: 0,
   overdueItems: 0,
-  inProgressItems: null,
-  acceptedEvidence: 0,
-  referredEvidence: 0,
-  totalEvidence: 0,
-  oldestSubmission: MISSING_VALUE,
+  oldestSubmission: '--',
   overdueThresholdDays: 7,
-  unavailableFields: [],
 };
 
-function displayValue(value?: string | number | null): string {
-  if (value === null || value === undefined || value === '') return MISSING_VALUE;
-  return String(value);
-}
-
-function StatusPill({ item }: { item: MarkingQueueItem }) {
-  if (item.isOnBreak) {
-    return (
-      <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200/70">
-        On Break
-      </span>
-    );
+function StatusBadge({ status, overdue }: { status: string; overdue?: boolean }) {
+  if (overdue) {
+    return <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-semibold text-red-700">Overdue</span>;
   }
-
-  return (
-    <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-      {displayValue(item.status)}
-    </span>
-  );
+  const style = status === 'accepted'
+    ? 'bg-emerald-50 text-emerald-700'
+    : status === 'partial'
+      ? 'bg-blue-50 text-blue-700'
+      : status === 'referred'
+      ? 'bg-amber-50 text-amber-700'
+      : status === 'escalated'
+        ? 'bg-purple-50 text-purple-700'
+        : status === 'rejected'
+          ? 'bg-red-50 text-red-700'
+      : 'bg-primary-50 text-primary-700';
+  const label = status === 'accepted'
+    ? 'Accepted'
+    : status === 'partial'
+      ? 'Partial award'
+      : status === 'referred'
+        ? 'Referred back'
+        : status === 'escalated'
+          ? 'Escalated'
+          : status === 'rejected'
+            ? 'Rejected'
+            : 'Pending review';
+  return <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${style}`}>{label}</span>;
 }
 
-function StatBox({ label, value, tone = 'white' }: { label: string; value: string; tone?: 'white' | 'amber' | 'red' }) {
-  const valueClass = tone === 'amber' ? 'text-amber-300' : tone === 'red' ? 'text-red-300' : 'text-white';
-
+function DetailSection({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[78px]">
-      <p className={`text-2xl font-bold ${valueClass}`}>{value}</p>
-      <p className="text-[10px] text-white/70 uppercase tracking-wide">{label}</p>
-    </div>
+    <section className="rounded-2xl border border-foreground-200 bg-white p-4">
+      <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-900">
+        <i className={`${icon} text-primary-600`} /> {title}
+      </h4>
+      {children}
+    </section>
   );
 }
 
 export default function CoachMarkingQueue() {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<FilterKey>('all');
-  const [items, setItems] = useState<MarkingQueueItem[]>([]);
-  const [summary, setSummary] = useState<MarkingQueueSummary>(EMPTY_SUMMARY);
-  const [selectedItem, setSelectedItem] = useState<MarkingQueueItem | null>(null);
+  const [items, setItems] = useState<MarkingSubmission[]>([]);
+  const [summary, setSummary] = useState<QueueSummary>(EMPTY_SUMMARY);
+  const [filter, setFilter] = useState<QueueFilter>('pending');
+  const [selected, setSelected] = useState<MarkingSubmission | null>(null);
+  const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadQueue() {
-      setLoading(true);
-      setError(null);
-      try {
-        const response = await fetch(API_ENDPOINT);
-        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
-        const data: MarkingQueueResponse = await response.json();
-        if (cancelled) return;
-        setItems(data.items || []);
-        setSummary(data.summary || EMPTY_SUMMARY);
-      } catch (err) {
-        if (!cancelled) {
-          setItems([]);
-          setSummary(EMPTY_SUMMARY);
-          setError(err instanceof Error ? err.message : 'Unable to load marking queue data');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const loadQueue = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(API_ENDPOINT);
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
+      setItems(data.items || []);
+      setSummary(data.summary || EMPTY_SUMMARY);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load the marking queue.');
+    } finally {
+      setLoading(false);
     }
-
-    loadQueue();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
-  const pendingLearners = useMemo(() => items.filter(item => item.pendingEvidence > 0), [items]);
-  const overdueLearners = useMemo(() => items.filter(item => item.isOverdue), [items]);
-  const acceptedLearners = useMemo(() => items.filter(item => item.acceptedEvidence > 0), [items]);
-  const referredLearners = useMemo(() => items.filter(item => item.referredEvidence > 0), [items]);
+  useEffect(() => {
+    void loadQueue();
+  }, [loadQueue]);
 
-  const filtered = useMemo(() => {
-    if (filter === 'pending') return pendingLearners;
-    if (filter === 'overdue') return overdueLearners;
-    if (filter === 'accepted') return acceptedLearners;
-    if (filter === 'referred') return referredLearners;
-    return items;
-  }, [acceptedLearners, filter, items, overdueLearners, pendingLearners, referredLearners]);
+  const filtered = useMemo(() => items.filter(item => {
+    if (filter === 'all') return true;
+    if (filter === 'overdue') return item.isOverdue;
+    if (filter === 'pending') return item.status === 'pending' || item.status === 'escalated';
+    if (filter === 'accepted') return item.status === 'accepted' || item.status === 'partial';
+    if (filter === 'referred') return item.status === 'referred' || item.status === 'rejected';
+    return item.status === filter;
+  }), [filter, items]);
 
-  const handleReview = (item: MarkingQueueItem) => {
-    setSelectedItem(item);
+  const openReview = (item: MarkingSubmission) => {
+    setSelected(item);
+    setFeedback(item.coachFeedback || '');
+    setError('');
   };
 
-  const openLearnerEvidence = (item: MarkingQueueItem) => {
-    navigate(`/coach/learner-case-file?id=${encodeURIComponent(item.learnerId)}&tab=evidence`, {
-      state: { learnerId: item.learnerId, learnerName: item.learner, tab: 'evidence' },
-    });
+  const submitDecision = async (decision: ReviewDecision) => {
+    if (!selected || reviewing) return;
+    if (decision === 'referred' && !feedback.trim()) {
+      setError('Add feedback explaining what the learner needs to improve.');
+      return;
+    }
+    setReviewing(true);
+    setError('');
+    try {
+      const response = await fetch(`${API_ENDPOINT}/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision,
+          feedback: feedback.trim(),
+          reviewedBy: 'Med Maher',
+        }),
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!response.ok) throw new Error(data.detail || 'The review could not be saved.');
+      setSelected(null);
+      await loadQueue();
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'The review could not be saved.');
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  const filterCounts: Record<QueueFilter, number> = {
+    all: summary.totalItems,
+    pending: summary.pendingItems,
+    overdue: summary.overdueItems,
+    accepted: summary.acceptedItems,
+    referred: summary.referredItems,
   };
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Marking Queue" pageSubtitle="Review learner evidence pending marking" userName="Med Maher" userRole="Progress Coach">
-      <div className="p-6 space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-edit-line text-white text-2xl"></i>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Marking Queue</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{summary.pendingItems} pending evidence</strong> across {summary.queueLearners} queue learners from {summary.activeLearners} active learners.
-                {' '}{summary.overdueItems} overdue evidence across {summary.overdueLearners} learners by {summary.overdueThresholdDays}+ days.
-                {' '}Oldest submission: {displayValue(summary.oldestSubmission)}.
-                {(summary.queueOnBreakLearners || 0) > 0 ? ` ${summary.queueOnBreakLearners} queue learner(s) on break are shown but flagged.` : ''}
-              </p>
+    <WorkspaceShell
+      role="coach"
+      roleLabel={coachNav.label}
+      navItems={coachNav.items}
+      workspaceLabel={coachNav.workspaceLabel}
+      pageTitle="Marking Queue"
+      pageSubtitle="Review learner reflections, evidence and OTJH"
+      userName="Med Maher"
+      userRole="Progress Coach"
+    >
+      <div className="space-y-5 p-4 md:p-6">
+        <header className="overflow-hidden rounded-2xl bg-gradient-to-r from-[#120025] via-[#24004d] to-[#39106d] p-6 text-white shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
+            <div className="flex flex-1 items-start gap-4">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15">
+                <i className="ri-file-list-3-line text-2xl" />
+              </span>
+              <div>
+                <h1 className="text-xl font-bold">Learner Reflection Reviews</h1>
+                <p className="mt-1 text-sm text-white/75">
+                  Review complete learning submissions, validate KSB development and confirm OTJH.
+                </p>
+                <p className="mt-2 text-xs text-white/55">
+                  Oldest pending submission: {summary.oldestSubmission}
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <StatBox label="Active Learners" value={displayValue(summary.activeLearners)} />
-              <StatBox label="Pending" value={displayValue(summary.pendingItems)} tone="amber" />
-              <StatBox label="Overdue Evidence" value={displayValue(summary.overdueItems)} tone="red" />
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                ['Learners', summary.activeLearners, 'text-white'],
+                ['Pending', summary.pendingItems, 'text-amber-300'],
+                ['Overdue', summary.overdueItems, 'text-red-300'],
+              ].map(([label, value, colour]) => (
+                <div key={String(label)} className="min-w-24 rounded-xl bg-white/10 px-4 py-3 text-center">
+                  <p className={`text-2xl font-bold ${colour}`}>{value}</p>
+                  <p className="text-[9px] font-medium uppercase tracking-wider text-white/60">{label}</p>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        </header>
 
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit">
-          <button onClick={() => setFilter('all')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'all' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Queue <span className="text-[10px] opacity-60">({summary.queueLearners})</span></button>
-          <button onClick={() => setFilter('pending')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'pending' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Pending <span className="text-[10px] opacity-60">({pendingLearners.length})</span></button>
-          <button onClick={() => setFilter('overdue')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'overdue' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Overdue <span className="text-[10px] opacity-60">({summary.overdueLearners})</span></button>
-          <button onClick={() => setFilter('accepted')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'accepted' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Accepted <span className="text-[10px] opacity-60">({acceptedLearners.length})</span></button>
-          <button onClick={() => setFilter('referred')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'referred' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Referred <span className="text-[10px] opacity-60">({referredLearners.length})</span></button>
-        </div>
-
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="grid grid-cols-[1.5fr_1.5fr_0.7fr_0.7fr_0.7fr_0.9fr_0.7fr_0.7fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-            <span>Learner</span>
-            <span>Group</span>
-            <span className="text-center">Pending</span>
-            <span className="text-center">Accepted</span>
-            <span className="text-center">Referred</span>
-            <span className="text-center">Last Submitted</span>
-            <span className="text-center">Elapsed</span>
-            <span className="text-center">Action</span>
-          </div>
-          <div className="divide-y divide-background-200/30">
-            {MARKING_DATA_COMING_SOON ? (
-              <div className="px-4 py-20 text-center">
-                <div className="flex flex-col items-center gap-3">
-                  <span className="w-12 h-12 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center">
-                    <i className="ri-time-line text-xl"></i>
-                  </span>
-                  <p className="text-sm font-semibold text-foreground-600">Coming Soon</p>
-                </div>
-              </div>
-            ) : loading && (
-              <div className="px-4 py-14 text-center text-sm text-foreground-400">Loading live marking queue...</div>
-            )}
-            {!MARKING_DATA_COMING_SOON && !loading && error && (
-              <div className="px-4 py-14 text-center">
-                <div className="inline-flex flex-col items-center gap-2 text-red-600">
-                  <i className="ri-error-warning-line text-2xl"></i>
-                  <span className="text-sm font-semibold">Unable to load live marking queue.</span>
-                  <span className="text-xs text-foreground-400">{error}</span>
-                </div>
-              </div>
-            )}
-            {!MARKING_DATA_COMING_SOON && !loading && !error && filtered.length === 0 && (
-              <div className="px-4 py-14 text-center text-sm text-foreground-400">
-                No learners match this filter.
-              </div>
-            )}
-            {!MARKING_DATA_COMING_SOON && !loading && !error && filtered.map(item => (
-              <div key={`${item.id}-${item.email}`} className="grid grid-cols-[1.5fr_1.5fr_0.7fr_0.7fr_0.7fr_0.9fr_0.7fr_0.7fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${item.isOverdue ? 'bg-red-100 text-red-700' : 'bg-primary-100 text-primary-700'}`}>{item.initials}</div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <p className="text-[12px] font-medium text-foreground-900 truncate">{item.learner}</p>
-                      {item.isOnBreak && <StatusPill item={item} />}
-                    </div>
-                    <p className="text-[10px] text-foreground-400 truncate">{displayValue(item.programme)}</p>
-                  </div>
-                </div>
-                <span className="text-[11px] text-foreground-500 truncate">{displayValue(item.group)}</span>
-                <span className={`text-[11px] text-center font-semibold ${item.pendingEvidence > 0 ? 'text-amber-600' : 'text-foreground-400'}`}>{item.pendingEvidence}</span>
-                <span className="text-[11px] text-foreground-500 text-center">{item.acceptedEvidence}</span>
-                <span className={`text-[11px] text-center ${item.referredEvidence > 0 ? 'text-red-600 font-semibold' : 'text-foreground-500'}`}>{item.referredEvidence}</span>
-                <span className="text-[11px] text-foreground-500 text-center">{displayValue(item.lastSubmission)}</span>
-                <span className={`text-[11px] text-center font-semibold ${item.isOverdue ? 'text-red-600' : 'text-foreground-500'}`}>{item.elapsedDays}d</span>
-                <div className="text-center">
-                  <button onClick={() => handleReview(item)} className="px-2 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Review</button>
-                </div>
-              </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-1 rounded-xl bg-background-100 p-1">
+            {(['pending', 'overdue', 'accepted', 'referred', 'all'] as QueueFilter[]).map(key => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
+                className={`rounded-lg px-4 py-2 text-xs font-semibold capitalize transition-colors ${
+                  filter === key ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'
+                }`}
+              >
+                {key} <span className="ml-1 opacity-60">({filterCounts[key]})</span>
+              </button>
             ))}
           </div>
+          <button onClick={() => void loadQueue()} className="inline-flex items-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 py-2 text-xs font-semibold text-foreground-700">
+            <i className="ri-refresh-line" /> Refresh
+          </button>
         </div>
 
-        {!MARKING_DATA_COMING_SOON && (
-          <div className="rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 text-[11px] text-foreground-400">
-            Fields not available in the current source table are treated as {MISSING_VALUE}: module, title, type, due date, and word count.
+        <div className="overflow-hidden rounded-2xl border border-foreground-200 bg-white">
+          <div className="hidden grid-cols-[1.3fr_1.5fr_1.2fr_0.8fr_0.7fr_0.6fr] gap-4 border-b border-foreground-200 bg-background-100/60 px-5 py-3 text-[10px] font-semibold uppercase tracking-wider text-foreground-400 md:grid">
+            <span>Learner</span><span>Activity</span><span>Module / Week</span>
+            <span>Submitted</span><span>Status</span><span className="text-right">Action</span>
           </div>
-        )}
+          {loading ? (
+            <div className="p-16 text-center text-sm text-foreground-400"><i className="ri-loader-4-line mr-2 animate-spin" />Loading submissions...</div>
+          ) : error && !selected ? (
+            <div className="p-16 text-center text-sm text-red-600">{error}</div>
+          ) : filtered.length === 0 ? (
+            <div className="p-16 text-center">
+              <i className="ri-checkbox-circle-line text-3xl text-emerald-500" />
+              <p className="mt-2 text-sm font-semibold text-foreground-700">No submissions in this view</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-foreground-100">
+              {filtered.map(item => (
+                <div key={item.id} className="grid gap-3 px-5 py-4 transition-colors hover:bg-background-100/40 md:grid-cols-[1.3fr_1.5fr_1.2fr_0.8fr_0.7fr_0.6fr] md:items-center md:gap-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{item.initials}</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground-900">{item.learner}</p>
+                      <p className="truncate text-[11px] text-foreground-400">{item.programme || '--'}</p>
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground-800">{item.activityTitle || item.activityId}</p>
+                    <p className="text-[11px] capitalize text-foreground-400">{item.activityType} · Quality {item.qualityScore}/100</p>
+                  </div>
+                  <p className="truncate text-xs text-foreground-500">{[item.module, item.week].filter(Boolean).join(' · ') || '--'}</p>
+                  <div>
+                    <p className="text-xs text-foreground-600">{item.submittedDisplay}</p>
+                    <p className={`text-[10px] ${item.isOverdue ? 'font-semibold text-red-600' : 'text-foreground-400'}`}>{item.elapsedDays} day(s)</p>
+                  </div>
+                  <div><StatusBadge status={item.status} overdue={item.isOverdue} /></div>
+                  <div className="text-right">
+                    <button onClick={() => navigate(`/coach/marking-queue/${item.id}`)} className="rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white hover:bg-primary-700">
+                      View
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {selectedItem && (
+      {selected && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <button
-            type="button"
-            aria-label="Close review panel"
-            className="absolute inset-0 bg-foreground-950/35 backdrop-blur-[1px] cursor-default"
-            onClick={() => setSelectedItem(null)}
-          />
-          <aside className="relative h-full w-full max-w-[520px] bg-background-50 shadow-2xl border-l border-foreground-200 overflow-y-auto">
-            <div className="sticky top-0 z-10 bg-background-50/95 backdrop-blur-sm border-b border-foreground-200 px-6 py-5 flex items-center justify-between">
+          <button aria-label="Close review" className="absolute inset-0 bg-foreground-950/45" onClick={() => setSelected(null)} />
+          <aside className="relative h-full w-full max-w-2xl overflow-y-auto border-l border-foreground-200 bg-[#f7fbff] shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-start justify-between border-b border-foreground-200 bg-[#f7fbff]/95 px-6 py-5 backdrop-blur">
               <div>
-                <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">Evidence Review</p>
-                <h3 className="text-lg font-heading font-bold text-foreground-900">{selectedItem.learner}</h3>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-primary-700">{selected.activityType} submission</p>
+                <h2 className="mt-1 text-xl font-bold text-foreground-950">{selected.learner}</h2>
+                <p className="mt-1 text-xs text-foreground-500">{selected.activityTitle} · {selected.submittedDisplay}</p>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedItem(null)}
-                className="w-9 h-9 rounded-full bg-background-100 text-foreground-500 hover:bg-background-200 hover:text-foreground-800 transition-smooth cursor-pointer"
-                aria-label="Close"
-              >
-                <i className="ri-close-line text-lg"></i>
-              </button>
+              <button onClick={() => setSelected(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-background-100 text-foreground-600"><i className="ri-close-line text-xl" /></button>
             </div>
 
-            <div className="p-6 space-y-5">
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 flex items-start gap-4">
-                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-lg font-bold shrink-0 ${selectedItem.isOverdue ? 'bg-red-100 text-red-700' : 'bg-primary-100 text-primary-700'}`}>
-                  {selectedItem.initials}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="text-base font-heading font-bold text-foreground-900">{selectedItem.learner}</h4>
-                    <StatusPill item={selectedItem} />
-                    {selectedItem.isOverdue && (
-                      <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/70">
-                        Overdue
-                      </span>
-                    )}
+            <div className="space-y-4 p-6">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  ['Quality', `${selected.qualityScore}/100`],
+                  ['KSBs', selected.ksbCodes.length],
+                  ['Actual OTJH', `${selected.actualTimeHours || '--'}h`],
+                  ['Status', selected.status],
+                ].map(([label, value]) => (
+                  <div key={String(label)} className="rounded-xl border border-foreground-200 bg-white p-3">
+                    <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
+                    <p className="mt-1 truncate text-sm font-semibold capitalize text-foreground-900">{value}</p>
                   </div>
-                  <p className="mt-1 text-[12px] text-foreground-500 truncate">{displayValue(selectedItem.email)}</p>
-                  <p className="mt-1 text-[12px] text-foreground-500">{displayValue(selectedItem.programme)}</p>
-                  <p className="mt-1 text-[12px] text-foreground-400">{displayValue(selectedItem.group)}</p>
-                </div>
+                ))}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border border-amber-200/70 bg-amber-50/60 p-4">
-                  <p className="text-[10px] font-semibold text-amber-700 uppercase tracking-wider">Pending</p>
-                  <p className="mt-2 text-2xl font-bold text-amber-700">{selectedItem.pendingEvidence}</p>
-                </div>
-                <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/60 p-4">
-                  <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-wider">Accepted</p>
-                  <p className="mt-2 text-2xl font-bold text-emerald-700">{selectedItem.acceptedEvidence}</p>
-                </div>
-                <div className="rounded-xl border border-red-200/70 bg-red-50/60 p-4">
-                  <p className="text-[10px] font-semibold text-red-700 uppercase tracking-wider">Referred</p>
-                  <p className="mt-2 text-2xl font-bold text-red-700">{selectedItem.referredEvidence}</p>
-                </div>
-              </div>
+              <DetailSection title="Learning reflection" icon="ri-book-open-line">
+                <p className="whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.learningReflection}</p>
+              </DetailSection>
 
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 space-y-3">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-foreground-500">Last submitted</span>
-                  <span className="text-[13px] font-semibold text-foreground-900">{displayValue(selectedItem.lastSubmission)}</span>
+              <DetailSection title="KSB development" icon="ri-links-line">
+                <div className="space-y-3">
+                  {selected.ksbCodes.map(code => (
+                    <div key={code} className="rounded-xl bg-background-100 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <strong className="text-sm text-primary-700">{code}</strong>
+                        <span className="text-xs text-foreground-500">
+                          Confidence {selected.confidenceBefore[code] || 1}/5 → {selected.confidenceAfter[code] || 1}/5
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-foreground-600">{selected.ksbExplanations[code] || 'No explanation provided.'}</p>
+                    </div>
+                  ))}
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-[12px] text-foreground-500">Elapsed</span>
-                  <span className={`text-[13px] font-semibold ${selectedItem.isOverdue ? 'text-red-600' : 'text-foreground-900'}`}>
-                    {selectedItem.elapsedDays}d
-                  </span>
-                </div>
-              </div>
+              </DetailSection>
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={() => openLearnerEvidence(selectedItem)}
-                  className="flex-1 px-4 py-3 rounded-xl bg-primary-500 text-white text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"
-                >
-                  <i className="ri-folder-upload-line mr-1.5"></i>
-                  Open Evidence Tab
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedItem(null)}
-                  className="px-4 py-3 rounded-xl border border-foreground-200 text-foreground-700 text-[13px] font-semibold hover:bg-background-100 transition-smooth cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
+              <DetailSection title="Workplace application" icon="ri-briefcase-line">
+                <p className="text-xs font-semibold capitalize text-primary-700">{(selected.applicationType || '').replaceAll('-', ' ')}</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.applicationText}</p>
+              </DetailSection>
+
+              <DetailSection title="Evidence" icon="ri-attachment-2">
+                {selected.evidenceFiles.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {selected.evidenceFiles.map(file => <span key={file} className="rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700"><i className="ri-file-line mr-1" />{file}</span>)}
+                  </div>
+                ) : <p className="text-sm text-foreground-400">No evidence file was attached.</p>}
+                <p className={`mt-3 text-xs ${selected.evidenceConsentConfirmed ? 'text-emerald-700' : 'text-foreground-400'}`}>
+                  <i className={selected.evidenceConsentConfirmed ? 'ri-checkbox-circle-line' : 'ri-information-line'} /> Evidence consent {selected.evidenceConsentConfirmed ? 'confirmed' : 'not required'}
+                </p>
+              </DetailSection>
+
+              <DetailSection title="Employer benefit" icon="ri-building-line">
+                <div className="flex flex-wrap gap-2">
+                  {selected.selectedBenefits.map(benefit => <span key={benefit} className="rounded-full bg-primary-50 px-3 py-1 text-xs text-primary-700">{benefit}</span>)}
+                </div>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.benefitExplanation}</p>
+              </DetailSection>
+
+              <DetailSection title="OTJH declaration" icon="ri-time-line">
+                <div className="grid grid-cols-2 gap-3 text-xs text-foreground-600 sm:grid-cols-3">
+                  <p><span className="block text-foreground-400">Planned</span>{selected.plannedOtjh || '--'}</p>
+                  <p><span className="block text-foreground-400">Actual</span>{selected.actualTimeHours || '--'} hours</p>
+                  <p><span className="block text-foreground-400">Date completed</span>{selected.dateCompleted || '--'}</p>
+                  <p><span className="block text-foreground-400">Paid hours</span><span className="capitalize">{selected.completedDuringPaidHours || '--'}</span></p>
+                  <p><span className="block text-foreground-400">OTJH confirmed</span>{selected.otjhConfirmed ? 'Yes' : 'No'}</p>
+                  <p><span className="block text-foreground-400">Signed</span>{selected.signedDeclaration ? 'Yes' : 'No'}</p>
+                </div>
+              </DetailSection>
+
+              <section className="rounded-2xl border border-primary-200 bg-primary-50/40 p-4">
+                <h4 className="text-sm font-semibold text-foreground-900">Coach feedback</h4>
+                <textarea
+                  value={feedback}
+                  onChange={event => setFeedback(event.target.value)}
+                  rows={4}
+                  placeholder="Add feedback for the learner. Feedback is required when referring work back."
+                  className="mt-3 w-full resize-none rounded-xl border border-foreground-200 bg-white p-3 text-sm focus:border-primary-400 focus:outline-none"
+                />
+                {error && <p className="mt-2 text-xs font-medium text-red-600">{error}</p>}
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  <button disabled={reviewing} onClick={() => void submitDecision('referred')} className="rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-sm font-semibold text-amber-700 disabled:opacity-50">
+                    <i className="ri-arrow-go-back-line mr-1" /> Refer back
+                  </button>
+                  <button disabled={reviewing} onClick={() => void submitDecision('accepted')} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                    <i className={reviewing ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-checkbox-circle-line mr-1'} /> Accept submission
+                  </button>
+                </div>
+              </section>
             </div>
           </aside>
         </div>

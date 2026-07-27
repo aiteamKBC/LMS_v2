@@ -42,7 +42,7 @@ export interface ComponentProgressResponse {
   module: string | null;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
@@ -50,7 +50,12 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: { error?: string } | null = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    throw new Error(`The server returned an unexpected response (${res.status}).`);
+  }
   if (!res.ok) {
     throw new Error((data && data.error) || `Request failed (${res.status})`);
   }

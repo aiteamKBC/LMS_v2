@@ -230,7 +230,7 @@ export default function ComponentViewPage() {
         ) : isVideo && !parsed ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
-          <div className="max-w-3xl mx-auto">
+          <div className="w-full max-w-5xl mx-auto">
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
@@ -242,10 +242,19 @@ export default function ComponentViewPage() {
               submitting={submitting}
               submitError={submitError}
               onSubmit={finalizeSubmit}
+              activityTitle={pageTitle}
+              weekLabel={weekTitle}
+              moduleLabel={moduleTitle}
+              learnerName={detail?.name || 'Learner'}
+              programmeName={detail?.programme || 'Programme not set'}
+              learnerKind={kind as LearnerKind}
+              learnerId={id}
+              evidenceSectionRef={componentId}
+              onClose={() => navigate(backHref)}
             />
           </div>
         ) : phase === 'results' && record ? (
-          <div className="max-w-3xl mx-auto">
+          <div className="w-full max-w-5xl mx-auto">
             <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(backHref)} />
           </div>
         ) : (

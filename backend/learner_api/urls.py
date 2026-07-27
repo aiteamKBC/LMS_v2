@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, quizzes, videos, views
+from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, quizzes, reflection_ai, reflection_submissions, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -26,6 +26,10 @@ urlpatterns = [
     path("videos/<str:component_id>/complete/", videos.submit_video_progress, name="video-complete"),
     # generic component completion (podcast / reading / slides / reflection / …)
     path("components/<str:component_id>/complete/", components.submit_component_progress, name="component-complete"),
+    # British-English voice reflection transcription, moderation and learning-scope check
+    path("reflection/transcribe/", reflection_ai.transcribe_reflection, name="reflection-transcribe"),
+    path("reflection/proofread/", reflection_ai.proofread_reflection, name="reflection-proofread"),
+    path("reflection/submissions/", reflection_submissions.create_reflection_submission, name="reflection-submission-create"),
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),

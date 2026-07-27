@@ -318,6 +318,7 @@ import CoachAttendanceProfile from "../pages/coach/attendance-profile/page";
 import CoachAbsenceReports from "../pages/coach/absence-reports/page";
 import CoachCatchupQueue from "../pages/coach/catchup-queue/page";
 import CoachMarkingQueue from "../pages/coach/marking-queue/page";
+import CoachMarkingReviewPage from "../pages/coach/marking-review/page";
 import CoachAiMarking from "../pages/coach/ai-marking/page";
 import CoachMeetings from "../pages/coach/meetings/page";
 import CoachTimetable from "../pages/coach/timetable/page";
@@ -823,6 +824,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/marking-queue",
     element: <CoachMarkingQueue />,
+  },
+  {
+    path: "/coach/marking-queue/:submissionId",
+    element: <CoachMarkingReviewPage />,
   },
   {
     path: "/coach/ai-marking",

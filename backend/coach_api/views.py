@@ -30,6 +30,7 @@ from learner_api.evidence_storage import (
     resolve_read_url,
 )
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
@@ -4793,93 +4794,140 @@ def coach_absence_reports(request):
     })
 
 
-@require_GET
-def coach_marking_queue(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
-    requested_owner_id = request.GET.get("case_owner_id")
-    case_owner_id = None
-    if requested_owner_id:
+@csrf_exempt
+def coach_marking_queue(request, submission_id=None):
+    """List and review the complete reflections submitted by learners."""
+    ensure_learning_reflection_submissions_table()
+
+    if submission_id is not None:
+        if request.method not in {"PATCH", "POST"}:
+            return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
-            case_owner_id = int(requested_owner_id)
-        except ValueError:
-            case_owner_id = None
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Request body must be valid JSON."}, status=400)
 
-    try:
-        caseload_rows = [
-            row
-            for row in fetch_caseload_rows(owner_email)
-            if (row["full_name"] or "").strip()
-        ]
-        caseload_learners = [serialize_learner(row) for row in caseload_rows]
-        owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
-
-        if case_owner_id is None and owner_email.lower() == DEFAULT_COACH_EMAIL.lower():
-            case_owner_id = DEFAULT_MARKING_OWNER_ID
-
-        caseload_by_email = {
-            normalize_email(learner.get("email")): learner
-            for learner in caseload_learners
-            if normalize_email(learner.get("email"))
-        }
-
-        marking_rows = fetch_marking_rows(owner_name, case_owner_id)
-        items = [
-            serialize_marking_row(
-                row,
-                caseload_by_email.get(normalize_email(row.get("learner_email"))),
+        decision = clean_text(payload.get("decision")).lower()
+        feedback = clean_text(payload.get("feedback"))
+        reviewed_by = clean_text(payload.get("reviewedBy")) or "Progress Coach"
+        valid_decisions = {"accepted", "partial", "referred", "escalated", "rejected"}
+        if decision not in valid_decisions:
+            return JsonResponse(
+                {"detail": "decision must be accepted, partial, referred, escalated or rejected."},
+                status=400,
             )
-            for row in marking_rows
-        ]
-        items = [
-            item
-            for item in items
-            if item["pendingEvidence"] > 0
-            and item["enrollmentStatus"] in ATTENDANCE_INCLUDED_STATUSES
-        ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach marking queue data.", "error": str(exc)},
-            status=500,
+        if decision != "accepted" and not feedback:
+            return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
+
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                update "Learner"."learning_reflection_submissions"
+                set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
+                where id = %s
+                returning id, status, reviewed_at
+                """,
+                [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
+            )
+            updated = cur.fetchone()
+        if not updated:
+            return JsonResponse({"detail": "Submission not found."}, status=404)
+        return JsonResponse({
+            "id": str(updated[0]),
+            "status": updated[1],
+            "reviewedAt": updated[2].isoformat() if updated[2] else None,
+        })
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(
+            """
+            select
+                id, learner_kind, learner_id, learner_name, programme_name,
+                activity_type, activity_id, activity_title, module_title,
+                week_title, planned_otjh, status, learning_reflection,
+                ksb_codes, ksb_explanations, confidence_before, confidence_after,
+                application_type, application_text, evidence_files,
+                evidence_consent_confirmed, selected_benefits,
+                benefit_explanation, actual_time_hours,
+                completed_during_paid_hours, date_completed, otjh_confirmed,
+                signed_declaration, quality_score, coach_feedback, reviewed_by,
+                reviewed_at, submitted_at
+            from "Learner"."learning_reflection_submissions"
+            order by
+                case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                submitted_at asc
+            """
         )
+        columns = [column[0] for column in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-    dated_items = [item for item in items if item["lastSubmissionIso"]]
-    oldest_iso = min((item["lastSubmissionIso"] for item in dated_items), default=None)
-    oldest_submission = "--"
-    if oldest_iso:
-        oldest_submission = next(
-            item["lastSubmission"]
-            for item in dated_items
-            if item["lastSubmissionIso"] == oldest_iso
-        )
+    now = timezone.now()
+    items = []
+    for row in rows:
+        submitted_at = row["submitted_at"]
+        elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
+        status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+        learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
+        initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
+        items.append({
+            "id": str(row["id"]),
+            "learnerKind": row["learner_kind"],
+            "learnerId": row["learner_id"],
+            "learner": learner_name,
+            "initials": initials,
+            "programme": row["programme_name"],
+            "activityType": row["activity_type"],
+            "activityId": row["activity_id"],
+            "activityTitle": row["activity_title"],
+            "module": row["module_title"],
+            "week": row["week_title"],
+            "plannedOtjh": row["planned_otjh"],
+            "status": status,
+            "learningReflection": row["learning_reflection"],
+            "ksbCodes": parse_json_value(row["ksb_codes"], []),
+            "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
+            "confidenceBefore": parse_json_value(row["confidence_before"], {}),
+            "confidenceAfter": parse_json_value(row["confidence_after"], {}),
+            "applicationType": row["application_type"],
+            "applicationText": row["application_text"],
+            "evidenceFiles": parse_json_value(row["evidence_files"], []),
+            "evidenceConsentConfirmed": bool(row["evidence_consent_confirmed"]),
+            "selectedBenefits": parse_json_value(row["selected_benefits"], []),
+            "benefitExplanation": row["benefit_explanation"],
+            "actualTimeHours": row["actual_time_hours"],
+            "completedDuringPaidHours": row["completed_during_paid_hours"],
+            "dateCompleted": row["date_completed"].isoformat() if row["date_completed"] else None,
+            "otjhConfirmed": bool(row["otjh_confirmed"]),
+            "signedDeclaration": bool(row["signed_declaration"]),
+            "qualityScore": row["quality_score"],
+            "coachFeedback": row["coach_feedback"],
+            "reviewedBy": row["reviewed_by"],
+            "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
+            "submittedAt": submitted_at.isoformat() if submitted_at else None,
+            "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
+            "elapsedDays": elapsed_days,
+            "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+        })
 
-    overdue_items = [item for item in items if item["isOverdue"]]
-    summary = {
-        "caseloadLearners": len(caseload_learners),
-        "queueLearners": len(items),
-        "activeLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "active"),
-        "queueActiveLearners": sum(1 for item in items if item["enrollmentStatus"] == "active"),
-        "onBreakLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "break"),
-        "queueOnBreakLearners": sum(1 for item in items if item["isOnBreak"]),
-        "pendingItems": sum(item["pendingEvidence"] for item in items),
-        "overdueLearners": len(overdue_items),
-        "overdueItems": sum(item["pendingEvidence"] for item in overdue_items),
-        "inProgressItems": None,
-        "acceptedEvidence": sum(item["acceptedEvidence"] for item in items),
-        "referredEvidence": sum(item["referredEvidence"] for item in items),
-        "totalEvidence": sum(item["totalEvidence"] for item in items),
-        "oldestSubmission": oldest_submission,
-        "oldestSubmissionIso": oldest_iso,
-        "overdueThresholdDays": MARKING_OVERDUE_DAYS,
-        "unavailableFields": ["module", "title", "type", "due", "words"],
-    }
-
-    return JsonResponse(
-        {
-            "owner": {"name": owner_name, "email": owner_email},
-            "summary": summary,
-            "items": items,
-        }
-    )
+    pending = [item for item in items if item["status"] in {"pending", "escalated"}]
+    overdue = [item for item in pending if item["isOverdue"]]
+    return JsonResponse({
+        "owner": {"name": "Med Maher", "email": DEFAULT_COACH_EMAIL},
+        "summary": {
+            "totalItems": len(items),
+            "activeLearners": len({(item["learnerKind"], item["learnerId"]) for item in items}),
+            "pendingItems": len(pending),
+            "acceptedItems": sum(1 for item in items if item["status"] in {"accepted", "partial"}),
+            "referredItems": sum(1 for item in items if item["status"] in {"referred", "rejected"}),
+            "overdueItems": len(overdue),
+            "oldestSubmission": pending[0]["submittedDisplay"] if pending else "--",
+            "overdueThresholdDays": MARKING_OVERDUE_DAYS,
+        },
+        "items": items,
+    })
 
 
 @require_GET
