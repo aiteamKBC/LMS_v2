@@ -468,6 +468,16 @@ export default function CoachAttendance() {
     present: attendanceDetails.filter((item) => item.status === 'present').length,
     absent: attendanceDetails.filter((item) => item.status === 'absent').length,
   }), [attendanceDetails]);
+  const hasActiveFilters = Boolean(
+    cohortFilter !== 'all'
+    || programmeFilter !== 'all'
+    || groupFilter !== 'all'
+    || employerFilter !== 'all'
+    || riskFilter !== 'all'
+    || dateFrom
+    || dateTo
+    || searchQuery.trim()
+  );
 
   const openAttendanceDetails = async (learner: AttendanceLearner, filter: AttendanceDetailFilter) => {
     setSelectedAttendanceLearner(learner);
@@ -613,7 +623,7 @@ export default function CoachAttendance() {
               <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
               <span className="text-[10px] text-foreground-400">to</span>
               <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
-              {(cohortFilter !== 'all' || programmeFilter !== 'all' || groupFilter !== 'all' || employerFilter !== 'all' || riskFilter !== 'all' || dateFrom || dateTo || searchQuery) && (
+              {hasActiveFilters && (
                 <button onClick={resetFilters} className="h-10 rounded-xl px-3 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-foreground-800">Clear Filters</button>
               )}
             </div>
@@ -672,8 +682,9 @@ export default function CoachAttendance() {
           </section>
         </div>
 
-        <div>
-          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+        {!hasActiveFilters && (
+          <div>
+            <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
@@ -705,8 +716,9 @@ export default function CoachAttendance() {
                 </div>
               )}
             </div>
-          </section>
-        </div>
+            </section>
+          </div>
+        )}
 
         <div className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-[0_12px_32px_rgba(46,16,101,0.08)] ring-1 ring-primary-50">
           <div className="flex items-center justify-between border-b border-primary-100 bg-gradient-to-r from-primary-50/90 via-white to-background-50 px-5 py-4">
@@ -730,13 +742,12 @@ export default function CoachAttendance() {
             </label>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1440px] table-fixed text-left">
+            <table className="w-full min-w-[1295px] table-fixed text-left">
               <colgroup>
                 <col className="w-12" />
                 <col className="w-[310px]" />
                 <col className="w-[220px]" />
                 <col className="w-[165px]" />
-                <col className="w-[195px]" />
                 <col className="w-[145px]" />
                 <col className="w-[190px]" />
                 <col className="w-[175px]" />
@@ -747,7 +758,6 @@ export default function CoachAttendance() {
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Learner</th>
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Attendance</th>
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Present / Absent</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Authorised / Unauthorised</th>
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Catch-up</th>
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Consecutive Absences</th>
                   <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Last Session</th>
@@ -756,12 +766,12 @@ export default function CoachAttendance() {
               <tbody className="divide-y divide-foreground-100 bg-white">
                 {loading && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
                   </tr>
                 )}
                 {!loading && error && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center">
+                    <td colSpan={7} className="py-16 text-center">
                       <div className="inline-flex flex-col items-center gap-2 text-red-600">
                         <i className="ri-error-warning-line text-2xl"></i>
                         <span className="text-sm font-semibold">Unable to load live attendance data.</span>
@@ -772,7 +782,7 @@ export default function CoachAttendance() {
                 )}
                 {!loading && !error && paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
                   </tr>
                 )}
                 {!loading && !error && paginatedData.map(row => {
@@ -824,12 +834,6 @@ export default function CoachAttendance() {
                             <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[9px] font-medium text-foreground-400 hover:text-primary-600">Total sessions: {row.sessions ?? (row.present + row.absent)}</button>
                           </div>
                         )}
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="space-y-1.5 text-[10px]">
-                          <p className="flex items-center justify-between rounded-lg bg-background-100/80 px-2 py-1 text-foreground-600"><span>Authorised</span><strong>{formatCount(row.authorisedAbsent)}</strong></p>
-                          <p className={`flex items-center justify-between rounded-lg px-2 py-1 ${(row.unauthorisedAbsent || 0) > 0 ? 'bg-red-50 text-red-700' : 'bg-background-100/80 text-foreground-600'}`}><span>Unauthorised</span><strong>{formatCount(row.unauthorisedAbsent)}</strong></p>
-                        </div>
                       </td>
                       <td className={`px-4 ${rowPadding}`}>
                         <div className="space-y-1.5 text-[10px] text-foreground-600">

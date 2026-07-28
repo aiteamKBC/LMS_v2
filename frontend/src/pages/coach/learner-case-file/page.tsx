@@ -25,7 +25,7 @@ import {
 const coachNav = roleNavMap.coach;
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
-const TABS = [
+const CASE_FILE_TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
   { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
@@ -41,7 +41,17 @@ const TABS = [
   { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
 ] as const;
 
-type TabId = typeof TABS[number]['id'] | 'coach-notes';
+type TabId = typeof CASE_FILE_TABS[number]['id'] | 'coach-notes';
+const HIDDEN_CASE_FILE_TAB_IDS = new Set<typeof CASE_FILE_TABS[number]['id']>([
+  'otjh',
+  'ksbs',
+  'evidence',
+  'audit',
+  'activity',
+  'network',
+  'documents',
+]);
+const NAV_TABS = CASE_FILE_TABS.filter(tab => !HIDDEN_CASE_FILE_TAB_IDS.has(tab.id));
 type LocationState = {
   learnerId?: string;
   learnerName?: string;
@@ -94,7 +104,7 @@ export default function LearnerCaseFile() {
   });
 
   useEffect(() => {
-    if (TABS.some((tab) => tab.id === requestedTab)) {
+    if (CASE_FILE_TABS.some((tab) => tab.id === requestedTab)) {
       setActiveTab(requestedTab as TabId);
     }
   }, [requestedTab]);
@@ -241,7 +251,7 @@ export default function LearnerCaseFile() {
           <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-sm">
             <div className="overflow-x-auto border-b border-foreground-100 scrollbar-hide">
               <div className="flex min-w-max px-2">
-                {TABS.map((tab) => (
+                {NAV_TABS.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
@@ -382,7 +392,7 @@ export default function LearnerCaseFile() {
 
               <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/10 bg-white/10 p-1 shadow-inner scrollbar-hide">
-                  {TABS.map((tab) => (
+                  {NAV_TABS.map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
@@ -718,7 +728,56 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.25fr)]">
+                <div className="space-y-3 rounded-xl border border-primary-200/70 bg-primary-50/45 p-3.5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-primary-700 shadow-sm">
+                          <i className="ri-filter-3-line text-sm"></i>
+                        </span>
+                        <div>
+                          <p className="text-[12px] font-bold text-foreground-900">Filter KSB list</p>
+                          <p className="mt-0.5 text-[11px] text-foreground-500">
+                            Narrow the list by category or search by code, label, and description.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center self-start rounded-full border border-primary-200 bg-white px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-primary-700">
+                      Filter
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setActiveKsbCategory(category)}
+                        className={`inline-flex items-center rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
+                          activeKsbCategory === category
+                            ? 'bg-primary-700 text-white shadow-sm'
+                            : 'bg-white text-foreground-600 ring-1 ring-foreground-200/70 hover:bg-background-100'
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative">
+                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                    <input
+                      type="text"
+                      value={ksbSearch}
+                      onChange={(event) => setKsbSearch(event.target.value)}
+                      placeholder="Filter by code, category, or description..."
+                      className="w-full rounded-xl border border-primary-200/70 bg-white py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400"
+                    />
+                  </div>
+                </div>
+
                 <div className="grid gap-3 sm:grid-cols-3">
                   {categorySummary.map((group) => (
                     <div key={group.category} className="rounded-xl border border-foreground-200/60 bg-white/80 p-3">
@@ -733,36 +792,6 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                       </p>
                     </div>
                   ))}
-                </div>
-
-                <div className="space-y-3 rounded-xl border border-foreground-200/60 bg-white/80 p-3">
-                  <div className="flex flex-wrap gap-2">
-                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => setActiveKsbCategory(category)}
-                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[10px] font-semibold transition ${
-                          activeKsbCategory === category
-                            ? 'bg-primary-700 text-white shadow-sm'
-                            : 'bg-background-100 text-foreground-600 hover:bg-background-200'
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="relative">
-                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
-                    <input
-                      type="text"
-                      value={ksbSearch}
-                      onChange={(event) => setKsbSearch(event.target.value)}
-                      placeholder="Search code or description..."
-                      className="w-full rounded-xl border border-foreground-200/60 bg-background-50 py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300"
-                    />
-                  </div>
                 </div>
               </div>
 

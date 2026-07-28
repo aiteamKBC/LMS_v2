@@ -672,11 +672,11 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    detail = to_learner_detail(source, active)
+    detail = to_learner_detail(source, learner_profile)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
@@ -686,10 +686,10 @@ def learner_detail(request, kind, pk):
     detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
 
     # Persist the plan's planned hours + the learner's completed hours onto the
-    # mirror so the columns stay current as the plan/progress change, and echo
-    # them back so the card reads the same stored values.
+    # learner profile so the columns stay current as the plan/progress change,
+    # and echo them back so the card reads the same stored values.
     planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
-    completed = completed_hours_from_progress(active.training_plan_progress) if active else "0"
+    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
 
     # Target = cumulative planned hours up to & including the CURRENT week (first
     # week of the first module, matching the frontend heuristic; grows week by
@@ -704,6 +704,7 @@ def learner_detail(request, kind, pk):
     target_str = fmt_hours(target_num)
     progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
     variance_str = "" if variance is None else str(variance)
+    variance_db = None if variance is None else variance
     otjh_status = _otjh_status(variance)
 
     detail["plannedHours"] = planned
@@ -712,25 +713,25 @@ def learner_detail(request, kind, pk):
     detail["progressHours"] = progress_hours_str
     detail["progressVariance"] = variance_str
     detail["otjhStatus"] = otjh_status
-    if active is not None:
+    if learner_profile is not None:
         try:
             calculated = {
                 "planned_hours": planned,
                 "completed_hours": completed,
                 "target_hours": target_str,
                 "progress_hours": progress_hours_str,
-                "progress_variance": variance_str,
+                "progress_variance": variance_db,
                 "otjh_status": otjh_status,
             }
             changed_fields = []
             for field, value in calculated.items():
-                if getattr(active, field) != value:
-                    setattr(active, field, value)
+                if getattr(learner_profile, field) != value:
+                    setattr(learner_profile, field, value)
                     changed_fields.append(field)
             # This endpoint is read on almost every learner page. Avoid a
             # remote database UPDATE when all calculated values are unchanged.
             if changed_fields:
-                active.save(update_fields=changed_fields)
+                learner_profile.save(update_fields=changed_fields)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 

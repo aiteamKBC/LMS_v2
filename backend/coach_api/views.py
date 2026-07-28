@@ -973,7 +973,7 @@ def find_learner_absence_relation(connection) -> str | None:
     return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
 
 
-def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
+def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
@@ -1024,7 +1024,7 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
-def fetch_owner_active_user_rows(owner_email: str) -> list[LearnerProfile]:
+def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     rows = [
         row
@@ -1076,9 +1076,16 @@ def resolve_schedule_window(
     return start_date, end_date
 
 
-def serialize_active_user_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newest_first: bool = False) -> list[dict]:
+    activity_reader = getattr(row, "activity_feed_entries", None)
+    if callable(activity_reader):
+        return [entry for entry in activity_reader(newest_first=newest_first) if isinstance(entry, dict)]
+    return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
+
+
+def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     planned_components = count_planned_components(row.training_plan)
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
@@ -1458,7 +1465,7 @@ def build_monthly_activity_learner(
     end_date: date,
 ) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     monthly_progress = [entry for entry in progress_entries if entry_is_between(entry, start_date, end_date)]
     monthly_feed = [entry for entry in activity_entries if entry_is_between(entry, start_date, end_date)]
     learner_events = [
@@ -1636,8 +1643,8 @@ def build_monthly_activity_learner(
 
 
 def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]:
-    active_rows = fetch_active_user_caseload_rows(owner_email)
-    caseload_learners = [serialize_active_user_learner(row) for row in active_rows]
+    active_rows = fetch_caseload_learner_profiles(owner_email)
+    caseload_learners = [serialize_caseload_learner(row) for row in active_rows]
     caseload_by_id = {
         str(learner["id"]): learner
         for learner in caseload_learners
@@ -2704,20 +2711,20 @@ def generated_event_priority(status: str, target_date: date, display_date: date)
     return "normal"
 
 
-def build_active_user_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
-    active_user_map: dict[int, LearnerProfile] = {}
+def build_learner_profile_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
+    learner_profile_map: dict[int, LearnerProfile] = {}
     for row in rows:
         try:
             learner_id = int(getattr(row, "id", 0) or 0)
         except (TypeError, ValueError):
             continue
         if learner_id > 0:
-            active_user_map[learner_id] = row
-    return active_user_map
+            learner_profile_map[learner_id] = row
+    return learner_profile_map
 
 
 def fetch_owner_name(owner_email: str, fallback: str = "Med Maher") -> str:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     return next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         fallback,
@@ -2956,14 +2963,14 @@ def build_catchup_scheduler_events(
     owner_email: str,
     owner_name: str,
     active_rows: list[LearnerProfile],
-    active_user_map: dict[int, LearnerProfile],
+    learner_profile_map: dict[int, LearnerProfile],
     persisted_records: list[CoachCalendarEvent],
 ) -> list[dict]:
     scheduler_events = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_records
     ]
@@ -3481,8 +3488,8 @@ def collect_live_session_events(
 
 
 def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
-    active_rows = fetch_owner_active_user_rows(owner_email)
-    active_user_map = build_active_user_map(active_rows)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
+    learner_profile_map = build_learner_profile_map(active_rows)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3546,7 +3553,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_standalone_records
     ]
@@ -3559,7 +3566,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         owner_email,
         owner_name,
         active_rows,
-        active_user_map,
+        learner_profile_map,
         persisted_catchup_records,
     )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
@@ -3638,7 +3645,7 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
 
 
 def find_catchup_template_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3691,8 +3698,8 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -3715,8 +3722,8 @@ def coach_timetable_schedule_event(request):
 
     catchup_template_event, owner_name = find_catchup_template_event(owner_email, event_key)
     if catchup_template_event:
-        learner_rows = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner_rows)
+        learner_rows = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner_rows)
         learner_id = int(catchup_template_event["learnerId"])
         target_date = scheduled_date
 
@@ -3871,8 +3878,8 @@ def coach_timetable_event_action(request):
         catchup_record.last_graph_sync_error = warning
         catchup_record.save()
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         updated_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -4298,13 +4305,13 @@ def coach_monthly_activity(request):
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
+        rows = fetch_caseload_learner_profiles(owner_email)
         timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
         events = timetable_payload.get("events", [])
         active_pairs = [
             (row, learner)
             for row in rows
-            for learner in [serialize_active_user_learner(row)]
+            for learner in [serialize_caseload_learner(row)]
             if learner.get("enrollmentStatus") == "active"
         ]
         learners = [
@@ -4364,8 +4371,8 @@ def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
-        learners = [serialize_active_user_learner(row) for row in rows]
+        rows = fetch_caseload_learner_profiles(owner_email)
+        learners = [serialize_caseload_learner(row) for row in rows]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},
@@ -4650,7 +4657,7 @@ def serialize_absence_report(
     attendance_rate_override=None,
     previous_absences_override=None,
 ) -> dict:
-    learner_snapshot = serialize_active_user_learner(learner) if learner else {}
+    learner_snapshot = serialize_caseload_learner(learner) if learner else {}
     reported_by = clean_text(report.reported_by)
     if reported_by not in {"Learner", "Employer", "Coach"}:
         reported_by = "Learner"
@@ -4701,10 +4708,10 @@ def serialize_absence_report(
 @csrf_exempt
 def coach_absence_reports(request):
     owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     active_ids = {int(row.id) for row in active_rows}
     active_emails = {normalize_email(row.email) for row in active_rows if normalize_email(row.email)}
-    active_map = build_active_user_map(active_rows)
+    active_map = build_learner_profile_map(active_rows)
 
     if request.method == "PATCH":
         try:

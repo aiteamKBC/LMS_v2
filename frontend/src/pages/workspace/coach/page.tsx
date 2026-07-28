@@ -128,6 +128,16 @@ function isVisibleRiskFlag(value?: string | null) {
     && normalized !== 'otjh at risk';
 }
 
+function isLowHoursRiskFlag(value?: string | null) {
+  return displayValue(value).toLowerCase().includes('low hours');
+}
+
+function riskFlagClass(value?: string | null) {
+  return isLowHoursRiskFlag(value)
+    ? 'border-red-100 bg-red-50 text-red-600'
+    : 'border-amber-100 bg-amber-50 text-amber-700';
+}
+
 function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
   if (normalized === 'atrisk') return 'at-risk';
@@ -200,10 +210,10 @@ const OTJH_STATUS_META: Record<OtjhStatusKey, { label: string; cardLabel: string
     cardLabel: 'At Risk',
     sub: 'OTJH at risk',
     color: 'red',
-    bg: 'bg-rose-50 border-rose-200/60',
-    text: 'text-rose-700',
-    bar: 'bg-rose-400',
-    avatar: 'bg-rose-50 text-rose-600 ring-rose-100',
+    bg: 'bg-red-50 border-red-200/50',
+    text: 'text-red-700',
+    bar: 'bg-red-500',
+    avatar: 'bg-primary-50 text-primary-600 ring-primary-100',
   },
   'need-attention': {
     label: 'Need Attention',
@@ -844,13 +854,13 @@ export default function CoachDashboard() {
 
         {atRiskCount > 0 && (
           <SectionReveal delay={80}>
-            <div className="rounded-xl border border-rose-200/60 bg-rose-50/55 p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-              <span className="w-9 h-9 rounded-lg bg-rose-100/80 flex items-center justify-center shrink-0">
-                <i className="ri-alert-fill text-rose-500 text-base"></i>
+            <div className="rounded-xl border border-red-200/50 bg-red-50/70 p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+              <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <i className="ri-alert-fill text-red-600 text-base"></i>
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-rose-700">Risk Alert: {atRiskCount} learners need immediate attention</p>
-                <p className="mt-0.5 truncate text-[12px] text-rose-600">
+                <p className="text-sm font-semibold text-red-800">Risk Alert: {atRiskCount} learners need immediate attention</p>
+                <p className="mt-0.5 truncate text-[12px] text-red-600">
                   {riskSummary || EMPTY_VALUE}
                 </p>
               </div>
@@ -1299,7 +1309,7 @@ function CompactProgressRail({
   tone?: MetricTone;
 }) {
   const barClass = tone === 'danger'
-    ? 'bg-rose-400'
+    ? 'bg-amber-400'
     : tone === 'warning'
       ? 'bg-amber-500'
       : tone === 'success'
@@ -1357,9 +1367,9 @@ function learnerStageBadge(learner: CoachLearner): { label: string; className: s
   if (otjhStatus === 'at-risk') {
     return {
       label: 'At Risk',
-      className: 'border-rose-200 bg-rose-50 text-rose-700',
-      avatarClass: 'bg-rose-50 text-rose-600',
-      arrowClass: 'bg-rose-50 text-rose-400',
+      className: 'border-red-200 bg-red-50 text-red-700',
+      avatarClass: 'bg-primary-50 text-primary-600',
+      arrowClass: 'bg-primary-50 text-primary-400',
     };
   }
   if (otjhStatus === 'need-attention') {
@@ -1442,12 +1452,12 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
               {(primaryRisk || additionalFlags.length > 0) && (
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   {primaryRisk && (
-                    <span className="rounded-full border border-rose-100 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-600">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${riskFlagClass(primaryRisk)}`}>
                       {primaryRisk}
                     </span>
                   )}
                   {additionalFlags.map(flag => (
-                    <span key={flag} className="rounded-full border border-rose-100 bg-rose-50 px-2 py-0.5 text-[10px] font-medium text-rose-600">
+                    <span key={flag} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${riskFlagClass(flag)}`}>
                       {flag}
                     </span>
                   ))}
@@ -1497,7 +1507,7 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
       {/* Risk flags */}
       {primaryRisk && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-100 bg-rose-50 px-2.5 py-1 text-[9px] font-semibold text-rose-700">
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold ${riskFlagClass(primaryRisk)}`}>
             <i className="ri-error-warning-fill text-[10px]"></i>
             {primaryRisk}
           </span>
