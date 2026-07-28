@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -59,6 +59,12 @@ interface InclusionOption {
   label: string;
   live: boolean;
   sourceLabel: string;
+}
+
+interface LearnerSelectOption {
+  value: string;
+  label: string;
+  searchText: string;
 }
 
 interface CaseloadLearner {
@@ -298,6 +304,10 @@ function learnerScopeLabel(learner: CaseloadLearner): string {
   const programme = learnerProgrammeLabel(learner);
   const group = displayValue(learner.group);
   return group === EMPTY_VALUE ? programme : `${programme} / ${group}`;
+}
+
+function learnerSelectLabel(learner: CaseloadLearner): string {
+  return `${displayValue(learner.name)} / ${learnerProgrammeLabel(learner)}`;
 }
 
 function isActiveLearner(learner: CaseloadLearner): boolean {
@@ -1373,6 +1383,10 @@ export default function CoachReports() {
   const [loading, setLoading] = useState(true);
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
   const [downloadState, setDownloadState] = useState<ExportFormat | null>(null);
+  const [learnerMenuOpen, setLearnerMenuOpen] = useState(false);
+  const [learnerSearch, setLearnerSearch] = useState('');
+  const learnerSelectRef = useRef<HTMLDivElement | null>(null);
+  const learnerSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [options, setOptions] = useState<ReportOptions>({
     learnerId: '',
     reportType: 'monthly-otjh',
@@ -1467,10 +1481,39 @@ export default function CoachReports() {
     });
     return activeFirst;
   }, [caseloadLearners]);
+  const learnerSelectOptions = useMemo<LearnerSelectOption[]>(() => [
+    {
+      value: 'all',
+      label: 'All assigned learners',
+      searchText: 'all assigned learners caseload all learners',
+    },
+    ...learnerOptions.map((learner) => ({
+      value: displayValue(learner.id),
+      label: learnerSelectLabel(learner),
+      searchText: [
+        displayValue(learner.name),
+        learnerProgrammeLabel(learner),
+        displayValue(learner.cohortName),
+        displayValue(learner.group),
+        displayValue(learner.email),
+      ].join(' ').toLowerCase(),
+    })),
+  ], [learnerOptions]);
   const selectedLearner = useMemo(
     () => learnerOptions.find(learner => displayValue(learner.id) === options.learnerId) || null,
     [learnerOptions, options.learnerId],
   );
+  const selectedLearnerOption = useMemo(
+    () => learnerSelectOptions.find(option => option.value === options.learnerId) || learnerSelectOptions[0] || null,
+    [learnerSelectOptions, options.learnerId],
+  );
+  const filteredLearnerOptions = useMemo(() => {
+    const query = learnerSearch.trim().toLowerCase();
+    if (!query) return learnerSelectOptions;
+    return learnerSelectOptions.filter(option => (
+      option.label.toLowerCase().includes(query) || option.searchText.includes(query)
+    ));
+  }, [learnerSearch, learnerSelectOptions]);
   const reportTypeMeta = REPORT_TYPE_META[options.reportType];
   const dateRangeInvalid = Boolean(options.fromDate && options.toDate && options.fromDate > options.toDate);
   const liveInclusionCount = INCLUSION_OPTIONS.filter(option => option.live && options.inclusions[option.key]).length;
@@ -1490,6 +1533,34 @@ export default function CoachReports() {
       bodySections: generatedReport.sections.filter(section => section.title !== 'Source status' && section.title !== 'Report details'),
     };
   }, [generatedReport]);
+
+  useEffect(() => {
+    if (!learnerMenuOpen) return undefined;
+
+    learnerSearchInputRef.current?.focus();
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!learnerSelectRef.current?.contains(target)) {
+        setLearnerMenuOpen(false);
+        setLearnerSearch('');
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setLearnerMenuOpen(false);
+        setLearnerSearch('');
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [learnerMenuOpen]);
 
   function updateOption<K extends keyof ReportOptions>(key: K, value: ReportOptions[K]) {
     setOptions(prev => ({ ...prev, [key]: value }));
@@ -1578,18 +1649,70 @@ export default function CoachReports() {
               <div className="space-y-5">
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-foreground-700">Learner</span>
-                  <select
-                    value={options.learnerId}
-                    onChange={(event) => updateOption('learnerId', event.target.value)}
-                    className="w-full rounded-xl border border-foreground-200 bg-white px-4 py-3 text-[15px] text-foreground-900 shadow-sm outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-                  >
-                    <option value="all">All assigned learners</option>
-                    {learnerOptions.map((learner) => (
-                      <option key={displayValue(learner.id)} value={displayValue(learner.id)}>
-                        {displayValue(learner.name)} / {learnerProgrammeLabel(learner)}
-                      </option>
-                    ))}
-                  </select>
+                  <div ref={learnerSelectRef} className="relative">
+                    <button
+                      type="button"
+                      aria-haspopup="listbox"
+                      aria-expanded={learnerMenuOpen}
+                      onClick={() => {
+                        setLearnerMenuOpen(current => !current);
+                        setLearnerSearch('');
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-foreground-200 bg-white px-4 py-3 text-left text-[15px] text-foreground-900 shadow-sm outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                    >
+                      <span className="truncate">{selectedLearnerOption?.label || 'Select learner'}</span>
+                      <i className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform ${learnerMenuOpen ? 'rotate-180' : ''}`}></i>
+                    </button>
+
+                    {learnerMenuOpen && (
+                      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 rounded-2xl border border-foreground-200/70 bg-white p-2 shadow-xl shadow-foreground-950/10">
+                        <div className="relative mb-2">
+                          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                          <input
+                            ref={learnerSearchInputRef}
+                            type="text"
+                            value={learnerSearch}
+                            onChange={(event) => setLearnerSearch(event.target.value)}
+                            placeholder="Search learner, cohort, group..."
+                            className="w-full rounded-xl border border-foreground-200 bg-white py-2.5 pl-9 pr-3 text-[14px] text-foreground-900 outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                          />
+                        </div>
+
+                        <div role="listbox" aria-label="Choose learner" className="max-h-64 overflow-y-auto rounded-xl">
+                          {filteredLearnerOptions.map((option) => {
+                            const active = option.value === options.learnerId;
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                onClick={() => {
+                                  updateOption('learnerId', option.value);
+                                  setLearnerMenuOpen(false);
+                                  setLearnerSearch('');
+                                }}
+                                className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
+                                  active
+                                    ? 'bg-primary-50 font-semibold text-primary-700'
+                                    : 'text-foreground-700 hover:bg-background-100'
+                                }`}
+                              >
+                                <span className="truncate">{option.label}</span>
+                                {active ? <i className="ri-check-line text-base"></i> : null}
+                              </button>
+                            );
+                          })}
+
+                          {!filteredLearnerOptions.length && (
+                            <div className="px-3 py-4 text-center text-[12px] text-foreground-400">
+                              No learners match your search.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </label>
 
                 <label className="block">

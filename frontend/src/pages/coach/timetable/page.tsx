@@ -1,5 +1,6 @@
 ﻿import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -91,6 +92,13 @@ interface TimetableResponse {
   schedulerQueues?: {
     catchUp?: TimetableEvent[];
   };
+}
+
+interface ScheduleNavigationIntent {
+  source: SchedulableSource;
+  learnerId?: string;
+  targetDate?: string | null;
+  title?: string;
 }
 
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
@@ -477,6 +485,27 @@ function isSchedulableSource(value?: string): value is SchedulableSource {
   return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
 }
 
+function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
+  if (!value || typeof value !== 'object') return null;
+  const source = typeof (value as { source?: unknown }).source === 'string'
+    ? (value as { source?: string }).source
+    : undefined;
+  if (!isSchedulableSource(source)) return null;
+
+  return {
+    source,
+    learnerId: typeof (value as { learnerId?: unknown }).learnerId === 'string'
+      ? (value as { learnerId?: string }).learnerId
+      : undefined,
+    targetDate: typeof (value as { targetDate?: unknown }).targetDate === 'string'
+      ? (value as { targetDate?: string }).targetDate
+      : undefined,
+    title: typeof (value as { title?: unknown }).title === 'string'
+      ? (value as { title?: string }).title
+      : undefined,
+  };
+}
+
 function eventIdentity(event: TimetableEvent) {
   return event.eventKey || event.id;
 }
@@ -550,6 +579,7 @@ function compareSchedulablePriority(a: TimetableEvent, b: TimetableEvent) {
    Page
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function CoachTimetablePage() {
+  const location = useLocation();
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const [viewMode, setViewMode] = useState<ViewMode>('month');
@@ -582,6 +612,9 @@ export default function CoachTimetablePage() {
   const [scheduleModalBusy, setScheduleModalBusy] = useState(false);
   const [scheduleModalError, setScheduleModalError] = useState<string | null>(null);
   const [scheduleModalNotice, setScheduleModalNotice] = useState<string | null>(null);
+  const [pendingScheduleIntent, setPendingScheduleIntent] = useState<ScheduleNavigationIntent | null>(() => (
+    parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent)
+  ));
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -655,7 +688,10 @@ export default function CoachTimetablePage() {
         setViewYear(anchorDate.getFullYear());
         setViewMonth(anchorDate.getMonth());
         setSelectedDay(anchorDate.getDate());
-        setSelectedEvent(null);
+        setSelectedEvent(currentSelectedEvent => {
+          if (!currentSelectedEvent) return null;
+          return nextEvents.find(event => event.id === currentSelectedEvent.id) || null;
+        });
       } catch (err) {
         if (cancelled) return;
 
@@ -684,6 +720,12 @@ export default function CoachTimetablePage() {
       if (cleanup) cleanup();
     };
   }, [loadTimetable]);
+
+  useEffect(() => {
+    const nextIntent = parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent);
+    if (!nextIntent) return;
+    setPendingScheduleIntent(nextIntent);
+  }, [location.key, location.state]);
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -957,6 +999,47 @@ export default function CoachTimetablePage() {
     setScheduleModalError(null);
     setScheduleModalNotice(null);
   }, [scheduleModalBusy]);
+
+  useEffect(() => {
+    if (!pendingScheduleIntent || loading) return;
+
+    setViewMode('month');
+    setFilterStatus('needs-schedule');
+    setFilterSource(pendingScheduleIntent.source);
+    setSearchTerm('');
+    setScheduleModalOpen(false);
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+
+    const sourceEvents = schedulableEvents.filter((event) => event.source === pendingScheduleIntent.source);
+    const learnerEvents = pendingScheduleIntent.learnerId
+      ? sourceEvents.filter((event) => event.learnerId === pendingScheduleIntent.learnerId)
+      : sourceEvents;
+    const preferredPool = learnerEvents.length ? learnerEvents : sourceEvents;
+    const preferredEvent = preferredPool.find((event) => {
+      if (!pendingScheduleIntent.targetDate) return false;
+      return (
+        eventTargetDateValue(event) === pendingScheduleIntent.targetDate
+        || event.date === pendingScheduleIntent.targetDate
+        || event.scheduledDate === pendingScheduleIntent.targetDate
+      );
+    }) || preferredPool[0] || null;
+
+    const anchorDate = parseDateOnly(pendingScheduleIntent.targetDate)
+      || (preferredEvent ? getMetricDate(eventTargetDateValue(preferredEvent), preferredEvent) : null);
+
+    if (anchorDate) {
+      setCalendarDate(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
+    }
+
+    if (preferredEvent) {
+      setSelectedEvent(preferredEvent);
+    } else {
+      setSelectedEvent(null);
+    }
+
+    setPendingScheduleIntent(null);
+  }, [loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
 
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;

@@ -448,26 +448,26 @@ def write_commercial_fields(payload, *, require_create=False):
 # --------------------------------------------------------------------------- #
 # outbound: learner detail (workspace/learner page)                           #
 # --------------------------------------------------------------------------- #
-def to_learner_detail(source, active):
-    """Shape a CommercialUser/EnrolmentUser (+ its ActiveUser mirror, if any)
-    for the learner workspace page. `active` is None when the learner isn't
-    currently Active (or has no mirrored row yet). The training plan itself
-    comes straight from the source record's structured plan column, so it's
-    visible even for learners who aren't currently Active; only KSBs (looked
-    up live by sync_active_user) depend on the Active_users mirror."""
+def to_learner_detail(source, learner_profile):
+    """Shape a CommercialUser/EnrolmentUser (+ its learner profile, if any)
+    for the learner workspace page. `learner_profile` is None when the learner
+    isn't currently active. The training plan itself comes straight from the
+    source record's structured plan column, so it's visible even for learners
+    who aren't currently active; KSBs, progress, and activity feed are read
+    from the normalized Learner.* tables exposed through LearnerProfile."""
     modules, week, components = flatten_training_plan(get_training_plan(source))
 
     # Unified progress log holds both quiz attempts and video completions,
     # distinguished by "kind" (a record without a "kind" is treated as a quiz
     # attempt, for any pre-"kind" data).
-    progress = _as_list(active.training_plan_progress) if active else []
+    progress = _as_list(learner_profile.training_plan_progress) if learner_profile else []
     quiz_attempts = [r for r in progress if r.get("kind", "quiz") == "quiz"]
     video_progress = [r for r in progress if r.get("kind") == "video"]
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
     # written by learner_api.components.submit_component_progress.
     component_progress = [r for r in progress if r.get("kind") == "component"]
-    # Activity log, newest first for the feed (full history is kept in the column).
-    activity_feed = list(reversed(_as_list(active.activity_feed))) if active else []
+    # Activity feed source of truth: Learner.learner_activity_events, newest first.
+    activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
 
     return {
         "id": str(source.id),
@@ -480,11 +480,11 @@ def to_learner_detail(source, active):
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
         "lineManager": _s(getattr(source, "line_manager", "")),
-        "isActive": active is not None,
+        "isActive": learner_profile is not None,
         "modules": modules,
         "week": week,
         "components": components,
-        "ksbs": _as_list(active.ksbs) if active else [],
+        "ksbs": _as_list(learner_profile.ksbs) if learner_profile else [],
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
         "componentProgress": component_progress,

@@ -7,6 +7,8 @@ import type { AbsenceReport } from '@/mocks/absence-reports';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/absence-reports';
+const HIGH_RISK_ABSENCE_REPORTS_LABEL = 'High-Risk Absence Reports';
+const HIGH_RISK_ABSENCE_SHORT_LABEL = 'High Risk';
 type ReportStatusKey = 'pending' | 'approved' | 'declined';
 
 function FilterDropdown({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; allLabel?: string }) {
@@ -44,7 +46,7 @@ function isPendingReport(report: AbsenceReport) {
 }
 
 function reportPriority(report: AbsenceReport) {
-  if (report.attendanceRate < 80 || report.previousAbsences >= 5) return { label: 'High priority', className: 'bg-red-50 text-red-700 border-red-100' };
+  if (report.attendanceRate < 80 || report.previousAbsences >= 5) return { label: HIGH_RISK_ABSENCE_SHORT_LABEL, className: 'bg-red-50 text-red-700 border-red-100' };
   if (!report.evidenceProvided || report.previousAbsences >= 3) return { label: 'Check carefully', className: 'bg-amber-50 text-amber-700 border-amber-100' };
   return { label: 'Standard review', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' };
 }
@@ -270,7 +272,7 @@ export default function CoachAbsenceReports() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: 'Needs review', value: pending, sub: 'Pending decisions', icon: 'ri-time-line', color: 'amber', accent: 'bg-amber-400', onClick: () => { setStatusFilter('pending'); setQueueFilter('all'); } },
-            { label: 'High priority', value: highPriority, sub: 'Low attendance or repeat absence', icon: 'ri-alarm-warning-line', color: 'red', accent: 'bg-red-400', onClick: () => { setStatusFilter('pending'); setQueueFilter('high-priority'); } },
+            { label: HIGH_RISK_ABSENCE_REPORTS_LABEL, value: highPriority, sub: 'Low attendance or repeat absence', icon: 'ri-alarm-warning-line', color: 'red', accent: 'bg-red-400', onClick: () => { setStatusFilter('pending'); setQueueFilter('high-priority'); } },
             { label: 'Approved', value: approved, sub: 'Confirmed absences', icon: 'ri-check-line', color: 'emerald', accent: 'bg-emerald-400', onClick: () => { setStatusFilter('approved'); setQueueFilter('all'); } },
             { label: 'Declined', value: declined, sub: 'Rejected requests', icon: 'ri-close-line', color: 'red', accent: 'bg-rose-400', onClick: () => { setStatusFilter('declined'); setQueueFilter('all'); } },
           ].map(card => (
@@ -431,7 +433,7 @@ export default function CoachAbsenceReports() {
               )}
               {queueFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
-                  {queueFilter === 'high-priority' ? 'High priority' : queueFilter === 'with-evidence' ? 'With evidence' : 'Missing evidence'}
+                  {queueFilter === 'high-priority' ? HIGH_RISK_ABSENCE_REPORTS_LABEL : queueFilter === 'with-evidence' ? 'With evidence' : 'Missing evidence'}
                   <button onClick={() => { setQueueFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
                 </span>
               )}
@@ -461,7 +463,7 @@ export default function CoachAbsenceReports() {
             </div>
             <div className="flex flex-wrap items-center gap-2 text-[10px] text-foreground-400">
               <span className="rounded-full bg-amber-50 px-2.5 py-1 font-semibold text-amber-700">{pending} pending</span>
-              <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-700">{highPriority} high priority</span>
+              <span className="rounded-full bg-red-50 px-2.5 py-1 font-semibold text-red-700">{highPriority} high-risk reports</span>
               <span className="rounded-full bg-primary-50 px-2.5 py-1 font-semibold text-primary-700">{withEvidence} with evidence</span>
             </div>
           </div>
