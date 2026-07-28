@@ -1,6 +1,7 @@
 ﻿import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -497,6 +498,29 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
   return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
+}
+
+function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const source = typeof (value as { source?: unknown }).source === 'string'
+    ? (value as { source?: string }).source
+    : undefined;
+
+  if (!isSchedulableSource(source)) return null;
+
+  return {
+    source,
+    learnerId: typeof (value as { learnerId?: unknown }).learnerId === 'string'
+      ? (value as { learnerId?: string }).learnerId
+      : undefined,
+    targetDate: typeof (value as { targetDate?: unknown }).targetDate === 'string'
+      ? (value as { targetDate?: string }).targetDate
+      : undefined,
+    title: typeof (value as { title?: unknown }).title === 'string'
+      ? (value as { title?: string }).title
+      : undefined,
+  };
 }
 
 function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
