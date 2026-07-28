@@ -525,6 +525,18 @@ export default function EvidencePage() {
           {/* ══════════════════════════════════════════════════════
               STATS CARDS
               ══════════════════════════════════════════════════════ */}
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+              <i className="ri-information-line text-base" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold">Demo data</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
+                The evidence, statistics, statuses and tutor feedback shown on this page are mock data for demonstration only. New uploads are not currently saved to the database.
+              </p>
+            </div>
+          </div>
+
           <section>
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <StatStripCard label="Total Evidence" value={counts.total} icon="ri-folder-line" color="primary" />

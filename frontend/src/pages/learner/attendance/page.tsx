@@ -54,6 +54,18 @@ export default function AttendancePage() {
             </div>
           </section>
 
+          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+              <i className="ri-information-line text-base"></i>
+            </span>
+            <div>
+              <p className="text-xs font-semibold">Demo attendance data</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
+                The attendance figures and risk status shown on this page are mock data for testing and demonstration only. They should not be treated as an official attendance record.
+              </p>
+            </div>
+          </div>
+
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatCard icon="ri-calendar-2-line" label="Total sessions" value={attendance.sessions} colour="bg-primary-50 text-primary-600" />
             <StatCard icon="ri-checkbox-circle-line" label="Present" value={attendance.present} colour="bg-emerald-50 text-emerald-600" />
