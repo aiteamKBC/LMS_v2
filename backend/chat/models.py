@@ -150,6 +150,35 @@ class Message(models.Model):
         return f"Message {self.pk} in conversation {self.conversation_id}"
 
 
+class MessageDeletion(models.Model):
+    """A per-participant hide marker for the chat's "delete for me" action."""
+
+    message_id = models.BigIntegerField(db_column="message_id")
+    participant_type = models.CharField(max_length=20)
+    participant_id = models.CharField(max_length=255)
+    deleted_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        # This is a new table owned by this app in both production and tests.
+        managed = True
+        db_table = _table_name("chat_test_message_deletions", 'chat"."message_deletions')
+        constraints = [
+            models.UniqueConstraint(
+                fields=("message_id", "participant_type", "participant_id"),
+                name="uq_chat_message_delete_participant",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("participant_type", "participant_id"),
+                name="chat_delete_participant_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Message {self.message_id} hidden for {self.participant_type}:{self.participant_id}"
+
+
 class MessageReceipt(models.Model):
     """Read/delivery state in the existing polymorphic receipt table."""
 

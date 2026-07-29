@@ -19,12 +19,14 @@ def _participant_data(participant, participant_type):
             "id": str(participant.pk),
             "type": "coach",
             "name": participant.name,
+            "email": participant.email,
             "avatar": None,
         }
     return {
         "id": str(participant.pk),
         "type": "learner",
         "name": participant.full_name,
+        "email": participant.email,
         "avatar": None,
     }
 
@@ -38,6 +40,7 @@ class LatestMessageSerializer(serializers.ModelSerializer):
     """Compact message representation used by the conversation list."""
 
     sender = serializers.SerializerMethodField()
+    body = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
@@ -53,6 +56,9 @@ class LatestMessageSerializer(serializers.ModelSerializer):
 
     def get_sender(self, obj):
         return _sender_data(obj)
+
+    def get_body(self, obj):
+        return "Message deleted" if obj.is_deleted else obj.body
 
 
 class ConversationSerializer(serializers.ModelSerializer):
@@ -92,6 +98,7 @@ class ConversationSerializer(serializers.ModelSerializer):
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = serializers.SerializerMethodField()
+    body = serializers.SerializerMethodField()
     is_mine = serializers.SerializerMethodField()
     read_at = serializers.SerializerMethodField()
 
@@ -112,6 +119,9 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_sender(self, obj):
         return _sender_data(obj)
+
+    def get_body(self, obj):
+        return "Message deleted" if obj.is_deleted else obj.body
 
     def get_is_mine(self, obj):
         principal = chat_principal_for_user(_request_user(self.context))

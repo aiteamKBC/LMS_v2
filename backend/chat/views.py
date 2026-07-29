@@ -20,6 +20,9 @@ from .services import (
     broadcast_message,
     conversation_queryset_for_user,
     create_message,
+    delete_message_for_everyone,
+    delete_message_for_me,
+    edit_message,
     get_conversation_for_user,
     get_message_for_user,
     mark_message_as_read,
@@ -196,3 +199,70 @@ class MessageReadView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class MessageEditView(APIView):
+    """Edit a message only when the authenticated user sent it."""
+
+    permission_classes = (IsAuthenticated, IsMessageParticipant)
+
+    def patch(self, request, message_id):
+        message = get_message_for_user(message_id, request.user)
+        if message is None:
+            raise Http404
+        self.check_object_permissions(request, message)
+
+        input_serializer = MessageCreateSerializer(data=request.data)
+        input_serializer.is_valid(raise_exception=True)
+
+        try:
+            message = edit_message(
+                message=message,
+                editor=request.user,
+                body=input_serializer.validated_data["body"],
+            )
+        except ChatAccessError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except InvalidMessageError as exc:
+            raise ValidationError({"body": str(exc)}) from exc
+
+        broadcast_message(message, event_type="message_updated")
+        output_serializer = MessageSerializer(
+            message,
+            context={"request": request},
+        )
+        return Response(output_serializer.data, status=status.HTTP_200_OK)
+
+
+class MessageDeleteView(APIView):
+    """Delete a message for the current participant or for everyone."""
+
+    permission_classes = (IsAuthenticated, IsMessageParticipant)
+
+    def post(self, request, message_id):
+        message = get_message_for_user(message_id, request.user)
+        if message is None:
+            raise Http404
+        self.check_object_permissions(request, message)
+
+        scope = str(request.data.get("scope", "me")).strip().lower()
+        if scope not in {"me", "everyone"}:
+            raise ValidationError({"scope": "Scope must be 'me' or 'everyone'."})
+
+        try:
+            if scope == "me":
+                delete_message_for_me(message=message, user=request.user)
+                return Response(
+                    {"message": message.pk, "scope": "me"},
+                    status=status.HTTP_200_OK,
+                )
+
+            message = delete_message_for_everyone(message=message, user=request.user)
+        except ChatAccessError as exc:
+            raise PermissionDenied(str(exc)) from exc
+        except InvalidMessageError as exc:
+            raise ValidationError({"scope": str(exc)}) from exc
+
+        broadcast_message(message, event_type="message_deleted")
+        output_serializer = MessageSerializer(message, context={"request": request})
+        return Response(output_serializer.data, status=status.HTTP_200_OK)

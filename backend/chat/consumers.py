@@ -97,3 +97,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 "message": event["message"],
             }
         )
+
+    async def chat_message_updated(self, event):
+        await self.send_json(
+            {
+                "type": "message_updated",
+                "message": event["message"],
+            }
+        )
+
+    async def chat_message_deleted(self, event):
+        await self.send_json(
+            {
+                "type": "message_deleted",
+                "message": event["message"],
+            }
+        )
