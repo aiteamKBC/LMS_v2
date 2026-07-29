@@ -2,18 +2,27 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.db import transaction
-from django.db.models import Count, DateTimeField, OuterRef, Prefetch, Q, Subquery
+from django.db.models import Count, DateTimeField, Exists, OuterRef, Prefetch, Q, Subquery
 from django.utils import timezone
 
-from .models import ChatCoach, ChatLearner, Conversation, Message, MessageReceipt
+from .models import (
+    ChatCoach,
+    ChatLearner,
+    Conversation,
+    Message,
+    MessageDeletion,
+    MessageReceipt,
+)
 
 logger = logging.getLogger(__name__)
 
 MAX_MESSAGE_LENGTH = 5000
+MESSAGE_ACTION_WINDOW = timedelta(minutes=15)
 
 
 class ChatAccessError(Exception):
@@ -101,6 +110,24 @@ def _receipt_recipient_filter(principal, prefix=""):
     }
 
 
+def _hidden_message_filter(principal, prefix=""):
+    """Return a subquery for messages hidden from one participant."""
+
+    message_field = f"{prefix}message_id" if prefix else "message_id"
+    return MessageDeletion.objects.filter(
+        **{
+            message_field: OuterRef("pk"),
+            "participant_type": principal.kind,
+            "participant_id": str(principal.id),
+        }
+    )
+
+
+def _ensure_message_action_is_recent(message):
+    if timezone.now() > message.created_at + MESSAGE_ACTION_WINDOW:
+        raise InvalidMessageError("Messages can only be edited or deleted for everyone within 15 minutes.")
+
+
 def conversation_queryset_for_user(user):
     """Return only conversations owned by the authenticated external identity."""
 
@@ -120,7 +147,9 @@ def conversation_queryset_for_user(user):
     latest_message_queryset = (
         Message.objects.select_related(
             "sender_coach", "sender_learner"
-        ).order_by("-created_at", "-id")[:1]
+        )
+        .filter(~Exists(_hidden_message_filter(principal)))
+        .order_by("-created_at", "-id")[:1]
     )
 
     return (
@@ -157,6 +186,7 @@ def messages_queryset_for_user(conversation, user):
     return (
         Message.objects.filter(conversation_id=conversation.pk)
         .select_related("sender_coach", "sender_learner")
+        .filter(~Exists(_hidden_message_filter(principal)))
         .annotate(viewer_read_at=Subquery(viewer_read_at, output_field=DateTimeField()))
         .order_by("created_at", "id")
     )
@@ -261,6 +291,105 @@ def create_message(conversation, sender, body):
 
 
 @transaction.atomic
+def edit_message(message, editor, body):
+    """Update a message only when the authenticated user sent it."""
+
+    principal = chat_principal_for_user(editor)
+    if not _principal_matches_conversation(message.conversation, principal):
+        raise ChatAccessError("Editor does not belong to this conversation.")
+    if message.is_deleted:
+        raise InvalidMessageError("Deleted messages cannot be edited.")
+    if message.sender_type != principal.kind or str(message.sender_id) != str(principal.id):
+        raise ChatAccessError("Only the message sender can edit this message.")
+    _ensure_message_action_is_recent(message)
+    if not isinstance(body, str):
+        raise InvalidMessageError("Message body must be text.")
+
+    body = body.strip()
+    if not body:
+        raise InvalidMessageError("Message body cannot be empty.")
+    if len(body) > MAX_MESSAGE_LENGTH:
+        raise InvalidMessageError(
+            f"Message body cannot exceed {MAX_MESSAGE_LENGTH} characters."
+        )
+
+    locked_message = (
+        Message.objects.select_for_update()
+        .get(pk=message.pk)
+    )
+    if not _principal_matches_conversation(locked_message.conversation, principal):
+        raise ChatAccessError("Editor does not belong to this conversation.")
+    if locked_message.is_deleted:
+        raise InvalidMessageError("Deleted messages cannot be edited.")
+    if locked_message.sender_type != principal.kind or str(locked_message.sender_id) != str(principal.id):
+        raise ChatAccessError("Only the message sender can edit this message.")
+    _ensure_message_action_is_recent(locked_message)
+
+    now = timezone.now()
+    locked_message.body = body
+    locked_message.edited_at = now
+    locked_message.full_clean()
+    locked_message.save(update_fields=["body", "edited_at"])
+    Conversation.objects.filter(pk=locked_message.conversation_id).update(updated_at=now)
+
+    return (
+        Message.objects.select_related(
+            "conversation", "sender_coach", "sender_learner"
+        ).get(pk=locked_message.pk)
+    )
+
+
+@transaction.atomic
+def delete_message_for_me(message, user):
+    """Hide a message for the requesting participant only."""
+
+    principal = chat_principal_for_user(user)
+    if not _principal_matches_conversation(message.conversation, principal):
+        raise ChatAccessError("User does not belong to this conversation.")
+
+    MessageDeletion.objects.get_or_create(
+        message_id=message.pk,
+        participant_type=principal.kind,
+        participant_id=str(principal.id),
+    )
+
+
+@transaction.atomic
+def delete_message_for_everyone(message, user):
+    """Soft-delete a sender's message for both conversation participants."""
+
+    principal = chat_principal_for_user(user)
+    if not _principal_matches_conversation(message.conversation, principal):
+        raise ChatAccessError("User does not belong to this conversation.")
+    if message.sender_type != principal.kind or str(message.sender_id) != str(principal.id):
+        raise ChatAccessError("Only the message sender can delete this message for everyone.")
+    if message.is_deleted:
+        return message
+    _ensure_message_action_is_recent(message)
+
+    # Do not select_related nullable sender FKs while taking the row lock;
+    # PostgreSQL rejects FOR UPDATE on the nullable side of that join.
+    locked_message = Message.objects.select_for_update().get(pk=message.pk)
+    if locked_message.is_deleted:
+        return locked_message
+    if locked_message.sender_type != principal.kind or str(locked_message.sender_id) != str(principal.id):
+        raise ChatAccessError("Only the message sender can delete this message for everyone.")
+    _ensure_message_action_is_recent(locked_message)
+
+    now = timezone.now()
+    locked_message.is_deleted = True
+    locked_message.edited_at = now
+    locked_message.save(update_fields=["is_deleted", "edited_at"])
+    Conversation.objects.filter(pk=locked_message.conversation_id).update(updated_at=now)
+
+    return (
+        Message.objects.select_related(
+            "conversation", "sender_coach", "sender_learner"
+        ).get(pk=locked_message.pk)
+    )
+
+
+@transaction.atomic
 def mark_message_as_read(message, user):
     principal = chat_principal_for_user(user)
     if not _principal_matches_conversation(message.conversation, principal):
@@ -293,14 +422,14 @@ def message_event_payload(message):
             "type": message.sender_type,
             "id": str(message.sender_id),
         },
-        "body": message.body,
+        "body": "Message deleted" if message.is_deleted else message.body,
         "created_at": message.created_at.isoformat(),
         "edited_at": message.edited_at.isoformat() if message.edited_at else None,
         "is_deleted": message.is_deleted,
     }
 
 
-def broadcast_message(message):
+def broadcast_message(message, event_type="new_message"):
     """Broadcast a committed REST-created message through Redis."""
 
     channel_layer = get_channel_layer()
@@ -311,7 +440,7 @@ def broadcast_message(message):
     try:
         async_to_sync(channel_layer.group_send)(
             conversation_group_name(message.conversation_id),
-            {"type": "chat.new_message", "message": message_event_payload(message)},
+            {"type": f"chat.{event_type}", "message": message_event_payload(message)},
         )
     except Exception:
         logger.exception("Unable to broadcast chat message %s", message.pk)

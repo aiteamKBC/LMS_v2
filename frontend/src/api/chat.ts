@@ -4,6 +4,7 @@ export interface ChatParticipant {
   id: string;
   type: ChatParticipantType;
   name: string;
+  email: string;
   avatar: string | null;
 }
 
@@ -11,6 +12,7 @@ export interface ChatSender {
   id: string;
   type: ChatParticipantType;
   name?: string;
+  email?: string;
   avatar?: string | null;
 }
 
@@ -137,10 +139,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    const payload = data as { detail?: string; body?: string[] } | null;
+    const payload = data as { detail?: string; body?: string[]; scope?: string[] | string } | null;
+    const scopeMessage = Array.isArray(payload?.scope) ? payload.scope[0] : payload?.scope;
     const message = response.status === 401 || response.status === 403
       ? 'Your web session is not authenticated for chat. Please sign in through Django.'
-      : payload?.detail || payload?.body?.[0] || `Chat request failed (${response.status}).`;
+      : payload?.detail || payload?.body?.[0] || scopeMessage || `Chat request failed (${response.status}).`;
     throw new ChatApiError(message, response.status);
   }
 
@@ -159,6 +162,20 @@ export function createChatMessage(conversationId: number, body: string): Promise
   return request<ChatMessage>(`/conversations/${conversationId}/messages/`, {
     method: 'POST',
     body: JSON.stringify({ body }),
+  });
+}
+
+export function updateChatMessage(messageId: number, body: string): Promise<ChatMessage> {
+  return request<ChatMessage>(`/messages/${messageId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function deleteChatMessage(messageId: number, scope: 'me' | 'everyone'): Promise<ChatMessage | { message: number; scope: 'me' }> {
+  return request<ChatMessage | { message: number; scope: 'me' }>(`/messages/${messageId}/delete/`, {
+    method: 'POST',
+    body: JSON.stringify({ scope }),
   });
 }
 

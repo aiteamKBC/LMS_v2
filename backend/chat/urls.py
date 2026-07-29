@@ -5,6 +5,8 @@ from .views import (
     ChatSessionView,
     ConversationListView,
     ConversationMessagesView,
+    MessageDeleteView,
+    MessageEditView,
     MessageReadView,
 )
 
@@ -19,5 +21,7 @@ urlpatterns = [
         ConversationMessagesView.as_view(),
         name="conversation-messages",
     ),
+    path("messages/<int:message_id>/delete/", MessageDeleteView.as_view(), name="message-delete"),
+    path("messages/<int:message_id>/", MessageEditView.as_view(), name="message-edit"),
     path("messages/<int:message_id>/read/", MessageReadView.as_view(), name="message-read"),
 ]

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
+import { useAuth } from '@/hooks/useAuth';
+import { bootstrapChatSession } from '@/api/chat';
 import { fetchCommercialUsers, updateCommercialUser, type CommercialUserRow } from '@/api/commercialUsers';
 import { fetchEnrolmentUsers, updateEnrolmentUser, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
@@ -178,6 +180,7 @@ function TableCard({
 
 export default function LearnersPage() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const { error } = useToast();
   const [commercial, setCommercial] = useState<CommercialUserRow[]>([]);
   const [apprentices, setApprentices] = useState<UserListRow[]>([]);
@@ -203,6 +206,18 @@ export default function LearnersPage() {
   }, []);
 
   const total = commercial.length + apprentices.length;
+
+  const openLearnerPage = async (kind: 'commercial' | 'apprenticeship', id: string) => {
+    // Enter the learner demo account first so the learner dashboard and chat
+    // use the same authenticated learner identity as a fresh sign-in.
+    login('learner@kbc.test');
+    try {
+      await bootstrapChatSession('learner@kbc.test');
+    } catch (cause) {
+      error('Learner chat could not be connected', cause instanceof Error ? cause.message : 'Please try again.');
+    }
+    navigate(`/workspace/learner/${kind}/${id}`);
+  };
 
   return (
     <WorkspaceShell
@@ -270,7 +285,7 @@ export default function LearnersPage() {
                           Training plan<i className="ri-arrow-right-line" />
                         </button>
                         <button
-                          onClick={() => navigate(`/workspace/learner/commercial/${u.id}`)}
+                          onClick={() => void openLearnerPage('commercial', String(u.id))}
                           className="text-[12px] text-foreground-600 hover:text-foreground-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
                         >
                           <i className="ri-external-link-line" />Open learner page
@@ -329,7 +344,7 @@ export default function LearnersPage() {
                           Training plan<i className="ri-arrow-right-line" />
                         </button>
                         <button
-                          onClick={() => navigate(`/workspace/learner/apprenticeship/${u.id}`)}
+                          onClick={() => void openLearnerPage('apprenticeship', String(u.id))}
                           className="text-[12px] text-foreground-600 hover:text-foreground-900 hover:underline inline-flex items-center gap-1 cursor-pointer"
                         >
                           <i className="ri-external-link-line" />Open learner page
