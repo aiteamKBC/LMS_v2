@@ -43,7 +43,6 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
   const target = parseHours(real?.targetHours);
   const planned = parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
   const progressHours = parseHours(real?.progressHours);
-  const variance = real?.progressVariance ? parseFloat(real.progressVariance) : null;
   const status = real?.otjhStatus || 'On track';
   const rag = RAG(status);
   const plannedPercent = planned > 0 ? Math.round((completed / planned) * 100) : 0;
@@ -91,45 +90,52 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
         {/* Hero */}
-        <section className="relative rounded-2xl overflow-hidden p-6 md:p-8 text-white" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-900)) 0%, oklch(var(--primary-700)) 100%)' }}>
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+        <section className="relative min-h-[170px] overflow-hidden rounded-3xl border border-primary-700/40 p-6 text-white shadow-[0_18px_45px_rgba(35,8,76,0.20)] md:p-7" style={{ background: 'linear-gradient(115deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 45%, oklch(var(--primary-700)) 100%)' }}>
+          <div className="pointer-events-none absolute -left-24 -top-32 h-72 w-72 rounded-full bg-primary-400/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-36 right-36 h-72 w-72 rounded-full bg-secondary-400/15 blur-3xl" />
+          <div className="relative flex min-h-[110px] flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="min-w-0">
               <span className={`inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${rag.bg} ${rag.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{status}
               </span>
-              <h1 className="mt-3 text-2xl md:text-3xl font-heading font-bold tracking-tight">Off-the-Job Training Hours</h1>
-              <p className="mt-1 text-sm text-white/70 max-w-xl">Your logged learning hours, built from every quiz and video you complete and reflect on.</p>
+              <h1 className="mt-3 text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">Off-the-Job Training Hours</h1>
+              <p className="mt-1 max-w-xl text-sm !text-white/65">Your logged learning hours from completed quizzes, videos and learning activities.</p>
             </div>
-            <div className="shrink-0 flex items-center gap-5">
-              <div className="text-right">
-                <p className="text-4xl font-heading font-bold tabular-nums leading-none">{formatHoursMinutes(completed)}</p>
-                <p className="text-xs text-white/70 mt-1">of {formatHoursMinutes(planned)} planned</p>
+            <div className="flex w-full shrink-0 items-center gap-4 rounded-2xl border border-white/15 bg-white/10 p-4 shadow-lg shadow-black/10 backdrop-blur-md md:w-auto md:min-w-[260px]">
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-emerald-300">
+                <i className="ri-time-line text-xl" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Hours completed</p>
+                    <p className="mt-1 text-2xl font-heading font-bold tabular-nums leading-none !text-white">{formatHoursMinutes(completed)}</p>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-300">{plannedPercent}%</span>
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/15">
+                  <div className="h-full rounded-full bg-emerald-300 transition-all duration-700" style={{ width: `${Math.min(100, plannedPercent)}%` }} />
+                </div>
+                <p className="mt-1.5 text-[10px] !text-white/55">of {formatHoursMinutes(planned)} programme hours</p>
               </div>
             </div>
           </div>
         </section>
 
         {/* Stat strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
           <StatCard icon="ri-flag-line" iconTint="bg-primary-100 text-primary-600" label="Completed" value={formatHoursMinutes(completed)} sub={`${plannedPercent}% of plan`} />
           <StatCard icon="ri-focus-3-line" iconTint="bg-violet-100 text-violet-600" label="Current target" value={formatHoursMinutes(target)} sub="up to this week" />
-          <StatCard
-            icon={progressHours < 0 ? 'ri-arrow-down-line' : 'ri-arrow-up-line'}
-            iconTint={progressHours < 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}
-            label={progressHours < 0 ? 'Behind target' : 'Ahead of target'}
-            value={formatHoursMinutes(Math.abs(progressHours))}
-            sub={variance != null ? `${Math.round(variance * 100)}% variance` : '—'}
-          />
-          <StatCard icon="ri-calendar-todo-line" iconTint="bg-background-200 text-foreground-500" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned" />
+          <StatCard icon="ri-calendar-todo-line" iconTint="bg-background-200 text-foreground-500" label="Programme plan" value={formatHoursMinutes(planned)} sub="total planned hours" />
         </div>
 
         {/* Progress vs target */}
-        <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+        <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:p-5">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-heading font-semibold text-foreground-900">Progress against current target</h2>
             <span className="text-xs text-foreground-400">{formatHoursMinutes(completed)} / {formatHoursMinutes(target)}</span>
           </div>
-          <div className="h-2.5 w-full rounded-full bg-background-200 overflow-hidden">
+          <div className="h-3 w-full overflow-hidden rounded-full bg-background-200">
             <div className={`h-full rounded-full transition-all duration-700 ${rag.dot}`} style={{ width: `${targetPercent}%` }} />
           </div>
           <p className="text-[11px] text-foreground-400 mt-1.5">
@@ -141,20 +147,26 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
 
         {/* Two-column: activity log + type breakdown */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5 items-start">
-          <section className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-            <div className="flex items-center justify-between px-4 md:px-5 py-3 border-b border-foreground-100">
-              <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Log</h2>
-              <span className="text-xs text-foreground-400">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
+          <section className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm lg:col-span-2">
+            <div className="flex items-center justify-between border-b border-foreground-100 bg-background-50 px-4 py-3.5 md:px-5">
+              <div className="flex items-center gap-2.5">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-100 text-primary-600"><i className="ri-history-line text-sm" /></span>
+                <div>
+                  <h2 className="text-sm font-heading font-bold text-foreground-900">Activity Log</h2>
+                  <p className="text-[10px] text-foreground-400">Recorded learning activity and submitted time</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
             </div>
             {loading ? (
               <div className="p-5"><EmptyState text="Loading…" /></div>
             ) : rows.length === 0 ? (
               <div className="p-5"><EmptyState text="No logged activity yet — complete a quiz or video to see it here." /></div>
             ) : (
-              <div className="divide-y divide-foreground-100">
+              <div className="max-h-[520px] divide-y divide-foreground-100 overflow-y-auto">
                 {rows.map((r, i) => (
-                  <div key={i} className="flex items-center gap-3 px-4 md:px-5 py-3">
-                    <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${r.tint}`}>
+                  <div key={i} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-50/25 md:px-5">
+                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${r.tint}`}>
                       <i className={`${r.icon} text-[15px]`} />
                     </span>
                     <div className="flex-1 min-w-0">
@@ -181,8 +193,14 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
             )}
           </section>
 
-          <section className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-            <h2 className="text-base font-heading font-semibold text-foreground-900 mb-4">By activity type</h2>
+          <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm lg:col-span-1 md:p-5">
+            <div className="mb-5 flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-secondary-100 text-secondary-600"><i className="ri-pie-chart-line text-sm" /></span>
+              <div>
+                <h2 className="text-sm font-heading font-bold text-foreground-900">By activity type</h2>
+                <p className="text-[10px] text-foreground-400">Logged time distribution</p>
+              </div>
+            </div>
             {breakdown.length === 0 ? (
               <EmptyState text="No hours logged yet." />
             ) : (
@@ -209,13 +227,14 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
 
 function StatCard({ icon, iconTint, label, value, sub }: { icon: string; iconTint: string; label: string; value: string; sub: string }) {
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${iconTint}`}><i className={`${icon} text-sm`} /></span>
-        <span className="text-xs text-foreground-400">{label}</span>
+    <div className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+      <div className="mb-3 flex items-center justify-between">
+        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconTint}`}><i className={`${icon} text-sm`} /></span>
+        <i className="ri-more-line text-sm text-foreground-200" />
       </div>
-      <p className="text-xl font-heading font-bold text-foreground-900 tabular-nums leading-tight">{value}</p>
-      <p className="text-[11px] text-foreground-400 mt-0.5">{sub}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
+      <p className="mt-1 text-xl font-heading font-bold leading-tight text-foreground-900 tabular-nums">{value}</p>
+      <p className="mt-1 text-[10px] text-foreground-400">{sub}</p>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import * as XLSX from 'xlsx';
 import {
-  archiveCurriculumKsbFramework,
+  deleteCurriculumKsbFramework,
   createCurriculumKsbFramework,
   updateCurriculumKsbFramework,
   type CurriculumKsbFramework,
@@ -405,29 +405,29 @@ export function KsbFrameworkManager({
     }
   };
 
-  const archiveFramework = async (target: CurriculumKsbFramework) => {
+  const deleteFramework = async (target: CurriculumKsbFramework) => {
     setSaving(true);
     try {
-      await archiveCurriculumKsbFramework(target.id);
+      await deleteCurriculumKsbFramework(target.id);
       onRefresh();
     } catch (err) {
-      toastError('Unable to archive framework', err instanceof Error ? err.message : 'The framework could not be archived.');
+      toastError('Unable to delete framework', err instanceof Error ? err.message : 'The framework could not be deleted.');
       throw err;
     } finally {
       setSaving(false);
     }
   };
 
-  const requestArchiveFramework = async (framework: CurriculumKsbFramework) => {
+  const requestDeleteFramework = async (framework: CurriculumKsbFramework) => {
     await showCurriculumConfirm({
-      title: 'Archive framework?',
-      text: 'Archiving this framework hides it from new curriculum planning. Existing modules using it will keep their historical reference.',
+      title: 'Delete framework?',
+      text: 'Deleting this framework removes it from the KSB profiles table. Existing modules using it will keep their historical reference.',
       icon: 'warning',
-      confirmButtonText: 'Archive Framework',
+      confirmButtonText: 'Delete Framework',
       cancelButtonText: 'Cancel',
-      successTitle: 'Framework archived',
+      successTitle: 'Framework deleted',
       successText: 'Existing modules using it will keep their historical reference.',
-      onConfirm: () => archiveFramework(framework),
+      onConfirm: () => deleteFramework(framework),
     });
   };
 
@@ -506,7 +506,7 @@ export function KsbFrameworkManager({
               </button>
               <div className="mt-2 flex gap-1">
                 <button onClick={() => { setCreating(false); setSelectedId(framework.id); }} className="px-2 py-1 rounded-md border border-background-200 text-[10px] font-semibold hover:bg-background-100"><i className="ri-edit-line mr-1"></i>Edit</button>
-                <button onClick={() => void requestArchiveFramework(framework)} className="px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-600 text-[10px] font-semibold hover:bg-red-100"><i className="ri-archive-line mr-1"></i>Archive</button>
+                <button onClick={() => void requestDeleteFramework(framework)} className="px-2 py-1 rounded-md border border-red-200 bg-red-50 text-red-600 text-[10px] font-semibold hover:bg-red-100"><i className="ri-delete-bin-line mr-1"></i>Delete</button>
               </div>
             </div>
             );
@@ -596,7 +596,7 @@ export function KsbFrameworkManager({
         <div className="sticky bottom-0 px-5 pr-40 py-3 border-t border-background-200 bg-background-50 flex items-center gap-3">
           <p className="text-xs font-semibold text-foreground-400 mr-auto">{items.length} required KSB codes</p>
           <div className="flex shrink-0 items-center gap-3">
-            {!creating && selectedFramework && <button onClick={() => void requestArchiveFramework(selectedFramework)} className="px-4 py-2 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50">Archive</button>}
+            {!creating && selectedFramework && <button onClick={() => void requestDeleteFramework(selectedFramework)} className="px-4 py-2 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50">Delete</button>}
             <button onClick={saveFramework} disabled={!canSave || saving} className="px-5 py-2.5 rounded-lg bg-primary-950 text-white text-xs font-bold hover:bg-primary-900 disabled:bg-foreground-300 disabled:cursor-not-allowed">{saving ? 'Saving...' : 'Save Framework'}</button>
           </div>
         </div>

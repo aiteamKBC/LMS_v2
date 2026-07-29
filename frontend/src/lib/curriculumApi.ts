@@ -27,6 +27,7 @@ export interface CurriculumProgramme {
   color: string;
   description: string;
   structureType?: 'scheduled' | 'free' | string;
+  ksbProfileSourceId?: string;
 }
 
 export interface CurriculumModule {
@@ -62,6 +63,7 @@ export interface CurriculumModule {
   startDate?: string;
   endDate?: string;
   ksbCount: number;
+  ksbProfileSourceId?: string;
   lessons: number;
   quizzes: number;
   assignments: number;
@@ -643,11 +645,11 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   const timeout = controller && init?.timeoutMs
     ? window.setTimeout(() => controller.abort(), init.timeoutMs)
     : null;
-  const { timeoutMs: _timeoutMs, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: _signal, ...fetchInit } = init || {};
   try {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...fetchInit,
-    signal: init?.signal || controller?.signal,
+    signal: controller?.signal,
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init?.headers || {}),
@@ -800,8 +802,8 @@ export function updateCurriculumKsbFramework(id: string, input: CurriculumKsbFra
   return patchJson<{ updated: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`, input);
 }
 
-export function archiveCurriculumKsbFramework(id: string) {
-  return deleteJson<{ archived: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
+export function deleteCurriculumKsbFramework(id: string) {
+  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
 }
 
 export function fetchCurriculumSessions(signal?: AbortSignal): Promise<CurriculumSession[]> {
@@ -854,11 +856,12 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId'>>;
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
+  ksbProfileSourceId?: string;
   cohortId?: string;
   cohortName?: string;
   cohort?: string;

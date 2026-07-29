@@ -26,6 +26,8 @@ export default function QuizTakePage() {
 
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [learnerKsbs, setLearnerKsbs] = useState<LearnerKsbItem[]>([]);
+  const [learnerName, setLearnerName] = useState('Learner');
+  const [programmeName, setProgrammeName] = useState('Programme not set');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -57,7 +59,13 @@ export default function QuizTakePage() {
     if (!id) return;
     let cancelled = false;
     fetchLearnerDetail(kind as LearnerKind, id)
-      .then((d) => { if (!cancelled) setLearnerKsbs(d.ksbs || []); })
+      .then((d) => {
+        if (!cancelled) {
+          setLearnerKsbs(d.ksbs || []);
+          setLearnerName(d.name || 'Learner');
+          setProgrammeName(d.programme || 'Programme not set');
+        }
+      })
       .catch(() => { /* KSBs are optional — window still works without them */ });
     return () => { cancelled = true; };
   }, [kind, id]);
@@ -129,7 +137,7 @@ export default function QuizTakePage() {
       userName="Learner"
       userRole="Learner"
     >
-      <div className="p-3 md:p-6 max-w-3xl mx-auto">
+      <div className="p-3 md:p-6 max-w-5xl mx-auto">
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading quiz…" /></div>
         ) : loadError || !quiz ? (
@@ -156,10 +164,19 @@ export default function QuizTakePage() {
             plannedTimeLabel={quiz.duration ? `${quiz.duration} ${quiz.timeUnit || 'min'}` : ''}
             learnerKsbs={learnerKsbs}
             elapsedSeconds={elapsedSeconds}
-            submitting={submitting}
-            submitError={submitError}
-            onSubmit={finalizeSubmit}
-          />
+              submitting={submitting}
+              submitError={submitError}
+              onSubmit={finalizeSubmit}
+              activityTitle={quiz.title}
+              weekLabel={weekTitle || ''}
+              moduleLabel={moduleTitle || ''}
+              learnerName={learnerName}
+              programmeName={programmeName}
+              learnerKind={kind as LearnerKind}
+              learnerId={id}
+              evidenceSectionRef={`quiz-${quiz.id}`}
+              onClose={() => navigate(backHref)}
+            />
         ) : (
           result && <ResultsScreen quiz={quiz} result={result} onBack={() => navigate(backHref)} />
         )}

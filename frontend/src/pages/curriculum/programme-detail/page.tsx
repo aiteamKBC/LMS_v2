@@ -1,8 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
-import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
 import type {
   CurriculumComponent,
@@ -15,30 +15,33 @@ import type {
   CurriculumProgrammeInput,
   CurriculumSession,
   CurriculumStaffProfile,
+  CurriculumHoliday,
   CurriculumKsbCoverageResponse,
   CurriculumKsbCoverageStatus,
   CurriculumKsbSet,
   CurriculumStandard,
 } from '@/lib/curriculumApi';
 import {
-  deleteStaffingAssignment,
   fetchCurriculumComponents,
+  fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
+  fetchCurriculumKsbSets,
+  fetchCurriculumKsbFrameworks,
   fetchCurriculumCoaches,
+  fetchCurriculumHolidays,
   fetchCurriculumStandards,
   fetchCurriculumTutors,
   updateCurriculumProgramme,
-  updateStaffingAssignment,
 } from '@/lib/curriculumApi';
 import {
   type KsbMapping,
   type ModuleCatalogueItem as AuthoringModule,
 } from '../module-builder/moduleAuthoringData';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types — Full Programme Hierarchy
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Types â€” Full Programme Hierarchy
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Session {
   id: string;
@@ -149,11 +152,14 @@ interface Cohort {
   status: 'active' | 'planned' | 'completed';
   learners: number;
   groups: Group[];
+  holidayIds?: string[];
+  holidays?: CurriculumHoliday[];
 }
 
 interface Programme {
   id: string;
   sourceId?: string;
+  ksbProfileSourceId?: string;
   name: string;
   standard: string;
   level: string;
@@ -169,8 +175,6 @@ interface Programme {
 }
 
 type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description'>>;
-type SelectOption = { value: string; label: string };
-
 // A delivery session shown on the Sessions tab, derived from real week-builder
 // components: `live-session` components are Live, `video` components are Recorded.
 type DeliverySessionKind = 'live' | 'recorded';
@@ -194,9 +198,9 @@ interface DeliverySession {
 }
 
 // Classify a component as a Live session or a Recorded video. NOTE: the
-// `/curriculum/components/` list endpoint returns a *display* type — live-session
+// `/curriculum/components/` list endpoint returns a *display* type â€” live-session
 // becomes "Live Session" but video/podcast/reading/powerpoint all collapse to
-// "Self-study" — so `type` alone can't isolate video. We match on the tolerant
+// "Self-study" â€” so `type` alone can't isolate video. We match on the tolerant
 // type string first, then fall back to the component's own authoring settings
 // keys (which stay type-specific), so this works whichever endpoint fed us.
 function deliveryKindForComponent(component: { type?: string; settings?: Record<string, unknown> }): DeliverySessionKind | null {
@@ -211,9 +215,9 @@ function deliveryKindForComponent(component: { type?: string; settings?: Record<
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Type badge colours
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const componentStatusColors: Record<string, string> = {
   published: 'bg-emerald-50 text-emerald-700 border-emerald-200/60',
@@ -272,28 +276,6 @@ function slugify(value: unknown) {
 
 function staffProfileName(profile: CurriculumStaffProfile) {
   return clean(profile.name || profile.Tutor_name || profile.Coach_name || profile.email);
-}
-
-function staffOptions(profiles: CurriculumStaffProfile[] = [], currentValues: string[] = []): SelectOption[] {
-  const names = new Map<string, string>();
-
-  profiles.forEach(profile => {
-    const name = staffProfileName(profile);
-    const key = normalise(name);
-    if (!key || key === 'unassigned' || names.has(key)) return;
-    names.set(key, name);
-  });
-
-  currentValues.forEach(value => {
-    const name = clean(value);
-    const key = normalise(name);
-    if (!key || key === 'unassigned' || names.has(key)) return;
-    names.set(key, name);
-  });
-
-  return Array.from(names.values())
-    .sort((left, right) => left.localeCompare(right))
-    .map(name => ({ value: name, label: name }));
 }
 
 type KsbKind = 'knowledge' | 'skill' | 'behaviour' | 'other';
@@ -369,12 +351,24 @@ function uniqueCleanValues(values: unknown[]) {
   });
 }
 
+function isInternalGroupIdentifier(value: string) {
+  const cleaned = clean(value);
+  return /^GROUP-\d{10,}$/i.test(cleaned)
+    || /^GRP-?[A-Z0-9]{10,}$/i.test(cleaned)
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleaned);
+}
+
+function displayGroupValues(values: unknown[]) {
+  const expanded = values.flatMap(value => clean(value).split(',').map(part => part.trim()));
+  return uniqueCleanValues(expanded).filter(value => !isInternalGroupIdentifier(value));
+}
+
 function authoringGroupLabels(module: AuthoringModule, component?: { settings?: Record<string, unknown> }) {
   const settings = component?.settings || {};
   const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
   const keys = Array.isArray(settings.selectedGroupKeys) ? settings.selectedGroupKeys : [];
   const fallback = [module.group, module.groupId];
-  return uniqueCleanValues([...names, ...(names.length ? [] : keys), ...(names.length || keys.length ? [] : fallback)]);
+  return displayGroupValues([...names, ...(names.length ? [] : keys), ...(names.length || keys.length ? [] : fallback)]);
 }
 
 function ksbKey(code: string) {
@@ -404,6 +398,131 @@ function ksbSetSourceIdForProgrammeDetail(set?: CurriculumKsbSet) {
   if (!set) return '';
   const key = set.frameworkId || (set.profileId ? `ksb-${set.profileId}` : '') || set.programmeId || set.programmeName || set.standard;
   return clean(key);
+}
+
+type KsbCoverageSourceRequest = { sourceType?: string; sourceId?: string };
+
+function splitProgrammeKsbSource(value?: string): KsbCoverageSourceRequest {
+  const stored = clean(value);
+  if (!stored) return {};
+  const match = stored.match(/^([a-z_-]+):(.*)$/i);
+  if (!match) return { sourceType: 'framework', sourceId: stored };
+  const [, rawType, rawId] = match;
+  const sourceId = clean(rawId);
+  if (!sourceId) return {};
+  const sourceType = normalise(rawType);
+  if (['standard', 'skills_standard', 'skills-england', 'skills_england'].includes(sourceType)) {
+    return { sourceType: 'standard', sourceId };
+  }
+  if (['profile', 'ksb_profile', 'framework'].includes(sourceType)) {
+    return { sourceType: 'framework', sourceId };
+  }
+  return { sourceType: sourceType || 'framework', sourceId };
+}
+
+function programmeKsbCoverageSource(programme: Pick<Programme, 'ksbProfileSourceId' | 'standard'>): KsbCoverageSourceRequest {
+  const explicit = splitProgrammeKsbSource(programme.ksbProfileSourceId);
+  if (explicit.sourceId) return explicit;
+  const standardId = rawSkillsStandardIdentifier(programme as Programme);
+  return standardId ? { sourceType: 'standard', sourceId: standardId } : {};
+}
+
+function inferProgrammeKsbCoverageSource(
+  programme: Pick<Programme, 'id' | 'sourceId' | 'name' | 'standard' | 'ksbProfileSourceId'>,
+  ksbSets: CurriculumKsbSet[],
+  standards: CurriculumStandard[],
+): KsbCoverageSourceRequest {
+  const explicit = programmeKsbCoverageSource(programme as Programme);
+  if (explicit.sourceId) return explicit;
+
+  const programmeIds = uniqueCleanValues([programme.sourceId, programme.id, programme.name]);
+  const linkedProfile = ksbSets.find(set => {
+    const linkedProgrammeIds = uniqueCleanValues([set.programmeId, ...(set.programmeIds || [])]);
+    return programmeIds.some(id => linkedProgrammeIds.some(linkedId => normalise(id) === normalise(linkedId)));
+  });
+  if (linkedProfile) {
+    const sourceId = ksbSetSourceIdForProgrammeDetail(linkedProfile);
+    if (sourceId) return { sourceType: 'framework', sourceId };
+  }
+
+  const linkedStandard = standards.find(standard => (
+    normalise(standard.id) === normalise(programme.standard)
+    || normalise(standard.name) === normalise(programme.standard)
+    || normalise(standard.standardRef) === normalise(programme.standard)
+  ));
+  return linkedStandard ? { sourceType: 'standard', sourceId: linkedStandard.id } : {};
+}
+
+function sourceMatchesProgrammeSource(row: Pick<KsbHeatmapRow, 'sourceType' | 'sourceId'>, source: KsbCoverageSourceRequest) {
+  if (!source.sourceId) return true;
+  const rowSourceId = normaliseKsbSourceId(row.sourceId);
+  if (!rowSourceId) return true;
+  const rowSourceType = normaliseKsbSourceType(row.sourceType, row.sourceId);
+  const requiredType = normaliseKsbSourceType(source.sourceType, source.sourceId);
+  return rowSourceId === normaliseKsbSourceId(source.sourceId) && (!requiredType || !rowSourceType || rowSourceType === requiredType);
+}
+
+function filterHeatmapRowsByProgrammeSource(rows: KsbHeatmapRow[], source: KsbCoverageSourceRequest) {
+  return source.sourceId ? rows.filter(row => sourceMatchesProgrammeSource(row, source)) : rows;
+}
+
+function ksbDescriptionKeys(code: string, sourceType?: string, sourceId?: string) {
+  const formatted = formatKsbCode(code);
+  const compact = formatted.replace('.', '');
+  const codes = uniqueCleanValues([formatted, compact, clean(code).toUpperCase()]);
+  const type = normaliseKsbSourceType(sourceType, sourceId);
+  const source = normaliseKsbSourceId(sourceId);
+  return codes.flatMap(item => [
+    type || source ? `${type}|${source}|${item}` : '',
+    `||${item}`,
+  ]).filter(Boolean);
+}
+
+function addKsbDescription(lookup: Map<string, string>, code: string, description: string, sourceType?: string, sourceId?: string) {
+  const text = clean(description);
+  if (!code || !text || normalise(text) === normalise(code)) return;
+  ksbDescriptionKeys(code, sourceType, sourceId).forEach(key => {
+    if (!lookup.has(key)) lookup.set(key, text);
+  });
+}
+
+function buildKsbDescriptionLookup(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]) {
+  const lookup = new Map<string, string>();
+  const visitEntry = (entry: CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, sourceType: string, sourceId: string) => {
+    const codes = uniqueCleanValues([entry.code, entry.rawCode, entry.fullCode]);
+    codes.forEach(code => addKsbDescription(lookup, code, clean(entry.description || entry.title), sourceType, sourceId));
+    (entry.children || []).forEach(child => visitEntry(child, sourceType, sourceId));
+  };
+  ksbSets.forEach(set => {
+    const sourceIds = uniqueCleanValues([
+      ksbSetSourceIdForProgrammeDetail(set),
+      set.frameworkId,
+      set.ksbProfileId,
+      set.profileId ? String(set.profileId) : '',
+      set.profileId ? `KSBP-${set.profileId}` : '',
+      set.programmeId,
+      set.programmeName,
+      set.standard,
+    ]);
+    set.ksbs.forEach(entry => sourceIds.forEach(sourceId => visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, 'framework', sourceId)));
+    set.ksbs.forEach(entry => visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, '', ''));
+  });
+  standards.forEach(standard => {
+    const sourceIds = uniqueCleanValues([standard.id, standard.code, standard.standardRef, standard.name]);
+    (standard.ksbs || standard.sampleKsbs || []).forEach(entry => {
+      sourceIds.forEach(sourceId => addKsbDescription(lookup, entry.code, entry.description, 'standard', sourceId));
+      addKsbDescription(lookup, entry.code, entry.description);
+    });
+  });
+  return lookup;
+}
+
+function lookupKsbDescription(lookup: Map<string, string>, code: string, sourceType?: string, sourceId?: string) {
+  for (const key of ksbDescriptionKeys(code, sourceType, sourceId)) {
+    const found = lookup.get(key);
+    if (found) return found;
+  }
+  return '';
 }
 
 function clampCoverageWeight(value: number) {
@@ -477,7 +596,7 @@ function collectAuthoringKsbRollup(module: AuthoringModule | null): KsbRollupIte
 function collectComponentKsbRollup(components: CurriculumComponent[], moduleName: string): KsbRollupItem[] {
   const rollup = new Map<string, KsbRollupItem>();
   components.forEach(component => {
-    const componentGroups = uniqueCleanValues([
+    const componentGroups = displayGroupValues([
       (component as CurriculumComponent & { group?: string; groupName?: string }).group,
       (component as CurriculumComponent & { group?: string; groupName?: string }).groupName,
     ]);
@@ -589,12 +708,16 @@ function findProgramme(data: CurriculumOverview | null, routeId: string) {
 function programmeDetailToOverview(
   detail: CurriculumProgrammeDetail,
   staff: { coaches?: CurriculumStaffProfile[]; tutors?: CurriculumStaffProfile[] } = {},
+  supplemental: { programmes?: CurriculumProgramme[]; ksbSets?: CurriculumKsbSet[]; ksbFrameworks?: CurriculumOverview['ksbFrameworks']; holidays?: CurriculumHoliday[] } = {},
 ): CurriculumOverview {
   const modules = detail.flat.modules ?? [];
   const cohorts = detail.flat.cohorts ?? [];
   const groups = detail.flat.groups ?? [];
   const sessions = detail.flat.sessions ?? [];
   const components = detail.flat.components ?? [];
+  const programmeCandidates = [detail.programme, ...(supplemental.programmes || [])];
+  const programme = programmeCandidates.find(item => clean(item.ksbProfileSourceId) && programmeReferenceMatches(item, detail.programme.sourceId || detail.programme.id || detail.programme.name))
+    || detail.programme;
 
   return {
     schema: detail.schema,
@@ -607,15 +730,15 @@ function programmeDetailToOverview(
       ksbFrameworks: 0,
       sessions: sessions.length,
     },
-    programmes: [detail.programme],
+    programmes: [programme],
     modules,
-    ksbFrameworks: [],
-    ksbSets: [],
+    ksbFrameworks: supplemental.ksbFrameworks || [],
+    ksbSets: supplemental.ksbSets || [],
     cohorts,
     groups,
     sessions,
     components,
-    holidays: [],
+    holidays: supplemental.holidays || [],
     cohortAuthoringDetails: [],
     tutors: staff.tutors ?? [],
     coaches: staff.coaches ?? [],
@@ -635,13 +758,17 @@ function useProgrammeDetailData(programmeId: string) {
     }
     setLoading(true);
     try {
-      const [detail, coaches, tutors] = await Promise.all([
+      const [detail, coaches, tutors, programmes, ksbSets, ksbFrameworks, holidays] = await Promise.all([
         fetchCurriculumProgrammeDetail(programmeId, signal),
         fetchCurriculumCoaches(signal).catch(() => []),
         fetchCurriculumTutors(signal).catch(() => []),
+        fetchCurriculumProgrammes(signal).catch(() => []),
+        fetchCurriculumKsbSets(signal).catch(() => []),
+        fetchCurriculumKsbFrameworks(signal).catch(() => []),
+        fetchCurriculumHolidays(signal).catch(() => []),
       ]);
       if (signal?.aborted) return null;
-      const overview = programmeDetailToOverview(detail, { coaches, tutors });
+      const overview = programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbSets, ksbFrameworks, holidays });
       setData(overview);
       setError(null);
       return overview;
@@ -982,6 +1109,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   programmeGroups.forEach(group => {
     groupsByCohort.set(group.cohortId, [...(groupsByCohort.get(group.cohortId) ?? []), group]);
   });
+  const holidayById = new Map((data.holidays || []).map(holiday => [String(holiday.id), holiday]));
 
   const moduleMatchesGroup = (module: Module, cohortName: string, group: CurriculumGroup | { id: string; name: string; modules?: string[] }) => {
     const groupModuleNames = group.modules ?? [];
@@ -999,6 +1127,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     endDate: formatDateLabel(cohort.endDate),
     status: cohortStatus(cohort.status),
     learners: cohort.learners || 0,
+    holidayIds: (cohort.holidayIds || []).map(String),
+    holidays: (cohort.holidayIds || []).map(id => holidayById.get(String(id))).filter((holiday): holiday is CurriculumHoliday => Boolean(holiday)),
     groups: (groupsByCohort.get(cohort.id) ?? []).map(group => ({
       id: group.id,
       name: group.name,
@@ -1036,6 +1166,8 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       endDate: formatDateLabel(firstModule.weeksData.at(-1)?.endDate || ''),
       status: 'active' as const,
       learners: 0,
+      holidayIds: [],
+      holidays: [],
       groups: [],
     };
     cohortEntry.groups.push({
@@ -1060,13 +1192,13 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   const deliveryWindow = [
     deliveryStart ? formatDateLabel(deliveryStart) : '',
     deliveryEnd ? formatDateLabel(deliveryEnd) : '',
-  ].filter(Boolean).join(' – ');
+  ].filter(Boolean).join(' â€“ ');
 
-  const ksbSet = data.ksbSets.find(set => (
-    normalise(set.programmeId) === normalise(source.id) ||
-    isProgrammeMatch(source, set.programmeName) ||
-    isProgrammeMatch(source, set.standard)
-  ));
+  const programmeSourceIds = [source.id, source.sourceId, source.name].map(normalise).filter(Boolean);
+  const ksbSet = data.ksbSets.find(set => {
+    const linkedProgrammeIds = [set.programmeId, ...(set.programmeIds || [])].map(normalise).filter(Boolean);
+    return programmeSourceIds.some(id => linkedProgrammeIds.includes(id));
+  }) || data.ksbSets.find(set => isProgrammeMatch(source, set.standard));
   const ksbEntries: CurriculumKsbEntry[] = ksbSet?.ksbs ?? [];
   const moduleNames = modules.map((module, index) => `M${index + 1}`);
   const moduleLabelByName = new Map(modules.map((module, index) => [normalise(module.name), moduleNames[index]]));
@@ -1147,6 +1279,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     programme: {
       id: source.id,
       sourceId: String(source.sourceId || ''),
+      ksbProfileSourceId: clean(source.ksbProfileSourceId),
       name: source.name,
       standard: source.standard,
       level: source.level || 'Level not set',
@@ -1170,9 +1303,9 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Component
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
@@ -1183,18 +1316,24 @@ export default function ProgrammeDetailPage() {
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
+  const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
+  const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
+  const [skillsStandardsLoading, setSkillsStandardsLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
     const sourceLabels = buildKsbSourceLabelMap(data);
-    const heatmapRows = backendCoverageToProgrammeHeatmap(backendCoverage, sourceLabels, liveProgramme.modules);
+    const ksbDescriptions = buildKsbDescriptionLookup(programmeKsbSets, skillsStandards);
+    const heatmapRows = backendCoverageToProgrammeHeatmap(backendCoverage, sourceLabels, liveProgramme.modules, ksbDescriptions);
+    const effectiveSource = inferProgrammeKsbCoverageSource(liveProgramme, programmeKsbSets, skillsStandards);
+    const scopedRows = heatmapRows ? filterHeatmapRowsByProgrammeSource(heatmapRows.rows, effectiveSource) : null;
     return {
       ...liveProgramme,
       moduleNames: heatmapRows?.moduleNames || liveProgramme.moduleNames,
-      ksbHeatmap: heatmapRows?.rows || liveProgramme.ksbHeatmap,
+      ksbHeatmap: scopedRows || filterHeatmapRowsByProgrammeSource(liveProgramme.ksbHeatmap, effectiveSource),
     };
-  }, [backendCoverage, data, liveProgramme]);
-  const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'staffing'>('cohorts');
+  }, [backendCoverage, data, liveProgramme, programmeKsbSets, skillsStandards]);
+  const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'review'>('cohorts');
   const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
@@ -1215,19 +1354,13 @@ export default function ProgrammeDetailPage() {
   const [ksbSearch, setKsbSearch] = useState<string>('');
   const [ksbTraceOpen, setKsbTraceOpen] = useState(false);
   const [ksbTraceInitialTab, setKsbTraceInitialTab] = useState<'map' | 'coverage' | 'trace'>('coverage');
-  const [staffingSearch, setStaffingSearch] = useState<string>('');
-  const [staffingStatusFilter, setStaffingStatusFilter] = useState<string>('all');
   const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const [assignMode, setAssignMode] = useState<string | null>(null);
-  const [assignForms, setAssignForms] = useState<Record<string, { coach: string; tutor: string }>>({});
   const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
   const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', owner: '', color: '#6941c6', description: '' });
   const [savingAction, setSavingAction] = useState<string | null>(null);
-  const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
-  const [skillsStandardsLoading, setSkillsStandardsLoading] = useState(false);
   const coverageProgrammeIds = useMemo(() => {
     const withoutRoutePrefix = clean(id || '').replace(/^program-/i, '');
     const candidates = [
@@ -1245,6 +1378,14 @@ export default function ProgrammeDetailPage() {
       return true;
     });
   }, [id, liveProgramme.id, liveProgramme.name, liveProgramme.sourceId]);
+  const coverageKsbSource = useMemo(
+    () => inferProgrammeKsbCoverageSource(liveProgramme, programmeKsbSets, skillsStandards),
+    [liveProgramme.id, liveProgramme.ksbProfileSourceId, liveProgramme.name, liveProgramme.sourceId, liveProgramme.standard, programmeKsbSets, skillsStandards],
+  );
+  const coverageKsbSourceLabel = useMemo(
+    () => ksbCoverageSourceLabel(coverageKsbSource, data, programmeKsbSets, skillsStandards),
+    [coverageKsbSource, data, programmeKsbSets, skillsStandards],
+  );
 
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
@@ -1254,7 +1395,7 @@ export default function ProgrammeDetailPage() {
       let lastError: unknown = null;
       for (const programmeId of coverageProgrammeIds) {
         try {
-          return await fetchCurriculumProgrammeKsbCoverage(programmeId, {}, signal);
+          return await fetchCurriculumProgrammeKsbCoverage(programmeId, coverageKsbSource, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           lastError = error;
@@ -1275,11 +1416,11 @@ export default function ProgrammeDetailPage() {
       .finally(() => {
         if (!signal?.aborted) setBackendCoverageLoading(false);
       });
-  }, [coverageProgrammeIds]);
+  }, [coverageKsbSource, coverageProgrammeIds]);
 
   useEffect(() => {
     if (tab !== 'ksb' && !ksbTraceOpen) return;
-    const coverageKey = coverageProgrammeIds.join('|');
+    const coverageKey = [coverageProgrammeIds.join('|'), coverageKsbSource.sourceType || '', coverageKsbSource.sourceId || ''].join('::');
     if (!coverageKey || coverageRequestKeyRef.current === coverageKey) return;
     coverageRequestKeyRef.current = coverageKey;
     const controller = new AbortController();
@@ -1288,7 +1429,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (coverageRequestKeyRef.current === coverageKey) coverageRequestKeyRef.current = '';
     };
-  }, [coverageProgrammeIds, ksbTraceOpen, loadBackendCoverage, tab]);
+  }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, ksbTraceOpen, loadBackendCoverage, tab]);
 
   useEffect(() => {
     setDetailComponents([]);
@@ -1323,6 +1464,16 @@ export default function ProgrammeDetailPage() {
       if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
     };
   }, [data]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchCurriculumKsbSets(controller.signal)
+      .then(setProgrammeKsbSets)
+      .catch(error => {
+        if (!controller.signal.aborted) console.warn('Unable to load KSB profiles for programme descriptions.', error);
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1361,14 +1512,6 @@ export default function ProgrammeDetailPage() {
   const allGroups = useMemo(() => PROGRAMME.cohorts.flatMap(cohortItem => (
     cohortItem.groups.map(group => ({ cohort: cohortItem, group }))
   )), [PROGRAMME.cohorts]);
-  const coachOptions = useMemo(
-    () => staffOptions(data?.coaches ?? [], allGroups.map(({ group }) => group.coach)),
-    [data?.coaches, allGroups],
-  );
-  const tutorOptions = useMemo(
-    () => staffOptions(data?.tutors ?? [], allGroups.map(({ group }) => group.tutor)),
-    [data?.tutors, allGroups],
-  );
   const filteredCohorts = useMemo(() => {
     const query = normalise(cohortSearch);
     return PROGRAMME.cohorts.filter(cohortItem => {
@@ -1454,15 +1597,6 @@ export default function ProgrammeDetailPage() {
     const query = normalise(ksbSearch);
     return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)].some(value => normalise(value).includes(query)));
   }, [PROGRAMME.ksbHeatmap, ksbSearch]);
-  const filteredStaffing = useMemo(() => {
-    const query = normalise(staffingSearch);
-    return PROGRAMME.staffing.filter(entry => {
-      const matchesSearch = !query || [entry.coach, entry.tutor, entry.groups, entry.cohorts, entry.status, entry.role].some(value => normalise(value).includes(query));
-      const matchesStatus = staffingStatusFilter === 'all' || entry.status === staffingStatusFilter;
-      return matchesSearch && matchesStatus;
-    });
-  }, [PROGRAMME.staffing, staffingSearch, staffingStatusFilter]);
-
   const totalSessions = deliverySessions.length;
   const allComponents = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.components || []));
   const publishedComponents = allComponents.filter(c => c.status === 'published').length;
@@ -1471,9 +1605,6 @@ export default function ProgrammeDetailPage() {
   const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
   const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
   const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
-  const activeGroups = allGroups.filter(({ group }) => group.status === 'active').length;
-  const assignedGroups = allGroups.filter(({ group }) => group.coach !== 'Unassigned' && group.tutor !== 'Unassigned').length;
-  const staffingCoverage = totalGroups ? Math.round((assignedGroups / totalGroups) * 100) : 0;
   const fullyCoveredKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'fully_covered').length;
   const partialKsbCount = PROGRAMME.ksbHeatmap.filter(row => ['partial', 'over_allocated'].includes(ksbCoverageState(row))).length;
   const mappedNoWeightKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'mapped').length;
@@ -1482,12 +1613,7 @@ export default function ProgrammeDetailPage() {
     : 0;
   const missingKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'missing').length;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
-  const programmeHealth = Math.round((ksbCoverage + staffingCoverage + contentReadiness) / 3);
-  const unassignedGroups = PROGRAMME.cohorts.flatMap(c => (
-    c.groups
-      .filter(g => g.coach === 'Unassigned' || g.tutor === 'Unassigned')
-      .map(g => ({ cohort: c, group: g }))
-  ));
+  const programmeHealth = Math.round((ksbCoverage + contentReadiness) / 2);
   const openKsbTrace = (initialTab: 'map' | 'coverage' | 'trace') => {
     setKsbTraceInitialTab(initialTab);
     setKsbTraceOpen(true);
@@ -1496,63 +1622,6 @@ export default function ProgrammeDetailPage() {
   const skillsStandardTarget = linkedSkillsStandard?.id || rawSkillsStandardIdentifier(PROGRAMME);
   const openSkillsStandard = () => {
     window.REACT_APP_NAVIGATE(skillsStandardTarget ? `/curriculum/standards/${encodeURIComponent(skillsStandardTarget)}` : '/curriculum/standards');
-  };
-
-  const openAssign = (group: Group) => {
-    setAssignMode(group.id);
-    setAssignForms(prev => ({
-      ...prev,
-      [group.id]: {
-        coach: group.coach === 'Unassigned' ? '' : group.coach,
-        tutor: group.tutor === 'Unassigned' ? '' : group.tutor,
-      },
-    }));
-  };
-
-  const saveAssignment = async (groupId: string) => {
-    const form = assignForms[groupId] || { coach: '', tutor: '' };
-    setSavingAction(groupId);
-    try {
-      await updateStaffingAssignment(groupId, { coach: form.coach, tutor: form.tutor });
-      await showCurriculumAlert({
-        title: 'Staffing assignment saved',
-        text: 'The live curriculum data will refresh with the updated coach and tutor.',
-        icon: 'success',
-        timer: 1600,
-      });
-      setAssignMode(null);
-      reload();
-    } catch (err) {
-      await showCurriculumAlert({
-        title: 'Unable to save assignment',
-        text: err instanceof Error ? err.message : 'The staffing assignment could not be saved.',
-        icon: 'error',
-      });
-    } finally {
-      setSavingAction(null);
-    }
-  };
-
-  const removeAssignment = async (groupId: string) => {
-    setSavingAction(groupId);
-    try {
-      await deleteStaffingAssignment(groupId);
-      await showCurriculumAlert({
-        title: 'Staffing assignment removed',
-        text: 'The group is now unassigned in default Curriculum views.',
-        icon: 'success',
-        timer: 1600,
-      });
-      reload();
-    } catch (err) {
-      await showCurriculumAlert({
-        title: 'Unable to remove assignment',
-        text: err instanceof Error ? err.message : 'The staffing assignment could not be removed.',
-        icon: 'error',
-      });
-    } finally {
-      setSavingAction(null);
-    }
   };
 
   const openProgrammeForm = () => {
@@ -1611,18 +1680,8 @@ export default function ProgrammeDetailPage() {
     { key: 'weeks' as const, label: 'Weeks', icon: 'ri-calendar-line' },
     { key: 'sessions' as const, label: 'Sessions', icon: 'ri-time-line' },
     { key: 'ksb' as const, label: 'KSB Heatmap', icon: 'ri-bar-chart-line' },
-    { key: 'staffing' as const, label: 'Staffing', icon: 'ri-user-settings-line' },
+    { key: 'review' as const, label: 'Review', icon: 'ri-checkbox-circle-line' },
   ];
-  const tabContext = {
-    cohorts: { title: 'Cohort delivery map', description: 'Track each cohort, its live groups, schedule health and learner allocation.', count: `${filteredCohorts.length} visible` },
-    groups: { title: 'Groups and weekly delivery', description: 'Manage delivery teams, timetable patterns and module links for every group.', count: `${filteredGroups.length} visible` },
-    modules: { title: 'Module catalogue in this programme', description: 'Review attached modules, KSB coverage, delivery context and authoring links.', count: `${filteredModules.length} visible` },
-    weeks: { title: 'Weekly learning sequence', description: 'Inspect the selected module week-by-week with sessions and tutor delivery detail.', count: `${module.weeksData.length} weeks` },
-    sessions: { title: 'Sessions & recordings', description: 'Live Teams sessions and recorded videos pulled straight from the week-builder components.', count: `${filteredSessions.length} ${sessionKind === 'live' ? 'live' : 'recorded'}` },
-    ksb: { title: 'KSB heatmap', description: 'See how each KSB is covered across the modules in this programme.', count: `${filteredKsbHeatmap.length} KSBs` },
-    staffing: { title: 'Staff assignment', description: 'Assign and monitor coaches and tutors across cohorts and groups.', count: `${filteredStaffing.length} assignments` },
-  }[tab];
-  const assignmentTarget = assignMode ? allGroups.find(({ group }) => group.id === assignMode) : null;
 
   if (loading) {
     return (
@@ -1680,7 +1739,7 @@ export default function ProgrammeDetailPage() {
             </span>
             <h1 className="mt-4 text-lg font-heading font-black text-foreground-950">{error ? 'Unable to load programme data' : 'Programme not found'}</h1>
             <p className="mt-2 text-[13px] leading-6 text-foreground-500">
-              {error || `There is no live curriculum programme matching “${id || 'this route'}”. It may have been renamed or removed.`}
+              {error || `There is no live curriculum programme matching â€œ${id || 'this route'}â€. It may have been renamed or removed.`}
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/programmes')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
@@ -1699,7 +1758,7 @@ export default function ProgrammeDetailPage() {
   }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.standard} · ${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} Â· ${PROGRAMME.cohorts.length} cohorts Â· ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
         <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
           {/* Signature: an accent bar tinted with this programme's own colour identity */}
@@ -1713,7 +1772,6 @@ export default function ProgrammeDetailPage() {
                     Live programme
                   </span>
                   <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
-                  <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.standard || 'Standard not set'}</span>
                 </div>
                 <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
                 <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
@@ -1724,7 +1782,7 @@ export default function ProgrammeDetailPage() {
                   <HealthRing value={programmeHealth} color={PROGRAMME.color} />
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
-                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Staffing {staffingCoverage}% · Content {contentReadiness}%</p>
+                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% Â· Content {contentReadiness}%</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 xl:justify-end">
@@ -1744,7 +1802,7 @@ export default function ProgrammeDetailPage() {
               </div>
             </div>
 
-            {/* Live KPI rail — every value computed from the fetched programme data */}
+            {/* Live KPI rail â€” every value computed from the fetched programme data */}
             <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
               <StatPill icon="ri-group-line" value={PROGRAMME.cohorts.length} label="Cohorts" />
               <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
@@ -1757,39 +1815,34 @@ export default function ProgrammeDetailPage() {
         </section>
 
         {/* Programme Navigation */}
-        <div className="sticky top-0 z-20 flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
-          {tabs.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
-              <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
-                <i className={`${t.icon} text-[14px]`}></i>
-              </span>
-              <span>{t.label}</span>
-              {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
-              {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.cohorts.length}</span>}
-              {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
-              {t.key === 'weeks' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalWeeks}</span>}
-              {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
-              {t.key === 'staffing' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{staffingCoverage}%</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-primary-500">Current workspace</p>
-            <h2 className="mt-1 text-base font-heading font-black text-foreground-950">{tabContext.title}</h2>
-            <p className="mt-1 text-[13px] text-foreground-500">{tabContext.description}</p>
+        <div className="sticky top-0 z-20 flex items-center gap-2 overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
+          <div className="flex items-center gap-1.5">
+            {tabs.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
+                <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
+                  <i className={`${t.icon} text-[14px]`}></i>
+                </span>
+                <span>{t.label}</span>
+                {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
+                {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.cohorts.length}</span>}
+                {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
+                {t.key === 'weeks' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalWeeks}</span>}
+                {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
+                {t.key === 'review' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
+              </button>
+            ))}
           </div>
-          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
-            <i className="ri-pulse-line text-sm"></i>
-            {tabContext.count}
-          </span>
+          <div className="ml-auto flex items-center gap-2 border-l border-background-200 pl-2">
+            <button onClick={() => openKsbTrace('coverage')} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+              <i className="ri-bar-chart-box-line text-sm"></i>
+              View KSB coverage details
+            </button>
+          </div>
         </div>
 
-
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Cohorts
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'cohorts' && (
           <div className="space-y-4">
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -1818,7 +1871,7 @@ export default function ProgrammeDetailPage() {
 
             {filteredCohorts.map(c => (
               <div key={c.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                {/* Cohort Header — Clickable */}
+                {/* Cohort Header â€” Clickable */}
                 <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
                     <i className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expandedCohort === c.id ? 'rotate-180' : ''}`}></i>
@@ -1828,7 +1881,7 @@ export default function ProgrammeDetailPage() {
                       <p className="text-sm font-semibold text-foreground-900">{c.name}</p>
                       <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${c.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/50' : c.status === 'planned' ? 'bg-accent-50 text-accent-700 border-accent-200/50' : 'bg-foreground-100 text-foreground-500 border-foreground-200/50'}`}>{c.status}</span>
                     </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} — {c.endDate} · {c.learners} learners · {c.groups.length} groups</p>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} â€” {c.endDate} Â· {c.learners} learners Â· {c.groups.length} groups</p>
                   </div>
                   <div className="hidden items-center gap-4 text-[12px] text-foreground-500 shrink-0 sm:flex">
                     {c.groups.length > 0 && (() => {
@@ -1865,13 +1918,12 @@ export default function ProgrammeDetailPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-foreground-400 bg-background-200/50 px-2 py-0.5 rounded">{g.mode}</span>
-                            <span className="text-[10px] text-foreground-400">{g.startDate} — {g.endDate}</span>
+                            <span className="text-[10px] text-foreground-400">{g.startDate} â€” {g.endDate}</span>
                           </div>
                           <div className="flex items-center gap-2 mt-3">
                             <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
                               {expandedGroup === g.id ? 'Hide Details' : 'View Full Details'}
                             </button>
-                            <button onClick={() => openAssign(g)} className="px-2.5 py-1 bg-background-50 border border-background-200 rounded-md text-[10px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">Assign Staff</button>
                           </div>
 
                           {expandedGroup === g.id && (
@@ -1879,7 +1931,7 @@ export default function ProgrammeDetailPage() {
                               <div className="flex items-start justify-between gap-3 mb-3">
                                 <div>
                                   <p className="text-[12px] font-semibold text-foreground-900">{g.name} full details</p>
-                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} · {g.startDate} — {g.endDate}</p>
+                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} Â· {g.startDate} â€” {g.endDate}</p>
                                 </div>
                                 <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
                               </div>
@@ -1909,7 +1961,7 @@ export default function ProgrammeDetailPage() {
                                     <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                                       <div className="min-w-0">
                                         <p className="text-[11px] font-semibold text-foreground-900 truncate">{moduleItem.name}</p>
-                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks · {moduleItem.otjh}h OTJH · {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
+                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks Â· {moduleItem.otjh}h OTJH Â· {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
                                       </div>
                                       <button onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }} className="px-2.5 py-1 rounded-md border border-background-200 bg-background-100 text-[10px] font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
                                         Open Weeks
@@ -1940,9 +1992,9 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Groups
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'groups' && (
           <div className="space-y-4">
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -1977,7 +2029,7 @@ export default function ProgrammeDetailPage() {
               <div key={c.id} className="space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[12px] font-semibold text-foreground-700">{c.name}</span>
-                  <span className="text-[10px] text-foreground-400">{c.groups.length} groups · {c.learners} learners</span>
+                  <span className="text-[10px] text-foreground-400">{c.groups.length} groups Â· {c.learners} learners</span>
                 </div>
                 {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
                   <div key={g.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -1999,42 +2051,7 @@ export default function ProgrammeDetailPage() {
                           <span><i className="ri-map-pin-line mr-1 text-[10px]"></i>{g.mode}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => openAssign(g)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-user-add-line mr-1"></i> Assign Staff
-                        </button>
-                        <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-edit-line mr-1"></i> Edit
-                        </button>
-                      </div>
                     </div>
-
-                    {/* Assign Staff Panel */}
-                    {assignMode === g.id && (
-                      <div className="mt-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
-                        <h4 className="text-[12px] font-semibold text-foreground-700 mb-3">Assign Coach & Tutor</h4>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                          <StaffAssignmentSelect
-                            label="Coach"
-                            value={assignForms[g.id]?.coach ?? (g.coach === 'Unassigned' ? '' : g.coach)}
-                            options={coachOptions}
-                            onOpen={() => { void reload(); }}
-                            onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), coach: value } }))}
-                          />
-                          <StaffAssignmentSelect
-                            label="Tutor"
-                            value={assignForms[g.id]?.tutor ?? (g.tutor === 'Unassigned' ? '' : g.tutor)}
-                            options={tutorOptions}
-                            onOpen={() => { void reload(); }}
-                            onChange={value => setAssignForms(prev => ({ ...prev, [g.id]: { ...(prev[g.id] || { coach: '', tutor: '' }), tutor: value } }))}
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => saveAssignment(g.id)} disabled={savingAction === g.id} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">{savingAction === g.id ? 'Saving...' : 'Save Assignment'}</button>
-                          <button onClick={() => setAssignMode(null)} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -2042,9 +2059,9 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Modules
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'modules' && (
           <div className="space-y-4">
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -2100,180 +2117,277 @@ export default function ProgrammeDetailPage() {
             )}
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {filteredModules.map((mod, idx) => (
-              <div key={mod.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
-                <div className="flex items-start justify-between mb-3">
+            {filteredModules.map(mod => {
+              const weekCount = mod.weeksData.length || mod.weeks || 0;
+              const componentCount = mod.weeksData.reduce((total, week) => total + (week.components?.length || 0), 0);
+              const mappedKsbCodes = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).sort(sortKsbCodes);
+              const weightedKsbCount = mod.ksbMapping.filter(item => item.source !== 'fallback' && Number(item.weight || 0) > 0).length;
+              const mappingOccurrenceCount = mod.ksbMapping.reduce((total, item) => total + Number(item.count || 0), 0);
+              const deliveryStart = clean(mod.weeksData[0]?.startDate);
+              const deliveryEnd = clean(mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate);
+              return (
+              <div key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
+                <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_54%,#effdf7_100%)] px-5 py-4">
+                <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
-                    <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
+                    <span className="w-11 h-11 rounded-xl bg-primary-600 text-white flex items-center justify-center shrink-0 shadow-sm">
                       <i className="ri-stack-line text-sm"></i>
                     </span>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-semibold text-foreground-900">{mod.name}</p>
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${moduleStatusColors[mod.status]}`}>{mod.status}</span>
+                        <p className="text-base font-heading font-black text-foreground-950">{mod.name}</p>
                       </div>
-                      <p className="text-[11px] text-foreground-400 mt-0.5">{mod.description}</p>
+                      <p className="text-[11px] font-semibold text-foreground-500 mt-0.5">{[mod.cohort || 'No cohort', mod.group || 'No group'].join(' - ')}</p>
                     </div>
                   </div>
                 </div>
-
-                {/* KSB Tags */}
-                <div className="mb-2">
-                  <KsbGroupedTags codes={mod.ksbTags} />
+                {mod.description && <p className="mt-3 text-[12px] leading-5 text-foreground-500">{mod.description}</p>}
                 </div>
 
-                {/* Module Info Row */}
-                <div className="flex items-center gap-4 text-[12px] text-foreground-500 mb-4">
-                  <span><i className="ri-calendar-line mr-1 text-[10px]"></i>{mod.weeks} {mod.weeks === 1 ? 'week' : 'weeks'}</span>
-                  <span><i className="ri-time-line mr-1 text-[10px]"></i>{mod.otjh}h OTJH</span>
-                  <span><i className="ri-layout-grid-line mr-1 text-[10px]"></i>{mod.weeksData.reduce((total, week) => total + (week.components?.length || 0), 0)} components</span>
+                <div className="p-5">
+
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <ModuleCardMetric tone="purple" icon="ri-calendar-line" label="Weeks" value={weekCount} />
+                  <ModuleCardMetric tone="blue" icon="ri-layout-grid-line" label="Components" value={componentCount} />
+                  <ModuleCardMetric tone="emerald" icon="ri-time-line" label="OTJH" value={`${formatHours(mod.otjh)}h`} />
+                  <ModuleCardMetric tone="amber" icon="ri-node-tree" label="KSBs" value={mappedKsbCodes.length} />
                 </div>
 
-                {/* KSB Mapping Bars */}
-                <div className="mb-3">
+                <div className="mb-4 rounded-xl border border-background-200 bg-background-100/70 p-3">
+                <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-foreground-400">Delivery details</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <ModuleDetailLine icon="ri-calendar-event-line" label="Delivery window" value={[deliveryStart, deliveryEnd].filter(Boolean).join(' - ') || 'Not scheduled'} />
+                  <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[mod.cohort || 'No cohort', mod.group || 'No group'].join(' / ')} />
+                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} />
+                </div>
+                </div>
+
+                <div className="mb-4 rounded-xl border border-primary-100 bg-primary-50/50 px-3 py-2">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <MiniDarkMetric label="Weighted KSBs" value={weightedKsbCount} />
+                    <MiniDarkMetric label="Mappings" value={mappingOccurrenceCount} />
+                    <MiniDarkMetric label="KSB tags" value={mappedKsbCodes.length} />
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSBs in this module</p>
+                  <KsbGroupedTags codes={mappedKsbCodes} />
+                </div>
+
+                <div className="mb-4">
                   <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSB Coverage</p>
                   <p className="mb-2 text-[10px] font-medium text-foreground-400">Percentages are saved Module Builder weights. No weight means the KSB is linked, but its weight is 0 or not set yet.</p>
                   <KsbCoverageGroups mapping={mod.ksbMapping} />
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center gap-2 pt-3 border-t border-background-200/30">
-                  <button
-                    onClick={() => {
-                      setSelectedModule(mod.id);
-                      setSelectedWeek(mod.weeksData[0]?.id || '');
-                      setTab('weeks');
-                    }}
-                    className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
-                  >
-                    <i className="ri-eye-line mr-1"></i> View Module
-                  </button>
-                  <button
-                    onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(mod.id)}`)}
-                    className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
-                  >
-                    <i className="ri-arrow-right-line mr-1"></i> Open Module Builder
-                  </button>
-                  <button
-                    onClick={() => {
-                      setKsbSearch(mod.ksbTags[0] ? formatKsbCode(mod.ksbTags[0]) : mod.name);
-                      setTab('ksb');
-                    }}
-                    className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
-                  >
-                    <i className="ri-link mr-1"></i> KSB Mapping
-                  </button>
+                <div>
+                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">Week breakdown</p>
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {mod.weeksData.map(week => {
+                      const weekComponents = week.components || [];
+                      const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
+                      return (
+                        <div key={week.id} className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-bold text-foreground-800">{week.title || `Week ${week.number}`}</p>
+                            <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
+                            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{weekComponents.length} comp</span>
+                            <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[9px] font-bold text-secondary-700">{weekKsbCount} KSB</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
+                </div>
+
               </div>
-            ))}
+              );
+            })}
             </div>
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Weeks
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'weeks' && (
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.2fr] gap-4">
-                <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <aside className="space-y-4">
+              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
-                    <p className="text-[10px] font-bold text-foreground-400 uppercase tracking-wider mb-1">Module picker</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Module workspace</p>
+                    <h3 className="text-base font-heading font-black text-foreground-950">Choose module</h3>
                   </div>
-                  <select value={selectedModule} onChange={event => { const nextModule = PROGRAMME.modules.find(m => m.id === event.target.value); setSelectedModule(event.target.value); setSelectedWeek(nextModule?.weeksData[0]?.id || ''); }} className="w-full h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                    {weekModuleOptions.map(option => (
-                      <option key={option.id} value={option.id}>
-                        {option.name} - {[option.cohort, option.group].filter(Boolean).join(' / ') || 'No cohort/group'}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-[11px] text-foreground-400">{weekModuleOptions.length} of {PROGRAMME.modules.length} modules</p>
+                  <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">{weekModuleOptions.length} modules</span>
                 </div>
+                <select
+                  value={selectedModule}
+                  onChange={event => {
+                    const nextModule = PROGRAMME.modules.find(m => m.id === event.target.value);
+                    setSelectedModule(event.target.value);
+                    setSelectedWeek(nextModule?.weeksData[0]?.id || '');
+                  }}
+                  className="mb-3 w-full h-11 rounded-xl border border-primary-200 bg-background-50 px-3 text-[13px] font-bold text-foreground-900 outline-none ring-primary-100 transition-smooth focus:ring-4"
+                >
+                  {weekModuleOptions.map(option => (
+                    <option key={option.id} value={option.id}>
+                      {option.name} - {[option.cohort, option.group].filter(Boolean).join(' / ') || 'No cohort/group'}
+                    </option>
+                  ))}
+                </select>
+                <div className="space-y-2">
+                  {weekModuleOptions.map(option => {
+                    const optionComponents = option.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0);
+                    const active = option.id === module.id;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedModule(option.id);
+                          setSelectedWeek(option.weeksData[0]?.id || '');
+                        }}
+                        className={`w-full rounded-xl border p-3 text-left transition-smooth ${active ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-100 hover:border-primary-200 hover:bg-primary-50/40'}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-background-50 text-primary-600'}`}>
+                            <i className="ri-stack-line text-sm"></i>
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[13px] font-black text-foreground-950">{option.name}</p>
+                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{option.cohort || 'No cohort'} / {option.group || 'No group'}</p>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{option.weeksData.length || option.weeks} weeks</span>
+                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">{optionComponents} comp</span>
+                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(option.otjh)}h</span>
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
 
-                <div className="rounded-xl border border-primary-200/60 bg-primary-50/30 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-heading font-bold text-foreground-900">{module.name}</p>
-                      <p className="text-[11px] text-foreground-500 mt-1">{module.description || 'No module description configured.'}</p>
+            <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+              <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_50%,#ecfdf5_100%)] p-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-white">Selected module</span>
+                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${moduleStatusColors[module.status] || moduleStatusColors.draft}`}>{module.status || 'draft'}</span>
                     </div>
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${moduleStatusColors[module.status]}`}>{module.status}</span>
-                  </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-                    <ModuleTooltipMetric icon="ri-calendar-line" label="Cohort" value={module.cohort || 'Not set'} />
-                    <ModuleTooltipMetric icon="ri-team-line" label="Group" value={module.group || 'Not set'} />
-                    <ModuleTooltipMetric icon="ri-calendar-2-line" label="Weeks" value={module.weeksData.length || module.weeks} />
-                    <ModuleTooltipMetric icon="ri-puzzle-2-line" label="Components" value={module.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0)} />
+                    <h2 className="text-xl font-heading font-black text-foreground-950">{module.name}</h2>
+                    <p className="mt-1 text-[12px] font-semibold text-foreground-500">{module.description || 'No module description configured.'}</p>
                   </div>
                   <button
+                    type="button"
                     onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(module.id)}`)}
-                    className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
                   >
                     <i className="ri-tools-line text-sm"></i>
                     Open Module Builder
                   </button>
                 </div>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">{module.name}</h3>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">{module.weeksData.length} weeks · {module.otjh}h OTJH</p>
+
+                <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <ModuleCardMetric icon="ri-calendar-line" label="Weeks" value={module.weeksData.length || module.weeks} />
+                  <ModuleCardMetric tone="blue" icon="ri-layout-grid-line" label="Components" value={module.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0)} />
+                  <ModuleCardMetric tone="emerald" icon="ri-time-line" label="OTJH" value={`${formatHours(module.otjh)}h`} />
+                  <ModuleCardMetric tone="amber" icon="ri-node-tree" label="KSBs" value={uniqueCleanValues(module.weeksData.flatMap(item => (item.components || []).flatMap(component => component.ksbRefs || []))).length} />
                 </div>
-                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${moduleStatusColors[module.status]}`}>{module.status}</span>
               </div>
 
-              <div className="space-y-3">
-                {filteredWeeks.map(w => {
-                  const weekComponents = w.components ?? [];
-                  return (
-                  <div key={w.id} className="border border-foreground-200/60 rounded-xl overflow-hidden">
-                    <button onClick={() => setSelectedWeek(selectedWeek === w.id ? '' : w.id)} className="w-full flex items-center gap-3 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
-                      <span className="text-[10px] font-semibold text-foreground-300 w-8">W{w.number}</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-[13px] font-semibold text-foreground-900">{w.title}</p>
-                        <p className="text-[11px] text-foreground-400">{w.startDate} - {w.endDate} · {w.otjh}h OTJH · {weekComponents.length} components</p>
-                      </div>
-                      <i className={`ri-arrow-down-s-line text-foreground-400 transition-smooth ${selectedWeek === w.id ? 'rotate-180' : ''}`}></i>
-                    </button>
-                    {selectedWeek === w.id && (
-                      <div className="px-4 pb-4 border-t border-background-200/30">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-                          {weekComponents.length > 0 ? weekComponents.map((component, i) => (
-                            <div key={component.id} className="flex items-center gap-3 p-3 bg-background-100 rounded-lg border border-foreground-200/60">
-                              <span className="text-[10px] font-semibold text-foreground-300 w-5">{i + 1}</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-[12px] font-medium text-foreground-900 truncate">{component.title || 'Untitled component'}</p>
-                                <div className="flex items-center gap-2 flex-wrap mt-1">
-                                  <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
-                                  <span className="text-[10px] text-foreground-400">{component.duration || 0} min</span>
-                                  {component.contentSections > 0 && <span className="text-[10px] text-foreground-400">{component.contentSections} sections</span>}
-                                  {component.quizQuestions ? <span className="text-[10px] text-foreground-400">{component.quizQuestions} questions</span> : null}
-                                  {component.ksbRefs?.length ? <span className="text-[10px] text-foreground-400">{component.ksbRefs.length} KSBs</span> : null}
-                                </div>
-                              </div>
-                              <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${moduleStatusColors[component.status] || moduleStatusColors.draft}`}>{component.status}</span>
-                            </div>
-                          )) : (
-                            <div className="md:col-span-2 rounded-lg border border-dashed border-foreground-200 bg-background-100 px-4 py-5 text-center text-[12px] font-medium text-foreground-500">
-                              No module-builder components are attached to this week yet.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  );
-                })}
+              <div className="border-b border-background-200 bg-background-50 p-5">
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[module.cohort || 'No cohort', module.group || 'No group'].join(' / ')} />
+                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={module.tutor || 'Unassigned'} />
+                </div>
               </div>
-            </div>
+
+              <div className="p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Week timeline</p>
+                    <h3 className="text-base font-heading font-black text-foreground-950">{module.weeksData.length} scheduled weeks</h3>
+                  </div>
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-700">{formatHours(module.otjh)}h total OTJH</span>
+                </div>
+
+                <div className="relative space-y-3">
+                  <div className="absolute bottom-6 left-[22px] top-6 w-px bg-primary-100" aria-hidden="true" />
+                  {filteredWeeks.map(w => {
+                    const weekComponents = w.components ?? [];
+                    const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
+                    const isOpen = selectedWeek === w.id;
+                    return (
+                      <div key={w.id} className={`relative overflow-hidden rounded-2xl border bg-background-50 transition-smooth ${isOpen ? 'border-primary-300 shadow-[0_14px_40px_rgba(105,65,198,0.12)]' : 'border-foreground-200/70 hover:border-primary-200 hover:shadow-sm'}`}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedWeek(isOpen ? '' : w.id)}
+                          className="flex w-full items-center gap-4 p-4 text-left"
+                        >
+                          <span className={`relative z-10 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[12px] font-black ${isOpen ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700'}`}>
+                            W{w.number}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-heading font-black text-foreground-950">{w.title || `Week ${w.number}`}</p>
+                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{w.startDate} - {w.endDate}</span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{formatHours(w.otjh)}h OTJH</span>
+                              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">{weekComponents.length} components</span>
+                              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">{weekKsbCount} KSBs</span>
+                            </div>
+                          </div>
+                          <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-smooth ${isOpen ? 'rotate-180 text-primary-600' : ''}`}></i>
+                        </button>
+                        {isOpen && (
+                          <div className="border-t border-background-200 bg-background-100/60 px-4 pb-4 pt-3">
+                            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                              {weekComponents.length > 0 ? weekComponents.map((component, i) => (
+                                <div key={component.id} className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm">
+                                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{i + 1}</span>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
+                                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
+                                      {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
+                                      {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                                    </div>
+                                  </div>
+                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${moduleStatusColors[component.status] || moduleStatusColors.draft}`}>{component.status}</span>
+                                </div>
+                              )) : (
+                                <div className="lg:col-span-2 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
+                                  <i className="ri-inbox-line text-xl text-foreground-300"></i>
+                                  <p className="mt-2 text-[12px] font-bold text-foreground-500">No components attached to this week yet.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Sessions
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'sessions' && (
           <div className="space-y-4">
             {/* Live / Recorded toggle */}
@@ -2292,8 +2406,8 @@ export default function ProgrammeDetailPage() {
               </div>
               <p className="text-[12px] leading-5 text-foreground-500 sm:max-w-md sm:text-right">
                 {sessionKind === 'live'
-                  ? 'Live Teams sessions authored in the week builder — scheduled date, assigned groups and attendance.'
-                  : 'Recorded videos authored in the week builder — provider, source and watch time.'}
+                  ? 'Live Teams sessions authored in the week builder â€” scheduled date, assigned groups and attendance.'
+                  : 'Recorded videos authored in the week builder â€” provider, source and watch time.'}
               </p>
             </div>
 
@@ -2302,7 +2416,7 @@ export default function ProgrammeDetailPage() {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups, KSB…' : 'Search videos, provider, module, KSB…'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups, KSBâ€¦' : 'Search videos, provider, module, KSBâ€¦'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <select value={sessionModuleFilter} onChange={event => setSessionModuleFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
                   <option value="all">All modules</option>
@@ -2330,7 +2444,7 @@ export default function ProgrammeDetailPage() {
               <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
                 <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60">
                   <p className="text-[11px] text-foreground-500">
-                    Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}–{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
+                    Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}â€“{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
                   </p>
                 </div>
                 <div className="overflow-x-auto">
@@ -2339,7 +2453,7 @@ export default function ProgrammeDetailPage() {
                       <>
                         <div className="grid grid-cols-[2fr_1.4fr_1fr_1.4fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                           <span>Session</span>
-                          <span>Module · Week</span>
+                          <span>Module Â· Week</span>
                           <span className="text-center">Date / Time</span>
                           <span>Groups</span>
                           <span className="text-center">Mins</span>
@@ -2358,10 +2472,10 @@ export default function ProgrammeDetailPage() {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
-                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` · ${s.weekTitle}` : ''}</p>
+                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` Â· ${s.weekTitle}` : ''}</p>
                               </div>
                               <div className="text-center">
-                                <p className="text-[11px] text-foreground-700">{s.date || '—'}</p>
+                                <p className="text-[11px] text-foreground-700">{s.date || 'â€”'}</p>
                                 <p className="text-[10px] text-foreground-400">{s.time || 'Time TBC'}</p>
                               </div>
                               <div className="flex flex-wrap gap-1">
@@ -2372,7 +2486,7 @@ export default function ProgrammeDetailPage() {
                                   </>
                                 ) : <span className="text-[10px] text-foreground-400">All groups</span>}
                               </div>
-                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || '—'}</span>
+                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || 'â€”'}</span>
                               <div className="flex justify-center">
                                 <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
                               </div>
@@ -2384,7 +2498,7 @@ export default function ProgrammeDetailPage() {
                       <>
                         <div className="grid grid-cols-[2fr_1.4fr_1fr_1.2fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
                           <span>Video</span>
-                          <span>Module · Week</span>
+                          <span>Module Â· Week</span>
                           <span>Provider</span>
                           <span>KSBs</span>
                           <span className="text-center">Mins</span>
@@ -2399,18 +2513,18 @@ export default function ProgrammeDetailPage() {
                               </div>
                               <div className="min-w-0">
                                 <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
-                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` · ${s.weekTitle}` : ''}</p>
+                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` Â· ${s.weekTitle}` : ''}</p>
                               </div>
-                              <span className="text-[11px] text-foreground-600 truncate">{s.provider || '—'}</span>
+                              <span className="text-[11px] text-foreground-600 truncate">{s.provider || 'â€”'}</span>
                               <div className="flex flex-wrap gap-1">
                                 {s.ksbRefs.length ? (
                                   <>
                                     {s.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
                                     {s.ksbRefs.length > 3 && <span className="text-[9px] text-foreground-400">+{s.ksbRefs.length - 3}</span>}
                                   </>
-                                ) : <span className="text-[10px] text-foreground-400">—</span>}
+                                ) : <span className="text-[10px] text-foreground-400">â€”</span>}
                               </div>
-                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || '—'}</span>
+                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || 'â€”'}</span>
                               <div className="flex justify-center">
                                 <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
                               </div>
@@ -2443,15 +2557,33 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: KSB Heatmap
-        ═══════════════════════════════════════════════════════════════════════ */}
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
         {tab === 'ksb' && (
           <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
                 <p className="text-[12px] text-foreground-400 mt-1">Rolled up from component KSB mappings into weeks, modules and programme coverage. Empty cells indicate the KSB is not addressed in that module.</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
+                    <i className="ri-bookmark-3-line text-sm"></i>
+                    {coverageKsbSource.sourceId
+                      ? `Showing KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
+                      : 'No KSB source applied to this programme'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?programme=${encodeURIComponent(PROGRAMME.name)}`)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+                  <i className="ri-tools-line text-sm"></i>
+                  Edit component weights
+                </button>
+                <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/ksb-mapping')} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+                  <i className="ri-list-check-3 text-sm"></i>
+                  Global worklist
+                </button>
               </div>
             </div>
             {backendCoverageLoading ? (
@@ -2541,7 +2673,7 @@ export default function ProgrammeDetailPage() {
                                 <span className="mt-0.5 text-[9px] font-semibold leading-none">x{count || 1}</span>
                               </span>
                             ) : (
-                              <span className="text-foreground-300">—</span>
+                              <span className="text-foreground-300">â€”</span>
                             )}
                           </td>
                         );
@@ -2565,114 +2697,184 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
+        {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
             TAB: Staffing
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'staffing' && (
+        â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
+        {tab === 'review' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
+            <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px]">
+                <div className="border-b border-foreground-200/60 p-5 xl:border-b-0 xl:border-r">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white">
+                      <i className="ri-checkbox-circle-line text-lg"></i>
+                    </span>
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary-600">Review</p>
+                      <h2 className="text-xl font-heading font-black text-foreground-950">{PROGRAMME.name}</h2>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <span className="rounded-full border border-background-200 bg-background-100 px-3 py-1 text-[11px] font-bold text-foreground-700">{PROGRAMME.duration}</span>
+                    <span className="rounded-full border border-background-200 bg-background-100 px-3 py-1 text-[11px] font-bold text-foreground-700">{PROGRAMME.level || 'Level not set'}</span>
+                    <span className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">KSB source: {coverageKsbSourceLabel || 'No source applied'}</span>
+                  </div>
+                  <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <ReviewMetric icon="ri-group-line" label="Cohorts" value={PROGRAMME.cohorts.length} tone="purple" />
+                    <ReviewMetric icon="ri-team-line" label="Groups" value={totalGroups} tone="blue" />
+                    <ReviewMetric icon="ri-stack-line" label="Modules" value={PROGRAMME.modules.length} tone="slate" />
+                    <ReviewMetric icon="ri-time-line" label="OTJH" value={`${formatHours(totalOtjh)}h`} tone="emerald" />
+                  </div>
+                </div>
+                <div className="bg-[linear-gradient(180deg,#fbfffd_0%,#fffaf2_100%)] p-5">
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-foreground-400">Readiness</p>
+                  <div className="mt-4 space-y-3">
+                    <ReviewProgress label="KSB coverage" value={ksbCoverage} color="bg-primary-600" />
+                    <ReviewProgress label="Content readiness" value={contentReadiness} color="bg-emerald-500" />
+                  </div>
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <ReviewTinyStat label="Missing KSBs" value={missingKsbCount} />
+                    <ReviewTinyStat label="Components" value={allComponents.length} />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Coach & Tutor Assignment</h3>
-                  <p className="text-[12px] text-foreground-400 mt-1">Manage staff allocation across cohorts and groups.</p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-foreground-400">Delivery map</p>
+                  <h3 className="text-base font-heading font-black text-foreground-950">Programme structure at a glance</h3>
                 </div>
-                <button onClick={() => {
-                  const target = unassignedGroups[0]?.group || allGroups[0]?.group;
-                  if (target) openAssign(target);
-                }} disabled={allGroups.length === 0} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                  <i className="ri-add-line mr-1"></i> New Assignment
-                </button>
-              </div>
-
-              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                <div className="border-b border-foreground-200/60 p-4">
-                  <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
-                    <div className="relative">
-                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-                      <input value={staffingSearch} onChange={event => setStaffingSearch(event.target.value)} placeholder="Search coach, tutor, group, cohort..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
-                    </div>
-                    <select value={staffingStatusFilter} onChange={event => setStaffingStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                      <option value="all">All statuses</option>
-                      <option value="active">Active</option>
-                      <option value="unassigned">Unassigned</option>
-                    </select>
-                    <button onClick={() => { setStaffingSearch(''); setStaffingStatusFilter('all'); }} disabled={!staffingSearch && staffingStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
-                  </div>
-                  <p className="text-[11px] text-foreground-400 mt-3">{filteredStaffing.length} of {PROGRAMME.staffing.length} assignments</p>
-                </div>
-                <div className="overflow-x-auto">
-                <div className="min-w-[860px]">
-                <div className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-                  <span>Coach</span>
-                  <span>Tutor</span>
-                  <span className="text-center">Groups</span>
-                  <span className="text-center">Cohorts</span>
-                  <span className="text-center">Status</span>
-                  <span className="text-center">Action</span>
-                </div>
-                <div className="divide-y divide-background-200/30">
-                  {filteredStaffing.map((s, i) => (
-                    <div key={i} className="grid grid-cols-[1.5fr_1.5fr_1fr_1fr_1fr_0.8fr] gap-3 px-4 py-3.5 items-center hover:bg-background-100/30 transition-smooth">
-                      <div className="flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-[10px] font-bold">
-                          {s.coach.split(' ').map(n => n[0]).join('')}
-                        </span>
-                        <span className="text-[12px] font-medium text-foreground-900">{s.coach}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-7 h-7 rounded-full bg-accent-100 text-accent-700 flex items-center justify-center text-[10px] font-bold">
-                          {s.tutor.split(' ').map(n => n[0]).join('')}
-                        </span>
-                        <span className="text-[12px] font-medium text-foreground-900">{s.tutor}</span>
-                      </div>
-                      <span className="text-[11px] text-foreground-500 text-center">{s.groups}</span>
-                      <span className="text-[11px] text-foreground-500 text-center">{s.cohorts}</span>
-                      <div className="flex justify-center">
-                        <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${s.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{s.status}</span>
-                      </div>
-                      <div className="flex justify-center gap-1">
-                        <button
-                          title="Open the group-level assignment editor"
-                          onClick={() => {
-                            setGroupSearch(s.groups.split(',')[0]?.trim() || s.coach || s.tutor);
-                            setTab('groups');
-                          }}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700 transition-smooth hover:bg-primary-100"
-                        >
-                          <i className="ri-arrow-right-up-line text-xs"></i>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">{totalWeeks} weeks</span>
+                  <span className="rounded-full bg-sky-50 px-3 py-1 text-[11px] font-bold text-sky-700">{allComponents.length} components</span>
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-700">{formatHours(totalOtjh)}h OTJH</span>
                 </div>
               </div>
-            </div>
-
-            {/* Unassigned Groups */}
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Unassigned Groups</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {unassignedGroups.length === 0 ? (
-                  <div className="rounded-2xl border border-background-200/80 bg-background-100 p-4">
-                    <p className="text-[12px] font-medium text-foreground-600">All live groups have coach and tutor assignments.</p>
-                  </div>
-                ) : unassignedGroups.map(({ cohort, group }) => (
-                  <div key={group.id} className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <i className="ri-alert-line text-amber-600 text-sm"></i>
-                      <p className="text-[13px] font-semibold text-amber-800">{group.name}</p>
-                      <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{cohort.name}</span>
+              <div className="space-y-3">
+                {PROGRAMME.cohorts.map(cohortItem => (
+                  <div key={cohortItem.id} className="rounded-xl border border-primary-100 bg-primary-50/30 p-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 text-white"><i className="ri-calendar-check-line"></i></span>
+                      <div>
+                        <p className="text-[10px] font-black uppercase text-primary-700">Cohort</p>
+                        <p className="text-sm font-heading font-black text-foreground-950">{cohortItem.name}</p>
+                      </div>
+                      <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{cohortItem.startDate} - {cohortItem.endDate}</span>
+                      <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{cohortItem.groups.length} groups</span>
                     </div>
-                    <p className="text-[11px] text-amber-700 mb-3">Missing {group.coach === 'Unassigned' && group.tutor === 'Unassigned' ? 'coach and tutor' : group.coach === 'Unassigned' ? 'coach' : 'tutor'} assignment. Starts {group.startDate}.</p>
-                    <button onClick={() => openAssign(group)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-user-add-line mr-1"></i> Assign Now
-                    </button>
+                    <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-amber-800">
+                          <i className="ri-calendar-event-line text-sm"></i>
+                          Applied holidays
+                        </span>
+                        {cohortItem.holidays?.length ? cohortItem.holidays.map(holiday => (
+                          <span key={String(holiday.id)} className="rounded-full border border-amber-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
+                            {holiday.label || 'Holiday'}{holiday.startDate ? ` · ${formatDateLabel(holiday.startDate)}` : ''}
+                          </span>
+                        )) : (
+                          <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">No holidays applied</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      {cohortItem.groups.map(groupItem => {
+                        const groupModules = groupItem.modules.length
+                          ? groupItem.modules
+                          : PROGRAMME.modules.filter(mod => clean(mod.cohort) === cohortItem.name && clean(mod.group) === groupItem.name);
+                        const groupOtjh = groupModules.reduce((sum, mod) => sum + Number(mod.otjh || 0), 0);
+                        const groupComponents = groupModules.reduce((sum, mod) => sum + mod.weeksData.reduce((weekSum, wk) => weekSum + (wk.components?.length || 0), 0), 0);
+                        return (
+                          <div key={groupItem.id} className="rounded-xl border border-background-200 bg-background-50 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-[10px] font-black uppercase text-slate-500">Group</p>
+                                <h4 className="text-sm font-heading font-black text-foreground-950">{groupItem.name}</h4>
+                                <p className="mt-1 text-[11px] font-semibold text-foreground-500">{groupItem.schedule} - {groupItem.mode}</p>
+                              </div>
+                              <div className="flex flex-wrap justify-end gap-1.5">
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700">{formatHours(groupOtjh)}h</span>
+                                <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black text-primary-700">{groupModules.length} modules</span>
+                                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-black text-sky-700">{groupComponents} comp</span>
+                              </div>
+                            </div>
+                            <div className="mt-3 grid grid-cols-1 gap-2">
+                              <ReviewInfo label="Coach" value={groupItem.coach} icon="ri-heart-line" />
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {groupModules.map(mod => (
+                                <span key={mod.id} className="inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-700">
+                                  <i className="ri-stack-line text-primary-600"></i>
+                                  {mod.name}
+                                  <span className="text-emerald-700">{formatHours(mod.otjh)}h</span>
+                                </span>
+                              ))}
+                              {groupModules.length === 0 && (
+                                <span className="rounded-lg border border-dashed border-background-300 px-2.5 py-1 text-[11px] font-semibold text-foreground-500">No modules linked</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+              {PROGRAMME.modules.map(mod => {
+                const componentCount = mod.weeksData.reduce((sum, wk) => sum + (wk.components?.length || 0), 0);
+                const mappedKsbCodes = [...new Set([
+                  ...mod.ksbTags.map(clean).filter(Boolean),
+                  ...mod.ksbMapping.map(item => item.ksb),
+                ])];
+                return (
+                  <article key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+                    <div className="border-b border-foreground-200/60 bg-background-100/60 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Module</p>
+                          <h3 className="text-base font-heading font-black text-foreground-950">{mod.name}</h3>
+                          <p className="mt-1 text-[11px] font-bold text-foreground-500">{mod.cohort || 'No cohort'} / {mod.group || 'No group'}</p>
+                        </div>
+                        <span className="rounded-xl bg-emerald-50 px-3 py-2 text-[13px] font-black text-emerald-700">{formatHours(mod.otjh)}h OTJH</span>
+                      </div>
+                    </div>
+                    <div className="space-y-3 p-4">
+                      <div className="grid grid-cols-3 gap-2">
+                        <ReviewTinyStat label="Weeks" value={mod.weeksData.length} />
+                        <ReviewTinyStat label="Components" value={componentCount} />
+                        <ReviewTinyStat label="KSBs" value={mappedKsbCodes.length} />
+                      </div>
+                      <div className="grid grid-cols-1 gap-2">
+                        <ReviewInfo icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} />
+                      </div>
+                      <div>
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-foreground-400">Weeks</p>
+                        <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
+                          {mod.weeksData.map(wk => (
+                            <div key={wk.id} className="grid grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
+                              <span className="text-[10px] font-black uppercase text-foreground-400">W{wk.number}</span>
+                              <div className="min-w-0">
+                                <p className="truncate text-[11px] font-black text-foreground-900">{wk.title || `Week ${wk.number}`}</p>
+                                <p className="text-[10px] text-foreground-500">{wk.startDate}</p>
+                              </div>
+                              <div className="flex shrink-0 gap-1.5">
+                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(wk.otjh)}h</span>
+                                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">{wk.components?.length || 0} comp</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </section>
           </div>
         )}
 
@@ -2688,10 +2890,6 @@ export default function ProgrammeDetailPage() {
                   <label className="block">
                     <span className="text-[10px] font-semibold text-foreground-400 uppercase">Programme name *</span>
                     <input value={programmeForm.name} onChange={event => setProgrammeForm(prev => ({ ...prev, name: event.target.value }))} required className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
-                  </label>
-                  <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Standard</span>
-                    <input value={programmeForm.standard} onChange={event => setProgrammeForm(prev => ({ ...prev, standard: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
                   </label>
                   <label className="block">
                     <span className="text-[10px] font-semibold text-foreground-400 uppercase">Level</span>
@@ -2719,58 +2917,6 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {tab === 'staffing' && assignmentTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setAssignMode(null)}>
-            <div className="bg-background-50 rounded-2xl w-full max-w-md shadow-2xl" onClick={event => event.stopPropagation()}>
-              <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Assign Staff</h3>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">{assignmentTarget.cohort.name} - {assignmentTarget.group.name}</p>
-                </div>
-                <button type="button" onClick={() => setAssignMode(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <StaffAssignmentSelect
-                  label="Coach"
-                  value={assignForms[assignmentTarget.group.id]?.coach ?? ''}
-                  options={coachOptions}
-                  onOpen={() => { void reload(); }}
-                  onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), coach: value } }))}
-                />
-                <StaffAssignmentSelect
-                  label="Tutor"
-                  value={assignForms[assignmentTarget.group.id]?.tutor ?? ''}
-                  options={tutorOptions}
-                  onOpen={() => { void reload(); }}
-                  onChange={value => setAssignForms(prev => ({ ...prev, [assignmentTarget.group.id]: { ...(prev[assignmentTarget.group.id] || { coach: '', tutor: '' }), tutor: value } }))}
-                />
-              </div>
-              <div className="px-6 py-4 border-t border-background-200/60 flex justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => showCurriculumConfirm({
-                    title: 'Clear staffing assignment?',
-                    text: `This removes the coach and tutor assignment for ${assignmentTarget.group.name}. The group remains live and will be marked unassigned.`,
-                    icon: 'warning',
-                    confirmButtonText: 'Clear Assignment',
-                    onConfirm: async () => {
-                      setAssignMode(null);
-                      await removeAssignment(assignmentTarget.group.id);
-                    },
-                  })}
-                  disabled={savingAction === assignmentTarget.group.id}
-                  className="px-4 py-2 rounded-lg border border-red-200/60 bg-red-50 text-[12px] font-semibold text-red-600 hover:bg-red-100 disabled:opacity-50"
-                >
-                  Clear
-                </button>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setAssignMode(null)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
-                  <button type="button" onClick={() => saveAssignment(assignmentTarget.group.id)} disabled={savingAction === assignmentTarget.group.id} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === assignmentTarget.group.id ? 'Saving...' : 'Save Assignment'}</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
         {wizardOpen && (
           <AddCurriculumStructureWizard
             isOpen={wizardOpen}
@@ -2794,52 +2940,9 @@ export default function ProgrammeDetailPage() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Helper Components
-// ─────────────────────────────────────────────────────────────────────────────
-
-function StaffAssignmentSelect({
-  label,
-  value,
-  onChange,
-  options,
-  onOpen,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: SelectOption[];
-  onOpen?: () => void;
-}) {
-  const currentValue = clean(value);
-  const hasCurrentValue = currentValue && currentValue !== 'Unassigned' && !options.some(option => option.value === currentValue);
-  const visibleOptions = hasCurrentValue ? [{ value: currentValue, label: currentValue }, ...options] : options;
-  const lastOpenNotify = useRef(0);
-  const notifyOpen = () => {
-    const now = Date.now();
-    if (now - lastOpenNotify.current < 800) return;
-    lastOpenNotify.current = now;
-    onOpen?.();
-  };
-
-  return (
-    <label className="block">
-      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      <select
-        value={currentValue === 'Unassigned' ? '' : currentValue}
-        onFocus={notifyOpen}
-        onMouseDown={notifyOpen}
-        onChange={event => onChange(event.target.value)}
-        className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300 cursor-pointer"
-      >
-        <option value="">Unassigned</option>
-        {visibleOptions.map(option => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
   return (
@@ -2851,6 +2954,100 @@ function StatPill({ icon, value, label }: { icon: string; value: number | string
         <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
         <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       </div>
+    </div>
+  );
+}
+
+function formatHours(value: number | string) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return '0';
+  return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1).replace(/\.0$/, '');
+}
+
+function ReviewMetric({ icon, label, value, tone }: { icon: string; label: string; value: number | string; tone: 'purple' | 'blue' | 'slate' | 'emerald' }) {
+  const tones = {
+    purple: 'border-primary-100 bg-primary-50 text-primary-700',
+    blue: 'border-sky-100 bg-sky-50 text-sky-700',
+    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+    emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+  };
+  return (
+    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
+      <div className="flex items-center gap-2">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/70">
+          <i className={`${icon} text-sm`}></i>
+        </span>
+        <p className="text-xl font-black leading-none">{value}</p>
+      </div>
+      <p className="mt-2 text-[9px] font-black uppercase tracking-wide opacity-80">{label}</p>
+    </div>
+  );
+}
+
+function ReviewProgress({ label, value, color }: { label: string; value: number; color: string }) {
+  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[11px] font-bold text-foreground-700">{label}</span>
+        <span className="text-[11px] font-black text-foreground-900">{safe}%</span>
+      </div>
+      <div className="h-2 rounded-full bg-background-200">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${safe}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function ReviewTinyStat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded-xl border border-background-200 bg-background-50 px-3 py-2">
+      <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
+      <p className="mt-1 text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</p>
+    </div>
+  );
+}
+
+function ReviewInfo({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[24px_82px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
+      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-background-50 text-primary-600">
+        <i className={`${icon} text-xs`}></i>
+      </span>
+      <span className="text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className="min-w-0 truncate text-[11px] font-black text-foreground-900">{value || 'Not set'}</span>
+    </div>
+  );
+}
+
+function ModuleCardMetric({ icon, label, value, tone = 'purple' }: { icon: string; label: string; value: number | string; tone?: 'purple' | 'blue' | 'emerald' | 'amber' }) {
+  const tones = {
+    purple: 'border-primary-100 bg-primary-50 text-primary-700',
+    blue: 'border-sky-100 bg-sky-50 text-sky-700',
+    emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    amber: 'border-amber-100 bg-amber-50 text-amber-700',
+  };
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${tones[tone]}`}>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/70">
+        <i className={`${icon} text-sm`}></i>
+      </span>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-black leading-tight text-current">{value}</p>
+        <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-500">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function ModuleDetailLine({ icon, label, value }: { icon: string; label: string; value: number | string }) {
+  return (
+    <div className="grid min-w-0 grid-cols-[24px_112px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-background-50 px-2 py-1.5 text-[11px]">
+      <span className="grid h-6 w-6 place-items-center rounded-md bg-background-100 text-primary-600">
+        <i className={`${icon} text-xs`}></i>
+      </span>
+      <span className="font-black uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className="w-fit max-w-full min-w-0 truncate rounded-md border border-background-200 bg-white px-2 py-1 text-left font-black text-foreground-950 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.65)]">{value}</span>
     </div>
   );
 }
@@ -2980,6 +3177,13 @@ function KsbGroupedTags({ codes, limit }: { codes: string[]; limit?: number }) {
 
 function KsbCoverageGroups({ mapping }: { mapping: ModuleKsbMappingSummary[] }) {
   const sorted = [...mapping].sort((a, b) => sortKsbCodes(a.ksb, b.ksb));
+  if (!sorted.length) {
+    return (
+      <div className="rounded-lg border border-dashed border-background-300 bg-background-100 px-3 py-3 text-[11px] font-semibold text-foreground-400">
+        No KSBs mapped to this module yet.
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -3059,6 +3263,32 @@ function buildKsbSourceLabelMap(data: CurriculumOverview | null) {
   return labels;
 }
 
+function ksbCoverageSourceLabel(
+  source: KsbCoverageSourceRequest,
+  data: CurriculumOverview | null,
+  ksbSets: CurriculumKsbSet[],
+  standards: CurriculumStandard[],
+) {
+  const sourceId = clean(source.sourceId);
+  if (!sourceId) return '';
+  const sourceType = clean(source.sourceType || 'framework');
+  const labelMap = buildKsbSourceLabelMap(data);
+  const mappedLabel = sourceLabelKeys(sourceType, sourceId).map(key => labelMap.get(key)).find(Boolean);
+  if (mappedLabel) return mappedLabel;
+
+  const sourceKey = normaliseKsbSourceId(sourceId);
+  if (normaliseKsbSourceType(sourceType, sourceId) === 'standard') {
+    const standard = standards.find(item => [item.id, item.code, item.standardRef, item.name, item.larsCode].some(value => normaliseKsbSourceId(value) === sourceKey));
+    return clean(standard?.name || standard?.standardRef || standard?.code || sourceId);
+  }
+
+  const framework = (data?.ksbFrameworks || []).find(item => [item.id, item.profileId, item.ksbProfileId].some(value => normaliseKsbSourceId(value) === sourceKey));
+  if (framework) return frameworkDisplayLabel(framework) || sourceId;
+
+  const set = ksbSets.find(item => normaliseKsbSourceId(ksbSetSourceIdForProgrammeDetail(item)) === sourceKey);
+  return clean(set?.programmeName || set?.standard || sourceId);
+}
+
 type HeatmapModuleBinding = { label: string; backendIndex?: number };
 
 function uniqueModuleLabel(baseLabel: string, labelCounts: Map<string, number>) {
@@ -3120,6 +3350,7 @@ function backendCoverageToProgrammeHeatmap(
   coverage: CurriculumKsbCoverageResponse | null,
   sourceLabels = new Map<string, string>(),
   programmeModules: Array<Pick<Module, 'id' | 'name'>> = [],
+  ksbDescriptions = new Map<string, string>(),
 ): { moduleNames: string[]; rows: KsbHeatmapRow[] } | null {
   if (!coverage?.heatmap?.modules?.length) return null;
   const moduleBindings = buildHeatmapModuleBindings(coverage.heatmap.modules, programmeModules);
@@ -3144,7 +3375,7 @@ function backendCoverageToProgrammeHeatmap(
         component: mapping.component_name || mapping.componentName,
         componentType: mapping.component_type || mapping.componentType,
         classification: mapping.classification,
-        groups: uniqueCleanValues([
+        groups: displayGroupValues([
           (mapping as CurriculumKsbCoverageResponse['items'][number]['mappings'][number] & { group_name?: string; groupName?: string; group?: string; groups?: string[] }).group_name,
           (mapping as CurriculumKsbCoverageResponse['items'][number]['mappings'][number] & { group_name?: string; groupName?: string; group?: string; groups?: string[] }).groupName,
           (mapping as CurriculumKsbCoverageResponse['items'][number]['mappings'][number] & { group_name?: string; groupName?: string; group?: string; groups?: string[] }).group,
@@ -3162,11 +3393,15 @@ function backendCoverageToProgrammeHeatmap(
       || sourceLabelKeys(sourceType, sourceId).map(key => sourceLabels.get(key)).find(Boolean)
       || sourceName;
     const id = clean(row.coverage_key || row.coverageKey) || [sourceType, sourceId, row.code].map(normalise).join('|');
+    const fallbackDescription = lookupKsbDescription(ksbDescriptions, row.code, sourceType, sourceId);
+    const rowTitle = clean(row.title);
+    const rowDescription = clean((row as unknown as { description?: string }).description);
+    const description = rowDescription || fallbackDescription;
     return {
       id,
       ksb: row.code,
-      title: row.title || row.code,
-      description: row.description || '',
+      title: rowTitle && normalise(rowTitle) !== normalise(row.code) ? rowTitle : description || row.code,
+      description,
       coverage: rowCoverage,
       counts,
       evidence,
@@ -3212,7 +3447,7 @@ function KsbHeatmapLegend() {
 }
 
 function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; moduleNames: string[] }) {
-  const gridTemplateColumns = `minmax(250px, 1.3fr) repeat(${Math.max(moduleNames.length, 1)}, minmax(118px, 0.55fr)) minmax(180px, 0.7fr) minmax(340px, 1.4fr)`;
+  const gridTemplateColumns = `minmax(250px, 1.3fr) repeat(${Math.max(moduleNames.length, 1)}, minmax(220px, 0.9fr)) minmax(180px, 0.7fr) minmax(340px, 1.4fr)`;
 
   return (
     <div className="overflow-x-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
@@ -3245,6 +3480,7 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
                     key={`${rowId}-${moduleName}`}
                     value={row.coverage[moduleName]}
                     count={row.counts?.[moduleName] || 0}
+                    evidence={row.evidence?.[moduleName] || []}
                   />
                 ))}
                 <div className="flex flex-col items-center justify-center gap-1">
@@ -3261,26 +3497,54 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
   );
 }
 
-function KsbHeatCell({ value, count }: { value: number | null | undefined; count: number }) {
+function groupedKsbEvidenceByWeek(evidence: KsbEvidenceItem[]) {
+  const weekMap = new Map<string, KsbEvidenceItem[]>();
+  evidence.forEach(item => {
+    const week = clean(item.week, item.scope === 'module' ? 'Module level' : 'Week not set');
+    const current = weekMap.get(week) || [];
+    weekMap.set(week, [...current, item]);
+  });
+  return [...weekMap.entries()].map(([week, items]) => ({ week, items }));
+}
+
+function KsbHeatCell({ value, count, evidence }: { value: number | null | undefined; count: number; evidence: KsbEvidenceItem[] }) {
   const hasValue = value !== null && value !== undefined;
+  const groupedEvidence = groupedKsbEvidenceByWeek(evidence);
   return (
-    <div className={`flex min-h-16 flex-col justify-between rounded-xl border px-3 py-2 text-center ${heatCellClass(value)}`}>
-      {hasValue ? (
+    <div className={`flex min-h-20 flex-col justify-between rounded-xl border px-3 py-2 ${heatCellClass(value)}`}>
+      {hasValue || count > 0 ? (
         <>
-          <span className="text-[15px] font-heading font-bold leading-none">{value}%</span>
-          <span className="mt-1 text-[10px] font-bold leading-none">x{count || 1}</span>
-          <span className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/60">
-            <span className="block h-full rounded-full bg-current" style={{ width: `${Math.min(Math.max(Number(value || 0), 4), 100)}%` }}></span>
-          </span>
-        </>
-      ) : count > 0 ? (
-        <>
-          <span className="text-[12px] font-heading font-bold leading-none text-foreground-700">No weight</span>
-          <span className="mt-1 text-[10px] font-bold leading-none text-foreground-500">x{count}</span>
-          <span className="mt-2 text-[9px] font-semibold leading-none text-foreground-400">0/not set</span>
+          <div className="flex items-center justify-between gap-2 text-center">
+            <span className="text-[15px] font-heading font-bold leading-none">{hasValue ? `${value}%` : 'No weight'}</span>
+            <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-bold leading-none">x{count || 1}</span>
+          </div>
+          {hasValue && (
+            <span className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/60">
+              <span className="block h-full rounded-full bg-current" style={{ width: `${Math.min(Math.max(Number(value || 0), 4), 100)}%` }}></span>
+            </span>
+          )}
+          {groupedEvidence.length > 0 && (
+            <div className="mt-2 space-y-1 text-left">
+              {groupedEvidence.map(({ week, items }) => (
+                <div key={week} className="rounded-lg bg-white/70 px-2 py-1">
+                  <div className="flex items-center gap-1 text-[9px] font-black uppercase text-foreground-500">
+                    <i className="ri-calendar-check-line"></i>
+                    <span className="truncate">{week}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {items.map((item, index) => (
+                      <span key={`${week}-${item.component || item.scope}-${index}`} className="rounded-md border border-background-200 bg-background-50 px-1.5 py-0.5 text-[9px] font-semibold text-foreground-700">
+                        {clean(item.component, item.scope)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       ) : (
-        <span className="m-auto text-[18px] font-semibold leading-none">-</span>
+        <span className="m-auto text-center text-[18px] font-semibold leading-none">-</span>
       )}
     </div>
   );
@@ -3518,11 +3782,11 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
           <div className="space-y-3">
             {byModule.map(moduleGroup => (
               <div key={moduleGroup.module} className="rounded-xl border border-background-200 bg-background-100/45 p-3">
-                <p className="text-[12px] font-bold text-foreground-950">Programme → {moduleGroup.module}</p>
+                <p className="text-[12px] font-bold text-foreground-950">Programme â†’ {moduleGroup.module}</p>
                 <div className="mt-2 space-y-2">
                   {moduleGroup.weeks.map(weekGroup => (
                     <div key={`${moduleGroup.module}-${weekGroup.week}`} className="rounded-lg border border-background-200 bg-background-50 p-3">
-                      <p className="text-[11px] font-bold text-foreground-700">→ {weekGroup.week || 'Module-level mapping'}</p>
+                      <p className="text-[11px] font-bold text-foreground-700">â†’ {weekGroup.week || 'Module-level mapping'}</p>
                       <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
                         {weekGroup.items.map((item, index) => (
                           <div key={`${item.module}-${item.week}-${item.component}-${index}`} className="rounded-lg border border-background-200 bg-background-100 px-3 py-2">
@@ -3531,7 +3795,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
                               {item.classification && <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(item.classification)}</span>}
                               <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{item.weight > 0 ? `${item.weight}%` : 'No weight'}</span>
                             </div>
-                            <p className="mt-2 text-[11px] font-semibold text-foreground-900">→ {item.component || item.componentType || 'Component not set'}</p>
+                            <p className="mt-2 text-[11px] font-semibold text-foreground-900">â†’ {item.component || item.componentType || 'Component not set'}</p>
                             {item.componentType && <p className="text-[10px] font-semibold text-foreground-400">{componentTypeLabel(item.componentType)}</p>}
                             <div className="mt-2 flex flex-wrap gap-1">
                               {item.groups.map(group => <span key={group} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Group: {group}</span>)}
@@ -3658,7 +3922,7 @@ function traceEvidenceForRow(row: KsbHeatmapRow, programme: Programme): KsbTrace
       ...entry,
       moduleLabel,
       module: clean(entry.module || module?.name || moduleLabel, moduleLabel),
-      groups: uniqueCleanValues([...(entry.groups || []), ...fallbackGroups]),
+      groups: displayGroupValues([...(entry.groups || []), ...fallbackGroups]),
     };
   }));
 }
@@ -3677,4 +3941,3 @@ function groupTraceEvidence(evidence: KsbTraceEvidence[]) {
     weeks: [...weekMap.entries()].map(([week, items]) => ({ week, items })),
   }));
 }
-

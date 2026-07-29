@@ -275,9 +275,17 @@ def _append_week_quizzes(weeks, components):
     if not quizzes_by_week_id:
         return components
 
+    existing_quiz_ids = {
+        component.get("quizMeta", {}).get("quizId")
+        for component in components
+        if component.get("isQuiz") and isinstance(component.get("quizMeta"), dict)
+    }
+
     for w in weeks:
         week_id = week_ids_by_key.get((w.get("module"), w.get("week")))
         for quiz_id, title, questions, duration, time_unit in quizzes_by_week_id.get(week_id, []):
+            if quiz_id in existing_quiz_ids:
+                continue
             components.append({
                 "module": w.get("module"), "week": w.get("week"),
                 "component": _display_quiz_title(title),
@@ -390,6 +398,55 @@ def _resolve_from_master(modules, weeks, components):
             )
             master_components = cur.fetchall()  # [(comp_id, week_id, module_id, type, title, description, settings_json, display_order)]
 
+            # Quiz components are linked either through settings_json.linkedQuizId
+            # (the Module Builder save format) or the normalized link table.
+            # Resolve both so learner quiz pages receive isQuiz + quizMeta instead
+            # of treating a linked quiz as an ordinary generic component.
+            quiz_id_by_component = {}
+            component_ids = [row[0] for row in master_components]
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _order in master_components:
+                if isinstance(settings, str):
+                    try:
+                        settings = json.loads(settings) if settings else {}
+                    except (ValueError, TypeError):
+                        settings = {}
+                if not isinstance(settings, dict):
+                    settings = {}
+                linked_quiz_id = settings.get("linkedQuizId")
+                try:
+                    if linked_quiz_id not in (None, ""):
+                        quiz_id_by_component[comp_id] = int(linked_quiz_id)
+                except (TypeError, ValueError):
+                    pass
+
+            if component_ids:
+                cur.execute(
+                    "SELECT component_id, quiz_id FROM curriculum.quiz_component_links "
+                    "WHERE component_id = ANY(%s)",
+                    [component_ids],
+                )
+                for component_id, quiz_id in cur.fetchall():
+                    quiz_id_by_component[component_id] = quiz_id
+
+            linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
+            quiz_meta_by_id = {}
+            if linked_quiz_ids:
+                cur.execute(
+                    "SELECT id, title, questions, duration, time_unit FROM curriculum.quizzes "
+                    "WHERE id = ANY(%s)",
+                    [linked_quiz_ids],
+                )
+                quiz_meta_by_id = {
+                    row[0]: {
+                        "quizId": row[0],
+                        "title": row[1],
+                        "questions": row[2],
+                        "duration": row[3],
+                        "timeUnit": row[4],
+                    }
+                    for row in cur.fetchall()
+                }
+
             # Authored KSB weight per component. Drives the completion criteria
             # (see COMPONENT_KSB_WEIGHT_TARGET in components.py): a component
             # with KSBs mapped can only be completed once its weights total the
@@ -487,9 +544,10 @@ def _resolve_from_master(modules, weeks, components):
         )
         duration = settings.get("durationMinutes")
         ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
+        linked_quiz = quiz_meta_by_id.get(quiz_id_by_component.get(comp_id))
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
-            "display": _display_component_title(ctype, ctitle),
+            "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
             "type": ctype,
             "description": _s(cdesc) or None,
             "videoUrl": video_url,
@@ -503,6 +561,13 @@ def _resolve_from_master(modules, weeks, components):
             "ksbWeightTotal": ksb_weight,
             "ksbMappingCount": ksb_count,
             "ksbMappings": ksbs_by_component.get(comp_id, []),
+            "isQuiz": bool(linked_quiz),
+            "quizMeta": ({
+                "quizId": linked_quiz["quizId"],
+                "questions": linked_quiz["questions"],
+                "duration": linked_quiz["duration"],
+                "timeUnit": linked_quiz["timeUnit"],
+            } if linked_quiz else None),
         })
 
     # Distinct snapshot module ids in first-seen order, plus any legacy
@@ -548,6 +613,8 @@ def _resolve_from_master(modules, weeks, components):
                     "ksbWeightTotal": comp["ksbWeightTotal"],
                     "ksbMappingCount": comp["ksbMappingCount"],
                     "ksbMappings": comp["ksbMappings"],
+                    "isQuiz": comp["isQuiz"],
+                    "quizMeta": comp["quizMeta"],
                 })
 
     # Preserve legacy (id-less) modules unchanged so pre-structured-format
@@ -605,11 +672,11 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    detail = to_learner_detail(source, active)
+    detail = to_learner_detail(source, learner_profile)
     # Live-resolve titles + membership from the master authoring tables so coach
     # edits in Module Builder reflect here immediately (structured-plan learners).
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
@@ -619,10 +686,10 @@ def learner_detail(request, kind, pk):
     detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
 
     # Persist the plan's planned hours + the learner's completed hours onto the
-    # mirror so the columns stay current as the plan/progress change, and echo
-    # them back so the card reads the same stored values.
+    # learner profile so the columns stay current as the plan/progress change,
+    # and echo them back so the card reads the same stored values.
     planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
-    completed = completed_hours_from_progress(active.training_plan_progress) if active else "0"
+    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
 
     # Target = cumulative planned hours up to & including the CURRENT week (first
     # week of the first module, matching the frontend heuristic; grows week by
@@ -637,6 +704,7 @@ def learner_detail(request, kind, pk):
     target_str = fmt_hours(target_num)
     progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
     variance_str = "" if variance is None else str(variance)
+    variance_db = None if variance is None else variance
     otjh_status = _otjh_status(variance)
 
     detail["plannedHours"] = planned
@@ -645,25 +713,25 @@ def learner_detail(request, kind, pk):
     detail["progressHours"] = progress_hours_str
     detail["progressVariance"] = variance_str
     detail["otjhStatus"] = otjh_status
-    if active is not None:
+    if learner_profile is not None:
         try:
             calculated = {
                 "planned_hours": planned,
                 "completed_hours": completed,
                 "target_hours": target_str,
                 "progress_hours": progress_hours_str,
-                "progress_variance": variance_str,
+                "progress_variance": variance_db,
                 "otjh_status": otjh_status,
             }
             changed_fields = []
             for field, value in calculated.items():
-                if getattr(active, field) != value:
-                    setattr(active, field, value)
+                if getattr(learner_profile, field) != value:
+                    setattr(learner_profile, field, value)
                     changed_fields.append(field)
             # This endpoint is read on almost every learner page. Avoid a
             # remote database UPDATE when all calculated values are unchanged.
             if changed_fields:
-                active.save(update_fields=changed_fields)
+                learner_profile.save(update_fields=changed_fields)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 

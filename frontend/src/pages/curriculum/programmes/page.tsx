@@ -13,13 +13,19 @@ import {
   archiveCurriculumGroup,
   archiveCurriculumModule,
   deleteCurriculumProgramme,
+  fetchCurriculumModules,
   fetchCurriculumProgrammeKsbCoverage,
+  fetchCurriculumKsbSets,
+  fetchCurriculumStandards,
   updateCurriculumCohort,
   updateCurriculumGroup,
+  updateCurriculumKsbFramework,
   updateCurriculumModule,
   updateCurriculumProgramme,
   type CurriculumCohort,
   type CurriculumKsbCoverageItem,
+  type CurriculumKsbEntry,
+  type CurriculumKsbSet,
   type CurriculumKsbTraceMapping,
   type CurriculumGroup,
   type CurriculumModule,
@@ -27,14 +33,38 @@ import {
   type CurriculumProgrammeInput,
   type CurriculumSession,
   type CurriculumStaffProfile,
+  type CurriculumStandard,
 } from '@/lib/curriculumApi';
 
 type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'color' | 'description'>>;
+type ProgrammeAppliedKsbSource = {
+  value: string;
+  kind: 'profile' | 'standard' | 'none';
+  title: string;
+  subtitle: string;
+  detail: string;
+};
+type ProgrammeKsbSourceReview = {
+  programme: CurriculumProgramme;
+  source: ProgrammeAppliedKsbSource;
+  ksbSet?: CurriculumKsbSet;
+  standard?: CurriculumStandard;
+};
+type ProgrammeKsbSourceItem = {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  type: string;
+  family: 'knowledge' | 'skills' | 'behaviours';
+  parentCode?: string;
+};
 
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string };
+type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
   return showCurriculumAlert({
@@ -52,17 +82,38 @@ export default function CurriculumProgrammes() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
   const [wizardProgramme, setWizardProgramme] = useState<CurriculumProgramme | undefined>();
+  const [wizardStartStep, setWizardStartStep] = useState<StructureWizardStep>('programme');
+  const [wizardCohortId, setWizardCohortId] = useState<string | undefined>();
+  const [wizardGroupId, setWizardGroupId] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
   const [reviewProgramme, setReviewProgramme] = useState<CurriculumProgramme | null>(null);
+  const [applyProgramme, setApplyProgramme] = useState<CurriculumProgramme | null>(null);
+  const [applyingKsbSource, setApplyingKsbSource] = useState(false);
   const [reviewItems, setReviewItems] = useState<CurriculumKsbCoverageItem[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [sourceReview, setSourceReview] = useState<ProgrammeKsbSourceReview | null>(null);
+  const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
+  const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const { programmes, loading, error, reload } = useCurriculumProgrammes();
+  const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ compact: true, includeHolidays: true, refreshModules: true });
+  const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.all([
+      fetchCurriculumKsbSets(controller.signal).then(setKsbSets),
+      fetchCurriculumStandards(controller.signal).then(setStandards),
+    ]).catch(err => {
+      if (!controller.signal.aborted) console.warn('Unable to load KSB descriptions for programme review.', err);
+    });
+    return () => controller.abort();
+  }, []);
 
   const filtered = programmes.filter(p => {
     const needle = search.toLowerCase();
-    if (needle && !p.name.toLowerCase().includes(needle) && !p.standard.toLowerCase().includes(needle)) return false;
+    if (needle && !p.name.toLowerCase().includes(needle)) return false;
     return true;
   });
 
@@ -72,16 +123,37 @@ export default function CurriculumProgrammes() {
   const totalModules = programmes.reduce((a, b) => a + (b.modules || 0), 0);
   const totalSessions = programmes.reduce((a, b) => a + (b.weeks || 0), 0);
   const programmesWithKsb = programmes.filter(programme => programme.ksbTotal > 0);
+  const programmeKsbSources = useMemo(() => {
+    const lookup = new Map<string, ProgrammeAppliedKsbSource>();
+    programmes.forEach(programme => {
+      lookup.set(programme.sourceId || programme.id, resolveProgrammeAppliedKsbSource(programme, ksbSets, standards));
+    });
+    return lookup;
+  }, [ksbSets, programmes, standards]);
   const averageKsbCoverage = programmesWithKsb.length
     ? Math.round(programmesWithKsb.reduce((sum, programme) => sum + ((programme.ksbMapped / programme.ksbTotal) * 100), 0) / programmesWithKsb.length)
     : 0;
   const pageSubtitle = `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
   const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {totalCohorts} cohorts - {totalModules} modules</>;
 
+  const refreshProgrammeCards = async () => {
+    const [nextKsbSets, nextStandards] = await Promise.all([
+      fetchCurriculumKsbSets().catch(() => ksbSets),
+      fetchCurriculumStandards().catch(() => standards),
+      reload(),
+      reloadCurriculumData(),
+    ]);
+    setKsbSets(nextKsbSets);
+    setStandards(nextStandards);
+  };
+
   const openEdit = (programme: CurriculumProgramme) => {
     setActionError(null);
     setWizardProgrammeId(programme.sourceId || programme.id);
     setWizardProgramme(programme);
+    setWizardStartStep('programme');
+    setWizardCohortId(undefined);
+    setWizardGroupId(undefined);
     setWizardOpen(true);
   };
 
@@ -89,6 +161,9 @@ export default function CurriculumProgrammes() {
     setWizardOpen(false);
     setWizardProgrammeId(undefined);
     setWizardProgramme(undefined);
+    setWizardStartStep('programme');
+    setWizardCohortId(undefined);
+    setWizardGroupId(undefined);
   };
 
   const deleteProgramme = async (programme: CurriculumProgramme) => {
@@ -133,6 +208,100 @@ export default function CurriculumProgrammes() {
     }
   };
 
+  const applyProgrammeKsbSource = async (programme: CurriculumProgramme, sourceValue: string) => {
+    const [kind, id] = sourceValue.split(':');
+    const programmeId = programme.sourceId || programme.id;
+    if (!programmeId || !id) return;
+    setApplyingKsbSource(true);
+    try {
+      const modulesForCascade = curriculumData?.modules?.length ? curriculumData.modules : await fetchCurriculumModules();
+      if (kind === 'profile') {
+        const profile = ksbSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
+        if (!profile) throw new Error('Selected KSB profile could not be found.');
+        const selectedProfileId = ksbSourceIdForProgrammeCard(profile);
+        const programmeCandidates = uniqueTextValues([programmeId, programme.id, programme.sourceId, programme.name]);
+        const previouslyLinkedProfiles = ksbSets.filter(set => {
+          if (ksbSourceIdForProgrammeCard(set) === selectedProfileId) return false;
+          const linkedProgrammeIds = uniqueTextValues([set.programmeId, ...(set.programmeIds || [])]);
+          return programmeCandidates.some(candidate => linkedProgrammeIds.some(linked => normalise(linked) === normalise(candidate)));
+        });
+        await Promise.all(previouslyLinkedProfiles.map(set => {
+          const nextProgrammeIds = uniqueTextValues([...(set.programmeIds || []), set.programmeId])
+            .filter(value => !programmeCandidates.some(candidate => normalise(candidate) === normalise(value)));
+          return updateCurriculumKsbFramework(ksbSourceIdForProgrammeCard(set), {
+            programmeId: nextProgrammeIds[0] || '',
+            programmeIds: nextProgrammeIds,
+            name: set.standard || set.programmeName || 'KSB profile',
+          });
+        }));
+        const nextProgrammeIds = uniqueTextValues([...(profile.programmeIds || []), programmeId, programme.name]);
+        await updateCurriculumKsbFramework(selectedProfileId, {
+          programmeId,
+          programmeIds: nextProgrammeIds,
+          name: profile.standard || profile.programmeName || programme.standard || programme.name,
+        });
+        await updateCurriculumProgramme(programmeId, {
+          name: programme.name,
+          standard: programme.standard || profile.standard || profile.programmeName || programme.name,
+          level: programme.level,
+          color: programme.color,
+          description: programme.description,
+          structureType: programme.structureType,
+          ksbProfileSourceId: `profile:${selectedProfileId}`,
+        });
+        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `profile:${selectedProfileId}`);
+      } else {
+        const standard = standards.find(item => item.id === id);
+        if (!standard) throw new Error('Selected standard could not be found.');
+        await updateCurriculumProgramme(programmeId, {
+          name: programme.name,
+          standard: standard.name,
+          level: standard.levelValue || standard.level,
+          color: programme.color,
+          description: programme.description,
+          structureType: programme.structureType,
+          ksbProfileSourceId: `standard:${standard.id}`,
+        });
+        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `standard:${standard.id}`);
+      }
+      await reload();
+      await reloadCurriculumData();
+      await Promise.all([
+        fetchCurriculumKsbSets().then(setKsbSets),
+        fetchCurriculumStandards().then(setStandards),
+      ]);
+      setApplyProgramme(null);
+      await showProgrammeSwalToast('KSB source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
+    } catch (err) {
+      await showProgrammeSwalToast('Unable to apply KSB source', err instanceof Error ? err.message : 'The programme KSB source could not be saved.', 'error');
+    } finally {
+      setApplyingKsbSource(false);
+    }
+  };
+
+  const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
+    if (!source.value) {
+      setApplyProgramme(programme);
+      return;
+    }
+    const [kind, id] = source.value.split(':');
+    if (kind === 'profile') {
+      const ksbSet = findProgrammeKsbSetBySourceId(ksbSets, id);
+      if (ksbSet) {
+        setSourceReview({ programme, source, ksbSet });
+        return;
+      }
+    }
+    if (kind === 'standard') {
+      const standard = standards.find(item => normalise(item.id) === normalise(id));
+      if (standard) {
+        setSourceReview({ programme, source, standard });
+        return;
+      }
+    }
+    void showProgrammeSwalToast('KSB source not found', 'The selected KSB profile could not be loaded yet. Try refreshing the page.', 'error');
+  };
+
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-4 sm:p-6 space-y-5">
@@ -151,7 +320,14 @@ export default function CurriculumProgrammes() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
+                  onClick={() => {
+                    setWizardProgrammeId(undefined);
+                    setWizardProgramme(undefined);
+                    setWizardStartStep('programme');
+                    setWizardCohortId(undefined);
+                    setWizardGroupId(undefined);
+                    setWizardOpen(true);
+                  }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
                   <i className="ri-add-line text-base"></i>
@@ -196,7 +372,7 @@ export default function CurriculumProgrammes() {
                 type="text"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search by programme or standard..."
+                placeholder="Search by programme..."
                 className="h-11 w-full rounded-xl border border-foreground-200/70 bg-background-50 pl-10 pr-10 text-[13px] font-medium text-foreground-900 placeholder:text-foreground-400 outline-none transition-smooth focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
               />
               {search && (
@@ -214,6 +390,7 @@ export default function CurriculumProgrammes() {
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {filtered.map(prog => {
               const coverage = prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               return (
               <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
                 <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
@@ -224,7 +401,7 @@ export default function CurriculumProgrammes() {
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
-                      <p className="text-[11px] text-foreground-400">{prog.standard} - {prog.level || 'Level not set'}</p>
+                      <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
                         <i className="ri-calendar-event-line text-[10px]"></i>
                         Programme
@@ -232,6 +409,28 @@ export default function CurriculumProgrammes() {
                     </div>
                   </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); openAppliedKsbSourceReview(prog, appliedSource); }}
+                  className={`mb-4 w-full rounded-xl border px-3 py-2.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'border-primary-100 bg-primary-50/70 hover:border-primary-200 hover:bg-primary-50' : 'border-amber-100 bg-amber-50/70 hover:border-amber-200 hover:bg-amber-50'}`}
+                  aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB source'}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'bg-primary-600 text-white' : 'bg-amber-500 text-white'}`}>
+                      <i className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></i>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-[9px] font-black uppercase tracking-wide ${appliedSource.value ? 'text-primary-700' : 'text-amber-700'}`}>
+                        {appliedSource.value ? 'Applied KSB source' : 'No KSB source selected'}
+                      </p>
+                      <p className="mt-0.5 truncate text-[12px] font-heading font-bold text-foreground-950">{appliedSource.title}</p>
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{appliedSource.detail || appliedSource.subtitle}</p>
+                    </div>
+                    <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-primary-600">
+                      <i className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></i>
+                    </span>
+                  </div>
+                </button>
                 <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
@@ -254,8 +453,8 @@ export default function CurriculumProgrammes() {
                     <i className="ri-eye-line"></i>
                     Open
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); void openProgrammeKsbReview(prog); }}>
-                    <i className="ri-node-tree text-sm"></i>KSBs
+                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
+                    <i className="ri-node-tree text-sm"></i>Apply KSB source
                   </button>
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                     <i className="ri-pencil-line text-sm"></i>Edit
@@ -277,7 +476,14 @@ export default function CurriculumProgrammes() {
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
             onClear={() => setSearch('')}
-            onCreate={() => { setWizardProgrammeId(undefined); setWizardProgramme(undefined); setWizardOpen(true); }}
+            onCreate={() => {
+              setWizardProgrammeId(undefined);
+              setWizardProgramme(undefined);
+              setWizardStartStep('programme');
+              setWizardCohortId(undefined);
+              setWizardGroupId(undefined);
+              setWizardOpen(true);
+            }}
           />
         )}
 
@@ -285,10 +491,13 @@ export default function CurriculumProgrammes() {
           <ProgrammeStructureEditor
             programme={editingProgramme}
             onClose={() => setEditingProgramme(null)}
-            onSaved={reload}
-            onOpenAddStructure={() => {
+            onSaved={refreshProgrammeCards}
+            onOpenAddStructure={(startStep = 'cohort', cohortId, groupId) => {
               setWizardProgrammeId(editingProgramme.sourceId || editingProgramme.id);
               setWizardProgramme(editingProgramme);
+              setWizardStartStep(startStep);
+              setWizardCohortId(cohortId);
+              setWizardGroupId(groupId);
               setEditingProgramme(null);
               setWizardOpen(true);
             }}
@@ -297,15 +506,18 @@ export default function CurriculumProgrammes() {
         <AddCurriculumStructureWizard
           isOpen={wizardOpen}
           onClose={closeWizard}
-          onSaved={reload}
+          onSaved={refreshProgrammeCards}
           initialProgrammeId={wizardProgrammeId}
           initialProgramme={wizardProgramme}
-          startStep="programme"
+          initialCohortId={wizardCohortId}
+          initialGroupId={wizardGroupId}
+          startStep={wizardStartStep}
         />
         {reviewProgramme && (
           <ProgrammeKsbReviewModal
             programme={reviewProgramme}
             items={reviewItems}
+            descriptions={ksbDescriptions}
             loading={reviewLoading}
             error={reviewError}
             onClose={() => {
@@ -313,6 +525,23 @@ export default function CurriculumProgrammes() {
               setReviewItems([]);
               setReviewError(null);
             }}
+          />
+        )}
+        {applyProgramme && (
+          <ApplyProgrammeKsbSourceModal
+            programme={applyProgramme}
+            ksbSets={ksbSets}
+            standards={standards}
+            currentSource={programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards)}
+            applying={applyingKsbSource}
+            onClose={() => setApplyProgramme(null)}
+            onApply={sourceValue => applyProgrammeKsbSource(applyProgramme, sourceValue)}
+          />
+        )}
+        {sourceReview && (
+          <ProgrammeKsbSourceModal
+            review={sourceReview}
+            onClose={() => setSourceReview(null)}
           />
         )}
       </div>
@@ -323,12 +552,14 @@ export default function CurriculumProgrammes() {
 function ProgrammeKsbReviewModal({
   programme,
   items,
+  descriptions,
   loading,
   error,
   onClose,
 }: {
   programme: CurriculumProgramme;
   items: CurriculumKsbCoverageItem[];
+  descriptions: Map<string, string>;
   loading: boolean;
   error: string | null;
   onClose: () => void;
@@ -342,6 +573,7 @@ function ProgrammeKsbReviewModal({
         item.code,
         item.title,
         item.description,
+        programmeKsbDescription(item, descriptions),
         coverageSourceLabel(item),
         ...(item.mappings || []).flatMap(mapping => [
           mapping.moduleName || mapping.module_name,
@@ -352,7 +584,7 @@ function ProgrammeKsbReviewModal({
       ].join(' ');
       return normalise(searchable).includes(needle);
     });
-  }, [items, query]);
+  }, [descriptions, items, query]);
 
   const groupedItems = useMemo(() => ({
     knowledge: filteredItems.filter(item => ksbFamily(item) === 'knowledge'),
@@ -396,9 +628,9 @@ function ProgrammeKsbReviewModal({
             <ProgrammeKsbEmptyState icon="ri-loader-4-line animate-spin" title="Loading applied KSBs" message="Reading programme coverage from the LMS database." />
           ) : filteredItems.length ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-              <ProgrammeKsbColumn title="Knowledge" tone="knowledge" items={groupedItems.knowledge} />
-              <ProgrammeKsbColumn title="Skills" tone="skills" items={groupedItems.skills} />
-              <ProgrammeKsbColumn title="Behaviours" tone="behaviours" items={groupedItems.behaviours} />
+              <ProgrammeKsbColumn title="Knowledge" tone="knowledge" items={groupedItems.knowledge} descriptions={descriptions} />
+              <ProgrammeKsbColumn title="Skills" tone="skills" items={groupedItems.skills} descriptions={descriptions} />
+              <ProgrammeKsbColumn title="Behaviours" tone="behaviours" items={groupedItems.behaviours} descriptions={descriptions} />
             </div>
           ) : (
             <ProgrammeKsbEmptyState
@@ -420,7 +652,212 @@ function ProgrammeKsbReviewModal({
   );
 }
 
-function ProgrammeKsbColumn({ title, tone, items }: { title: string; tone: 'knowledge' | 'skills' | 'behaviours'; items: CurriculumKsbCoverageItem[] }) {
+function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSourceReview; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const items = useMemo(() => programmeKsbSourceItems(review), [review]);
+  const filteredItems = useMemo(() => {
+    const needle = normalise(query);
+    if (!needle) return items;
+    return items.filter(item => normalise([item.code, item.title, item.description, item.type, item.parentCode].join(' ')).includes(needle));
+  }, [items, query]);
+  const groupedItems = useMemo(() => ({
+    knowledge: filteredItems.filter(item => item.family === 'knowledge'),
+    skills: filteredItems.filter(item => item.family === 'skills'),
+    behaviours: filteredItems.filter(item => item.family === 'behaviours'),
+  }), [filteredItems]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Applied KSB Profile</p>
+            <h3 className="mt-2 truncate text-xl font-heading font-bold">{review.source.title}</h3>
+            <p className="mt-1 text-[12px] font-semibold text-white/70">
+              {review.programme.name} - {filteredItems.length} of {items.length} KSBs shown - {review.source.detail}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB profile">
+            <i className="ri-close-line text-lg"></i>
+          </button>
+        </div>
+
+        <div className="border-b border-background-200 bg-background-50 p-4">
+          <div className="relative">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <input
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder="Search KSB code or description..."
+              className="h-11 w-full rounded-xl border border-foreground-200/70 bg-background-100 pl-10 pr-4 text-[13px] font-medium text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {items.length ? (
+            <div className="grid gap-4 lg:grid-cols-3">
+              <ProgrammeKsbSourceColumn title="Knowledge" count={groupedItems.knowledge.length} items={groupedItems.knowledge} tone="primary" />
+              <ProgrammeKsbSourceColumn title="Skills" count={groupedItems.skills.length} items={groupedItems.skills} tone="emerald" />
+              <ProgrammeKsbSourceColumn title="Behaviours" count={groupedItems.behaviours.length} items={groupedItems.behaviours} tone="amber" />
+            </div>
+          ) : (
+            <ProgrammeKsbEmptyState icon="ri-folder-warning-line" title="No KSBs in this profile" message="This applied source is linked, but it does not contain readable KSB definitions yet." />
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ProgrammeKsbSourceColumn({ title, count, items, tone }: { title: string; count: number; items: ProgrammeKsbSourceItem[]; tone: 'primary' | 'emerald' | 'amber' }) {
+  const toneClass = tone === 'emerald'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+    : tone === 'amber'
+      ? 'bg-amber-50 text-amber-700 border-amber-100'
+      : 'bg-primary-50 text-primary-700 border-primary-100';
+  return (
+    <section className="min-w-0 rounded-2xl border border-background-200 bg-background-100/60 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h4 className="text-sm font-heading font-bold text-foreground-950">{title}</h4>
+        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${toneClass}`}>{count}</span>
+      </div>
+      <div className="space-y-2">
+        {items.map(item => (
+          <article key={item.id} className="rounded-xl border border-foreground-200 bg-background-50 p-3 shadow-sm">
+            <div className="flex items-start gap-2">
+              <span className={`shrink-0 rounded-lg border px-2 py-1 text-[11px] font-black ${toneClass}`}>{item.code || '-'}</span>
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-foreground-900">{item.title || item.description || item.code}</p>
+                {item.description && item.description !== item.title && (
+                  <p className="mt-1 text-[11px] leading-5 text-foreground-500">{item.description}</p>
+                )}
+                {item.parentCode && <p className="mt-1 text-[10px] font-semibold text-foreground-400">Parent: {item.parentCode}</p>}
+              </div>
+            </div>
+          </article>
+        ))}
+        {!items.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 p-4 text-center text-[12px] font-semibold text-foreground-400">No {title.toLowerCase()} KSBs</p>}
+      </div>
+    </section>
+  );
+}
+
+function ApplyProgrammeKsbSourceModal({
+  programme,
+  ksbSets,
+  standards,
+  currentSource,
+  applying,
+  onClose,
+  onApply,
+}: {
+  programme: CurriculumProgramme;
+  ksbSets: CurriculumKsbSet[];
+  standards: CurriculumStandard[];
+  currentSource: ProgrammeAppliedKsbSource;
+  applying: boolean;
+  onClose: () => void;
+  onApply: (sourceValue: string) => void;
+}) {
+  const [sourceKind, setSourceKind] = useState<'profile' | 'standard'>(currentSource.kind === 'standard' ? 'standard' : 'profile');
+  const profileOptions = useMemo(() => ksbSets.map(set => ({
+    value: `profile:${ksbSourceIdForProgrammeCard(set)}`,
+    title: set.standard || set.programmeName || 'KSB profile',
+    subtitle: `${set.programmeName || 'No programme'} - ${set.ksbs.length} KSBs`,
+    detail: ksbSetCountsLabel(set),
+  })).filter(option => option.value !== 'profile:'), [ksbSets]);
+  const standardOptions = useMemo(() => standards.map(standard => ({
+    value: `standard:${standard.id}`,
+    title: standard.name,
+    subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || 'Level not set'}`,
+    detail: `${standard.knowledge || 0} K / ${standard.skills || 0} S / ${standard.behaviours || 0} B`,
+  })), [standards]);
+  const options = sourceKind === 'profile' ? profileOptions : standardOptions;
+  const recommended = useMemo(() => {
+    if (currentSource.value && options.some(option => option.value === currentSource.value)) return currentSource.value;
+    const programmeKey = normalise(programme.name);
+    const standardKey = normalise(programme.standard);
+    return options.find(option => normalise(option.title) === standardKey || normalise(option.title) === programmeKey || normalise(option.subtitle).includes(programmeKey))?.value || options[0]?.value || '';
+  }, [currentSource.value, options, programme.name, programme.standard]);
+  const [selectedSource, setSelectedSource] = useState(recommended);
+  useEffect(() => {
+    setSelectedSource(recommended);
+  }, [recommended, sourceKind]);
+  const selectedOption = options.find(option => option.value === selectedSource);
+  const selectedIsCurrent = Boolean(currentSource.value && selectedSource === currentSource.value);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Apply KSB source</p>
+            <h3 className="mt-2 text-xl font-heading font-bold">{programme.name}</h3>
+            <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or Skills Standard this programme must be measured against.</p>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB source">
+            <i className="ri-close-line text-lg"></i>
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-5">
+          <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-background-100 p-1">
+            {(['profile', 'standard'] as const).map(kind => (
+              <button key={kind} type="button" onClick={() => setSourceKind(kind)} className={`h-10 rounded-lg text-[12px] font-black transition-smooth ${sourceKind === kind ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}>
+                {kind === 'profile' ? 'KSB profile' : 'Skills Standard'}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3">
+            {options.map(option => {
+              const selected = option.value === selectedSource;
+              const current = option.value === currentSource.value;
+              return (
+                <button key={option.value} type="button" onClick={() => setSelectedSource(option.value)} className={`rounded-xl border p-4 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-foreground-200 bg-background-50 hover:bg-background-100'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <p className="text-sm font-heading font-black text-foreground-950">{option.title}</p>
+                        {current && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">Currently applied</span>}
+                      </div>
+                      <p className="mt-1 text-[12px] font-semibold text-foreground-500">{option.subtitle}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-black text-foreground-600">{option.detail}</span>
+                  </div>
+                </button>
+              );
+            })}
+            {!options.length && (
+              <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
+                <p className="text-sm font-bold text-foreground-800">No {sourceKind === 'profile' ? 'KSB profiles' : 'standards'} available</p>
+                <p className="mt-1 text-[12px] text-foreground-500">Add the source first, then come back to apply it to this programme.</p>
+              </div>
+            )}
+          </div>
+          {selectedOption && (
+            <div className={`mt-4 rounded-xl border px-4 py-3 text-[12px] font-semibold ${selectedIsCurrent ? 'border-primary-100 bg-primary-50 text-primary-800' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
+              {selectedIsCurrent ? 'This is the active KSB source for this programme: ' : 'Applying this will make programme coverage, missing KSBs, occurrences and component weights roll up against: '}
+              <strong>{selectedOption.title}</strong>.
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-end">
+          <button type="button" onClick={onClose} className="inline-flex h-10 items-center justify-center rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+            Cancel
+          </button>
+          <button type="button" disabled={!selectedSource || applying || selectedIsCurrent} onClick={() => onApply(selectedSource)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
+            <i className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></i>
+            {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply source'}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ProgrammeKsbColumn({ title, tone, items, descriptions }: { title: string; tone: 'knowledge' | 'skills' | 'behaviours'; items: CurriculumKsbCoverageItem[]; descriptions: Map<string, string> }) {
   const toneClasses = {
     knowledge: 'border-primary-300 bg-primary-50/50 text-primary-700',
     skills: 'border-amber-300 bg-amber-50/60 text-amber-700',
@@ -435,7 +872,7 @@ function ProgrammeKsbColumn({ title, tone, items }: { title: string; tone: 'know
       </div>
       <div className="space-y-3">
         {items.length ? items.map(item => (
-          <ProgrammeKsbCard key={`${item.coverageKey || item.coverage_key || item.ksbId || item.ksb_id}-${coverageSourceLabel(item)}`} item={item} />
+          <ProgrammeKsbCard key={`${item.coverageKey || item.coverage_key || item.ksbId || item.ksb_id}-${coverageSourceLabel(item)}`} item={item} descriptions={descriptions} />
         )) : (
           <div className="rounded-xl border border-dashed border-current/20 bg-white/55 p-4 text-center text-[12px] font-semibold text-foreground-500">
             No applied {title.toLowerCase()} KSBs
@@ -446,9 +883,11 @@ function ProgrammeKsbColumn({ title, tone, items }: { title: string; tone: 'know
   );
 }
 
-function ProgrammeKsbCard({ item }: { item: CurriculumKsbCoverageItem }) {
+function ProgrammeKsbCard({ item, descriptions }: { item: CurriculumKsbCoverageItem; descriptions: Map<string, string> }) {
   const mappings = (item.mappings || []).filter(mappingHasDetailedPlacement);
   const weight = Math.round(item.coveragePercentage || item.coverage_percentage || item.progressBarPercentage || item.progress_bar_percentage || 0);
+  const description = programmeKsbDescription(item, descriptions);
+  const title = String(item.title || '').trim();
   return (
     <article className="rounded-xl border border-current/35 bg-background-50 p-3 text-foreground-900 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -458,9 +897,9 @@ function ProgrammeKsbCard({ item }: { item: CurriculumKsbCoverageItem }) {
         </div>
         <span className="shrink-0 rounded-full bg-background-100 px-2 py-1 text-[11px] font-bold text-current">{weight}%</span>
       </div>
-      <p className="mt-3 text-[13px] font-semibold leading-5 text-foreground-900">{item.title || item.description}</p>
-      {item.title && item.description && item.title !== item.description && (
-        <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-foreground-600">{item.description}</p>
+      <p className="mt-3 text-[13px] font-semibold leading-5 text-foreground-900">{title && normalise(title) !== normalise(item.code) ? title : description || item.code}</p>
+      {description && (!title || normalise(title) !== normalise(description)) && (
+        <p className="mt-1 line-clamp-3 text-[12px] leading-5 text-foreground-600">{description}</p>
       )}
       <div className="mt-3 rounded-lg bg-background-100 px-3 py-2">
         <p className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
@@ -828,6 +1267,286 @@ function normalise(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 }
 
+function uniqueTextValues(values: unknown[]) {
+  const seen = new Set<string>();
+  return values.map(value => String(value || '').trim()).filter(value => {
+    const key = normalise(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function ksbSourceIdForProgrammeCard(set: CurriculumKsbSet) {
+  return String(set.frameworkId || set.ksbProfileId || set.profileId || set.programmeId || set.programmeName || set.standard || '').trim();
+}
+
+function findProgrammeKsbSetBySourceId(sets: CurriculumKsbSet[], sourceId: string) {
+  const key = normalise(sourceId);
+  return sets.find(set => [
+    ksbSourceIdForProgrammeCard(set),
+    set.frameworkId,
+    set.ksbProfileId,
+    set.profileId,
+    set.profileId ? `KSBP-${set.profileId}` : '',
+    set.programmeId,
+    set.programmeName,
+    set.standard,
+  ].some(value => normalise(value) === key));
+}
+
+function ksbSetCountsLabel(set: CurriculumKsbSet) {
+  const counts = set.ksbs.reduce((total, item) => {
+    const family = normalise(item.type || item.code);
+    if (family.startsWith('skill') || normalise(item.code).startsWith('s')) total.s += 1;
+    else if (family.startsWith('behaviour') || family.startsWith('behavior') || normalise(item.code).startsWith('b')) total.b += 1;
+    else total.k += 1;
+    return total;
+  }, { k: 0, s: 0, b: 0 });
+  return `${counts.k} K / ${counts.s} S / ${counts.b} B`;
+}
+
+function ksbSourceFamily(type: unknown, code: unknown): ProgrammeKsbSourceItem['family'] {
+  const family = normalise(type);
+  const cleanCode = normalise(code);
+  if (family.startsWith('skill') || cleanCode.startsWith('s')) return 'skills';
+  if (family.startsWith('behaviour') || family.startsWith('behavior') || cleanCode.startsWith('b')) return 'behaviours';
+  return 'knowledge';
+}
+
+function flattenProgrammeKsbEntries(entries: CurriculumKsbEntry[], parentCode = ''): ProgrammeKsbSourceItem[] {
+  return entries.flatMap((entry, index) => {
+    const code = programmeKsbCode(entry.code || entry.rawCode || entry.fullCode || '');
+    const item: ProgrammeKsbSourceItem = {
+      id: String(entry.id || entry.code || entry.rawCode || entry.fullCode || `${parentCode || 'ksb'}-${index}`),
+      code,
+      title: String(entry.title || code || entry.description || '').trim(),
+      description: String(entry.description || '').trim(),
+      type: String(entry.type || '').trim(),
+      family: ksbSourceFamily(entry.type, code),
+      parentCode,
+    };
+    const children = flattenProgrammeKsbEntries((entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }).children || [], code || parentCode);
+    return [item, ...children];
+  });
+}
+
+function programmeKsbSourceItems(review: ProgrammeKsbSourceReview): ProgrammeKsbSourceItem[] {
+  if (review.ksbSet) return flattenProgrammeKsbEntries(review.ksbSet.ksbs || []);
+  const standardKsbs = review.standard?.ksbs || review.standard?.sampleKsbs || [];
+  return standardKsbs.map((entry, index) => {
+    const code = programmeKsbCode(entry.code);
+    return {
+      id: String(entry.id || entry.code || `standard-ksb-${index}`),
+      code,
+      title: code,
+      description: String(entry.description || '').trim(),
+      type: String(entry.type || '').trim(),
+      family: ksbSourceFamily(entry.type, code),
+    };
+  });
+}
+
+function moduleKsbCascadeId(module: CurriculumModule) {
+  const candidates = [
+    module.moduleCatalogueId,
+    module.catalogueId,
+    module.structureId,
+    module.moduleId,
+    ...(module.relatedCatalogueIds || []),
+  ].map(value => String(value || '').trim());
+  const canonical = candidates.find(value => /^MOD-[A-Z0-9][A-Z0-9_-]*$/i.test(value));
+  return canonical || candidates.find(value => value && !value.startsWith('training-module-')) || '';
+}
+
+function programmeModulesForKsbCascade(programme: CurriculumProgramme, modules: CurriculumModule[]) {
+  const uniqueModules = new Map<string, CurriculumModule>();
+  modules.forEach(module => {
+    if (!matchesProgramme(programme, module.programmeId) && !matchesProgramme(programme, module.programme)) return;
+    const id = moduleKsbCascadeId(module);
+    if (!id) return;
+    uniqueModules.set(id, module);
+  });
+  return Array.from(uniqueModules.entries()).map(([id, module]) => ({ id, module }));
+}
+
+async function cascadeKsbSourceToProgrammeModules(programme: CurriculumProgramme, modules: CurriculumModule[], ksbProfileSourceId: string) {
+  const programmeModules = programmeModulesForKsbCascade(programme, modules);
+  if (!programmeModules.length) return 0;
+  await Promise.all(programmeModules.map(({ id, module }) => updateCurriculumModule(id, {
+    name: module.name,
+    programmeId: programme.sourceId || programme.id,
+    programmeName: programme.name,
+    programme: programme.name,
+    color: module.color,
+    notes: module.notes,
+    ksbProfileSourceId,
+  })));
+  return programmeModules.length;
+}
+
+function standardCountsLabel(standard: CurriculumStandard) {
+  return `${standard.knowledge || 0} K / ${standard.skills || 0} S / ${standard.behaviours || 0} B`;
+}
+
+function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): ProgrammeAppliedKsbSource {
+  const explicitSource = String(programme.ksbProfileSourceId || '').trim();
+  if (explicitSource) {
+    const explicitKind = explicitSource.startsWith('standard:') ? 'standard' : 'profile';
+    const explicitId = explicitSource.replace(/^(profile|framework|standard):/i, '');
+    if (explicitKind === 'profile') {
+      const profile = findProgrammeKsbSetBySourceId(ksbSets, explicitId);
+      if (profile) {
+        return {
+          value: `profile:${ksbSourceIdForProgrammeCard(profile)}`,
+          kind: 'profile',
+          title: profile.standard || profile.programmeName || 'KSB profile',
+          subtitle: `${profile.programmeName || programme.name} - ${profile.ksbs.length} KSBs`,
+          detail: ksbSetCountsLabel(profile),
+        };
+      }
+    }
+    if (explicitKind === 'standard') {
+      const standard = standards.find(item => normalise(item.id) === normalise(explicitId));
+      if (standard) {
+        return {
+          value: `standard:${standard.id}`,
+          kind: 'standard',
+          title: standard.name || standard.standardRef || 'Skills Standard',
+          subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || standard.levelValue || programme.level || 'Level not set'}`,
+          detail: standardCountsLabel(standard),
+        };
+      }
+    }
+  }
+
+  const programmeIds = uniqueTextValues([programme.sourceId, programme.id, programme.name]);
+  const linkedProfile = ksbSets.find(set => {
+    const linkedProgrammeIds = uniqueTextValues([
+      set.programmeId,
+      ...(set.programmeIds || []),
+    ]);
+    return programmeIds.some(id => linkedProgrammeIds.some(linkedId => normalise(id) === normalise(linkedId)));
+  });
+  if (linkedProfile) {
+    return {
+      value: `profile:${ksbSourceIdForProgrammeCard(linkedProfile)}`,
+      kind: 'profile',
+      title: linkedProfile.standard || linkedProfile.programmeName || 'KSB profile',
+      subtitle: `${linkedProfile.programmeName || programme.name} - ${linkedProfile.ksbs.length} KSBs`,
+      detail: ksbSetCountsLabel(linkedProfile),
+    };
+  }
+
+  const linkedStandard = standards.find(standard => (
+    normalise(standard.id) === normalise(programme.standard)
+    || normalise(standard.name) === normalise(programme.standard)
+    || normalise(standard.standardRef) === normalise(programme.standard)
+  ));
+  if (linkedStandard) {
+    return {
+      value: `standard:${linkedStandard.id}`,
+      kind: 'standard',
+      title: linkedStandard.name || linkedStandard.standardRef || 'Skills Standard',
+      subtitle: `${linkedStandard.code || linkedStandard.standardRef || 'Standard'} - ${linkedStandard.level || linkedStandard.levelValue || programme.level || 'Level not set'}`,
+      detail: standardCountsLabel(linkedStandard),
+    };
+  }
+
+  return {
+    value: '',
+    kind: 'none',
+    title: 'Choose a KSB profile or Skills Standard',
+    subtitle: 'Coverage will not be measured against a selected source yet',
+    detail: 'Not applied',
+  };
+}
+
+function programmeKsbCode(value: unknown) {
+  const code = String(value || '').trim().toUpperCase();
+  const match = code.match(/^([KSB])(\d+(?:\.\d+)?)$/);
+  if (!match) return code;
+  const [, prefix, number] = match;
+  if (number.includes('.') || number.length === 1) return `${prefix}${number}`;
+  return `${prefix}${number.slice(0, 1)}.${number.slice(1)}`;
+}
+
+function programmeKsbSourceType(sourceType?: string, sourceId?: string) {
+  const explicit = normalise(sourceType);
+  if (explicit) return explicit === 'profile' ? 'framework' : explicit;
+  const id = String(sourceId || '').trim().toLowerCase();
+  if (id.startsWith('standard:')) return 'standard';
+  return id ? 'framework' : '';
+}
+
+function programmeKsbSourceId(sourceId?: string) {
+  return normalise(String(sourceId || '').replace(/^(profile|framework|standard):/i, ''));
+}
+
+function programmeKsbDescriptionKeys(code: string, sourceType?: string, sourceId?: string) {
+  const formatted = programmeKsbCode(code);
+  const codes = [...new Set([formatted, formatted.replace('.', ''), String(code || '').trim().toUpperCase()].filter(Boolean))];
+  const type = programmeKsbSourceType(sourceType, sourceId);
+  const source = programmeKsbSourceId(sourceId);
+  return codes.flatMap(item => [
+    type || source ? `${type}|${source}|${item}` : '',
+    `||${item}`,
+  ]).filter(Boolean);
+}
+
+function addProgrammeKsbDescription(lookup: Map<string, string>, code: string, description: string, sourceType?: string, sourceId?: string) {
+  const text = String(description || '').trim();
+  if (!code || !text || normalise(text) === normalise(code)) return;
+  programmeKsbDescriptionKeys(code, sourceType, sourceId).forEach(key => {
+    if (!lookup.has(key)) lookup.set(key, text);
+  });
+}
+
+function buildProgrammeKsbDescriptionLookup(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]) {
+  const lookup = new Map<string, string>();
+  const visitEntry = (entry: CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, sourceType = '', sourceId = '') => {
+    [entry.code, entry.rawCode, entry.fullCode].filter(Boolean).forEach(code => {
+      addProgrammeKsbDescription(lookup, String(code), entry.description || entry.title, sourceType, sourceId);
+    });
+    (entry.children || []).forEach(child => visitEntry(child, sourceType, sourceId));
+  };
+  ksbSets.forEach(set => {
+    const sourceIds = [
+      set.frameworkId,
+      set.ksbProfileId,
+      set.profileId ? String(set.profileId) : '',
+      set.profileId ? `KSBP-${set.profileId}` : '',
+      set.programmeId,
+      set.programmeName,
+      set.standard,
+    ].map(value => String(value || '').trim()).filter(Boolean);
+    set.ksbs.forEach(entry => {
+      sourceIds.forEach(sourceId => visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, 'framework', sourceId));
+      visitEntry(entry as CurriculumKsbEntry & { children?: CurriculumKsbEntry[] });
+    });
+  });
+  standards.forEach(standard => {
+    const sourceIds = [standard.id, standard.code, standard.standardRef, standard.name].filter(Boolean);
+    (standard.ksbs || standard.sampleKsbs || []).forEach(entry => {
+      sourceIds.forEach(sourceId => addProgrammeKsbDescription(lookup, entry.code, entry.description, 'standard', sourceId));
+      addProgrammeKsbDescription(lookup, entry.code, entry.description);
+    });
+  });
+  return lookup;
+}
+
+function programmeKsbDescription(item: CurriculumKsbCoverageItem, descriptions: Map<string, string>) {
+  const direct = String(item.description || '').trim();
+  if (direct && normalise(direct) !== normalise(item.code)) return direct;
+  const sourceType = String(item.sourceType || item.source_type || '').trim();
+  const sourceId = String(item.sourceId || item.source_id || '').trim();
+  for (const key of programmeKsbDescriptionKeys(item.code, sourceType, sourceId)) {
+    const found = descriptions.get(key);
+    if (found) return found;
+  }
+  return '';
+}
+
 function ksbFamily(item: CurriculumKsbCoverageItem) {
   const explicit = normalise(item.ksbType || item.ksb_type);
   if (explicit.startsWith('skill')) return 'skills';
@@ -930,7 +1649,7 @@ function ProgrammeStructureEditor({
   programme: CurriculumProgramme;
   onClose: () => void;
   onSaved: () => void;
-  onOpenAddStructure: () => void;
+  onOpenAddStructure: (startStep?: StructureWizardStep, cohortId?: string, groupId?: string) => void;
 }) {
   const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true });
   const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, error: staffError, reload: reloadStaffProfiles } = useCurriculumStaffProfiles();
@@ -973,6 +1692,13 @@ function ProgrammeStructureEditor({
     { key: 'groups' as const, label: 'Groups', count: groups.length },
     { key: 'modules' as const, label: 'Modules', count: modules.length },
   ];
+  const primaryCohort = cohorts[0];
+  const primaryGroup = groups[0];
+  const addAction = tab === 'modules'
+    ? { label: 'Add module', icon: 'ri-stack-line', step: 'modules' as StructureWizardStep, cohortId: primaryGroup?.cohortId || primaryCohort?.id, groupId: primaryGroup?.id }
+    : tab === 'groups'
+      ? { label: 'Add group', icon: 'ri-team-line', step: 'group' as StructureWizardStep, cohortId: primaryCohort?.id, groupId: undefined }
+      : { label: 'Add cohort', icon: 'ri-calendar-event-line', step: 'cohort' as StructureWizardStep, cohortId: undefined, groupId: undefined };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-md p-4" onClick={onClose}>
@@ -990,8 +1716,8 @@ function ProgrammeStructureEditor({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={onOpenAddStructure} className="px-4 py-2.5 rounded-lg bg-emerald-500 text-white text-[12px] font-bold hover:bg-emerald-600 transition-smooth shadow-sm">
-              <i className="ri-add-line mr-1"></i>Add Structure
+            <button onClick={() => onOpenAddStructure(addAction.step, addAction.cohortId, addAction.groupId)} className="px-4 py-2.5 rounded-lg bg-emerald-500 text-white text-[12px] font-bold hover:bg-emerald-600 transition-smooth shadow-sm">
+              <i className={`${addAction.icon} mr-1`}></i>{addAction.label}
             </button>
             <button onClick={onClose} className="w-9 h-9 rounded-lg bg-background-100 border border-background-200 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
               <i className="ri-close-line text-foreground-500"></i>

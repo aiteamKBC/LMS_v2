@@ -6,11 +6,14 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 
 /* ─────────────────────────────────────────────
@@ -44,14 +47,59 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
+const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: string }> = {
+  accepted: { label: 'Reflection accepted', style: 'bg-emerald-100 text-emerald-700', icon: 'ri-check-double-line' },
+  submitted_for_tutor_review: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  pending: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  referred: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  reject: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  rejected: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+};
+
 /** One component row inside the current-week card. */
-function CurrentWeekRow({ c, videos, onOpen }: {
-  c: JourneyComponent; videos: LearnerVideoProgress[]; onOpen?: () => void;
+function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
+  c: JourneyComponent;
+  videos: LearnerVideoProgress[];
+  learnerKind?: string;
+  learnerId?: string;
+  onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
+  const [reflectionStatus, setReflectionStatus] = useState('');
+
+  useEffect(() => {
+    const validKind = learnerKind === 'commercial' || learnerKind === 'apprenticeship';
+    const activityId = c.isQuiz && c.quizMeta?.quizId != null
+      ? `quiz-${c.quizMeta.quizId}`
+      : c.componentId;
+    if (!validKind || !learnerId || !activityId) {
+      setReflectionStatus('');
+      return;
+    }
+
+    let cancelled = false;
+    void loadLearningReflectionSubmission({
+      learnerKind: learnerKind as LearnerKind,
+      learnerId,
+      activityType: c.isQuiz ? 'quiz' : componentNoun(c.type),
+      activityId,
+    })
+      .then((submission) => {
+        if (!cancelled) setReflectionStatus(submission?.status || '');
+      })
+      .catch(() => {
+        if (!cancelled) setReflectionStatus('');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [c.componentId, c.isQuiz, c.quizMeta?.quizId, c.type, learnerId, learnerKind]);
+
+  const reflection = REFLECTION_STATUS[reflectionStatus];
   return (
     <button
       type="button"
@@ -82,6 +130,12 @@ function CurrentWeekRow({ c, videos, onOpen }: {
           {prog.state === 'watched' && <i className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
+        {reflection && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
+            <i className={`${reflection.icon} text-[10px]`} />
+            {reflection.label}
+          </span>
+        )}
         {c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><i className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
@@ -142,7 +196,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
         ) : (
           <div className="space-y-2">
             {components.map((c, i) => (
-              <CurrentWeekRow key={c.componentId || `${c.title}-${i}`} c={c} videos={videos} onOpen={openFor(c)} />
+              <CurrentWeekRow
+                key={c.componentId || `${c.title}-${i}`}
+                c={c}
+                videos={videos}
+                learnerKind={kind}
+                learnerId={learnerId}
+                onOpen={openFor(c)}
+              />
             ))}
           </div>
         )}
@@ -380,17 +441,17 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   return (
     <div>
       {/* Month nav */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="mb-3 flex items-center justify-between rounded-xl border border-primary-100/70 bg-gradient-to-r from-primary-50/70 to-background-50 px-3 py-2.5">
         <span className="text-[13px] font-heading font-semibold text-foreground-900">{MINI_MONTHS[vm]} {vy}</span>
         <div className="flex items-center gap-1">
-          <button onClick={goToday} className="text-[11px] font-medium px-2 py-1 rounded-md bg-background-100 text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer">Today</button>
-          <button onClick={prev} aria-label="Previous month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
-          <button onClick={next} aria-label="Next month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
+          <button onClick={goToday} className="rounded-lg border border-foreground-100 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600 shadow-sm transition-smooth hover:border-primary-200 hover:text-primary-600 cursor-pointer">Today</button>
+          <button onClick={prev} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
+          <button onClick={next} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
         </div>
       </div>
 
       {/* Weekday header */}
-      <div className="grid grid-cols-7 gap-1 mb-1">
+      <div className="mb-1.5 grid grid-cols-7 gap-1 px-1">
         {MINI_WD.map((w, i) => <div key={i} className="text-center text-[10px] font-semibold text-foreground-400">{w}</div>)}
       </div>
 
@@ -399,8 +460,8 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
         {cells.map((d, i) => (
           <div
             key={i}
-            className={`h-9 rounded-lg flex flex-col items-center justify-center ${d == null ? '' : 'border border-foreground-100'} ${
-              d != null && isToday(d) ? 'bg-primary-500 border-primary-500 text-white' : 'text-foreground-700'
+            className={`h-10 rounded-lg flex flex-col items-center justify-center transition-smooth ${d == null ? '' : 'border border-foreground-100 bg-background-50 hover:border-primary-200 hover:bg-primary-50/40'} ${
+              d != null && isToday(d) ? '!bg-primary-500 !border-primary-500 text-white shadow-sm shadow-primary-500/20' : 'text-foreground-700'
             }`}
           >
             {d != null && (
@@ -414,8 +475,8 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
       </div>
 
       {/* Next sessions */}
-      <div className="mt-4 pt-3 border-t border-foreground-100">
-        <div className="flex items-center justify-between mb-2">
+      <div className="mt-4 border-t border-foreground-100 pt-4">
+        <div className="mb-3 flex items-center justify-between">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Next sessions</p>
           <button
             onClick={() => { setShowBook((v) => !v); setBookErr(null); }}
@@ -430,16 +491,16 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
         ) : (
           <div className="space-y-2">
             {upcoming.map(({ ev, dt }) => (
-              <div key={ev.id} className="flex items-center gap-2.5">
-                <div className="w-9 shrink-0 rounded-lg bg-background-100 py-1 text-center">
+              <div key={ev.id} className="group flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 transition-smooth hover:border-primary-200 hover:shadow-sm">
+                <div className="w-10 shrink-0 rounded-lg bg-primary-50 py-1.5 text-center ring-1 ring-inset ring-primary-100">
                   <p className="text-[12px] font-bold leading-none text-foreground-800">{dt.d}</p>
-                  <p className="text-[9px] uppercase text-foreground-400 mt-0.5">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
+                  <p className="mt-1 text-[9px] font-semibold uppercase text-primary-500">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-semibold text-foreground-900 truncate">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
-                  <p className="text-[11px] text-foreground-400 truncate">{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
+                  <p className="truncate text-[12px] font-semibold text-foreground-900">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-foreground-400"><i className="ri-time-line mr-1" />{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
                 </div>
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
+                <span className={`h-2 w-2 shrink-0 rounded-full ring-4 ring-background-100 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
               </div>
             ))}
           </div>
@@ -704,6 +765,70 @@ export default function LearnerOverview() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
+  const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(isRealMode);
+
+  useEffect(() => {
+    if (!isRealMode || !kind || !id) {
+      setAttendance(null);
+      setAttendanceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAttendance(null);
+    setAttendanceLoading(true);
+    fetchLearnerAttendance(kind, id)
+      .then((record) => {
+        if (!cancelled) setAttendance(record);
+      })
+      .catch(() => {
+        if (!cancelled) setAttendance(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealMode, kind, id]);
+
+  useEffect(() => {
+    if (!isRealMode || !kind || !id) {
+      setEvidence([]);
+      setEvidenceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setEvidence([]);
+    setEvidenceLoading(true);
+    fetchEvidence(kind, id)
+      .then((records) => {
+        if (!cancelled) setEvidence(records);
+      })
+      .catch(() => {
+        if (!cancelled) setEvidence([]);
+      })
+      .finally(() => {
+        if (!cancelled) setEvidenceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealMode, kind, id]);
+
+  const evidenceStats = useMemo(() => {
+    const approved = evidence.filter((record) => record.status === 'approved').length;
+    const pending = evidence.filter((record) => record.status === 'pending').length;
+    const rejected = evidence.filter((record) => record.status === 'rejected').length;
+    const progress = evidence.length ? Math.round((approved / evidence.length) * 100) : 0;
+    return { total: evidence.length, approved, pending, rejected, progress };
+  }, [evidence]);
 
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
@@ -957,7 +1082,28 @@ export default function LearnerOverview() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
               {isRealMode ? (
                 <>
-                  <HealthCard icon="ri-calendar-check-line" label="Attendance" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                  {attendance ? (
+                    <HealthCard
+                      icon="ri-calendar-check-line"
+                      label="Attendance"
+                      value={`${attendance.attendanceRate}%`}
+                      detail={`${attendance.present}/${attendance.sessions} sessions`}
+                      status={attendance.attendanceRate >= 90 ? 'green' : attendance.attendanceRate >= 80 ? 'amber' : 'red'}
+                      progress={attendance.attendanceRate}
+                      showBar
+                      href="/learner/attendance"
+                    />
+                  ) : (
+                    <HealthCard
+                      icon="ri-calendar-check-line"
+                      label="Attendance"
+                      value="—"
+                      detail={attendanceLoading ? 'Loading attendance…' : 'No attendance record yet'}
+                      status="muted"
+                      progress={0}
+                      href="/learner/attendance"
+                    />
+                  )}
                   {otj.activities > 0 ? (
                     <HealthCard
                       icon="ri-time-line"
@@ -1005,7 +1151,28 @@ export default function LearnerOverview() {
                   ) : (
                     <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="emerald" progress={0} badgeLabel="Defined" />
                   )}
-                  <HealthCard icon="ri-folder-check-line" label="Evidence" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                  {evidenceStats.total > 0 ? (
+                    <HealthCard
+                      icon="ri-folder-check-line"
+                      label="Evidence"
+                      value={`${evidenceStats.total} Submitted`}
+                      detail={`${evidenceStats.approved} approved · ${evidenceStats.pending} pending${evidenceStats.rejected ? ` · ${evidenceStats.rejected} rejected` : ''}`}
+                      status={evidenceStats.rejected > 0 ? 'red' : evidenceStats.pending > 0 ? 'amber' : 'green'}
+                      progress={evidenceStats.progress}
+                      href="/learner/evidence"
+                      badgeLabel={evidenceStats.rejected > 0 ? 'Action Required' : evidenceStats.pending > 0 ? 'Needs Review' : 'Approved'}
+                    />
+                  ) : (
+                    <HealthCard
+                      icon="ri-folder-check-line"
+                      label="Evidence"
+                      value="—"
+                      detail={evidenceLoading ? 'Loading evidence…' : 'No evidence submitted yet'}
+                      status="muted"
+                      progress={0}
+                      href="/learner/evidence"
+                    />
+                  )}
                 </>
               ) : (
                 <>
@@ -1086,10 +1253,18 @@ export default function LearnerOverview() {
               </div>
 
               {/* ── My Calendar ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col shadow-[0_5px_24px_rgba(28,10,55,0.04)]">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">My Calendar</h2>
-                  <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+                      <i className="ri-calendar-2-line text-base" />
+                    </span>
+                    <div>
+                      <h2 className="text-base font-heading font-semibold leading-tight text-foreground-900">My Calendar</h2>
+                      <p className="mt-0.5 text-[11px] text-foreground-400">Sessions and upcoming reviews</p>
+                    </div>
+                  </div>
+                  <a href="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
                     Open <i className="ri-arrow-right-line ml-0.5"></i>
                   </a>
                 </div>
@@ -1285,7 +1460,7 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
     : null;
 
   const Card = (
-    <div className={`relative overflow-hidden rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer ${S.tint || 'bg-background-50'}`}>
+    <div className={`relative flex h-full flex-col overflow-hidden rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer ${S.tint || 'bg-background-50'}`}>
       {S.tint && <div className="absolute inset-0 bg-background-50 -z-10" />}
       {/* Top row: icon + status badge */}
       <div className="flex items-center justify-between mb-3">
@@ -1319,13 +1494,13 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
         </div>
       )}
 
-      <p className="text-xs text-foreground-400 mt-2">{detail}</p>
+      <p className="mt-auto pt-2 text-xs text-foreground-400">{detail}</p>
     </div>
   );
 
   if (href) {
     return (
-      <a href={href} className="block">
+      <a href={href} className="block h-full">
         {Card}
       </a>
     );

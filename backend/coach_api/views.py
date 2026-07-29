@@ -30,6 +30,7 @@ from learner_api.evidence_storage import (
     resolve_read_url,
 )
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
@@ -52,46 +53,158 @@ from curriculum_api.views import (
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
 PROGRESS_REVIEW_RESPONSE_IDS = {
-    "learning_summary",
-    "key_achievements",
-    "progress_checks",
-    "attendance_progress",
-    "otjh_progress",
-    "learner_reflection",
-    "learner_rating",
-    "manager_reflection",
-    "manager_rating",
-    "tutor_reflection",
-    "tutor_rating",
-    "safeguarding_discussion",
-    "key_themes",
-    "support_required",
-    "support_plan",
+    "attendance_issues",
+    "workplace_training_since_review",
+    "ksb_learning_activities",
+    "evidence_timely",
+    "other_progress_issues",
+    "other_progress_issues_detail",
+    "learner_attitude_pride_rating",
+    "learner_collaboration_rating",
+    "learner_time_management_rating",
+    "learner_respect_empathy_rating",
+    "learner_english_confidence_rating",
+    "learner_maths_confidence_rating",
+    "learner_wider_skills_rating",
+    "learner_workplace_behaviours_rating",
+    "learner_provider_safeguarding_confidence_rating",
+    "learner_employer_safeguarding_confidence_rating",
+    "learner_provider_support_rating",
+    "learner_manager_support_rating",
+    "learner_additional_comments",
+    "manager_learning_application_rating",
+    "manager_wider_skills_rating",
+    "manager_workplace_behaviours_rating",
+    "manager_valued_application",
+    "manager_progress_summary",
+    "tutor_learning_attitude_rating",
+    "tutor_time_management_rating",
+    "tutor_respect_empathy_rating",
+    "tutor_english_maths_rating",
+    "tutor_workplace_behaviours_rating",
+    "tutor_strengths",
+    "tutor_progress_summary",
+    "safeguarding_understood",
+    "prevent_understood",
+    "safeguarding_reporting_understood",
+    "safeguarding_reporting_process",
+    "safeguarding_concerns",
+    "safeguarding_concerns_detail",
+    "key_theme",
+    "key_theme_other",
+    "key_theme_comments",
+    "additional_learning_support",
+    "additional_learning_support_detail",
+    "health_adjustments",
+    "health_adjustments_detail",
+    "other_support_circumstances",
+    "other_support_detail",
+    "previous_targets_achieved",
+    "previous_targets_detail",
     "targets_actions",
     "action_owners_dates",
     "rag_status",
     "rag_reason",
 }
+PROGRESS_REVIEW_OPTIONAL_RESPONSE_IDS = {
+    "other_progress_issues_detail",
+    "learner_additional_comments",
+    "safeguarding_concerns_detail",
+    "key_theme_other",
+    "additional_learning_support_detail",
+    "health_adjustments_detail",
+    "other_support_detail",
+    "previous_targets_detail",
+}
+PROGRESS_REVIEW_REQUIRED_RESPONSE_IDS = (
+    PROGRESS_REVIEW_RESPONSE_IDS - PROGRESS_REVIEW_OPTIONAL_RESPONSE_IDS
+)
+PROGRESS_REVIEW_RATING_RESPONSE_IDS = {
+    response_id
+    for response_id in PROGRESS_REVIEW_RESPONSE_IDS
+    if response_id.endswith("_rating")
+}
+PROGRESS_REVIEW_YES_NO_RESPONSE_IDS = {
+    "attendance_issues",
+    "workplace_training_since_review",
+    "ksb_learning_activities",
+    "evidence_timely",
+    "other_progress_issues",
+    "safeguarding_understood",
+    "prevent_understood",
+    "safeguarding_reporting_understood",
+    "safeguarding_concerns",
+    "additional_learning_support",
+    "health_adjustments",
+    "other_support_circumstances",
+    "previous_targets_achieved",
+}
+PROGRESS_REVIEW_KEY_THEMES = {
+    "Health & Safety",
+    "Prevent",
+    "British Values",
+    "Equality, Diversity & Inclusion",
+    "Online Safety",
+    "Wellbeing",
+    "Other",
+}
 MONTHLY_COACHING_RESPONSE_IDS = {
+    "mcm_previous_meeting",
     "mcm_previous_summary",
-    "mcm_previous_barriers",
-    "mcm_opening_checkin",
-    "mcm_agenda_agreed",
     "mcm_presentation_summary",
-    "mcm_presentation_feedback",
-    "mcm_ksb_reflection",
-    "mcm_workplace_application",
-    "mcm_next_month_targets",
-    "mcm_next_month_actions",
-    "mcm_resources_guidance",
-    "mcm_wellbeing_check",
-    "mcm_safeguarding_action",
+    "mcm_knowledge_reflection",
+    "mcm_skills_reflection",
+    "mcm_behaviour_reflection",
+    "mcm_behaviour_next_step",
+    "mcm_next_month_focus",
+    "mcm_expected_evidence",
+    "mcm_learning_resources",
+    "mcm_resources_read",
+    "mcm_paid_hours_confirmed",
+    "mcm_workload_manageable",
+    "mcm_wellbeing_impact",
+    "mcm_wellbeing_outcome",
+    "mcm_safeguarding_contact_confidence",
+    "mcm_wellbeing_support_confidence",
+    "mcm_safe_and_respected",
+    "mcm_online_safety_prevent",
+    "mcm_raise_concerns_confidence",
+    "mcm_provider_safeguarding_confidence",
     "mcm_learner_feedback",
-    "mcm_learning_rating",
-    "mcm_next_meeting",
-    "mcm_close_confirmation",
+    "mcm_curriculum_planned",
+    "mcm_teaching_well_delivered",
+    "mcm_resources_accessible",
+    "mcm_assessment_feedback_helpful",
+    "mcm_tutor_support",
+    "mcm_overall_learning_progress",
+    "mcm_next_meeting_booked",
+    "mcm_next_meeting_date",
     "mcm_meeting_summary",
+    "mcm_meeting_notes",
     "mcm_outcome",
+}
+MONTHLY_COACHING_REQUIRED_RESPONSE_IDS = (
+    MONTHLY_COACHING_RESPONSE_IDS - {"mcm_meeting_notes"}
+)
+MONTHLY_COACHING_YES_NO_RESPONSE_IDS = {
+    "mcm_paid_hours_confirmed",
+    "mcm_next_meeting_booked",
+}
+MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS = {
+    "mcm_workload_manageable",
+    "mcm_wellbeing_impact",
+    "mcm_safeguarding_contact_confidence",
+    "mcm_wellbeing_support_confidence",
+    "mcm_safe_and_respected",
+    "mcm_online_safety_prevent",
+    "mcm_raise_concerns_confidence",
+    "mcm_provider_safeguarding_confidence",
+    "mcm_curriculum_planned",
+    "mcm_teaching_well_delivered",
+    "mcm_resources_accessible",
+    "mcm_assessment_feedback_helpful",
+    "mcm_tutor_support",
+    "mcm_overall_learning_progress",
 }
 DEFAULT_ATTENDANCE_DATABASE = "AiTeamKBC"
 DEFAULT_MARKING_OWNER_ID = 6452
@@ -347,8 +460,9 @@ def schedule_status_label(value: str | None) -> str:
         "not-scheduled": "Not Scheduled",
         "scheduled": "Scheduled",
         "in-progress": "In Progress",
+        "awaiting-signature": "Awaiting Signature",
         "completed": "Completed",
-        "cancelled": "Cancelled",
+        "cancelled": "Not Scheduled",
     }
     return labels.get(normalized, clean_text(value) or "Not Scheduled")
 
@@ -859,7 +973,7 @@ def find_learner_absence_relation(connection) -> str | None:
     return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
 
 
-def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
+def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
@@ -910,7 +1024,7 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
-def fetch_owner_active_user_rows(owner_email: str) -> list[LearnerProfile]:
+def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     rows = [
         row
@@ -962,9 +1076,16 @@ def resolve_schedule_window(
     return start_date, end_date
 
 
-def serialize_active_user_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newest_first: bool = False) -> list[dict]:
+    activity_reader = getattr(row, "activity_feed_entries", None)
+    if callable(activity_reader):
+        return [entry for entry in activity_reader(newest_first=newest_first) if isinstance(entry, dict)]
+    return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
+
+
+def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     planned_components = count_planned_components(row.training_plan)
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
@@ -1344,7 +1465,7 @@ def build_monthly_activity_learner(
     end_date: date,
 ) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     monthly_progress = [entry for entry in progress_entries if entry_is_between(entry, start_date, end_date)]
     monthly_feed = [entry for entry in activity_entries if entry_is_between(entry, start_date, end_date)]
     learner_events = [
@@ -1522,8 +1643,8 @@ def build_monthly_activity_learner(
 
 
 def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]:
-    active_rows = fetch_active_user_caseload_rows(owner_email)
-    caseload_learners = [serialize_active_user_learner(row) for row in active_rows]
+    active_rows = fetch_caseload_learner_profiles(owner_email)
+    caseload_learners = [serialize_caseload_learner(row) for row in active_rows]
     caseload_by_id = {
         str(learner["id"]): learner
         for learner in caseload_learners
@@ -2590,20 +2711,20 @@ def generated_event_priority(status: str, target_date: date, display_date: date)
     return "normal"
 
 
-def build_active_user_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
-    active_user_map: dict[int, LearnerProfile] = {}
+def build_learner_profile_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
+    learner_profile_map: dict[int, LearnerProfile] = {}
     for row in rows:
         try:
             learner_id = int(getattr(row, "id", 0) or 0)
         except (TypeError, ValueError):
             continue
         if learner_id > 0:
-            active_user_map[learner_id] = row
-    return active_user_map
+            learner_profile_map[learner_id] = row
+    return learner_profile_map
 
 
 def fetch_owner_name(owner_email: str, fallback: str = "Med Maher") -> str:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     return next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         fallback,
@@ -2842,14 +2963,14 @@ def build_catchup_scheduler_events(
     owner_email: str,
     owner_name: str,
     active_rows: list[LearnerProfile],
-    active_user_map: dict[int, LearnerProfile],
+    learner_profile_map: dict[int, LearnerProfile],
     persisted_records: list[CoachCalendarEvent],
 ) -> list[dict]:
     scheduler_events = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_records
     ]
@@ -3055,6 +3176,8 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "notes": " ".join(event_note_lines(base_event, record)),
             "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
             "reviewCompletedAt": record.review_completed_at.isoformat() if record and record.review_completed_at else None,
+            "managerSignedAt": record.manager_signed_at.isoformat() if record and record.manager_signed_at else None,
+            "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
             "syncWarning": clean_text(record.last_graph_sync_error) if record else "",
         }
@@ -3365,8 +3488,8 @@ def collect_live_session_events(
 
 
 def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
-    active_rows = fetch_owner_active_user_rows(owner_email)
-    active_user_map = build_active_user_map(active_rows)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
+    learner_profile_map = build_learner_profile_map(active_rows)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3430,7 +3553,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_standalone_records
     ]
@@ -3443,7 +3566,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         owner_email,
         owner_name,
         active_rows,
-        active_user_map,
+        learner_profile_map,
         persisted_catchup_records,
     )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
@@ -3522,7 +3645,7 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
 
 
 def find_catchup_template_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3575,8 +3698,8 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -3599,8 +3722,8 @@ def coach_timetable_schedule_event(request):
 
     catchup_template_event, owner_name = find_catchup_template_event(owner_email, event_key)
     if catchup_template_event:
-        learner_rows = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner_rows)
+        learner_rows = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner_rows)
         learner_id = int(catchup_template_event["learnerId"])
         target_date = scheduled_date
 
@@ -3673,6 +3796,14 @@ def coach_timetable_schedule_event(request):
             "target_date": target_date,
         },
     )
+    if record.status in {
+        CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        CoachCalendarEvent.STATUS_COMPLETED,
+    }:
+        return JsonResponse(
+            {"detail": "A submitted or completed review cannot be scheduled again."},
+            status=409,
+        )
     record.owner_email = owner_email
     record.owner_name = owner_name
     record.learner_id = int(base_event["learnerId"])
@@ -3713,21 +3844,31 @@ def coach_timetable_event_action(request):
     action = clean_text(payload.get("action")).lower()
     if not event_key:
         return JsonResponse({"detail": "eventKey is required."}, status=400)
-    if action not in {"start", "complete", "cancel"}:
-        return JsonResponse({"detail": "action must be one of: start, complete, cancel."}, status=400)
+    if action not in {"start", "complete", "sign", "cancel"}:
+        return JsonResponse({"detail": "action must be one of: start, complete, sign, cancel."}, status=400)
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
         warning = ""
+        if action == "sign":
+            return JsonResponse({"detail": "Only progress reviews can be signed off."}, status=400)
         if action == "start" and not calendar_record_has_launch_url(catchup_record):
             return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
+        if action == "start" and catchup_record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+            return JsonResponse({"detail": "Only a scheduled event can be started."}, status=409)
+        if action == "start" and catchup_record.scheduled_date and catchup_record.scheduled_date > date.today():
+            return JsonResponse({"detail": "Join Meeting becomes available on the scheduled day."}, status=409)
+        if action == "complete" and catchup_record.status != CoachCalendarEvent.STATUS_IN_PROGRESS:
+            return JsonResponse({"detail": "Start the event before completing it."}, status=409)
         if action == "start":
             catchup_record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
         elif action == "complete":
             catchup_record.status = CoachCalendarEvent.STATUS_COMPLETED
         elif action == "cancel":
             warning = delete_calendar_event_from_graph(catchup_record)
-            catchup_record.status = CoachCalendarEvent.STATUS_CANCELLED
+            catchup_record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+            catchup_record.scheduled_date = None
+            catchup_record.scheduled_time = None
             catchup_record.meeting_link = ""
             catchup_record.graph_web_link = ""
             catchup_record.graph_event_id = ""
@@ -3737,8 +3878,8 @@ def coach_timetable_event_action(request):
         catchup_record.last_graph_sync_error = warning
         catchup_record.save()
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         updated_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -3771,6 +3912,13 @@ def coach_timetable_event_action(request):
         if completion_source == "mcr"
         else None
     )
+    required_response_ids = (
+        PROGRESS_REVIEW_REQUIRED_RESPONSE_IDS
+        if completion_source == "progress-review"
+        else MONTHLY_COACHING_REQUIRED_RESPONSE_IDS
+        if completion_source == "mcr"
+        else response_ids
+    )
     if action == "complete" and response_ids:
         submitted_responses = payload.get("reviewResponses")
         if not isinstance(submitted_responses, dict):
@@ -3780,28 +3928,128 @@ def coach_timetable_event_action(request):
             key: clean_text(submitted_responses.get(key))[:4000]
             for key in response_ids
         }
-        missing = sorted(key for key, value in review_responses.items() if not value)
+        missing = sorted(
+            key
+            for key in (required_response_ids or set())
+            if not review_responses.get(key)
+        )
         if missing:
             return JsonResponse(
                 {"detail": "Please answer every question before completing the session.", "missing": missing},
                 status=400,
             )
+        if completion_source == "progress-review":
+            invalid_ratings = sorted(
+                key
+                for key in PROGRESS_REVIEW_RATING_RESPONSE_IDS
+                if not review_responses.get(key, "").isdigit()
+                or not 1 <= int(review_responses[key]) <= 10
+            )
+            if invalid_ratings:
+                return JsonResponse(
+                    {"detail": "Every progress review rating must be between 1 and 10.", "invalid": invalid_ratings},
+                    status=400,
+                )
+            invalid_yes_no = sorted(
+                key
+                for key in PROGRESS_REVIEW_YES_NO_RESPONSE_IDS
+                if review_responses.get(key) not in {"Yes", "No"}
+            )
+            if invalid_yes_no:
+                return JsonResponse(
+                    {"detail": "Every Yes/No progress review question must be answered.", "invalid": invalid_yes_no},
+                    status=400,
+                )
+            if review_responses.get("key_theme") not in PROGRESS_REVIEW_KEY_THEMES:
+                return JsonResponse({"detail": "Select a valid key theme."}, status=400)
+            conditional_requirements = {
+                ("other_progress_issues", "Yes"): "other_progress_issues_detail",
+                ("safeguarding_concerns", "Yes"): "safeguarding_concerns_detail",
+                ("key_theme", "Other"): "key_theme_other",
+                ("additional_learning_support", "Yes"): "additional_learning_support_detail",
+                ("health_adjustments", "Yes"): "health_adjustments_detail",
+                ("other_support_circumstances", "Yes"): "other_support_detail",
+                ("previous_targets_achieved", "No"): "previous_targets_detail",
+            }
+            missing_conditional = sorted(
+                detail_id
+                for (answer_id, trigger_value), detail_id in conditional_requirements.items()
+                if review_responses.get(answer_id) == trigger_value
+                and not review_responses.get(detail_id)
+            )
+            if missing_conditional:
+                return JsonResponse(
+                    {"detail": "Complete the required follow-up details.", "missing": missing_conditional},
+                    status=400,
+                )
+        if completion_source == "mcr":
+            invalid_yes_no = sorted(
+                key
+                for key in MONTHLY_COACHING_YES_NO_RESPONSE_IDS
+                if review_responses.get(key) not in {"Yes", "No"}
+            )
+            if invalid_yes_no:
+                return JsonResponse(
+                    {"detail": "Every Yes/No MCM question must be answered.", "invalid": invalid_yes_no},
+                    status=400,
+                )
+            valid_agreement_values = {"Agree", "Neutral", "Disagree", "Not discussed"}
+            invalid_agreements = sorted(
+                key
+                for key in MONTHLY_COACHING_AGREEMENT_RESPONSE_IDS
+                if review_responses.get(key) not in valid_agreement_values
+            )
+            if invalid_agreements:
+                return JsonResponse(
+                    {"detail": "Select a valid response for every MCM agreement statement.", "invalid": invalid_agreements},
+                    status=400,
+                )
+            if review_responses.get("mcm_previous_meeting") not in {
+                "Previous Monthly Coaching Meeting",
+                "No previous meeting",
+            }:
+                return JsonResponse({"detail": "Select a valid previous meeting."}, status=400)
+            try:
+                date.fromisoformat(review_responses.get("mcm_next_meeting_date", ""))
+            except ValueError:
+                return JsonResponse({"detail": "Enter a valid next coaching meeting date."}, status=400)
         outcome_key = "rag_status" if completion_source == "progress-review" else "mcm_outcome"
         if review_responses[outcome_key].lower() not in {"green", "amber", "red"}:
             return JsonResponse({"detail": "RAG status must be Green, Amber or Red."}, status=400)
 
     if action == "start" and not calendar_record_has_launch_url(record):
         return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
+    if action == "start" and record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+        return JsonResponse({"detail": "Only a scheduled event can be started."}, status=409)
+    if action == "start" and record.scheduled_date and record.scheduled_date > date.today():
+        return JsonResponse({"detail": "Join Meeting becomes available on the scheduled day."}, status=409)
+    if action == "complete" and record.status != CoachCalendarEvent.STATUS_IN_PROGRESS:
+        return JsonResponse({"detail": "Start the review before completing it."}, status=409)
+    if action == "sign":
+        if completion_source != "progress-review":
+            return JsonResponse({"detail": "Only progress reviews require a manager signature."}, status=400)
+        if record.status != CoachCalendarEvent.STATUS_AWAITING_SIGNATURE:
+            return JsonResponse({"detail": "This progress review is not awaiting a manager signature."}, status=409)
     if action == "start":
         record.status = CoachCalendarEvent.STATUS_IN_PROGRESS
     elif action == "complete":
-        record.status = CoachCalendarEvent.STATUS_COMPLETED
+        record.status = (
+            CoachCalendarEvent.STATUS_AWAITING_SIGNATURE
+            if completion_source == "progress-review"
+            else CoachCalendarEvent.STATUS_COMPLETED
+        )
         if review_responses is not None:
             record.review_responses = review_responses
             record.review_completed_at = timezone.now()
+    elif action == "sign":
+        record.status = CoachCalendarEvent.STATUS_COMPLETED
+        record.manager_signed_at = timezone.now()
+        record.manager_signed_by = clean_text(payload.get("managerName")) or "Line Manager"
     elif action == "cancel":
         warning = delete_calendar_event_from_graph(record)
-        record.status = CoachCalendarEvent.STATUS_CANCELLED
+        record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        record.scheduled_date = None
+        record.scheduled_time = None
         record.meeting_link = ""
         record.graph_web_link = ""
         record.graph_event_id = ""
@@ -4057,13 +4305,13 @@ def coach_monthly_activity(request):
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
+        rows = fetch_caseload_learner_profiles(owner_email)
         timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
         events = timetable_payload.get("events", [])
         active_pairs = [
             (row, learner)
             for row in rows
-            for learner in [serialize_active_user_learner(row)]
+            for learner in [serialize_caseload_learner(row)]
             if learner.get("enrollmentStatus") == "active"
         ]
         learners = [
@@ -4123,8 +4371,8 @@ def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
-        learners = [serialize_active_user_learner(row) for row in rows]
+        rows = fetch_caseload_learner_profiles(owner_email)
+        learners = [serialize_caseload_learner(row) for row in rows]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},
@@ -4409,7 +4657,7 @@ def serialize_absence_report(
     attendance_rate_override=None,
     previous_absences_override=None,
 ) -> dict:
-    learner_snapshot = serialize_active_user_learner(learner) if learner else {}
+    learner_snapshot = serialize_caseload_learner(learner) if learner else {}
     reported_by = clean_text(report.reported_by)
     if reported_by not in {"Learner", "Employer", "Coach"}:
         reported_by = "Learner"
@@ -4460,10 +4708,10 @@ def serialize_absence_report(
 @csrf_exempt
 def coach_absence_reports(request):
     owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     active_ids = {int(row.id) for row in active_rows}
     active_emails = {normalize_email(row.email) for row in active_rows if normalize_email(row.email)}
-    active_map = build_active_user_map(active_rows)
+    active_map = build_learner_profile_map(active_rows)
 
     if request.method == "PATCH":
         try:
@@ -4553,93 +4801,141 @@ def coach_absence_reports(request):
     })
 
 
-@require_GET
-def coach_marking_queue(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
-    requested_owner_id = request.GET.get("case_owner_id")
-    case_owner_id = None
-    if requested_owner_id:
+@csrf_exempt
+def coach_marking_queue(request, submission_id=None):
+    """List and review the complete reflections submitted by learners."""
+    ensure_learning_reflection_submissions_table()
+
+    if submission_id is not None:
+        if request.method not in {"PATCH", "POST"}:
+            return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
-            case_owner_id = int(requested_owner_id)
-        except ValueError:
-            case_owner_id = None
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Request body must be valid JSON."}, status=400)
 
-    try:
-        caseload_rows = [
-            row
-            for row in fetch_caseload_rows(owner_email)
-            if (row["full_name"] or "").strip()
-        ]
-        caseload_learners = [serialize_learner(row) for row in caseload_rows]
-        owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
-
-        if case_owner_id is None and owner_email.lower() == DEFAULT_COACH_EMAIL.lower():
-            case_owner_id = DEFAULT_MARKING_OWNER_ID
-
-        caseload_by_email = {
-            normalize_email(learner.get("email")): learner
-            for learner in caseload_learners
-            if normalize_email(learner.get("email"))
-        }
-
-        marking_rows = fetch_marking_rows(owner_name, case_owner_id)
-        items = [
-            serialize_marking_row(
-                row,
-                caseload_by_email.get(normalize_email(row.get("learner_email"))),
+        decision = clean_text(payload.get("decision")).lower()
+        feedback = clean_text(payload.get("feedback"))
+        reviewed_by = clean_text(payload.get("reviewedBy")) or "Progress Coach"
+        valid_decisions = {"accepted", "partial", "referred", "escalated", "rejected"}
+        if decision not in valid_decisions:
+            return JsonResponse(
+                {"detail": "decision must be accepted, partial, referred, escalated or rejected."},
+                status=400,
             )
-            for row in marking_rows
-        ]
-        items = [
-            item
-            for item in items
-            if item["pendingEvidence"] > 0
-            and item["enrollmentStatus"] in ATTENDANCE_INCLUDED_STATUSES
-        ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach marking queue data.", "error": str(exc)},
-            status=500,
+        if decision != "accepted" and not feedback:
+            return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
+
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                update "Learner"."learning_reflection_submissions"
+                set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
+                where id = %s
+                returning id, status, reviewed_at
+                """,
+                [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
+            )
+            updated = cur.fetchone()
+        if not updated:
+            return JsonResponse({"detail": "Submission not found."}, status=404)
+        return JsonResponse({
+            "id": str(updated[0]),
+            "status": updated[1],
+            "reviewedAt": updated[2].isoformat() if updated[2] else None,
+        })
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(
+            """
+            select
+                id, learner_kind, learner_id, learner_name, programme_name,
+                activity_type, activity_id, activity_title, module_title,
+                week_title, planned_otjh, status, learning_reflection,
+                ksb_codes, ksb_weights, ksb_explanations, confidence_before, confidence_after,
+                application_type, application_text, evidence_files,
+                evidence_consent_confirmed, selected_benefits,
+                benefit_explanation, actual_time_hours,
+                completed_during_paid_hours, date_completed, otjh_confirmed,
+                signed_declaration, quality_score, coach_feedback, reviewed_by,
+                reviewed_at, submitted_at
+            from "Learner"."learning_reflection_submissions"
+            order by
+                case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                submitted_at asc
+            """
         )
+        columns = [column[0] for column in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-    dated_items = [item for item in items if item["lastSubmissionIso"]]
-    oldest_iso = min((item["lastSubmissionIso"] for item in dated_items), default=None)
-    oldest_submission = "--"
-    if oldest_iso:
-        oldest_submission = next(
-            item["lastSubmission"]
-            for item in dated_items
-            if item["lastSubmissionIso"] == oldest_iso
-        )
+    now = timezone.now()
+    items = []
+    for row in rows:
+        submitted_at = row["submitted_at"]
+        elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
+        status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+        learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
+        initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
+        items.append({
+            "id": str(row["id"]),
+            "learnerKind": row["learner_kind"],
+            "learnerId": row["learner_id"],
+            "learner": learner_name,
+            "initials": initials,
+            "programme": row["programme_name"],
+            "activityType": row["activity_type"],
+            "activityId": row["activity_id"],
+            "activityTitle": row["activity_title"],
+            "module": row["module_title"],
+            "week": row["week_title"],
+            "plannedOtjh": row["planned_otjh"],
+            "status": status,
+            "learningReflection": row["learning_reflection"],
+            "ksbCodes": parse_json_value(row["ksb_codes"], []),
+            "ksbWeights": parse_json_value(row["ksb_weights"], {}),
+            "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
+            "confidenceBefore": parse_json_value(row["confidence_before"], {}),
+            "confidenceAfter": parse_json_value(row["confidence_after"], {}),
+            "applicationType": row["application_type"],
+            "applicationText": row["application_text"],
+            "evidenceFiles": parse_json_value(row["evidence_files"], []),
+            "evidenceConsentConfirmed": bool(row["evidence_consent_confirmed"]),
+            "selectedBenefits": parse_json_value(row["selected_benefits"], []),
+            "benefitExplanation": row["benefit_explanation"],
+            "actualTimeHours": row["actual_time_hours"],
+            "completedDuringPaidHours": row["completed_during_paid_hours"],
+            "dateCompleted": row["date_completed"].isoformat() if row["date_completed"] else None,
+            "otjhConfirmed": bool(row["otjh_confirmed"]),
+            "signedDeclaration": bool(row["signed_declaration"]),
+            "qualityScore": row["quality_score"],
+            "coachFeedback": row["coach_feedback"],
+            "reviewedBy": row["reviewed_by"],
+            "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
+            "submittedAt": submitted_at.isoformat() if submitted_at else None,
+            "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
+            "elapsedDays": elapsed_days,
+            "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+        })
 
-    overdue_items = [item for item in items if item["isOverdue"]]
-    summary = {
-        "caseloadLearners": len(caseload_learners),
-        "queueLearners": len(items),
-        "activeLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "active"),
-        "queueActiveLearners": sum(1 for item in items if item["enrollmentStatus"] == "active"),
-        "onBreakLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "break"),
-        "queueOnBreakLearners": sum(1 for item in items if item["isOnBreak"]),
-        "pendingItems": sum(item["pendingEvidence"] for item in items),
-        "overdueLearners": len(overdue_items),
-        "overdueItems": sum(item["pendingEvidence"] for item in overdue_items),
-        "inProgressItems": None,
-        "acceptedEvidence": sum(item["acceptedEvidence"] for item in items),
-        "referredEvidence": sum(item["referredEvidence"] for item in items),
-        "totalEvidence": sum(item["totalEvidence"] for item in items),
-        "oldestSubmission": oldest_submission,
-        "oldestSubmissionIso": oldest_iso,
-        "overdueThresholdDays": MARKING_OVERDUE_DAYS,
-        "unavailableFields": ["module", "title", "type", "due", "words"],
-    }
-
-    return JsonResponse(
-        {
-            "owner": {"name": owner_name, "email": owner_email},
-            "summary": summary,
-            "items": items,
-        }
-    )
+    pending = [item for item in items if item["status"] in {"pending", "escalated"}]
+    overdue = [item for item in pending if item["isOverdue"]]
+    return JsonResponse({
+        "owner": {"name": "Med Maher", "email": DEFAULT_COACH_EMAIL},
+        "summary": {
+            "totalItems": len(items),
+            "activeLearners": len({(item["learnerKind"], item["learnerId"]) for item in items}),
+            "pendingItems": len(pending),
+            "acceptedItems": sum(1 for item in items if item["status"] in {"accepted", "partial"}),
+            "referredItems": sum(1 for item in items if item["status"] in {"referred", "rejected"}),
+            "overdueItems": len(overdue),
+            "oldestSubmission": pending[0]["submittedDisplay"] if pending else "--",
+            "overdueThresholdDays": MARKING_OVERDUE_DAYS,
+        },
+        "items": items,
+    })
 
 
 @require_GET

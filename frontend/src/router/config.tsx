@@ -198,11 +198,6 @@ const EmployerSupportRequests = lazy(() => import("@/pages/employer/support/page
 const CoachMessagesPage = lazy(() => import("../pages/coach/messages/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
-const AuditorEvidencePage = lazy(() => import("../pages/auditor/evidence/page"));
-const AuditorTrailPage = lazy(() => import("../pages/auditor/trail/page"));
-const AuditorCompliancePage = lazy(() => import("../pages/auditor/compliance/page"));
-const AuditorOfstedPage = lazy(() => import("../pages/auditor/ofsted/page"));
-const AuditorReportsPage = lazy(() => import("../pages/auditor/reports/page"));
 const LeadershipCohortPerformancePage = lazy(() => import("@/pages/leadership/cohort-performance/page"));
 const LeadershipProgrammePerformancePage = lazy(() => import("@/pages/leadership/programme-performance/page"));
 const LeadershipLearnerProgressPage = lazy(() => import("@/pages/leadership/learner-progress/page"));
@@ -323,6 +318,7 @@ import CoachAttendanceProfile from "../pages/coach/attendance-profile/page";
 import CoachAbsenceReports from "../pages/coach/absence-reports/page";
 import CoachCatchupQueue from "../pages/coach/catchup-queue/page";
 import CoachMarkingQueue from "../pages/coach/marking-queue/page";
+import CoachMarkingReviewPage from "../pages/coach/marking-review/page";
 import CoachAiMarking from "../pages/coach/ai-marking/page";
 import CoachMeetings from "../pages/coach/meetings/page";
 import CoachTimetable from "../pages/coach/timetable/page";
@@ -444,11 +440,6 @@ import CoachReportsPage from "../pages/coach/reports/page";
 import CurriculumKsbFrameworksPage from "../pages/curriculum/ksb-frameworks/page";
 import CurriculumVersionControlPage from "../pages/curriculum/version-control/page";
 import CurriculumPublishedPage from "../pages/curriculum/published/page";
-import AuditorEvidencePage from "../pages/auditor/evidence/page";
-import AuditorTrailPage from "../pages/auditor/trail/page";
-import AuditorCompliancePage from "../pages/auditor/compliance/page";
-import AuditorOfstedPage from "../pages/auditor/ofsted/page";
-import AuditorReportsPage from "../pages/auditor/reports/page";
 import LeadershipCohortPerformancePage from '@/pages/leadership/cohort-performance/page';
 import LeadershipProgrammePerformancePage from '@/pages/leadership/programme-performance/page';
 import LeadershipLearnerProgressPage from '@/pages/leadership/learner-progress/page';
@@ -833,6 +824,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/marking-queue",
     element: <CoachMarkingQueue />,
+  },
+  {
+    path: "/coach/marking-queue/:submissionId",
+    element: <CoachMarkingReviewPage />,
   },
   {
     path: "/coach/ai-marking",
@@ -1476,26 +1471,6 @@ const routes: RouteObject[] = [
   {
     path: "/safeguarding/reports",
     element: <SafeguardingReports />,
-  },
-  {
-    path: "/auditor/evidence",
-    element: <AuditorEvidencePage />,
-  },
-  {
-    path: "/auditor/trail",
-    element: <AuditorTrailPage />,
-  },
-  {
-    path: "/auditor/compliance",
-    element: <AuditorCompliancePage />,
-  },
-  {
-    path: "/auditor/ofsted",
-    element: <AuditorOfstedPage />,
-  },
-  {
-    path: "/auditor/reports",
-    element: <AuditorReportsPage />,
   },
   {
     path: "/notifications",

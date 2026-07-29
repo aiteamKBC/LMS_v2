@@ -527,10 +527,9 @@ export default function CoachCaseload() {
   const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(() => new Set());
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const tableDragStateRef = useRef({
     isPointerDown: false,
     isDragging: false,
@@ -583,30 +582,6 @@ export default function CoachCaseload() {
 
     return () => controller.abort();
   }, []);
-
-  useEffect(() => {
-    if (!exportMenuOpen) return;
-
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!exportMenuRef.current?.contains(event.target as Node)) {
-        setExportMenuOpen(false);
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setExportMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [exportMenuOpen]);
 
   const cohortOptions = useMemo(
     () =>
@@ -740,14 +715,20 @@ export default function CoachCaseload() {
   const selectedCount = selectedLearners.length;
 
   const handleExportPdf = useCallback((scope: 'selected' | 'filtered') => {
-    setExportMenuOpen(false);
+    const exportRows = scope === 'selected' ? selectedLearners : filtered;
+    if (exportRows.length === 0) {
+      return;
+    }
+
     setIsExportingPdf(true);
 
     window.setTimeout(() => {
       try {
-        downloadLearnersPdf(scope === 'selected' ? selectedLearners : filtered, ownerName);
+        downloadLearnersPdf(exportRows, ownerName);
       } finally {
         setIsExportingPdf(false);
+        setSelectionMode(false);
+        setSelectedLearnerIds(new Set());
       }
     }, 0);
   }, [filtered, ownerName, selectedLearners]);
@@ -804,6 +785,15 @@ export default function CoachCaseload() {
   }, [filtered]);
 
   const handleClearSelection = useCallback(() => {
+    setSelectedLearnerIds(new Set());
+  }, []);
+
+  const handleStartSelectionMode = useCallback(() => {
+    setSelectionMode(true);
+  }, []);
+
+  const handleCancelSelectionMode = useCallback(() => {
+    setSelectionMode(false);
     setSelectedLearnerIds(new Set());
   }, []);
 
@@ -987,60 +977,43 @@ export default function CoachCaseload() {
                 <HeaderMetric icon="ri-user-follow-line" label="Active" value={summaryCounts.active} tone="emerald" />
                 <HeaderMetric icon="ri-error-warning-line" label="Need Attention" value={summaryCounts.needAttention} tone="amber" />
                 <HeaderMetric icon="ri-alarm-warning-line" label="At Risk" value={summaryCounts.atRisk} tone="red" />
-                <div ref={exportMenuRef} className="relative">
+                <div className="flex flex-wrap items-stretch gap-2">
                   <button
                     type="button"
-                    onClick={() => setExportMenuOpen((current) => !current)}
-                    className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50"
+                    onClick={() => {
+                      if (!selectionMode) {
+                        handleStartSelectionMode();
+                        return;
+                      }
+                      handleExportPdf('selected');
+                    }}
+                    disabled={selectionMode && (selectedCount === 0 || isExportingPdf)}
+                    className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}`}></i>
-                    {selectedCount > 0 ? `Export Selected (${selectedCount})` : 'Export Learners'}
-                    <i className={`ri-arrow-down-s-line transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}></i>
+                    {selectionMode ? (selectedCount > 0 ? `Export Selected (${selectedCount})` : 'Select Learners') : 'Export Learners'}
                   </button>
-
-                  {exportMenuOpen && (
-                    <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-[230px] rounded-2xl border border-foreground-200/70 bg-white p-1.5 shadow-[0_18px_45px_rgba(28,12,58,0.16)]">
-                      <div className="border-b border-foreground-100 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Export Options</p>
-                        <p className="mt-1 text-[11px] text-foreground-500">
-                          {selectedCount > 0 ? `${selectedCount} selected learners` : `${filtered.length} learners in current view`}
-                        </p>
-                      </div>
-                      <div className="pt-1">
-                        {selectedCount > 0 && (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => handleExportPdf('selected')}
-                              disabled={isExportingPdf}
-                              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium text-foreground-700 transition hover:bg-background-100 hover:text-foreground-900 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                                <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'} text-sm`}></i>
-                              </span>
-                              <span className="flex-1">
-                                <span className="block font-semibold">Selected PDF</span>
-                                <span className="block text-[10px] text-foreground-400">Only selected learners</span>
-                              </span>
-                            </button>
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleExportPdf('filtered')}
-                          disabled={isExportingPdf}
-                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium text-foreground-700 transition hover:bg-background-100 hover:text-foreground-900 disabled:cursor-wait disabled:opacity-60"
-                        >
-                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                            <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'} text-sm`}></i>
-                          </span>
-                          <span className="flex-1">
-                            <span className="block font-semibold">Current View PDF</span>
-                            <span className="block text-[10px] text-foreground-400">All filtered learners</span>
-                          </span>
-                        </button>
-                      </div>
-                    </div>
+                  {selectionMode && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => handleExportPdf('filtered')}
+                        disabled={isExportingPdf || filtered.length === 0}
+                        className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/90 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'}`}></i>
+                        Current View PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelSelectionMode}
+                        disabled={isExportingPdf}
+                        className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl border border-white/16 bg-black/10 px-4 text-[11px] font-bold text-white/75 transition hover:bg-black/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <i className="ri-close-line"></i>
+                        Cancel
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1054,7 +1027,6 @@ export default function CoachCaseload() {
             <CaseloadStatusTab label="Need Attention" count={summaryCounts.needAttention} active={summaryFilter === 'need-attention'} onClick={() => handleSummaryCardClick('need-attention')} />
             <CaseloadStatusTab label="At Risk" count={summaryCounts.atRisk} active={summaryFilter === 'at-risk'} onClick={() => handleSummaryCardClick('at-risk')} />
             <CaseloadStatusTab label="On Break" count={summaryCounts.break} active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
-            <CaseloadStatusTab label="Completed" count={learners.filter((learner) => displayValue(learner.rawProgramStatus).toLowerCase() === 'completed').length} active={false} onClick={() => undefined} />
           </section>
 
           <section className="rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
@@ -1068,8 +1040,8 @@ export default function CoachCaseload() {
                   placeholder="Search by learner name or email..."
                   className="h-10 w-full rounded-xl border border-foreground-200 bg-background-100/70 pl-10 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300 focus:bg-white focus:ring-2 focus:ring-primary-100"
                 />
-              </div>
-              <div className="flex flex-1 flex-wrap items-center gap-2">
+            </div>
+            <div className="flex flex-1 flex-wrap items-center gap-2">
                 <CaseloadMenuSelect
                   value={sortKey}
                   onChange={(value) => {
@@ -1085,8 +1057,9 @@ export default function CoachCaseload() {
                     { value: 'components', label: 'Components' },
                     { value: 'ksb', label: 'KSB' },
                   ]}
-                  minWidth="min-w-[164px]"
+                  minWidth="min-w-[210px]"
                   icon="ri-sort-asc"
+                  prefixLabel="Sort by"
                 />
                 <FilterDropdown label="Cohort" value={cohortFilter} onChange={(value) => { setCohortFilter(value); setCurrentPage(1); }} options={cohortOptions} />
                 <FilterDropdown label="Group" value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupOptions} />
@@ -1132,11 +1105,13 @@ export default function CoachCaseload() {
                 </button>
               </div>
               <span className="text-[11px] text-foreground-400">
-                {selectedCount > 0 ? `${selectedCount} selected` : `${filtered.length} learners`}
+                {selectionMode
+                  ? `${selectedCount} selected`
+                  : `${filtered.length} learners`}
               </span>
             </div>
 
-            {!loading && !error && filtered.length > 0 && (
+            {selectionMode && !loading && !error && filtered.length > 0 && (
               <div className="flex flex-col gap-2 border-b border-foreground-100 bg-background-100/30 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -1167,11 +1142,18 @@ export default function CoachCaseload() {
                       Clear Selection
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={handleCancelSelectionMode}
+                    className="rounded-xl px-3 py-2 text-[11px] font-semibold text-foreground-500 transition hover:bg-white hover:text-foreground-800"
+                  >
+                    Cancel
+                  </button>
                 </div>
                 <p className="text-[11px] text-foreground-400">
                   {selectedCount > 0
                     ? `${selectedCount} learner${selectedCount === 1 ? '' : 's'} selected across your filtered results.`
-                    : 'Selections stay active while you move between pages.'}
+                    : 'Choose the learners you want to export. Selections stay active while you move between pages.'}
                 </p>
               </div>
             )}
@@ -1197,6 +1179,7 @@ export default function CoachCaseload() {
                     key={learner.id}
                     learner={learner}
                     selected={selectedLearnerIds.has(learner.id)}
+                    selectionMode={selectionMode}
                     onToggleSelect={() => toggleLearnerSelection(learner.id)}
                     onOpen={() => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
                   />
@@ -1206,6 +1189,7 @@ export default function CoachCaseload() {
               <ReferenceLearnerTable
                 learners={paginated}
                 selectedLearnerIds={selectedLearnerIds}
+                selectionMode={selectionMode}
                 onToggleSelect={toggleLearnerSelection}
                 onOpen={(learner) => navigate('/coach/learner-case-file', { state: { learnerId: learner.id, learnerName: learner.name } })}
               />
@@ -2057,11 +2041,13 @@ function CaseloadStatusTab({ label, count, active, onClick }: { label: string; c
 function ReferenceLearnerCard({
   learner,
   selected,
+  selectionMode,
   onToggleSelect,
   onOpen,
 }: {
   learner: Learner;
   selected: boolean;
+  selectionMode: boolean;
   onToggleSelect: () => void;
   onOpen: () => void;
 }) {
@@ -2078,26 +2064,29 @@ function ReferenceLearnerCard({
       <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start gap-3">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onToggleSelect}
-            aria-label={`Select ${learner.name}`}
-            className="mt-3 h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
-          />
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-secondary-100 text-[11px] font-bold text-primary-800 ring-2 ring-white shadow-sm">
+          {selectionMode && (
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={onToggleSelect}
+              aria-label={`Select ${learner.name}`}
+              className="mt-3 h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
+            />
+          )}
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label={`Open profile for ${learner.name}`}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-secondary-100 text-[11px] font-bold text-primary-800 ring-2 ring-white shadow-sm transition hover:scale-[1.02] hover:ring-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200"
+          >
             {learner.initials}
-          </span>
+          </button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="truncate text-[13px] font-bold text-foreground-950">{learner.name}</h2>
               <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${statusStyle.bg} ${statusStyle.text}`}>{displayValue(learner.rawProgramStatus)}</span>
             </div>
             <p className="mt-0.5 truncate text-[10px] text-foreground-400">{learner.email || learner.employer}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="Expand learner card"><i className="ri-arrow-down-s-line"></i></button>
-            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="More options"><i className="ri-more-2-fill"></i></button>
           </div>
         </div>
 
@@ -2168,11 +2157,13 @@ function CardMetric({ value, label, hint = null }: { value: string; label: strin
 function ReferenceLearnerTable({
   learners,
   selectedLearnerIds,
+  selectionMode,
   onToggleSelect,
   onOpen,
 }: {
   learners: Learner[];
   selectedLearnerIds: Set<string>;
+  selectionMode: boolean;
   onToggleSelect: (learnerId: string) => void;
   onOpen: (learner: Learner) => void;
 }) {
@@ -2180,22 +2171,36 @@ function ReferenceLearnerTable({
     <div className="overflow-x-auto">
       <table className="w-full min-w-[1180px] text-left">
         <thead className="border-b border-foreground-100 bg-background-100/55 text-[9px] uppercase tracking-wider text-foreground-400">
-          <tr><th className="w-12 px-4 py-3 text-center">Select</th><th className="px-4 py-3">Learner</th><th>Cohort / Group</th><th>Status</th><th>OTJH</th><th>Attendance</th><th>Components</th><th>KSB</th><th>Progress</th><th>Gateway</th><th></th></tr>
+          <tr>
+            {selectionMode && <th className="w-12 px-4 py-3 text-center">Select</th>}
+            <th className="px-4 py-3">Learner</th>
+            <th>Cohort / Group</th>
+            <th>Status</th>
+            <th>OTJH</th>
+            <th>Attendance</th>
+            <th>Components</th>
+            <th>KSB</th>
+            <th>Progress</th>
+            <th>Gateway</th>
+            <th></th>
+          </tr>
         </thead>
         <tbody className="divide-y divide-foreground-100">
           {learners.map((learner) => {
             const selected = selectedLearnerIds.has(learner.id);
             return (
             <tr key={learner.id} className={`text-[11px] text-foreground-600 hover:bg-primary-50/25 ${selected ? 'bg-primary-50/35' : ''}`}>
-              <td className="px-4 py-3 text-center">
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  onChange={() => onToggleSelect(learner.id)}
-                  aria-label={`Select ${learner.name}`}
-                  className="h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
-                />
-              </td>
+              {selectionMode && (
+                <td className="px-4 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => onToggleSelect(learner.id)}
+                    aria-label={`Select ${learner.name}`}
+                    className="h-3.5 w-3.5 rounded border-foreground-300 accent-primary-600"
+                  />
+                </td>
+              )}
               <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-[9px] font-bold text-primary-700">{learner.initials}</span><div><p className="font-bold text-foreground-900">{learner.name}</p><p className="text-[9px] text-foreground-400">{learner.email || learner.employer}</p></div></div></td>
               <td><p>{learner.cohortName}</p><p className="text-[9px] text-foreground-400">{learner.group}</p></td>
               <td><span className={`rounded-full border px-2 py-1 text-[9px] ${getProgramStatusStyle(learner.rawProgramStatus).bg} ${getProgramStatusStyle(learner.rawProgramStatus).text}`}>{displayValue(learner.rawProgramStatus)}</span></td>
@@ -2729,12 +2734,14 @@ function CaseloadMenuSelect({
   options,
   minWidth = 'min-w-[132px]',
   icon,
+  prefixLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
   minWidth?: string;
   icon?: string;
+  prefixLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -2770,6 +2777,14 @@ function CaseloadMenuSelect({
         }`}
       >
         {icon && <i className={`${icon} text-[12px] text-foreground-400`}></i>}
+        {prefixLabel && (
+          <>
+            <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] text-foreground-400">
+              {prefixLabel}
+            </span>
+            <span className="h-4 w-px shrink-0 bg-foreground-200"></span>
+          </>
+        )}
         <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
         <i className={`ri-arrow-down-s-line text-[13px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
       </button>

@@ -11,13 +11,15 @@ import {
   type CoachCalendarEvent,
   type ScheduleFormState,
   avatarClass,
+  canJoinMeeting,
+  eventDisplayDate,
   eventIdentity,
   eventPeriodLabel,
   fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
-  isCancelledEvent,
   isAtRiskProgressReview,
+  isAwaitingSignatureEvent,
   isDueSoonEvent,
   isEventThisMonth,
   isInProgressEvent,
@@ -36,7 +38,7 @@ import {
 
 const coachNav = roleNavMap.coach;
 
-type ReviewTab = 'this-month' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'prep-forms' | 'all';
+type ReviewTab = 'this-month' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'completed' | 'all';
 
 const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
   'this-month': {
@@ -52,7 +54,7 @@ const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
     description: 'Progress reviews not scheduled yet and due within the next 14 days.',
   },
   'needs-schedule': {
-    label: 'Needs Schedule',
+    label: 'Not Scheduled',
     description: 'Progress reviews that still need a first calendar booking.',
   },
   scheduled: {
@@ -63,17 +65,13 @@ const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
     label: 'In Progress',
     description: 'Progress reviews that have already been started by the coach.',
   },
+  'awaiting-signature': {
+    label: 'Awaiting Signature',
+    description: 'Progress reviews completed by the coach and waiting for the line manager signature.',
+  },
   completed: {
     label: 'Completed',
     description: 'Progress reviews marked as completed or confirmed.',
-  },
-  cancelled: {
-    label: 'Cancelled',
-    description: 'Progress reviews that were cancelled and can be scheduled again if needed.',
-  },
-  'prep-forms': {
-    label: 'Preparation Forms',
-    description: 'Preparation form records. This is ready for a live source when that data is connected.',
   },
   all: {
     label: 'All',
@@ -132,14 +130,13 @@ export default function CoachProgressReviews() {
   const dueSoonEvents = events.filter(event => isDueSoonEvent(event));
   const scheduledEvents = events.filter(event => isScheduledEvent(event));
   const inProgressEvents = events.filter(event => isInProgressEvent(event));
+  const awaitingSignatureEvents = events.filter(event => isAwaitingSignatureEvent(event));
   const completedEvents = events.filter(event => isCompletedEvent(event));
-  const cancelledEvents = events.filter(event => isCancelledEvent(event));
   const needsScheduleEvents = events.filter(needsScheduling);
   const thisMonth = thisMonthEvents.length;
   const overdue = overdueEvents.length;
   const dueSoon = dueSoonEvents.length;
   const pendingSchedule = needsScheduleEvents.length;
-  const prepForms = 0;
   const data = tab === 'this-month'
     ? thisMonthEvents
     : tab === 'overdue'
@@ -152,13 +149,13 @@ export default function CoachProgressReviews() {
             ? scheduledEvents
             : tab === 'in-progress'
               ? inProgressEvents
-            : tab === 'completed'
-              ? completedEvents
-              : tab === 'cancelled'
-                ? cancelledEvents
-                : tab === 'all'
-                  ? events
-                  : [];
+              : tab === 'awaiting-signature'
+                ? awaitingSignatureEvents
+                : tab === 'completed'
+                  ? completedEvents
+                  : tab === 'all'
+                    ? events
+                    : [];
   const pageCount = Math.ceil(data.length / REVIEWS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
   const paginatedReviews = data.slice(
@@ -300,37 +297,29 @@ export default function CoachProgressReviews() {
                 {data.length} {data.length === 1 ? 'review' : 'reviews'}
               </span>
             </div>
-            <div className="-mx-1 flex items-center gap-1 overflow-x-auto px-1 pb-3">
+            <div className="flex flex-wrap items-center gap-2 pb-4">
               <TabButton active={tab === 'this-month'} onClick={() => changeTab('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonth} description={FILTER_COPY['this-month'].description} />
               <TabButton active={tab === 'overdue'} onClick={() => changeTab('overdue')} label={FILTER_COPY.overdue.label} count={overdue} description={FILTER_COPY.overdue.description} />
               <TabButton active={tab === 'due-soon'} onClick={() => changeTab('due-soon')} label={FILTER_COPY['due-soon'].label} count={dueSoon} description={FILTER_COPY['due-soon'].description} />
               <TabButton active={tab === 'needs-schedule'} onClick={() => changeTab('needs-schedule')} label={FILTER_COPY['needs-schedule'].label} count={pendingSchedule} description={FILTER_COPY['needs-schedule'].description} />
               <TabButton active={tab === 'scheduled'} onClick={() => changeTab('scheduled')} label={FILTER_COPY.scheduled.label} count={scheduledEvents.length} description={FILTER_COPY.scheduled.description} />
               <TabButton active={tab === 'in-progress'} onClick={() => changeTab('in-progress')} label={FILTER_COPY['in-progress'].label} count={inProgressEvents.length} description={FILTER_COPY['in-progress'].description} />
+              <TabButton active={tab === 'awaiting-signature'} onClick={() => changeTab('awaiting-signature')} label={FILTER_COPY['awaiting-signature'].label} count={awaitingSignatureEvents.length} description={FILTER_COPY['awaiting-signature'].description} />
               <TabButton active={tab === 'completed'} onClick={() => changeTab('completed')} label={FILTER_COPY.completed.label} count={completedEvents.length} description={FILTER_COPY.completed.description} />
-              <TabButton active={tab === 'cancelled'} onClick={() => changeTab('cancelled')} label={FILTER_COPY.cancelled.label} count={cancelledEvents.length} description={FILTER_COPY.cancelled.description} />
-              <TabButton active={tab === 'prep-forms'} onClick={() => changeTab('prep-forms')} label={FILTER_COPY['prep-forms'].label} count={prepForms} description={FILTER_COPY['prep-forms'].description} />
               <TabButton active={tab === 'all'} onClick={() => changeTab('all')} label={FILTER_COPY.all.label} count={events.length} description={FILTER_COPY.all.description} />
             </div>
           </div>
 
-          {tab === 'prep-forms' && (
-            <div className="bg-background-100/55 p-3 sm:p-5">
-              <EmptyState icon="ri-file-list-3-line" title="No live preparation forms source is connected yet." />
-            </div>
-          )}
-
-        {tab !== 'prep-forms' && (
-          <div className="space-y-3 bg-background-100/55 p-3 sm:p-5">
-            {loading && <EmptyState icon="ri-loader-4-line" title="Loading progress reviews..." />}
-            {!loading && !error && data.length === 0 && <EmptyState icon="ri-file-chart-line" title="No progress reviews found." />}
+          <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
+            {loading && <div className="xl:col-span-2"><EmptyState icon="ri-loader-4-line" title="Loading progress reviews..." /></div>}
+            {!loading && !error && data.length === 0 && <div className="xl:col-span-2"><EmptyState icon="ri-file-chart-line" title="No progress reviews found." /></div>}
 
             {!loading && paginatedReviews.map(review => {
               const isOpen = expanded === eventIdentity(review);
               const isBusy = busyEventId === eventIdentity(review);
-              const url = meetingUrl(review);
+              const joinAvailable = canJoinMeeting(review);
               return (
-                <article key={eventIdentity(review)} className={`group overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)]' : 'border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
+                <article key={eventIdentity(review)} className={`group overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)] xl:col-span-2' : 'border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
                   <div className="flex cursor-pointer items-center gap-3 p-4 sm:gap-4 sm:p-5" onClick={() => toggleExpanded(review)}>
                     <div className="hidden h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl border border-background-200 bg-background-100 sm:flex">
                       <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-300">Review</span>
@@ -348,14 +337,14 @@ export default function CoachProgressReviews() {
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
                         <span><i className="ri-book-open-line mr-1 text-primary-500"></i>{review.programme || '--'}</span>
-                        <span><i className="ri-flag-line mr-1 text-primary-500"></i>{formatDateLabel(review.targetDate)}</span>
+                        <span><i className="ri-calendar-line mr-1 text-primary-500"></i>{formatDateLabel(eventDisplayDate(review))}</span>
                         <span><i className="ri-time-line mr-1 text-primary-500"></i>{formatTimeLabel(review)}</span>
                       </div>
                     </div>
                     <div className="hidden shrink-0 items-center gap-2 md:flex">
-                      {url && (
+                      {joinAvailable && (
                         <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(review); }} disabled={isBusy} className="cursor-pointer whitespace-nowrap rounded-xl bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:opacity-60">
-                          <i className="ri-video-on-line mr-1.5"></i>Join
+                          <i className="ri-video-on-line mr-1.5"></i>Join Meeting
                         </button>
                       )}
                       <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(review); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50">
@@ -387,7 +376,7 @@ export default function CoachProgressReviews() {
                           {actionError || actionNotice}
                         </div>
                       )}
-                      {review.status !== 'completed' && (
+                      {!['completed', 'awaiting-signature'].includes(review.status) && (
                         <div className="rounded-xl border border-background-200/60 bg-background-100/60 p-3">
                           <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500 mb-3">Schedule Review</p>
                           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -401,25 +390,34 @@ export default function CoachProgressReviews() {
                             </label>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 mt-3">
-                            <button type="button" onClick={() => handleSchedule(review)} disabled={isBusy} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-calendar-check-line mr-1"></i>{review.status === 'cancelled' ? 'Schedule Again' : review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
-                            </button>
-                            {(review.status === 'scheduled' || review.status === 'in-progress') && (
-                              <button type="button" onClick={() => handleAction(review, 'start')} disabled={isBusy || !url} className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                                <i className="ri-play-circle-line mr-1"></i>Start
+                            {joinAvailable && (
+                              <button type="button" onClick={() => handleJoin(review)} disabled={isBusy} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60">
+                                <i className="ri-video-on-line mr-1"></i>Join Meeting
                               </button>
                             )}
+                            <button type="button" onClick={() => handleSchedule(review)} disabled={isBusy} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
+                              <i className="ri-calendar-check-line mr-1"></i>{review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                            </button>
                             {review.status === 'in-progress' && (
                               <button type="button" onClick={() => openCompletionForm(review)} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                                <i className="ri-check-double-line mr-1"></i>Complete
-                              </button>
-                            )}
-                            {(review.status === 'scheduled' || review.status === 'in-progress') && (
-                              <button type="button" onClick={() => handleAction(review, 'cancel')} disabled={isBusy} className="px-3 py-2 bg-background-50 border border-red-200 text-red-700 rounded-lg text-[11px] font-medium hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                                <i className="ri-close-circle-line mr-1"></i>Cancel
+                                <i className="ri-send-plane-line mr-1"></i>Submit Review
                               </button>
                             )}
                           </div>
+                        </div>
+                      )}
+                      {review.status === 'awaiting-signature' && (
+                        <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                            <i className="ri-pen-nib-line"></i>
+                          </span>
+                          <div className="flex-1">
+                            <p className="text-xs font-bold text-violet-900">Waiting for line manager signature</p>
+                            <p className="mt-1 text-[11px] text-violet-700">The coach review is saved. Confirm the manager signature to finish this review.</p>
+                          </div>
+                          <button type="button" onClick={() => handleAction(review, 'sign')} disabled={isBusy} className="whitespace-nowrap rounded-xl bg-violet-700 px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-violet-800 disabled:opacity-60">
+                            <i className="ri-quill-pen-line mr-1.5"></i>Confirm Manager Signature
+                          </button>
                         </div>
                       )}
                     </div>
@@ -439,7 +437,6 @@ export default function CoachProgressReviews() {
               />
             )}
           </div>
-        )}
         </section>
         {completionEvent && (
           <ProgressReviewCompletionModal
@@ -484,11 +481,20 @@ function ProgressReviewCompletionModal({
 
   const submit = () => {
     const firstMissing = PROGRESS_REVIEW_SECTIONS.find((section) => (
-      section.questions.some((question) => !responses[question.id]?.trim())
+      section.questions.some((question) => (
+        (
+          question.required !== false
+          || (
+            question.showWhen
+            && responses[question.showWhen.questionId] === question.showWhen.value
+          )
+        )
+        && !responses[question.id]?.trim()
+      ))
     ));
     if (firstMissing) {
       setOpenSection(firstMissing.id);
-      setValidationError('Please answer every question before completing the review.');
+      setValidationError('Please answer every question before submitting the review for signature.');
       return;
     }
     onSubmit(responses);
@@ -505,9 +511,9 @@ function ProgressReviewCompletionModal({
                 <i className="ri-file-edit-line"></i>
               </span>
               <div>
-                <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete progress review</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-secondary-200">Submit progress review</p>
                 <h2 className="mt-1 text-lg font-bold text-white">{event.learner || 'Learner'} · {eventPeriodLabel(event)}</h2>
-                <p className="mt-1 text-xs text-white/60">Complete the review record before changing its status to Completed.</p>
+                <p className="mt-1 text-xs text-white/60">Complete the review record, then send it for the line manager signature.</p>
               </div>
             </div>
             <button type="button" onClick={onClose} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 disabled:opacity-50" aria-label="Close form">
@@ -528,10 +534,29 @@ function ProgressReviewCompletionModal({
             These answers will be saved to this review and shown to the learner in their Progress Review record.
           </div>
 
+          <div className="grid gap-3 rounded-2xl border border-background-200 bg-background-50 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ['Learner', event.learner || 'Unknown learner'],
+              ['Programme', event.programme || '--'],
+              ['Review period', eventPeriodLabel(event)],
+              ['Meeting', `${formatDateLabel(event.scheduledDate || event.targetDate)} · ${formatTimeLabel(event)}`],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl bg-background-100 px-3.5 py-3">
+                <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
+                <p className="mt-1 text-xs font-bold text-foreground-800">{value}</p>
+              </div>
+            ))}
+          </div>
+
           {PROGRESS_REVIEW_SECTIONS.map((section, sectionIndex) => {
             const isOpen = openSection === section.id;
-            const sectionAnswered = section.questions.filter((question) => responses[question.id]?.trim()).length;
-            const sectionComplete = sectionAnswered === section.questions.length;
+            const requiredQuestions = section.questions.filter((question) => question.required !== false);
+            const sectionAnswered = requiredQuestions.filter((question) => responses[question.id]?.trim()).length;
+            const sectionComplete = sectionAnswered === requiredQuestions.length;
+            const visibleQuestions = section.questions.filter((question) => (
+              !question.showWhen
+              || responses[question.showWhen.questionId] === question.showWhen.value
+            ));
             return (
               <section key={section.id} className={`overflow-hidden rounded-2xl border bg-background-50 transition-all ${isOpen ? 'border-primary-300 shadow-sm' : 'border-background-200'}`}>
                 <button type="button" onClick={() => setOpenSection(isOpen ? '' : section.id)} className="flex w-full items-center gap-3 p-4 text-left sm:px-5">
@@ -542,18 +567,21 @@ function ProgressReviewCompletionModal({
                   <span className="min-w-0 flex-1">
                     <span className="block text-[9px] font-bold uppercase tracking-[0.12em] text-foreground-400">Review section {sectionIndex + 1} of {PROGRESS_REVIEW_SECTIONS.length}</span>
                     <span className="mt-0.5 block text-sm font-bold text-foreground-900">{section.title}</span>
+                    <span className="mt-1 hidden text-[10px] text-foreground-400 sm:block">{section.description}</span>
                   </span>
                   {sectionComplete && <i className="ri-checkbox-circle-fill text-lg text-emerald-500"></i>}
                   <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}><i className="ri-arrow-down-s-line"></i></span>
                 </button>
                 {isOpen && (
-                  <div className="space-y-5 border-t border-primary-100 bg-white p-4 sm:p-5">
-                    {section.questions.map((question, questionIndex) => (
-                      <div key={question.id}>
+                  <div className="space-y-3 border-t border-primary-100 bg-white p-4 sm:p-5">
+                    {visibleQuestions.map((question, questionIndex) => (
+                      <div key={question.id} className="rounded-2xl border border-background-200 bg-background-50 p-4 transition focus-within:border-primary-300 focus-within:shadow-sm">
                         <label className="mb-2 block text-xs font-bold text-foreground-800">
                           <span className="mr-2 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary-100 px-1 text-[9px] text-primary-700">{questionIndex + 1}</span>
-                          {question.label}<span className="ml-1 text-red-500">*</span>
+                          {question.label}
+                          {(question.required !== false || question.showWhen) && <span className="ml-1 text-red-500">*</span>}
                         </label>
+                        {question.helpText && <p className="mb-2 text-[10px] text-foreground-400">{question.helpText}</p>}
                         {question.type === 'text' && (
                           <textarea
                             value={responses[question.id] || ''}
@@ -561,17 +589,64 @@ function ProgressReviewCompletionModal({
                             rows={3}
                             maxLength={4000}
                             placeholder={question.placeholder}
-                            className="w-full resize-y rounded-xl border border-background-300 bg-background-50 px-3.5 py-3 text-sm text-foreground-800 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-200"
+                            className="w-full resize-y rounded-xl border border-background-300 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200"
                           />
                         )}
-                        {question.type === 'rating' && (
-                          <div className="flex flex-wrap gap-2">
-                            {['1', '2', '3', '4', '5'].map((rating) => (
-                              <button key={rating} type="button" onClick={() => updateResponse(question.id, rating)} className={`flex h-10 min-w-10 items-center justify-center rounded-xl border px-3 text-xs font-bold transition ${responses[question.id] === rating ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-background-50 text-foreground-600 hover:border-primary-300'}`}>
-                                {rating}
+                        {question.type === 'yes-no' && (
+                          <div className="grid max-w-sm grid-cols-2 gap-2">
+                            {[
+                              ['Yes', 'ri-check-line'],
+                              ['No', 'ri-close-line'],
+                            ].map(([value, icon]) => (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={() => updateResponse(question.id, value)}
+                                className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-xs font-bold transition ${
+                                  responses[question.id] === value
+                                    ? value === 'Yes'
+                                      ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm'
+                                      : 'border-foreground-700 bg-foreground-800 text-white shadow-sm'
+                                    : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'
+                                }`}
+                              >
+                                <i className={icon}></i>{value}
                               </button>
                             ))}
-                            <span className="self-center text-[10px] text-foreground-400">1 = significant support needed · 5 = excellent progress</span>
+                          </div>
+                        )}
+                        {question.type === 'rating' && (
+                          <div>
+                            <div className="grid grid-cols-5 gap-1.5 sm:grid-cols-10">
+                              {Array.from({ length: 10 }, (_, index) => String(index + 1)).map((rating) => (
+                                <button key={rating} type="button" onClick={() => updateResponse(question.id, rating)} className={`flex h-10 min-w-0 items-center justify-center rounded-xl border text-xs font-bold transition ${responses[question.id] === rating ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'}`}>
+                                  {rating}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-2 flex justify-between text-[9px] font-medium text-foreground-400">
+                              <span>1 · Significant support needed</span>
+                              <span>10 · Excellent</span>
+                            </div>
+                          </div>
+                        )}
+                        {question.type === 'select' && (
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            {(question.options || []).map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() => updateResponse(question.id, option)}
+                                className={`min-h-10 rounded-xl border px-3 py-2 text-left text-[11px] font-semibold transition ${
+                                  responses[question.id] === option
+                                    ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
+                                    : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'
+                                }`}
+                              >
+                                <i className={`mr-2 ${responses[question.id] === option ? 'ri-checkbox-circle-fill' : 'ri-checkbox-blank-circle-line'}`}></i>
+                                {option}
+                              </button>
+                            ))}
                           </div>
                         )}
                         {question.type === 'rag' && (
@@ -606,7 +681,7 @@ function ProgressReviewCompletionModal({
           <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-xl px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
           <button type="button" onClick={submit} disabled={busy} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60">
             <i className={busy ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></i>
-            {busy ? 'Saving review...' : 'Save & Complete Review'}
+            {busy ? 'Submitting review...' : 'Submit for Manager Signature'}
           </button>
         </footer>
       </div>
@@ -616,8 +691,25 @@ function ProgressReviewCompletionModal({
 
 function TabButton({ active, onClick, label, count, description }: { active: boolean; onClick: () => void; label: string; count: number; description: string }) {
   return (
-    <button type="button" onClick={onClick} title={description} className={`cursor-pointer whitespace-nowrap rounded-xl px-3.5 py-2 text-[11px] font-semibold transition-smooth ${active ? 'bg-primary-900 text-white shadow-sm' : 'text-foreground-400 hover:bg-background-100 hover:text-foreground-700'}`}>
-      {label} <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[9px] ${active ? 'bg-white/15 text-white' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      title={description}
+      aria-pressed={active}
+      className={`group inline-flex min-h-10 cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl border px-3.5 py-2 text-[11px] font-semibold transition-all duration-200 ${
+        active
+          ? 'border-primary-900 bg-primary-900 text-white shadow-[0_8px_20px_-12px_oklch(var(--primary-900)/0.9)]'
+          : 'border-background-200 bg-background-50 text-foreground-500 hover:-translate-y-0.5 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-800'
+      }`}
+    >
+      <span>{label}</span>
+      <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[9px] font-bold ${
+        active
+          ? 'bg-white/15 text-white'
+          : 'bg-background-100 text-foreground-500 group-hover:bg-white group-hover:text-primary-700'
+      }`}>
+        {count}
+      </span>
     </button>
   );
 }
@@ -628,7 +720,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
   ).filter(page => page > 0 && page <= pageCount).sort((a, b) => a - b);
 
   return (
-    <nav className="flex flex-col items-center justify-between gap-3 border-t border-background-200 pt-4 sm:flex-row" aria-label="Review pages">
+    <nav className="flex flex-col items-center justify-between gap-3 border-t border-background-200 pt-4 sm:flex-row xl:col-span-2" aria-label="Review pages">
       <p className="text-[11px] font-medium text-foreground-400">
         Showing {(currentPage - 1) * REVIEWS_PER_PAGE + 1}–{Math.min(currentPage * REVIEWS_PER_PAGE, totalItems)} of {totalItems}
       </p>
