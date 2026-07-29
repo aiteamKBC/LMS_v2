@@ -79,7 +79,7 @@ export default defineConfig({
       "@": resolve(__dirname, "./src"),
     },
   },
-  server: {
+    server: {
     port: 3000,
     host: "0.0.0.0",
     // Forward API calls to the Django backend so the browser sees them as
@@ -104,6 +104,15 @@ export default defineConfig({
       "/engagement_api": {
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
+      },
+      "/api": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        changeOrigin: true,
+        ws: true,
       },
       "/media": {
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",

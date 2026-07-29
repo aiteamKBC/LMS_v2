@@ -26,6 +26,7 @@ urlpatterns = [
     path('quiz_api/', include('quiz_api.urls')),
     path('learner_api/', include('learner_api.urls')),
     path('engagement_api/', include('engagement_api.urls')),
+    path('api/chat/', include('chat.urls')),
 ]
 
 if settings.DEBUG:
