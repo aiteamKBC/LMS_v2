@@ -121,7 +121,7 @@ export default function MessagesPage() {
       setActiveConversationId(current => (
         current ?? (Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
           ? requestedConversation
-          : data[0]?.id ?? null)
+          : null)
       ));
       setError(null);
     } catch (cause) {
@@ -316,13 +316,11 @@ export default function MessagesPage() {
     setSending(true);
     setNewMessage('');
     try {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'send_message', body }));
-      } else {
-        const saved = await createChatMessage(activeConversationId, body);
-        setMessages(current => mergeMessage(current, saved));
-        await loadConversations();
-      }
+      // Persist through REST and merge the confirmed record immediately. The
+      // WebSocket remains responsible for messages sent by the other side.
+      const saved = await createChatMessage(activeConversationId, body);
+      setMessages(current => mergeMessage(current, saved));
+      await loadConversations();
       setError(null);
     } catch (cause) {
       setNewMessage(body);
@@ -680,7 +678,6 @@ export default function MessagesPage() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-[10px] text-foreground-300 mt-2 text-right">Messages are stored securely in PostgreSQL</p>
                   </div>
                 </>
               ) : (

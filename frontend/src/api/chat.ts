@@ -36,7 +36,7 @@ export interface ChatConversation {
   unread_count: number;
 }
 
-interface PaginatedMessages {
+export interface PaginatedMessages {
   count: number;
   next: string | null;
   previous: string | null;
@@ -156,6 +156,24 @@ export function fetchChatConversations(): Promise<ChatConversation[]> {
 
 export function fetchChatMessages(conversationId: number): Promise<PaginatedMessages> {
   return request<PaginatedMessages>(`/conversations/${conversationId}/messages/`);
+}
+
+export function fetchLearnerMessages(page = 1, pageSize = 100): Promise<PaginatedMessages> {
+  return request<PaginatedMessages>(`/learner-messages/?page=${page}&page_size=${pageSize}`);
+}
+
+export async function fetchAllLearnerMessages(): Promise<ChatMessage[]> {
+  const messages: ChatMessage[] = [];
+  let page = 1;
+  let response: PaginatedMessages;
+
+  do {
+    response = await fetchLearnerMessages(page, 100);
+    messages.push(...response.results);
+    page += 1;
+  } while (response.next && response.results.length > 0);
+
+  return messages;
 }
 
 export function createChatMessage(conversationId: number, body: string): Promise<ChatMessage> {

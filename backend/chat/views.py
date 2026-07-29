@@ -25,6 +25,7 @@ from .services import (
     edit_message,
     get_conversation_for_user,
     get_message_for_user,
+    learner_messages_queryset_for_coach,
     mark_message_as_read,
     messages_queryset_for_user,
 )
@@ -123,6 +124,23 @@ class ConversationListView(APIView):
             context={"request": request},
         )
         return Response(serializer.data)
+
+
+class LearnerMessagesView(APIView):
+    """Return learner-sent messages from every conversation assigned to a coach."""
+
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        try:
+            queryset = learner_messages_queryset_for_coach(request.user)
+        except ChatAccessError as exc:
+            raise PermissionDenied(str(exc)) from exc
+
+        paginator = MessagePagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = MessageSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
 
 
 class ConversationMessagesView(APIView):
