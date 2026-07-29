@@ -14,7 +14,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.conf import settings
 from django.db import connections, router
-from django.db.models import Q
+from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
@@ -2888,7 +2888,10 @@ def build_catchup_calendar_event(
     note_text = (
         " ".join(build_catchup_note_lines(record, target_date))
         if event_type == CATCH_UP_EVENT_TYPE
-        else clean_text(record.notes) or (f"{event_title} booked by the learner." if event_type in BOOKED_EVENT_TITLES else "")
+        else (
+            clean_text(record.notes)
+            or ("Support session managed by the coach." if event_type == "student-support" else (f"{event_title} booked by the learner." if event_type in BOOKED_EVENT_TITLES else ""))
+        )
     )
 
     return {
@@ -3602,7 +3605,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
     events = assign_timetable_slots(events)
     events = sorted(events, key=lambda event: (event["date"], event["startHour"], event["learner"]))
     summary = build_timetable_summary(events, needs_scheduling, source_counts, source_needs_scheduling)
-    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up sessions can be created by the coach for any learner in their caseload."
+    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up and support sessions can be created by the coach for any learner in their caseload."
     return {
         "owner_name": owner_name,
         "events": events,
@@ -3827,6 +3830,77 @@ def coach_timetable_schedule_event(request):
 
     updated_event = overlay_calendar_record(base_event, record)
     return JsonResponse({"event": updated_event, "warning": warning})
+
+
+@csrf_exempt
+def coach_timetable_book_event(request):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    try:
+        payload = parse_json_body(request)
+        owner_email = clean_text(payload.get("ownerEmail") or request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+        learner_id = int(payload.get("learnerId") or 0)
+        session_type = clean_text(payload.get("sessionType")).lower()
+        scheduled_date = parse_date_value(payload.get("scheduledDate"))
+        scheduled_time = parse_time_value(payload.get("scheduledTime"))
+        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+    except (TypeError, ValueError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    if session_type not in BOOKED_EVENT_TITLES:
+        return JsonResponse({"detail": "sessionType must be 'catch-up' or 'student-support'."}, status=400)
+    if learner_id <= 0:
+        return JsonResponse({"detail": "learnerId is required."}, status=400)
+    if isinstance(scheduled_date, datetime):
+        scheduled_date = scheduled_date.date()
+    if not isinstance(scheduled_date, date):
+        return JsonResponse({"detail": "scheduledDate is required."}, status=400)
+    if scheduled_date < date.today():
+        return JsonResponse({"detail": "Choose today or a future date for this session."}, status=400)
+    if not isinstance(scheduled_time, time):
+        return JsonResponse({"detail": "scheduledTime is required."}, status=400)
+
+    notes = clean_text(payload.get("notes"))[:500]
+    caseload_rows = fetch_caseload_learner_profiles(owner_email)
+    learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if not learner:
+        return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
+    learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
+    learner_email = clean_text(getattr(learner, "email", None))
+
+    try:
+        next_sequence = (
+            CoachCalendarEvent.objects.filter(learner_id=learner_id, event_type__iexact=session_type)
+            .aggregate(max_seq=Max("sequence"))["max_seq"]
+            or 0
+        ) + 1
+        record = CoachCalendarEvent(
+            event_key=build_timetable_event_key(learner_id, session_type, next_sequence, scheduled_date),
+            owner_email=owner_email,
+            owner_name=owner_name,
+            learner_id=learner_id,
+            learner_name=learner_name,
+            learner_email=learner_email,
+            event_type=session_type,
+            sequence=next_sequence,
+            target_date=scheduled_date,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            duration_minutes=duration_minutes,
+            status=CoachCalendarEvent.STATUS_SCHEDULED,
+            notes=notes,
+        )
+        warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
+        record.last_graph_sync_error = warning
+        record.save()
+    except Exception as exc:  # noqa: BLE001
+        return JsonResponse({"detail": "Unable to create coach session.", "error": str(exc)}, status=500)
+
+    event = build_catchup_calendar_event(record, owner_name=owner_name, learner=learner)
+    return JsonResponse({"event": event, "warning": warning}, status=201)
 
 
 @csrf_exempt
