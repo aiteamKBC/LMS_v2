@@ -136,6 +136,28 @@ export default function MessagesPage() {
     else setLoadingConversations(false);
   }, [auth.isAuthenticated, loadConversations]);
 
+  // Keep the inbox list and unread badges current even when the production
+  // WebSocket proxy is unavailable.
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+
+    const syncConversationList = async () => {
+      try {
+        const data = await fetchChatConversations();
+        if (!Array.isArray(data)) return;
+        setConversations(data);
+        setActiveConversationId(current => (
+          current !== null && !data.some(item => item.id === current) ? null : current
+        ));
+      } catch {
+        // The initial load displays the error; background refreshes stay quiet.
+      }
+    };
+
+    const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
+    return () => window.clearInterval(conversationTimer);
+  }, [auth.isAuthenticated]);
+
   useEffect(() => {
     if (activeConversationId === null) {
       setMessages([]);
