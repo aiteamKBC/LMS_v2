@@ -8,6 +8,7 @@ import {
   type CustomPage,
   type CustomPageField,
 } from '@/mocks/internal-panel';
+import { BrandLockup } from '@/components/BrandLockup';
 
 const FIELD_TYPES = [
   { value: 'text', label: 'Text Input', icon: 'ri-text' },
@@ -286,9 +287,7 @@ export default function InternalPanelPage() {
   const renderTopBar = () => (
     <div className="bg-white border-b border-[#e2e4e8] px-4 md:px-5 py-3 flex items-center justify-between sticky top-0 z-30">
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-[#D4AF37] flex items-center justify-center">
-          <span className="text-foreground-950 font-bold text-xs font-heading">K</span>
-        </div>
+        <BrandLockup size="compact" />
         <div>
           <h1 className="text-sm font-heading font-semibold text-foreground-900">Internal Panel</h1>
           <p className="text-[10px] text-foreground-400">KBC LearningOS Administration Hub</p>

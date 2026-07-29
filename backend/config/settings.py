@@ -101,6 +101,8 @@ ALLOWED_HOSTS = [
 
 INSTALLED_APPS = [
     'quiz_api',
+    'rest_framework',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -112,6 +114,7 @@ INSTALLED_APPS = [
     'audit_api',
     'curriculum_api',
     'engagement_api',
+    'chat',
 ]
 
 MIDDLEWARE = [
@@ -142,14 +145,45 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'
+
+# DRF is used by the chat API. Session authentication keeps it compatible with
+# Django's existing browser login flow; projects using another auth mechanism
+# can add it here without changing chat permissions.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework.authentication.SessionAuthentication',
+    ),
+}
+
+# Redis is used only as the Channels transport. Chat history and read state are
+# always persisted in PostgreSQL (or the configured Django default database).
+CHAT_REDIS_URL = (
+    os.environ.get('CHAT_REDIS_URL')
+    or os.environ.get('REDIS_URL')
+    or 'redis://127.0.0.1:6379/1'
+)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [CHAT_REDIS_URL],
+        },
+    },
+}
 
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("DATABASEURL")
+DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("DATABASEURL")
+    or os.environ.get("Database_url")
+)
+USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
 
-if DATABASE_URL:
+if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
     DATABASES = {
@@ -180,7 +214,7 @@ _enrolment_database_url = (
     or os.environ.get('DATABASEURL')
     or os.environ.get('DATABASE_URL')
 )
-if _enrolment_database_url:
+if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']

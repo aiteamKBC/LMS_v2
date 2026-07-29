@@ -27,6 +27,7 @@ urlpatterns = [
     path('learner_api/', include('learner_api.urls')),
     path('audit_api/', include('audit_api.urls')),
     path('engagement_api/', include('engagement_api.urls')),
+    path('api/chat/', include('chat.urls')),
 ]
 
 if settings.DEBUG:

@@ -5,6 +5,7 @@ import type { RoleDef, PermissionLevel, AccessScope } from '@/mocks/rbac';
 import { ALL_ROLES, ALL_PERMISSIONS, PERMISSION_LEVELS, ROUTE_PERMISSIONS, NAV_PERMISSIONS } from '@/mocks/rbac';
 import { kbcUsers } from '@/mocks/users';
 import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
+import { bootstrapChatSession, clearChatSession } from '@/api/chat';
 
 // ============================================================
 // Types
@@ -147,6 +148,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
+  // Keep the Django chat session aligned with the local demo login. The chat
+  // API uses the participant email to scope conversations in PostgreSQL.
+  useEffect(() => {
+    if (!auth.isAuthenticated || !auth.user?.email) return;
+    void bootstrapChatSession(auth.user.email).catch(() => {
+      // Non-chat demo roles do not have a chat identity; their normal app
+      // session should continue to work without showing a global error.
+    });
+  }, [auth.isAuthenticated, auth.user?.email]);
+
   const login = useCallback((email: string) => {
     const foundUser = kbcUsers.find(u => u.email === email);
     if (!foundUser) return;
@@ -169,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    void clearChatSession();
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setAuth({
       user: null,

@@ -766,7 +766,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/messages",
-    element: <MessagesPage />,
+    element: <GeneralMessagesPage />,
   },
   {
     path: "/workspace/employer",
@@ -1064,7 +1064,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/messages",
-    element: <CoachMessagesPage />,
+    element: <GeneralMessagesPage />,
   },
   {
     path: "/coach/reports",
