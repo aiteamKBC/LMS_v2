@@ -11,6 +11,7 @@ interface ContactRow {
   secondary: string;
   tone: string;
   target: string;
+  learnerId?: string;
 }
 
 export default function MessagesTab({ data }: CaseFileTabProps) {
@@ -26,6 +27,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       secondary: data.detail?.phone || data.programme || '--',
       tone: 'bg-accent-100 text-accent-700',
       target: data.email || data.displayName,
+      learnerId: data.id,
     });
 
     if (data.coachName || data.coachEmail) {
@@ -63,7 +65,13 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
     { label: 'Last Evidence Submitted', value: data.snapshot?.lastSubmittedEvidence || '--', detail: 'Latest evidence date stored in the coach caseload snapshot.', icon: 'ri-folder-upload-line' },
   ].filter((row) => row.value && row.value !== '--');
 
-  const handleOpenConversation = (target: string) => {
+  const handleOpenConversation = (contact: ContactRow) => {
+    if (contact.id === 'learner' && contact.learnerId) {
+      navigate(`/coach/messages?learner=${encodeURIComponent(contact.learnerId)}`);
+      return;
+    }
+
+    const target = contact.target;
     if (!target) {
       return;
     }
@@ -108,7 +116,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
                       <p className="text-[10px] text-foreground-400 mt-1">{contact.secondary}</p>
                     </div>
                     <button
-                      onClick={() => handleOpenConversation(contact.target)}
+                      onClick={() => handleOpenConversation(contact)}
                       className="px-3 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[11px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
                     >
                       <i className="ri-message-3-line text-xs"></i> Message

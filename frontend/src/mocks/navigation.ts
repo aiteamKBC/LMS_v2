@@ -108,6 +108,12 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/caseload',
   },
   {
+    id: 'coach-messages',
+    label: 'Learner Messages',
+    icon: 'ri-message-3-line',
+    href: '/coach/messages',
+  },
+  {
     id: 'coach-group-attendance',
     label: 'Attendance',
     icon: 'ri-calendar-2-line',
