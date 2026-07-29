@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .message_views import coach_message_thread, coach_messages_threads
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -10,6 +11,7 @@ from .views import (
     coach_marking_queue,
     coach_monthly_activity,
     coach_timetable_event_action,
+    coach_timetable_book_event,
     coach_timetable_schedule_event,
     coach_timetable,
 )
@@ -17,6 +19,8 @@ from .views import (
 
 urlpatterns = [
     path('coach/caseload', coach_caseload, name='coach-caseload'),
+    path('coach/messages', coach_messages_threads, name='coach-messages-threads'),
+    path('coach/messages/<int:learner_id>', coach_message_thread, name='coach-message-thread'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
@@ -26,6 +30,7 @@ urlpatterns = [
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
     path('coach/monthly-activity', coach_monthly_activity, name='coach-monthly-activity'),
     path('coach/timetable', coach_timetable, name='coach-timetable'),
+    path('coach/timetable/events/book', coach_timetable_book_event, name='coach-timetable-event-book'),
     path('coach/timetable/events/schedule', coach_timetable_schedule_event, name='coach-timetable-event-schedule'),
     path('coach/timetable/events/action', coach_timetable_event_action, name='coach-timetable-event-action'),
 ]

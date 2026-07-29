@@ -7,6 +7,7 @@ import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
+const BOOK_ENDPOINT = '/coach_api/coach/timetable/events/book';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
 
@@ -101,6 +102,8 @@ interface ScheduleNavigationIntent {
   targetDate?: string | null;
   title?: string;
 }
+
+type CoachBookableSessionType = 'catch-up' | 'student-support';
 
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
   totalEvents: 0,
@@ -234,6 +237,13 @@ function formatTime(h: number) {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function buildInitials(value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '--';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 'dayOfMonth'>) {
@@ -653,6 +663,17 @@ export default function CoachTimetablePage() {
   const [events, setEvents] = useState<TimetableEvent[]>([]);
   const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
+  const [createSessionOpen, setCreateSessionOpen] = useState(false);
+  const [createSessionType, setCreateSessionType] = useState<CoachBookableSessionType>('catch-up');
+  const [createSessionLearnerId, setCreateSessionLearnerId] = useState('');
+  const [createSessionLearnerSearch, setCreateSessionLearnerSearch] = useState('');
+  const [createSessionLearnerPickerOpen, setCreateSessionLearnerPickerOpen] = useState(false);
+  const [createSessionDate, setCreateSessionDate] = useState('');
+  const [createSessionTime, setCreateSessionTime] = useState('09:00');
+  const [createSessionDuration, setCreateSessionDuration] = useState(60);
+  const [createSessionNotes, setCreateSessionNotes] = useState('');
+  const [createSessionBusy, setCreateSessionBusy] = useState(false);
+  const [createSessionError, setCreateSessionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scheduleDate, setScheduleDate] = useState('');
@@ -803,6 +824,58 @@ export default function CoachTimetablePage() {
     setEventActionNotice(selectedEvent.syncWarning || null);
   }, [selectedEvent]);
 
+  const todayInputValue = formatDateInputValue(todayYear, todayMonth, todayDay);
+
+  const createSessionLearnerOptions = useMemo(() => {
+    const learnerMap = new Map<string, { name: string; programme: string; cohort: string; email: string }>();
+    const registerLearner = (event: TimetableEvent) => {
+      if (!event.learnerId) return;
+      if (learnerMap.has(event.learnerId)) return;
+      learnerMap.set(event.learnerId, {
+        name: event.learner || 'Learner',
+        programme: event.programme || '--',
+        cohort: event.cohort || '--',
+        email: event.email || '--',
+      });
+    };
+
+    schedulerCatchUpEvents.forEach(registerLearner);
+    events.forEach(registerLearner);
+
+    return [...learnerMap.entries()]
+      .sort((a, b) => a[1].name.localeCompare(b[1].name))
+      .map(([value, learner]) => ({
+        value,
+        name: learner.name,
+        programme: learner.programme,
+        cohort: learner.cohort,
+        email: learner.email,
+        label: learner.programme && learner.programme !== '--'
+          ? `${learner.name} · ${learner.programme}`
+          : learner.name,
+      }));
+  }, [events, schedulerCatchUpEvents]);
+
+  const selectedCreateSessionLearner = useMemo(
+    () => createSessionLearnerOptions.find(option => option.value === createSessionLearnerId) || null,
+    [createSessionLearnerId, createSessionLearnerOptions],
+  );
+
+  const filteredCreateSessionLearners = useMemo(() => {
+    const term = createSessionLearnerSearch.trim().toLowerCase();
+    if (!term) return createSessionLearnerOptions;
+    return createSessionLearnerOptions.filter(option => (
+      `${option.name} ${option.programme} ${option.cohort} ${option.email}`.toLowerCase().includes(term)
+    ));
+  }, [createSessionLearnerOptions, createSessionLearnerSearch]);
+
+  const getDefaultCreateSessionDate = useCallback(() => {
+    const selectedDate = new Date(viewYear, viewMonth, Math.min(selectedDay, getDaysInMonth(viewYear, viewMonth)));
+    const selectedDateAtStart = startOfDay(selectedDate);
+    if (selectedDateAtStart.getTime() < todayStartTime) return todayInputValue;
+    return formatDateInputValue(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+  }, [selectedDay, todayInputValue, todayStartTime, viewMonth, viewYear]);
+
   const schedulableEvents = useMemo(() => {
     const nonCatchUpEvents = events.filter(event => event.source !== 'catch-up' && isSelectableScheduleEvent(event));
     const catchUpEventMap = new Map<string, TimetableEvent>();
@@ -930,6 +1003,25 @@ export default function CoachTimetablePage() {
     };
   }, [scheduleModalBusy, scheduleModalOpen]);
 
+  useEffect(() => {
+    if (!createSessionOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !createSessionBusy) {
+        setCreateSessionOpen(false);
+      }
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [createSessionBusy, createSessionOpen]);
+
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
   const visibleRangeEvents = useMemo(() => {
@@ -1002,7 +1094,6 @@ export default function CoachTimetablePage() {
     completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
     cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
-  const sourceFilterCounts = Object.fromEntries(sourceFilterOptions.map(option => [option.value, option.count])) as Record<SourceFilter, number>;
   const selectedDayLabel = `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
   const activeFilterLabel = filterSource === 'all'
     ? STATUS_FILTER_LABELS[filterStatus]
@@ -1048,19 +1139,47 @@ export default function CoachTimetablePage() {
     setSelectedDay(day);
   };
 
+  const openCreateSessionModal = useCallback(() => {
+    const preferredLearnerId = selectedEvent?.learnerId && createSessionLearnerOptions.some(option => option.value === selectedEvent.learnerId)
+      ? selectedEvent.learnerId
+      : (createSessionLearnerOptions[0]?.value || '');
+    const preferredType: CoachBookableSessionType = selectedEvent?.source === 'student-support' || selectedEvent?.type === 'welfare'
+      ? 'student-support'
+      : 'catch-up';
+
+    setCreateSessionType(preferredType);
+    setCreateSessionLearnerId(preferredLearnerId);
+    setCreateSessionDate(getDefaultCreateSessionDate());
+    setCreateSessionTime('09:00');
+    setCreateSessionDuration(60);
+    setCreateSessionNotes('');
+    setCreateSessionError(null);
+    setCreateSessionLearnerSearch('');
+    setCreateSessionLearnerPickerOpen(false);
+    setCreateSessionOpen(true);
+  }, [createSessionLearnerOptions, getDefaultCreateSessionDate, selectedEvent]);
+
+  const closeCreateSessionModal = useCallback(() => {
+    if (createSessionBusy) return;
+    setCreateSessionOpen(false);
+    setCreateSessionLearnerSearch('');
+    setCreateSessionLearnerPickerOpen(false);
+    setCreateSessionError(null);
+  }, [createSessionBusy]);
+
   const openScheduleModal = useCallback((presetEvent?: TimetableEvent | null) => {
     setScheduleModalError(null);
     setScheduleModalNotice(null);
 
     if (presetEvent && isSelectableScheduleEvent(presetEvent)) {
-      setScheduleModalType(presetEvent.source);
+      setScheduleModalType(presetEvent.source as SchedulableSource);
       setScheduleModalLearnerKey(learnerIdentity(presetEvent));
       setScheduleModalEventKey(eventIdentity(presetEvent));
     } else {
       const preferredEvent = schedulableEvents[0];
 
       if (preferredEvent) {
-        setScheduleModalType(preferredEvent.source);
+        setScheduleModalType(preferredEvent.source as SchedulableSource);
         setScheduleModalLearnerKey(learnerIdentity(preferredEvent));
         setScheduleModalEventKey(eventIdentity(preferredEvent));
       } else {
@@ -1150,6 +1269,62 @@ export default function CoachTimetablePage() {
     }
   }, [scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
 
+  const handleCreateSession = useCallback(async () => {
+    if (!createSessionLearnerId || !createSessionDate || !createSessionTime) return;
+
+    setCreateSessionBusy(true);
+    setCreateSessionError(null);
+    try {
+      const response = await fetch(BOOK_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          learnerId: createSessionLearnerId,
+          sessionType: createSessionType,
+          scheduledDate: createSessionDate,
+          scheduledTime: createSessionTime,
+          durationMinutes: createSessionDuration,
+          notes: createSessionNotes,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+
+      const createdEvent = data.event as TimetableEvent;
+      updateSingleEvent(createdEvent);
+      if (createdEvent.source === 'catch-up') {
+        setSchedulerCatchUpEvents(current => {
+          const filtered = current.filter(event => event.learnerId !== createdEvent.learnerId);
+          return [...filtered, createdEvent].sort(compareSchedulablePriority);
+        });
+      }
+
+      setFilterSource('all');
+      setFilterStatus('all');
+      setCalendarDate(createdEvent.year, createdEvent.month, createdEvent.dayOfMonth);
+      setViewMode('day');
+      setSelectedEvent(createdEvent);
+      setEventActionError(null);
+      setEventActionNotice(typeof data.warning === 'string' && data.warning ? data.warning : null);
+      setCreateSessionOpen(false);
+      setCreateSessionLearnerSearch('');
+      setCreateSessionLearnerPickerOpen(false);
+    } catch (err) {
+      setCreateSessionError(err instanceof Error ? err.message : 'Unable to create session');
+    } finally {
+      setCreateSessionBusy(false);
+    }
+  }, [
+    createSessionDate,
+    createSessionDuration,
+    createSessionLearnerId,
+    createSessionNotes,
+    createSessionTime,
+    createSessionType,
+    setCalendarDate,
+    updateSingleEvent,
+  ]);
+
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey || !selectedScheduleEvent.ownerEmail) return;
 
@@ -1238,45 +1413,72 @@ export default function CoachTimetablePage() {
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
-        {/* â•â•â•â•â•â•â•â•â•â•â• HEADER â•â•â•â•â•â•â•â•â•â•â• */}
-        <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
-          <div className="flex flex-col gap-4 border-b border-background-100 px-4 py-4 md:px-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary-700">Progress Coach</span>
-                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{todayWeekdayLabel} {String(todayDay).padStart(2, '0')} {todayMonthLabel}</span>
-              </div>
-              <h1 className="text-[24px] font-heading font-bold tracking-tight text-foreground-950 md:text-[28px]">My Calendar</h1>
-              <p className="mt-1 max-w-2xl text-[13px] leading-5 text-foreground-500">
-                Live sessions, coaching reviews, progress reviews, and catch-up bookings in one scheduling workspace.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => openScheduleModal(selectedEvent && isSelectableScheduleEvent(selectedEvent) ? selectedEvent : null)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-[12px] font-bold text-white shadow-md shadow-primary-500/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-add-circle-line text-sm"></i>
-              Create Event
-            </button>
+        {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
+        <section
+          className="relative overflow-hidden rounded-[28px] border border-white/10 shadow-[0_22px_60px_-32px_rgba(27,9,68,0.9)]"
+          style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-800)) 100%)' }}
+        >
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div
+              className="absolute opacity-25"
+              style={{ width: '52%', height: '44%', left: '-5%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.32) 0%, transparent 70%)', filter: 'blur(60px)' }}
+            />
+            <div
+              className="absolute opacity-20"
+              style={{ width: '44%', height: '42%', right: '-6%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.28) 0%, transparent 72%)', filter: 'blur(58px)' }}
+            />
           </div>
-          <div className="flex flex-wrap gap-2 px-4 pb-4 md:px-5">
-            {[
-              { label: 'Visible', value: filteredEvents.length, icon: 'ri-calendar-check-line', tone: 'text-primary-700 bg-primary-50' },
-              { label: 'Live Sessions', value: sourceFilterCounts['live-session'], icon: 'ri-live-line', tone: 'text-sky-700 bg-sky-50' },
-              { label: 'Needs Schedule', value: statusFilterCounts['needs-schedule'], icon: 'ri-calendar-schedule-line', tone: 'text-orange-700 bg-orange-50' },
-              { label: 'Selected Day', value: selectedDayEvents.length, icon: 'ri-focus-3-line', tone: 'text-secondary-700 bg-secondary-50' },
-            ].map(stat => (
-              <div key={stat.label} className="flex min-w-[170px] items-center gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-2">
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${stat.tone}`}>
-                  <i className={stat.icon}></i>
-                </span>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{stat.label}</p>
-                  <p className="text-base font-heading font-bold text-foreground-950">{stat.value}</p>
+          <div className="relative flex min-h-[220px] flex-col gap-6 px-5 py-5 md:px-7 md:py-6 lg:flex-row lg:items-center">
+            <div className="min-w-0 flex-1">
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <span className="rounded-full border border-accent-300/20 bg-accent-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-accent-200">Progress Coach</span>
+                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/90">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+              </div>
+              <h1 className="max-w-xl text-[28px] font-heading font-bold tracking-tight text-white md:text-[34px]">My Calendar</h1>
+              <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-[15px]">
+                Plan monthly coaching reviews, progress reviews, catch-up sessions, and learner support from one clean scheduling workspace.
+              </p>
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={openCreateSessionModal}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-primary-800 shadow-lg shadow-foreground-950/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
+                >
+                  <i className="ri-add-circle-line text-base"></i>
+                  Create Session
+                </button>
+                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[12px] text-white/75 backdrop-blur-sm">
+                  Create a <span className="font-semibold text-white">catch-up or support session</span> and add it straight to the learner calendar.
                 </div>
               </div>
-            ))}
+            </div>
+
+            <div className="flex shrink-0 items-center justify-center lg:w-[380px]">
+              <div className="relative">
+                <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
+                  <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
+                    <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
+                      <div className="flex items-center justify-between">
+                        {[0, 1, 2, 3, 4, 5].map(index => (
+                          <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
+                            <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700"></span>
+                            <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm"></span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="px-4 pb-4 pt-3 text-center">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
+                      <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
+                        {String(todayDay).padStart(2, '0')}
+                      </p>
+                      <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
+                    </div>
+                    <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -1292,7 +1494,7 @@ export default function CoachTimetablePage() {
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
                   <p className="mt-1 text-sm font-heading font-semibold text-foreground-900">Loading your coaching calendar</p>
                   <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-                    Preparing sessions, reviews, and catch-up events for the current view.
+                    Preparing sessions, reviews, catch-up, and support events for the current view.
                   </p>
                 </div>
               </div>
@@ -1511,7 +1713,7 @@ export default function CoachTimetablePage() {
                       return (
                         <div
                           key={`empty-${idx}`}
-                          className="min-h-[118px] border-b border-r border-background-100 bg-background-100/35 xl:min-h-[132px]"
+                          className="min-h-[118px] border-b border-r border-background-200 bg-background-100/35 xl:min-h-[132px]"
                         />
                       );
                     }
@@ -1530,8 +1732,8 @@ export default function CoachTimetablePage() {
                           isSel
                             ? 'z-10 border-primary-300 bg-primary-50/60 shadow-[inset_0_0_0_1px_rgba(124,58,237,0.28)]'
                             : isWeekend
-                              ? 'border-background-100 bg-background-100/20 hover:bg-primary-50/20'
-                              : 'border-background-100 bg-white hover:bg-primary-50/15'
+                              ? 'border-background-200 bg-background-100/20 hover:bg-primary-50/20'
+                              : 'border-background-200 bg-white hover:bg-primary-50/15'
                         }`}
                       >
                         <div className="mb-2 flex items-center justify-between gap-2">
@@ -2116,6 +2318,268 @@ export default function CoachTimetablePage() {
           </div>
         </div>
       </div>
+
+      {createSessionOpen && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeCreateSessionModal}>
+          <div
+            className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-[24px] border border-background-200 bg-background-50 shadow-[0_24px_60px_-32px_rgba(15,8,40,0.32)]"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="border-b border-background-200/70 bg-background-50 px-4 py-4 md:px-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[10px] font-semibold text-primary-700">
+                    <i className="ri-user-star-line"></i>
+                    Coach Calendar
+                  </div>
+                  <h2 className="text-[21px] font-heading font-bold tracking-tight text-foreground-950">Schedule Coach Session</h2>
+                  <p className="mt-1 text-[13px] leading-5 text-foreground-500">
+                    Book a learner session and add it to both calendars.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeCreateSessionModal}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                  aria-label="Close create session modal"
+                >
+                  <i className="ri-close-line text-base"></i>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 px-4 py-4 md:px-5 md:py-5">
+              <section>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Learner</p>
+                    <p className="mt-1 text-[12px] text-foreground-500">Choose who this session is for.</p>
+                  </div>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                    {createSessionLearnerOptions.length} learner{createSessionLearnerOptions.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="relative">
+                  <div className={`rounded-[18px] border bg-white shadow-sm transition-smooth ${
+                    createSessionLearnerPickerOpen
+                      ? 'border-primary-300 ring-4 ring-primary-100/80'
+                      : 'border-background-200 hover:border-primary-200'
+                  }`}>
+                    <div className="flex min-h-[56px] items-center gap-3 px-3 py-2">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-[12px] font-bold text-primary-700 ring-1 ring-primary-100">
+                        {selectedCreateSessionLearner ? buildInitials(selectedCreateSessionLearner.name) : <i className="ri-search-line text-base"></i>}
+                      </span>
+                      <input
+                        type="text"
+                        value={createSessionLearnerPickerOpen ? createSessionLearnerSearch : (selectedCreateSessionLearner?.label || '')}
+                        onFocus={() => {
+                          if (createSessionLearnerOptions.length === 0) return;
+                          setCreateSessionLearnerPickerOpen(true);
+                          setCreateSessionLearnerSearch('');
+                        }}
+                        onChange={event => {
+                          setCreateSessionLearnerPickerOpen(true);
+                          setCreateSessionLearnerSearch(event.target.value);
+                        }}
+                        onBlur={() => {
+                          window.setTimeout(() => setCreateSessionLearnerPickerOpen(false), 120);
+                        }}
+                        placeholder="Search learner name, email, programme..."
+                        disabled={createSessionLearnerOptions.length === 0}
+                        className="min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-sm font-semibold text-foreground-900 shadow-none outline-none ring-0 placeholder:font-medium placeholder:text-foreground-400 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none disabled:cursor-not-allowed"
+                      />
+                      {createSessionLearnerSearch && createSessionLearnerPickerOpen ? (
+                        <button
+                          type="button"
+                          onMouseDown={event => event.preventDefault()}
+                          onClick={() => setCreateSessionLearnerSearch('')}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                          aria-label="Clear learner search"
+                        >
+                          <i className="ri-close-line text-base"></i>
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onMouseDown={event => event.preventDefault()}
+                        onClick={() => {
+                          if (createSessionLearnerOptions.length === 0) return;
+                          setCreateSessionLearnerPickerOpen(current => !current);
+                          setCreateSessionLearnerSearch('');
+                        }}
+                        disabled={createSessionLearnerOptions.length === 0}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                        aria-label="Toggle learner list"
+                      >
+                        <i className={`ri-arrow-down-s-line text-lg transition-transform ${createSessionLearnerPickerOpen ? 'rotate-180' : ''}`}></i>
+                      </button>
+                    </div>
+                  </div>
+
+                  {createSessionLearnerPickerOpen && (
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[110] overflow-hidden rounded-[18px] border border-background-200 bg-white shadow-2xl shadow-foreground-900/12">
+                      <div className="max-h-[260px] overflow-y-auto p-2">
+                        {filteredCreateSessionLearners.length > 0 ? (
+                          filteredCreateSessionLearners.map(option => {
+                            const isSelected = option.value === createSessionLearnerId;
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                onMouseDown={event => event.preventDefault()}
+                                onClick={() => {
+                                  setCreateSessionLearnerId(option.value);
+                                  setCreateSessionLearnerSearch('');
+                                  setCreateSessionLearnerPickerOpen(false);
+                                }}
+                                className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-smooth cursor-pointer ${
+                                  isSelected ? 'bg-primary-50 text-primary-800' : 'text-foreground-800 hover:bg-background-100'
+                                }`}
+                              >
+                                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[12px] font-bold ${
+                                  isSelected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-600'
+                                }`}>
+                                  {buildInitials(option.name)}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-sm font-semibold">{option.name}</span>
+                                  <span className="mt-0.5 block truncate text-[11px] text-foreground-500">
+                                    {[option.programme, option.cohort, option.email].filter(value => value && value !== '--').join(' · ') || 'No extra details'}
+                                  </span>
+                                </span>
+                                {isSelected && <i className="ri-check-line text-base text-primary-600"></i>}
+                              </button>
+                            );
+                          })
+                        ) : (
+                          <div className="px-4 py-8 text-center">
+                            <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-background-100 text-foreground-300">
+                              <i className="ri-search-line text-lg"></i>
+                            </span>
+                            <p className="text-sm font-semibold text-foreground-800">No learners found</p>
+                            <p className="mt-1 text-[11px] text-foreground-500">Try another name, email, or programme.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {createSessionLearnerOptions.length === 0 && (
+                  <p className="mt-2 text-[11px] text-amber-700">No active learners are available in this coach caseload right now.</p>
+                )}
+              </section>
+
+              <section>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Session Type</p>
+                <p className="mt-1 text-[12px] text-foreground-500">Choose the kind of session you want to create.</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {[
+                    { value: 'catch-up' as CoachBookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', description: 'Quick progress check-in' },
+                    { value: 'student-support' as CoachBookableSessionType, label: 'Support', icon: 'ri-heart-2-line', description: 'Extra support for learner needs' },
+                  ].map((sessionType) => {
+                    const isActive = createSessionType === sessionType.value;
+                    return (
+                      <button
+                        key={sessionType.value}
+                        type="button"
+                        onClick={() => setCreateSessionType(sessionType.value)}
+                        className={`rounded-[20px] border px-4 py-4 text-left transition-smooth cursor-pointer ${
+                          isActive
+                            ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100'
+                            : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/40'
+                        }`}
+                      >
+                        <span className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${isActive ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}>
+                          <i className={`${sessionType.icon} text-base`}></i>
+                        </span>
+                        <p className="text-[18px] font-heading font-semibold text-foreground-950">{sessionType.label}</p>
+                        <p className="mt-1 text-[12px] leading-5 text-foreground-500">{sessionType.description}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                  <input
+                    type="date"
+                    value={createSessionDate}
+                    min={todayInputValue}
+                    onChange={event => setCreateSessionDate(event.target.value)}
+                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Time</span>
+                  <input
+                    type="time"
+                    value={createSessionTime}
+                    onChange={event => setCreateSessionTime(event.target.value)}
+                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                  />
+                </label>
+              </section>
+
+              <section>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
+                  <select
+                    value={createSessionDuration}
+                    onChange={event => setCreateSessionDuration(Number(event.target.value))}
+                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                  >
+                    {[30, 45, 60, 90].map(minutes => (
+                      <option key={minutes} value={minutes}>{minutes === 60 ? '1 hour' : `${minutes} minutes`}</option>
+                    ))}
+                  </select>
+                </label>
+              </section>
+
+              <section>
+                <label className="block">
+                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Notes (Optional)</span>
+                  <textarea
+                    value={createSessionNotes}
+                    onChange={event => setCreateSessionNotes(event.target.value.slice(0, 500))}
+                    placeholder="Add anything the learner should know before the session..."
+                    rows={4}
+                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
+                  />
+                </label>
+                <p className="mt-1 text-[10px] text-foreground-400">{createSessionNotes.length}/500</p>
+              </section>
+
+              {createSessionError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {createSessionError}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-background-200/70 pt-3">
+                <button
+                  type="button"
+                  onClick={closeCreateSessionModal}
+                  className="rounded-[18px] border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateSession}
+                  disabled={createSessionBusy || !createSessionLearnerId || !createSessionDate || !createSessionTime}
+                  className="inline-flex items-center gap-2 rounded-[18px] bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <i className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></i>
+                  {createSessionBusy ? 'Booking...' : 'Book Session'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeScheduleModal}>
