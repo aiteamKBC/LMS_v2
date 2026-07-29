@@ -68,10 +68,12 @@ function SavedMcmAnswers({ sectionId, responses, emptyMessage }: { sectionId: st
       {answers.map((item) => (
         <div key={item.id} className="rounded-xl border border-background-200 bg-background-100/55 p-4">
           <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{item.label}</p>
-          {item.type === 'rating' ? (
-            <div className="mt-2 flex items-center gap-2"><span className="text-lg font-bold text-primary-700">{item.answer}/5</span><div className="flex gap-1">{[1, 2, 3, 4, 5].map((rating) => <i key={rating} className={rating <= Number(item.answer) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}></i>)}</div></div>
-          ) : item.type === 'rag' ? (
+          {item.type === 'rag' ? (
             <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${item.answer.toLowerCase() === 'green' ? 'bg-emerald-100 text-emerald-700' : item.answer.toLowerCase() === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}><i className="ri-circle-fill text-[8px]"></i>{item.answer}</span>
+          ) : item.type === 'yes-no' || item.type === 'agreement' ? (
+            <span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${item.answer === 'Yes' || item.answer === 'Agree' ? 'bg-emerald-100 text-emerald-700' : item.answer === 'No' || item.answer === 'Disagree' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>{item.answer}</span>
+          ) : item.type === 'date' ? (
+            <p className="mt-2 text-sm font-bold text-primary-700">{formatDate(item.answer, true)}</p>
           ) : (
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{item.answer}</p>
           )}

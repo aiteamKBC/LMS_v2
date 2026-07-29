@@ -3,9 +3,14 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
+import OTJHTab from './components/OTJHTab';
+import KSBsTab from './components/KSBsTab';
+import EvidenceTab from './components/EvidenceTab';
+import AuditTab from '@/features/audit/AuditTab';
 import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
+import LearningPlanTab from './components/OverviewTab';
 import {
   flattenJourney,
   formatFraction,
@@ -20,17 +25,33 @@ import {
 const coachNav = roleNavMap.coach;
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
-const TABS = [
+const CASE_FILE_TABS = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
   { id: 'programme', label: 'Programme & Employer', icon: 'ri-building-line' },
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'reviews', label: 'Reviews & Meetings', icon: 'ri-calendar-todo-line' },
-  { id: 'support', label: 'Support Plans', icon: 'ri-shield-heart-line' },
-  { id: 'timeline', label: 'Timeline & Audit', icon: 'ri-history-line' },
+  { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
+  { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
+  { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
+  { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
+  { id: 'audit', label: 'Audit', icon: 'ri-file-search-line' },
+  { id: 'activity', label: 'Activity', icon: 'ri-history-line' },
+  { id: 'network', label: 'Network', icon: 'ri-user-heart-line' },
+  { id: 'documents', label: 'Documents', icon: 'ri-folder-line' },
 ] as const;
 
-type TabId = typeof TABS[number]['id'] | 'coach-notes';
+type TabId = typeof CASE_FILE_TABS[number]['id'] | 'coach-notes';
+const HIDDEN_CASE_FILE_TAB_IDS = new Set<typeof CASE_FILE_TABS[number]['id']>([
+  'otjh',
+  'ksbs',
+  'evidence',
+  'audit',
+  'activity',
+  'network',
+  'documents',
+]);
+const NAV_TABS = CASE_FILE_TABS.filter(tab => !HIDDEN_CASE_FILE_TAB_IDS.has(tab.id));
 type LocationState = {
   learnerId?: string;
   learnerName?: string;
@@ -83,7 +104,7 @@ export default function LearnerCaseFile() {
   });
 
   useEffect(() => {
-    if (TABS.some((tab) => tab.id === requestedTab)) {
+    if (CASE_FILE_TABS.some((tab) => tab.id === requestedTab)) {
       setActiveTab(requestedTab as TabId);
     }
   }, [requestedTab]);
@@ -139,17 +160,26 @@ export default function LearnerCaseFile() {
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <NetworkTab data={data} />;
-      case 'timeline':
+        return <LearningPlanTab data={data} />;
+      case 'otjh':
+        return <OTJHTab data={data} />;
+      case 'ksbs':
+        return <KSBsTab data={data} />;
+      case 'evidence':
+        return <EvidenceTab data={data} />;
+      case 'audit':
+        return <AuditTab data={data} />;
+      case 'activity':
         return <ActivityTab data={data} />;
+      case 'network':
+        return <NetworkTab data={data} />;
+      case 'documents':
+        return <DocumentsTab data={data} />;
       default:
         return <ReferenceOverviewContent data={data} />;
     }
   };
 
-  const expectedProgress = data?.overallProgress !== null && data?.overallProgress !== undefined
-    ? Math.max(0, Math.min(100, (data.overallProgress ?? 0) - parseProfileVariance(data.snapshot?.progressVariance)))
-    : null;
   return (
     <WorkspaceShell
       role="coach"
@@ -180,27 +210,27 @@ export default function LearnerCaseFile() {
 
           <section className="overflow-hidden rounded-2xl border border-primary-800/15 bg-white shadow-[0_12px_34px_rgba(48,24,90,0.1)]">
             <div
-              className="px-5 py-6 text-white md:px-7"
+              className="px-6 py-7 text-white md:px-8 md:py-8"
               style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
             >
-              <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
-                <div className="flex min-w-0 items-center gap-4">
-                  <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 border-white/30 bg-white/15 text-lg font-bold shadow-lg">
+              <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-center gap-5">
+                  <span className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-white/30 bg-white/15 text-[22px] font-bold shadow-lg">
                     {data?.initials || '--'}
                   </span>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h1 className="text-2xl font-heading font-bold text-white">{pageTitle}</h1>
-                      <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
+                      <h1 className="text-[30px] font-heading font-bold leading-tight text-white md:text-[34px]">{pageTitle}</h1>
+                      <span className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-white/75">
+                    <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-white/75">
                       {data?.email && <span className="inline-flex items-center gap-1.5"><i className="ri-mail-line"></i>{data.email}</span>}
                       {data?.detail?.phone && <span className="inline-flex items-center gap-1.5"><i className="ri-phone-line"></i>{data.detail.phone}</span>}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
+                  <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-11 items-center gap-2 rounded-xl bg-white px-5 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
                     <i className="ri-calendar-line"></i> Schedule
                   </button>
                 </div>
@@ -209,10 +239,10 @@ export default function LearnerCaseFile() {
 
             <div className="grid grid-cols-2 divide-x divide-y divide-foreground-100 sm:grid-cols-4 xl:grid-cols-7 xl:divide-y-0">
               <ProfileTopStat label="Overall" value={formatPercent(data?.overallProgress ?? null)} tone="primary" />
-              <ProfileTopStat label="Expected" value={formatPercent(expectedProgress)} tone="muted" />
               <ProfileTopStat label="OTJH" value={data ? formatFraction(data.otjhCompleted, data.otjhTarget) : '--'} tone="primary" />
+              <ProfileTopStat label="KSB" value={formatPercent(data?.ksbProgress ?? null)} tone="emerald" />
               <ProfileTopStat label="Attendance" value={formatPercent(data?.attendanceRate ?? null)} tone="emerald" />
-              <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone="emerald" dot />
+              <ProfileTopStat label="RAG" value={data?.snapshot?.coachRag || '--'} tone={profileRagTone(data?.snapshot?.coachRag)} dot />
               <ProfileTopStat label="Gateway" value={data?.gatewayReviewDate || '--'} tone="primary" />
               <ProfileTopStat label="Next Session" value={nextLiveSession?.summary || '--'} tone="muted" wrap />
             </div>
@@ -221,7 +251,7 @@ export default function LearnerCaseFile() {
           <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-sm">
             <div className="overflow-x-auto border-b border-foreground-100 scrollbar-hide">
               <div className="flex min-w-max px-2">
-                {TABS.map((tab) => (
+                {NAV_TABS.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
@@ -362,7 +392,7 @@ export default function LearnerCaseFile() {
 
               <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-1 overflow-x-auto rounded-2xl border border-white/10 bg-white/10 p-1 shadow-inner scrollbar-hide">
-                  {TABS.map((tab) => (
+                  {NAV_TABS.map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
@@ -698,7 +728,56 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                 </div>
               </div>
 
-              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(320px,0.9fr)]">
+              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.25fr)]">
+                <div className="space-y-3 rounded-xl border border-primary-200/70 bg-primary-50/45 p-3.5">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-primary-700 shadow-sm">
+                          <i className="ri-filter-3-line text-sm"></i>
+                        </span>
+                        <div>
+                          <p className="text-[12px] font-bold text-foreground-900">Filter KSB list</p>
+                          <p className="mt-0.5 text-[11px] text-foreground-500">
+                            Narrow the list by category or search by code, label, and description.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <span className="inline-flex items-center self-start rounded-full border border-primary-200 bg-white px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-primary-700">
+                      Filter
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => setActiveKsbCategory(category)}
+                        className={`inline-flex items-center rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
+                          activeKsbCategory === category
+                            ? 'bg-primary-700 text-white shadow-sm'
+                            : 'bg-white text-foreground-600 ring-1 ring-foreground-200/70 hover:bg-background-100'
+                        }`}
+                      >
+                        {category}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative">
+                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                    <input
+                      type="text"
+                      value={ksbSearch}
+                      onChange={(event) => setKsbSearch(event.target.value)}
+                      placeholder="Filter by code, category, or description..."
+                      className="w-full rounded-xl border border-primary-200/70 bg-white py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400"
+                    />
+                  </div>
+                </div>
+
                 <div className="grid gap-3 sm:grid-cols-3">
                   {categorySummary.map((group) => (
                     <div key={group.category} className="rounded-xl border border-foreground-200/60 bg-white/80 p-3">
@@ -713,36 +792,6 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                       </p>
                     </div>
                   ))}
-                </div>
-
-                <div className="space-y-3 rounded-xl border border-foreground-200/60 bg-white/80 p-3">
-                  <div className="flex flex-wrap gap-2">
-                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
-                      <button
-                        key={category}
-                        type="button"
-                        onClick={() => setActiveKsbCategory(category)}
-                        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[10px] font-semibold transition ${
-                          activeKsbCategory === category
-                            ? 'bg-primary-700 text-white shadow-sm'
-                            : 'bg-background-100 text-foreground-600 hover:bg-background-200'
-                        }`}
-                      >
-                        {category}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="relative">
-                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
-                    <input
-                      type="text"
-                      value={ksbSearch}
-                      onChange={(event) => setKsbSearch(event.target.value)}
-                      placeholder="Search code or description..."
-                      className="w-full rounded-xl border border-foreground-200/60 bg-background-50 py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300"
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -1149,9 +1198,12 @@ function ProfileEmpty({ text }: { text: string }) {
   return <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100/45 px-4 py-6 text-center text-[10px] text-foreground-400">{text}</div>;
 }
 
-function parseProfileVariance(value?: string | null) {
-  const match = String(value || '').match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : 0;
+function profileRagTone(value?: string | null): 'primary' | 'emerald' | 'amber' | 'red' | 'muted' {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'green') return 'emerald';
+  if (normalized === 'amber') return 'amber';
+  if (normalized === 'red') return 'red';
+  return 'muted';
 }
 
 function ProfileTopStat({
@@ -1163,23 +1215,31 @@ function ProfileTopStat({
 }: {
   label: string;
   value: string;
-  tone: 'primary' | 'emerald' | 'red' | 'muted';
+  tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted';
   dot?: boolean;
   wrap?: boolean;
 }) {
   const toneClass = {
     primary: 'text-primary-700',
     emerald: 'text-emerald-600',
+    amber: 'text-amber-600',
     red: 'text-red-600',
     muted: 'text-foreground-500',
   }[tone];
+  const dotClass = {
+    primary: 'bg-primary-600',
+    emerald: 'bg-emerald-500',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+    muted: 'bg-foreground-300',
+  }[tone];
   return (
-    <div className="min-w-0 px-3 py-4 text-center">
-      <p className={`${wrap ? 'text-[11px] leading-tight' : 'truncate text-[14px]'} font-bold ${toneClass}`}>
-        {dot && <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-500"></span>}
+    <div className="min-w-0 px-3 py-5 md:px-4 md:py-6 text-center">
+      <p className={`${wrap ? 'text-[12px] leading-tight' : 'truncate text-[16px]'} font-bold ${toneClass}`}>
+        {dot && <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${dotClass}`}></span>}
         {value}
       </p>
-      <p className="mt-1 text-[8px] font-semibold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
+      <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
     </div>
   );
 }
@@ -1332,11 +1392,12 @@ function buildRiskItems(data: CoachLearnerCaseFileData) {
   return items;
 }
 
-function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'red' | 'muted') {
+function overviewToneClasses(tone: 'primary' | 'emerald' | 'amber' | 'accent' | 'red' | 'muted') {
   return {
     primary: 'bg-primary-100 text-primary-700',
     emerald: 'bg-emerald-100 text-emerald-700',
     amber: 'bg-amber-100 text-amber-700',
+    accent: 'bg-accent-100 text-accent-700',
     red: 'bg-red-100 text-red-700',
     muted: 'bg-background-100 text-foreground-600',
   }[tone];

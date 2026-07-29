@@ -84,7 +84,7 @@ export async function fetchEvidence(
   const qs = params.toString() ? `?${params.toString()}` : '';
   let res: Response;
   try {
-    res = await fetch(`${BASE}/${kind}/${id}/${qs}`);
+    res = await fetch(`${BASE}/${kind}/${id}/${qs}`, { cache: 'no-store' });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

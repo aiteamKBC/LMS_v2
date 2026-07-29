@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -63,13 +63,23 @@ function riskLabel(risk: AttendanceLearner['risk']) {
   return 'No Data';
 }
 
+function riskClasses(risk: AttendanceLearner['risk']) {
+  if (risk === 'green') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (risk === 'amber') return 'border-amber-200 bg-amber-50 text-amber-700';
+  if (risk === 'red') return 'border-red-200 bg-red-50 text-red-700';
+  return 'border-white/20 bg-white/10 text-white/70';
+}
+
 export default function CoachAttendanceProfile() {
   const navigate = useNavigate();
   const { learnerId = '' } = useParams();
+  const historySectionRef = useRef<HTMLDivElement>(null);
   const [learner, setLearner] = useState<AttendanceLearner | null>(null);
   const [sessions, setSessions] = useState<AttendanceSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'present' | 'absent' | 'catchup'>('all');
+  const [historyMonth, setHistoryMonth] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,36 +127,37 @@ export default function CoachAttendanceProfile() {
       if (session.status === 'present') item.present += 1;
       groups.set(key, item);
     });
-    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-8).map(([, item]) => ({
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-8).map(([key, item]) => ({
+      key,
       label: item.label,
       value: item.total ? Math.round((item.present / item.total) * 100) : 0,
     }));
   }, [sessions]);
 
-  const absenceReasons = useMemo(() => {
-    const counts = new Map<string, number>();
-    sessions.filter((session) => session.status === 'absent').forEach((session) => {
-      const reason = session.reason && session.reason !== '--' ? session.reason : 'No Reason Provided';
-      counts.set(reason, (counts.get(reason) || 0) + 1);
-    });
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [sessions]);
-
   const absenceTimeline = useMemo(() => sessions
     .filter((session) => session.status === 'absent')
-    .map((session) => ({ date: session.sessionDateLabel, reason: display(session.reason), title: display(session.sessionTitle) })),
+    .map((session) => ({
+      date: session.sessionDateLabel,
+      month: session.sessionDate?.slice(0, 7) || null,
+      reason: display(session.reason),
+      title: display(session.sessionTitle),
+    })),
   [sessions]);
 
-  const recentRate = (days: number) => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    const recent = sessions.filter((session) => session.sessionDate && new Date(`${session.sessionDate}T00:00:00`) >= cutoff && ['present', 'absent'].includes(session.status));
-    if (!recent.length) return '--';
-    return `${Math.round((recent.filter((session) => session.status === 'present').length / recent.length) * 100)}%`;
-  };
+  const catchupCompletedCount = sessions.filter((session) => session.catchupCompleted).length;
+  const filteredSessions = useMemo(() => sessions.filter((session) => {
+    if (historyFilter === 'present' && session.status !== 'present') return false;
+    if (historyFilter === 'absent' && session.status !== 'absent') return false;
+    if (historyFilter === 'catchup' && !session.catchupCompleted) return false;
+    if (historyMonth && session.sessionDate?.slice(0, 7) !== historyMonth) return false;
+    return true;
+  }), [historyFilter, historyMonth, sessions]);
 
-  const catchupSessions = sessions.filter((session) => session.catchupCompleted);
-  const maxBar = Math.max(...monthlyTrend.map((item) => item.value), 100);
+  const openHistory = (filter: 'all' | 'present' | 'absent' | 'catchup', month: string | null = null) => {
+    setHistoryFilter(filter);
+    setHistoryMonth(month);
+    window.setTimeout(() => historySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+  };
 
   return (
     <WorkspaceShell
@@ -161,26 +172,22 @@ export default function CoachAttendanceProfile() {
     >
       <main className="min-h-screen bg-[#f7f6fb] p-3 md:p-5">
         <div className="w-full space-y-4">
-          <button type="button" onClick={() => navigate('/coach/attendance')} className="inline-flex items-center gap-2 text-[10px] font-semibold text-foreground-500 hover:text-primary-700">
-            <i className="ri-arrow-left-line"></i> Attendance
-          </button>
-
           {loading && <div className="rounded-2xl border border-foreground-200 bg-white p-12 text-center text-sm text-foreground-400">Loading attendance profile...</div>}
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>}
 
           {!loading && !error && learner && (
             <>
               <section
-                className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
+                className="overflow-hidden rounded-2xl border border-white/10 px-5 py-5 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-6"
                 style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
               >
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   <div className="flex items-center gap-4">
-                    <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/20 bg-white/15 text-base font-bold text-white">{learner.initials}</span>
+                    <span className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/20 bg-white/15 text-base font-bold text-white shadow-inner">{learner.initials}</span>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h1 className="text-xl font-heading font-bold text-white">{learner.learner}</h1>
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[8px] font-semibold text-emerald-700">{riskLabel(learner.risk)}</span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold ${riskClasses(learner.risk)}`}>{riskLabel(learner.risk)}</span>
                       </div>
                       <p className="mt-1 text-[11px] text-white/70">{display(learner.programme)} <span className="mx-1.5">·</span> {display(learner.cohort)} <span className="mx-1.5">·</span> {display(learner.employer)}</p>
                       <p className="mt-1 text-[10px] text-white/55">{display(learner.email)}</p>
@@ -192,99 +199,104 @@ export default function CoachAttendanceProfile() {
                 </div>
               </section>
 
-              <section className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-                <ProfileMetric label="Attendance" value={formatPercent(learner.attendance)} />
-                <ProfileMetric label="Present Sessions" value={String(learner.present ?? '--')} tone="emerald" />
-                <ProfileMetric label="Absent Sessions" value={String(learner.absent ?? '--')} tone="red" />
-                <ProfileMetric label="Authorised" value={String(learner.authorisedAbsent ?? '--')} />
-                <ProfileMetric label="Unauthorised" value={String(learner.unauthorisedAbsent ?? '--')} tone="red" />
-                <ProfileMetric label="Catch-Up Recorded" value={String(learner.catchup ?? '--')} tone="amber" />
+              <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <ProfileMetric icon="ri-percent-line" label="Overall attendance" value={formatPercent(learner.attendance)} onClick={() => openHistory('all')} />
+                <ProfileMetric icon="ri-calendar-check-line" label={`Present from ${learner.sessions ?? '--'} sessions`} value={String(learner.present ?? '--')} tone="emerald" onClick={() => openHistory('present')} />
+                <ProfileMetric icon="ri-calendar-close-line" label={`${learner.authorisedAbsent ?? 0} authorised · ${learner.unauthorisedAbsent ?? 0} unauthorised`} value={String(learner.absent ?? '--')} tone="red" onClick={() => openHistory('absent')} />
+                <ProfileMetric icon="ri-history-line" label="Catch-ups completed" value={String(catchupCompletedCount)} tone="amber" onClick={() => openHistory('catchup')} />
               </section>
 
-              <ProfileSection title="Attendance Overview">
-                <div className="grid grid-cols-2 gap-x-8 gap-y-5 md:grid-cols-4">
-                  <OverviewValue label="Overall Attendance" value={formatPercent(learner.attendance)} />
-                  <OverviewValue label="Last 30 Days" value={recentRate(30)} />
-                  <OverviewValue label="Last 90 Days" value={recentRate(90)} />
-                  <OverviewValue label="Consecutive Absences" value={String(learner.consecutiveMissed ?? 0)} tone="red" />
-                  <OverviewValue label="Total Sessions" value={String(learner.sessions ?? '--')} />
-                  <OverviewValue label="Catch-Ups Completed" value={String(catchupSessions.length)} tone="emerald" />
-                  <OverviewValue label="Current Risk" value={riskLabel(learner.risk)} />
-                </div>
-              </ProfileSection>
-
               <div className="grid gap-4 lg:grid-cols-2">
-                <ProfileSection title="Monthly Attendance Trend">
-                  <div className="flex h-[220px] items-end gap-4 border-b border-l border-dashed border-foreground-200 px-5 pt-4">
+                <ProfileSection title="Monthly Attendance Trend" icon="ri-line-chart-line">
+                  <div className="relative flex h-[240px] items-end justify-center gap-10 overflow-hidden rounded-xl border border-foreground-100 bg-background-50/50 px-6 pb-4 pt-5">
+                    <div className="pointer-events-none absolute inset-x-5 top-1/4 border-t border-dashed border-foreground-200"></div>
+                    <div className="pointer-events-none absolute inset-x-5 top-1/2 border-t border-dashed border-foreground-200"></div>
+                    <div className="pointer-events-none absolute inset-x-5 top-3/4 border-t border-dashed border-foreground-200"></div>
                     {monthlyTrend.length ? monthlyTrend.map((item) => (
-                      <div key={item.label} className="flex h-full flex-1 flex-col items-center justify-end">
-                        <span className="mb-1 text-[9px] font-semibold text-primary-700">{item.value}%</span>
-                        <div className="w-full max-w-[42px] rounded-t bg-primary-600" style={{ height: `${Math.max(5, (item.value / maxBar) * 165)}px` }}></div>
-                        <span className="mt-2 text-[8px] text-foreground-400">{item.label}</span>
-                      </div>
+                      <button type="button" key={item.key} onClick={() => openHistory('all', item.key)} className="group relative z-10 flex h-full w-20 cursor-pointer flex-col items-center justify-end rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
+                        <span className="mb-2 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{item.value}%</span>
+                        <div className="w-11 rounded-t-lg bg-gradient-to-t from-primary-700 to-primary-500 shadow-sm transition group-hover:brightness-110 group-hover:shadow-md" style={{ height: `${Math.max(5, (item.value / 100) * 165)}px` }}></div>
+                        <span className="mt-2 text-[9px] font-medium text-foreground-500 group-hover:text-primary-700">{item.label}</span>
+                      </button>
                     )) : <div className="flex h-full w-full items-center justify-center text-[11px] text-foreground-400">No monthly attendance records.</div>}
                   </div>
                 </ProfileSection>
 
-                <ProfileSection title="Absence Timeline">
-                  <div className="max-h-[220px] space-y-2 overflow-y-auto pr-1">
+                <ProfileSection title="Absence Timeline" icon="ri-calendar-close-line">
+                  <div className="max-h-[240px] space-y-2.5 overflow-y-auto pr-1">
                     {absenceTimeline.length ? absenceTimeline.map((item, index) => (
-                      <div key={`${item.date}-${index}`} className="rounded-xl border border-red-100 bg-red-50/60 p-3">
-                        <p className="text-[11px] font-bold text-foreground-900">{item.title}</p>
-                        <p className="mt-1 text-[9px] text-foreground-500">{item.date}</p>
-                        <span className="mt-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-semibold text-amber-700">{item.reason}</span>
-                      </div>
+                      <button type="button" key={`${item.date}-${index}`} onClick={() => openHistory('absent', item.month)} className="group flex w-full cursor-pointer gap-3 rounded-xl border border-red-100 bg-red-50/50 p-3.5 text-left transition hover:border-red-200 hover:bg-red-50 hover:shadow-sm">
+                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-red-500 ring-1 ring-red-100"><i className="ri-close-line"></i></span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="truncate text-[11px] font-bold text-foreground-900 group-hover:text-red-700">{item.title}</p>
+                            <p className="shrink-0 text-[9px] text-foreground-400">{item.date}</p>
+                          </div>
+                          <span className="mt-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-semibold text-amber-700">{item.reason}</span>
+                        </div>
+                        <i className="ri-arrow-right-s-line self-center text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-red-500"></i>
+                      </button>
                     )) : <EmptyText text="No absences are recorded for this learner." />}
                   </div>
                 </ProfileSection>
               </div>
 
-              <ProfileSection title="Session History">
-                <div className="overflow-x-auto">
-                  <table className="min-w-[850px] w-full text-left">
-                    <thead><tr className="border-b border-foreground-100">
-                      {['Date', 'Session Type', 'Title', 'Time', 'Status', 'Reason', 'Catch-Up'].map((heading) => <th key={heading} className="px-3 py-3 text-[8px] font-semibold uppercase tracking-wide text-foreground-400">{heading}</th>)}
+              <div ref={historySectionRef} className="scroll-mt-4">
+              <ProfileSection title="Session History" icon="ri-table-line">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {([
+                      ['all', 'All sessions'],
+                      ['present', 'Present'],
+                      ['absent', 'Absent'],
+                      ['catchup', 'Catch-ups'],
+                    ] as const).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => openHistory(value, null)}
+                        className={`rounded-full px-3 py-1.5 text-[9px] font-semibold transition ${
+                          historyFilter === value && !historyMonth
+                            ? 'bg-primary-600 text-white shadow-sm'
+                            : 'bg-background-100 text-foreground-500 hover:bg-background-200'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {historyMonth && (
+                    <button type="button" onClick={() => setHistoryMonth(null)} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-[9px] font-semibold text-primary-700 hover:bg-primary-100">
+                      {new Date(`${historyMonth}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
+                      <i className="ri-close-line"></i>
+                    </button>
+                  )}
+                </div>
+                <div className="overflow-hidden rounded-xl border border-foreground-100">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[900px] text-left">
+                    <thead className="bg-background-100/70"><tr className="border-b border-foreground-200">
+                      {['Date', 'Session Type', 'Title', 'Time', 'Status', 'Reason', 'Catch-Up'].map((heading) => <th key={heading} className="px-4 py-3.5 text-[9px] font-bold uppercase tracking-wide text-foreground-500">{heading}</th>)}
                     </tr></thead>
                     <tbody className="divide-y divide-foreground-100">
-                      {sessions.map((session, index) => (
-                        <tr key={`${session.sessionId}-${index}`}>
-                          <td className="px-3 py-3 text-[10px] text-foreground-700">{display(session.sessionDateLabel)}</td>
-                          <td className="px-3 py-3 text-[10px] text-foreground-600">{display(session.sessionType)}</td>
-                          <td className="px-3 py-3 text-[10px] text-foreground-600">{display(session.sessionTitle)}</td>
-                          <td className="px-3 py-3 text-[10px] text-foreground-500">{display(session.startTime)} – {display(session.endTime)}</td>
-                          <td className="px-3 py-3"><span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${statusClasses(session.status)}`}>{display(session.status)}</span></td>
-                          <td className="px-3 py-3 text-[10px] text-foreground-500">{display(session.reason)}</td>
-                          <td className="px-3 py-3 text-[10px] text-foreground-500">{session.catchupCompleted ? 'Completed' : '--'}</td>
+                      {filteredSessions.map((session, index) => (
+                        <tr key={`${session.sessionId}-${index}`} className="transition-colors hover:bg-background-50">
+                          <td className="px-4 py-3.5 text-[10px] font-semibold text-foreground-700">{display(session.sessionDateLabel)}</td>
+                          <td className="px-4 py-3.5 text-[10px] capitalize text-foreground-600">{display(session.sessionType).replaceAll('_', ' ')}</td>
+                          <td className="px-4 py-3.5 text-[10px] font-medium text-foreground-700">{display(session.sessionTitle)}</td>
+                          <td className="px-4 py-3.5 text-[10px] text-foreground-500">{display(session.startTime)} – {display(session.endTime)}</td>
+                          <td className="px-4 py-3.5"><span className={`rounded-full border px-2.5 py-1 text-[8px] font-semibold capitalize ${statusClasses(session.status)}`}>{display(session.status)}</span></td>
+                          <td className="px-4 py-3.5 text-[10px] text-foreground-500">{display(session.reason)}</td>
+                          <td className="px-4 py-3.5 text-[10px] text-foreground-500">{session.catchupCompleted ? <span className="inline-flex items-center gap-1 text-emerald-600"><i className="ri-check-line"></i> Completed</span> : '--'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {!sessions.length && <EmptyText text="No session history is available." />}
+                  {!filteredSessions.length && <EmptyText text="No sessions match the selected filter." />}
+                  </div>
                 </div>
               </ProfileSection>
-
-              <ProfileSection title="Absence Reasons">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {absenceReasons.length ? absenceReasons.map(([reason, count]) => (
-                    <div key={reason} className="rounded-xl bg-background-100/70 p-4 text-center">
-                      <p className="text-lg font-bold text-foreground-900">{count}</p>
-                      <p className="mt-1 text-[9px] text-foreground-500">{reason}</p>
-                    </div>
-                  )) : <EmptyText text="No absence reasons are recorded." />}
-                </div>
-              </ProfileSection>
-
-              <ProfileSection title="Catch-Up Sessions">
-                <div className="grid gap-3 md:grid-cols-2">
-                  {catchupSessions.length ? catchupSessions.map((session, index) => (
-                    <div key={`${session.sessionId}-${index}`} className="rounded-xl border border-foreground-200 bg-background-50 p-4">
-                      <p className="text-[11px] font-bold text-foreground-900">{display(session.sessionTitle)}</p>
-                      <p className="mt-1 text-[9px] text-foreground-400">{display(session.sessionDateLabel)}</p>
-                      <span className="mt-2 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[8px] font-semibold text-emerald-700">Completed</span>
-                    </div>
-                  )) : <EmptyText text="No completed catch-up sessions are recorded." />}
-                </div>
-              </ProfileSection>
+              </div>
             </>
           )}
         </div>
@@ -293,18 +305,68 @@ export default function CoachAttendanceProfile() {
   );
 }
 
-function ProfileMetric({ label, value, tone = 'primary' }: { label: string; value: string; tone?: 'primary' | 'emerald' | 'red' | 'amber' }) {
-  const toneClass = tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-primary-700';
-  return <div className="rounded-xl border border-foreground-200/60 bg-white p-4 text-center"><p className={`text-2xl font-bold ${toneClass}`}>{value}</p><p className="mt-1 text-[9px] text-foreground-500">{label}</p></div>;
+function ProfileMetric({ icon, label, value, tone = 'primary', onClick }: { icon: string; label: string; value: string; tone?: 'primary' | 'emerald' | 'red' | 'amber'; onClick: () => void }) {
+  const styles = {
+    primary: {
+      card: 'border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/80',
+      accent: 'bg-primary-500',
+      icon: 'bg-primary-100 text-primary-700 ring-primary-200/70',
+      value: 'text-primary-800',
+      action: 'group-hover:bg-primary-600 group-hover:text-white',
+    },
+    emerald: {
+      card: 'border-emerald-200/70 bg-gradient-to-br from-white via-white to-emerald-50/80',
+      accent: 'bg-emerald-500',
+      icon: 'bg-emerald-100 text-emerald-700 ring-emerald-200/70',
+      value: 'text-emerald-700',
+      action: 'group-hover:bg-emerald-600 group-hover:text-white',
+    },
+    red: {
+      card: 'border-red-200/70 bg-gradient-to-br from-white via-white to-red-50/80',
+      accent: 'bg-red-500',
+      icon: 'bg-red-100 text-red-700 ring-red-200/70',
+      value: 'text-red-600',
+      action: 'group-hover:bg-red-600 group-hover:text-white',
+    },
+    amber: {
+      card: 'border-amber-200/70 bg-gradient-to-br from-white via-white to-amber-50/80',
+      accent: 'bg-amber-500',
+      icon: 'bg-amber-100 text-amber-700 ring-amber-200/70',
+      value: 'text-amber-700',
+      action: 'group-hover:bg-amber-600 group-hover:text-white',
+    },
+  } as const;
+  const style = styles[tone];
+
+  return (
+    <button type="button" onClick={onClick} className={`group relative flex min-h-[118px] w-full cursor-pointer flex-col overflow-hidden rounded-2xl border p-4 text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 ${style.card}`}>
+      <span className={`absolute inset-x-0 top-0 h-1 ${style.accent}`} />
+      <div className="flex items-start justify-between">
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${style.icon}`}>
+          <i className={`${icon} text-lg`}></i>
+        </span>
+        <span className={`flex h-7 w-7 items-center justify-center rounded-full bg-white text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition ${style.action}`}>
+          <i className="ri-arrow-right-line text-[11px] transition group-hover:translate-x-0.5"></i>
+        </span>
+      </div>
+      <div className="mt-auto pt-3">
+        <p className={`text-3xl font-heading font-bold leading-none tracking-tight ${style.value}`}>{value}</p>
+        <p className="mt-2 truncate text-[10px] font-semibold text-foreground-600">{label}</p>
+      </div>
+    </button>
+  );
 }
 
-function ProfileSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="rounded-xl border border-foreground-200/60 bg-white p-5"><h2 className="mb-4 text-sm font-heading font-bold text-foreground-900">{title}</h2>{children}</section>;
-}
-
-function OverviewValue({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'red' | 'amber' | 'emerald' }) {
-  const toneClass = tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : tone === 'emerald' ? 'text-emerald-600' : 'text-foreground-900';
-  return <div><p className="text-[9px] text-foreground-400">{label}</p><p className={`mt-1 text-sm font-bold ${toneClass}`}>{value}</p></div>;
+function ProfileSection({ title, icon, children }: { title: string; icon?: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-foreground-200/60 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center gap-2.5">
+        {icon && <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><i className={icon}></i></span>}
+        <h2 className="text-sm font-heading font-bold text-foreground-900">{title}</h2>
+      </div>
+      {children}
+    </section>
+  );
 }
 
 function EmptyText({ text }: { text: string }) {

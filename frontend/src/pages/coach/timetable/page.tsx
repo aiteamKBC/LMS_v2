@@ -1,5 +1,7 @@
 ﻿import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -93,6 +95,13 @@ interface TimetableResponse {
   };
 }
 
+interface ScheduleNavigationIntent {
+  source: SchedulableSource;
+  learnerId?: string;
+  targetDate?: string | null;
+  title?: string;
+}
+
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
   totalEvents: 0,
   completedEvents: 0,
@@ -128,7 +137,7 @@ const HOURS = Array.from({ length: 14 }, (_, i) => i + 7); // 07:00 â€“ 20:
 function typeConfig(type: TimetableEvent['type']) {
   const map: Record<TimetableEvent['type'], { label: string; bg: string; border: string; text: string; icon: string; dot: string; barBg: string }> = {
     coaching: { label: 'Coaching', bg: 'bg-primary-100', border: 'border-primary-300', text: 'text-primary-800', icon: 'ri-chat-smile-2-line', dot: 'bg-primary-500', barBg: 'bg-primary-500' },
-    'live-session': { label: 'Live Session', bg: 'bg-accent-100', border: 'border-accent-300', text: 'text-accent-800', icon: 'ri-video-line', dot: 'bg-accent-500', barBg: 'bg-accent-500' },
+    'live-session': { label: 'Live Session', bg: 'bg-sky-50', border: 'border-sky-300', text: 'text-sky-800', icon: 'ri-live-line', dot: 'bg-sky-500', barBg: 'bg-sky-500' },
     review: { label: 'Review', bg: 'bg-secondary-100', border: 'border-secondary-300', text: 'text-secondary-800', icon: 'ri-file-chart-line', dot: 'bg-secondary-500', barBg: 'bg-secondary-500' },
     'employer-meeting': { label: 'Employer', bg: 'bg-amber-100', border: 'border-amber-300', text: 'text-amber-800', icon: 'ri-building-2-line', dot: 'bg-amber-500', barBg: 'bg-amber-500' },
     welfare: { label: 'Welfare', bg: 'bg-red-100', border: 'border-red-300', text: 'text-red-800', icon: 'ri-heart-pulse-line', dot: 'bg-red-500', barBg: 'bg-red-500' },
@@ -139,6 +148,7 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
+  const isLiveSession = event.source === 'live-session' || event.type === 'live-session';
   const catchUpTheme = {
     label: 'Catch-up',
     bg: 'bg-amber-100',
@@ -202,6 +212,9 @@ function eventConfig(event: TimetableEvent) {
   };
 
   const statusTheme = statusThemeMap[event.status];
+  if (isLiveSession && !['completed', 'confirmed', 'cancelled'].includes(event.status)) {
+    return base;
+  }
   if (statusTheme) {
     return {
       ...base,
@@ -414,8 +427,11 @@ function formatDateInputValue(year: number, month: number, day: number) {
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
 type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled';
-type SourceFilter = 'all' | 'mcr' | 'progress-review' | 'catch-up';
-type SchedulableSource = Exclude<SourceFilter, 'all'>;
+type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up';
+type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up';
+
+const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up'];
+const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
@@ -439,13 +455,20 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
 
 const SOURCE_FILTER_LABELS: Record<SourceFilter, string> = {
   all: 'All Sources',
+  'live-session': 'Live Sessions',
   mcr: 'MCR',
   'progress-review': 'Progress Reviews',
   'catch-up': 'Catch-up',
 };
 
+const SOURCE_FILTER_CHIP_LABELS: Record<SourceFilter, string> = {
+  ...SOURCE_FILTER_LABELS,
+  'progress-review': 'PR',
+};
+
 const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   all: 'bg-foreground-400',
+  'live-session': 'bg-sky-500',
   mcr: 'bg-primary-500',
   'progress-review': 'bg-secondary-500',
   'catch-up': 'bg-amber-500',
@@ -475,6 +498,35 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
   return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
+}
+
+function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const source = typeof (value as { source?: unknown }).source === 'string'
+    ? (value as { source?: string }).source
+    : undefined;
+
+  if (!isSchedulableSource(source)) return null;
+
+  return {
+    source,
+    learnerId: typeof (value as { learnerId?: unknown }).learnerId === 'string'
+      ? (value as { learnerId?: string }).learnerId
+      : undefined,
+    targetDate: typeof (value as { targetDate?: unknown }).targetDate === 'string'
+      ? (value as { targetDate?: string }).targetDate
+      : undefined,
+    title: typeof (value as { title?: unknown }).title === 'string'
+      ? (value as { title?: string }).title
+      : undefined,
+  };
+}
+
+function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
+  if (source === 'all') return true;
+  if (source === 'live-session') return event.source === 'live-session' || event.type === 'live-session';
+  return event.source === source;
 }
 
 function eventIdentity(event: TimetableEvent) {
@@ -546,12 +598,49 @@ function compareSchedulablePriority(a: TimetableEvent, b: TimetableEvent) {
   return sourceSessionLabel(a).localeCompare(sourceSessionLabel(b));
 }
 
+function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
+  if (!searchTerm) return true;
+  return [
+    event.title,
+    event.learner,
+    event.employer,
+    event.tutor,
+    event.programme,
+  ].some(value => value?.toLowerCase().includes(searchTerm));
+}
+
+function EventDetailTile({ icon, label, value, sub }: { icon: string; label: string; value: ReactNode; sub?: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-background-200 bg-background-50 px-3 py-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
+        <i className={`${icon} text-[11px]`}></i>
+        {label}
+      </div>
+      <div className="truncate text-[12px] font-bold text-foreground-950">{value}</div>
+      {sub && <div className="mt-0.5 truncate text-[10px] font-medium text-foreground-500">{sub}</div>}
+    </div>
+  );
+}
+
+function EventDetailLine({ icon, children }: { icon: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-xl border border-background-100 bg-white px-3 py-2 text-[11px] font-medium text-foreground-600">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
+        <i className={icon}></i>
+      </span>
+      <div className="min-w-0 flex-1 truncate">{children}</div>
+    </div>
+  );
+}
+
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Page
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function CoachTimetablePage() {
+  const location = useLocation();
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStartTime = todayStart.getTime();
   const [viewMode, setViewMode] = useState<ViewMode>('month');
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
@@ -582,6 +671,9 @@ export default function CoachTimetablePage() {
   const [scheduleModalBusy, setScheduleModalBusy] = useState(false);
   const [scheduleModalError, setScheduleModalError] = useState<string | null>(null);
   const [scheduleModalNotice, setScheduleModalNotice] = useState<string | null>(null);
+  const [pendingScheduleIntent, setPendingScheduleIntent] = useState<ScheduleNavigationIntent | null>(() => (
+    parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent)
+  ));
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -655,7 +747,10 @@ export default function CoachTimetablePage() {
         setViewYear(anchorDate.getFullYear());
         setViewMonth(anchorDate.getMonth());
         setSelectedDay(anchorDate.getDate());
-        setSelectedEvent(null);
+        setSelectedEvent(currentSelectedEvent => {
+          if (!currentSelectedEvent) return null;
+          return nextEvents.find(event => event.id === currentSelectedEvent.id) || null;
+        });
       } catch (err) {
         if (cancelled) return;
 
@@ -684,6 +779,12 @@ export default function CoachTimetablePage() {
       if (cleanup) cleanup();
     };
   }, [loadTimetable]);
+
+  useEffect(() => {
+    const nextIntent = parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent);
+    if (!nextIntent) return;
+    setPendingScheduleIntent(nextIntent);
+  }, [location.key, location.state]);
 
   useEffect(() => {
     if (!selectedEvent) {
@@ -844,48 +945,68 @@ export default function CoachTimetablePage() {
     return events.filter(event => event.month === viewMonth && event.year === viewYear);
   }, [events, selectedDay, viewMode, viewMonth, viewYear, weekDates]);
 
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase();
+  const searchedVisibleRangeEvents = useMemo(() => {
+    return visibleRangeEvents.filter(event => matchesSearchTerm(event, normalizedSearchTerm));
+  }, [normalizedSearchTerm, visibleRangeEvents]);
+
   const sourceFilterOptions = useMemo(() => {
-    return (['all', 'mcr', 'progress-review', 'catch-up'] as SourceFilter[]).map(source => ({
+    return SOURCE_FILTER_ORDER.map(source => ({
       value: source,
-      label: SOURCE_FILTER_LABELS[source],
+      label: SOURCE_FILTER_CHIP_LABELS[source],
       dot: SOURCE_FILTER_DOTS[source],
       count: source === 'all'
-        ? visibleRangeEvents.length
-        : visibleRangeEvents.filter(event => event.source === source).length,
+        ? searchedVisibleRangeEvents.length
+        : searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, source)).length,
     }));
-  }, [visibleRangeEvents]);
+  }, [searchedVisibleRangeEvents]);
 
-  const filteredEvents = useMemo(() => visibleRangeEvents.filter(e => {
+  const sourceFilteredVisibleRangeEvents = useMemo(() => {
+    if (filterSource === 'all') return searchedVisibleRangeEvents;
+    return searchedVisibleRangeEvents.filter(event => eventMatchesSourceFilter(event, filterSource));
+  }, [filterSource, searchedVisibleRangeEvents]);
+
+  const filteredEvents = useMemo(() => sourceFilteredVisibleRangeEvents.filter(e => {
     if (filterStatus === 'overdue' && !isOverdueMetricEvent(e)) return false;
     if (filterStatus === 'due-soon' && !isDueSoonMetricEvent(e)) return false;
     if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
     if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
     if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
     if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
-    if (filterSource !== 'all' && e.source !== filterSource) return false;
-    if (searchTerm && !(
-      e.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.learner?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.employer?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.tutor?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.programme?.toLowerCase().includes(searchTerm.toLowerCase())
-    )) return false;
     return true;
-  }), [visibleRangeEvents, filterStatus, filterSource, searchTerm]);
+  }), [filterStatus, sourceFilteredVisibleRangeEvents]);
 
   const selectedDayEvents = useMemo(
     () => filteredEvents.filter(ev => ev.dayOfMonth === selectedDay && ev.month === viewMonth && ev.year === viewYear),
     [filteredEvents, selectedDay, viewMonth, viewYear],
   );
+  const upcomingEvents = useMemo(() => {
+    return events
+      .filter(ev => {
+        const evDate = parseEventDate(ev);
+        return evDate.getTime() >= todayStartTime && ev.status !== 'completed' && ev.status !== 'cancelled';
+      })
+      .sort((a, b) => {
+        const dateDelta = parseEventDate(a).getTime() - parseEventDate(b).getTime();
+        if (dateDelta !== 0) return dateDelta;
+        return a.startHour - b.startHour;
+      })
+      .slice(0, 5);
+  }, [events, todayStartTime]);
   const statusFilterCounts: Record<StatusFilter, number> = {
-    all: visibleRangeEvents.length,
-    overdue: visibleRangeEvents.filter(event => isOverdueMetricEvent(event)).length,
-    'due-soon': visibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
-    'needs-schedule': visibleRangeEvents.filter(needsSchedulingMetricEvent).length,
-    scheduled: visibleRangeEvents.filter(isScheduledMetricEvent).length,
-    completed: visibleRangeEvents.filter(isCompletedMetricEvent).length,
-    cancelled: visibleRangeEvents.filter(event => event.status === 'cancelled').length,
+    all: sourceFilteredVisibleRangeEvents.length,
+    overdue: sourceFilteredVisibleRangeEvents.filter(event => isOverdueMetricEvent(event)).length,
+    'due-soon': sourceFilteredVisibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
+    'needs-schedule': sourceFilteredVisibleRangeEvents.filter(needsSchedulingMetricEvent).length,
+    scheduled: sourceFilteredVisibleRangeEvents.filter(isScheduledMetricEvent).length,
+    completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
+    cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
+  const sourceFilterCounts = Object.fromEntries(sourceFilterOptions.map(option => [option.value, option.count])) as Record<SourceFilter, number>;
+  const selectedDayLabel = `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]}`;
+  const activeFilterLabel = filterSource === 'all'
+    ? STATUS_FILTER_LABELS[filterStatus]
+    : `${SOURCE_FILTER_CHIP_LABELS[filterSource]} / ${STATUS_FILTER_LABELS[filterStatus]}`;
 
   const datePickerValue = formatDateInputValue(viewYear, viewMonth, selectedDay);
 
@@ -957,6 +1078,47 @@ export default function CoachTimetablePage() {
     setScheduleModalError(null);
     setScheduleModalNotice(null);
   }, [scheduleModalBusy]);
+
+  useEffect(() => {
+    if (!pendingScheduleIntent || loading) return;
+
+    setViewMode('month');
+    setFilterStatus('needs-schedule');
+    setFilterSource(pendingScheduleIntent.source);
+    setSearchTerm('');
+    setScheduleModalOpen(false);
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+
+    const sourceEvents = schedulableEvents.filter((event) => event.source === pendingScheduleIntent.source);
+    const learnerEvents = pendingScheduleIntent.learnerId
+      ? sourceEvents.filter((event) => event.learnerId === pendingScheduleIntent.learnerId)
+      : sourceEvents;
+    const preferredPool = learnerEvents.length ? learnerEvents : sourceEvents;
+    const preferredEvent = preferredPool.find((event) => {
+      if (!pendingScheduleIntent.targetDate) return false;
+      return (
+        eventTargetDateValue(event) === pendingScheduleIntent.targetDate
+        || event.date === pendingScheduleIntent.targetDate
+        || event.scheduledDate === pendingScheduleIntent.targetDate
+      );
+    }) || preferredPool[0] || null;
+
+    const anchorDate = parseDateOnly(pendingScheduleIntent.targetDate)
+      || (preferredEvent ? getMetricDate(eventTargetDateValue(preferredEvent), preferredEvent) : null);
+
+    if (anchorDate) {
+      setCalendarDate(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
+    }
+
+    if (preferredEvent) {
+      setSelectedEvent(preferredEvent);
+    } else {
+      setSelectedEvent(null);
+    }
+
+    setPendingScheduleIntent(null);
+  }, [loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
 
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
@@ -1076,63 +1238,45 @@ export default function CoachTimetablePage() {
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 
-        {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
-        <section className="relative overflow-hidden rounded-[28px] border border-white/10 shadow-[0_22px_60px_-32px_rgba(27,9,68,0.9)]" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute opacity-25" style={{ width: '52%', height: '44%', left: '-5%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.32) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-            <div className="absolute opacity-20" style={{ width: '44%', height: '42%', right: '-6%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.28) 0%, transparent 72%)', filter: 'blur(58px)' }} />
-          </div>
-          <div className="relative flex min-h-[220px] flex-col gap-6 px-5 py-5 md:px-7 md:py-6 lg:flex-row lg:items-center">
-            <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-accent-300/20 bg-accent-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-accent-200">Progress Coach</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/90">{MONTH_NAMES[viewMonth]} {viewYear}</span>
+        {/* â•â•â•â•â•â•â•â•â•â•â• HEADER â•â•â•â•â•â•â•â•â•â•â• */}
+        <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
+          <div className="flex flex-col gap-4 border-b border-background-100 px-4 py-4 md:px-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary-700">Progress Coach</span>
+                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{todayWeekdayLabel} {String(todayDay).padStart(2, '0')} {todayMonthLabel}</span>
               </div>
-              <h1 className="max-w-xl text-[28px] font-heading font-bold tracking-tight text-white md:text-[34px]">My Calendar</h1>
-              <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-[15px]">
-                Plan monthly coaching reviews, progress reviews, and learner catch-up bookings from one clean scheduling workspace.
+              <h1 className="text-[24px] font-heading font-bold tracking-tight text-foreground-950 md:text-[28px]">My Calendar</h1>
+              <p className="mt-1 max-w-2xl text-[13px] leading-5 text-foreground-500">
+                Live sessions, coaching reviews, progress reviews, and catch-up bookings in one scheduling workspace.
               </p>
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => openScheduleModal(selectedEvent && isSelectableScheduleEvent(selectedEvent) ? selectedEvent : null)}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-primary-800 shadow-lg shadow-foreground-950/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
-                >
-                  <i className="ri-add-circle-line text-base"></i>
-                  Create Event
-                </button>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[12px] text-white/75 backdrop-blur-sm">
-                  Choose an existing <span className="font-semibold text-white">MCR, Progress Review, or Catch-up</span> item and place it straight onto the calendar.
+            </div>
+            <button
+              type="button"
+              onClick={() => openScheduleModal(selectedEvent && isSelectableScheduleEvent(selectedEvent) ? selectedEvent : null)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-[12px] font-bold text-white shadow-md shadow-primary-500/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-add-circle-line text-sm"></i>
+              Create Event
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2 px-4 pb-4 md:px-5">
+            {[
+              { label: 'Visible', value: filteredEvents.length, icon: 'ri-calendar-check-line', tone: 'text-primary-700 bg-primary-50' },
+              { label: 'Live Sessions', value: sourceFilterCounts['live-session'], icon: 'ri-live-line', tone: 'text-sky-700 bg-sky-50' },
+              { label: 'Needs Schedule', value: statusFilterCounts['needs-schedule'], icon: 'ri-calendar-schedule-line', tone: 'text-orange-700 bg-orange-50' },
+              { label: 'Selected Day', value: selectedDayEvents.length, icon: 'ri-focus-3-line', tone: 'text-secondary-700 bg-secondary-50' },
+            ].map(stat => (
+              <div key={stat.label} className="flex min-w-[170px] items-center gap-3 rounded-xl border border-background-200 bg-background-50 px-3 py-2">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${stat.tone}`}>
+                  <i className={stat.icon}></i>
+                </span>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{stat.label}</p>
+                  <p className="text-base font-heading font-bold text-foreground-950">{stat.value}</p>
                 </div>
               </div>
-            </div>
-
-            <div className="flex shrink-0 items-center justify-center lg:w-[380px]">
-              <div className="relative">
-                <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
-                  <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
-                    <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
-                      <div className="flex items-center justify-between">
-                        {[0, 1, 2, 3, 4, 5].map(index => (
-                          <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
-                            <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700"></span>
-                            <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm"></span>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="px-4 pb-4 pt-3 text-center">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
-                      <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
-                        {String(todayDay).padStart(2, '0')}
-                      </p>
-                      <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
-                    </div>
-                    <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            ))}
           </div>
         </section>
 
@@ -1167,179 +1311,197 @@ export default function CoachTimetablePage() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 rounded-2xl border border-background-200 bg-background-50 p-1 shadow-sm">
-            {([
-              { key: 'month' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },
-              { key: 'week' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },
-              { key: 'day' as ViewMode, label: 'Day', icon: 'ri-calendar-line' },
-            ]).map(v => (
-              <button
-                key={v.key}
-                aria-pressed={viewMode === v.key}
-                onClick={() => { setViewMode(v.key); if (v.key === 'month') setSelectedDay(todayDay); }}
-                className={`flex items-center gap-1.5 rounded-xl border px-4 py-2 text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
-                  viewMode === v.key
-                    ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20'
-                    : 'border-transparent text-foreground-500 hover:bg-background-100 hover:text-foreground-900'
-                }`}
-              >
-                <i className={`${v.icon} text-xs`}></i>{v.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handlePrev}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground-500 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200"
-              aria-label="Previous period"
-            >
-              <i className="ri-arrow-left-s-line"></i>
-            </button>
-            <button onClick={handleToday} className="rounded-xl border border-primary-200 bg-primary-100 px-3.5 py-2 text-[11px] font-semibold text-primary-700 shadow-sm transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-200">Today</button>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setDatePickerOpen(open => !open)}
-                className="min-w-[150px] rounded-xl border border-transparent px-3 py-2 text-center text-sm font-heading font-bold text-foreground-900 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 whitespace-nowrap"
-                title="Change calendar date"
-              >
-                {titleLabel}
-                <i className={`ri-arrow-down-s-line ml-1 text-xs transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></i>
-              </button>
-              {datePickerOpen && (
-                <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-xl shadow-foreground-900/10">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-heading font-bold text-foreground-900">Jump to date</p>
-                      <p className="text-[10px] text-foreground-400">
-                        {viewMode === 'month' ? 'Choose month and year' : 'Choose a specific day'}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setDatePickerOpen(false)}
-                      className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700"
-                      aria-label="Close date picker"
-                    >
-                      <i className="ri-close-line"></i>
-                    </button>
-                  </div>
-                  {viewMode === 'month' ? (
-                    <div className="grid grid-cols-[1fr_96px] gap-2">
-                      <label className="block">
-                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Month</span>
-                        <select
-                          value={viewMonth}
-                          onChange={(event) => handleMonthPickerChange(Number(event.target.value))}
-                          className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
+          <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 rounded-xl bg-background-100 p-1">
+                {([
+                  { key: 'month' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },
+                  { key: 'week' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },
+                  { key: 'day' as ViewMode, label: 'Day', icon: 'ri-calendar-line' },
+                ]).map(v => (
+                  <button
+                    key={v.key}
+                    aria-pressed={viewMode === v.key}
+                    onClick={() => { setViewMode(v.key); if (v.key === 'month') setSelectedDay(todayDay); }}
+                    className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
+                      viewMode === v.key
+                        ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                        : 'text-foreground-500 hover:bg-white hover:text-foreground-900'
+                    }`}
+                  >
+                    <i className={`${v.icon} text-xs`}></i>{v.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-50 p-1">
+                <button
+                  onClick={handlePrev}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700"
+                  aria-label="Previous period"
+                >
+                  <i className="ri-arrow-left-s-line"></i>
+                </button>
+                <button onClick={handleToday} className="h-8 rounded-lg bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-100">Today</button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setDatePickerOpen(open => !open)}
+                    className="h-8 min-w-[150px] rounded-lg px-3 text-center text-[12px] font-heading font-bold text-foreground-950 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 whitespace-nowrap"
+                    title="Change calendar date"
+                  >
+                    {titleLabel}
+                    <i className={`ri-arrow-down-s-line ml-1 text-xs transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></i>
+                  </button>
+                  {datePickerOpen && (
+                    <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-xl shadow-foreground-900/10">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-heading font-bold text-foreground-900">Jump to date</p>
+                          <p className="text-[10px] text-foreground-400">
+                            {viewMode === 'month' ? 'Choose month and year' : 'Choose a specific day'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setDatePickerOpen(false)}
+                          className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700"
+                          aria-label="Close date picker"
                         >
-                          {MONTH_NAMES.map((monthName, index) => (
-                            <option key={monthName} value={index}>{monthName}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block">
-                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Year</span>
-                        <input
-                          type="number"
-                          value={viewYear}
-                          min={1900}
-                          max={2200}
-                          onChange={(event) => handleYearPickerChange(Number(event.target.value))}
-                          className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                        />
-                      </label>
+                          <i className="ri-close-line"></i>
+                        </button>
+                      </div>
+                      {viewMode === 'month' ? (
+                        <div className="grid grid-cols-[1fr_96px] gap-2">
+                          <label className="block">
+                            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Month</span>
+                            <select
+                              value={viewMonth}
+                              onChange={(event) => handleMonthPickerChange(Number(event.target.value))}
+                              className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                            >
+                              {MONTH_NAMES.map((monthName, index) => (
+                                <option key={monthName} value={index}>{monthName}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Year</span>
+                            <input
+                              type="number"
+                              value={viewYear}
+                              min={1900}
+                              max={2200}
+                              onChange={(event) => handleYearPickerChange(Number(event.target.value))}
+                              className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                            />
+                          </label>
+                        </div>
+                      ) : (
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
+                          <input
+                            type="date"
+                            value={datePickerValue}
+                            onChange={(event) => handleDatePickerChange(event.target.value)}
+                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                          />
+                        </label>
+                      )}
                     </div>
-                  ) : (
-                    <label className="block">
-                      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
-                      <input
-                        type="date"
-                        value={datePickerValue}
-                        onChange={(event) => handleDatePickerChange(event.target.value)}
-                        className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
-                      />
-                    </label>
                   )}
                 </div>
-              )}
+                <button
+                  onClick={handleNext}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700"
+                  aria-label="Next period"
+                >
+                  <i className="ri-arrow-right-s-line"></i>
+                </button>
+              </div>
             </div>
-            <button
-              onClick={handleNext}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground-500 transition-smooth cursor-pointer hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200"
-              aria-label="Next period"
-            >
-              <i className="ri-arrow-right-s-line"></i>
-            </button>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs"></i>
+            <div className="relative w-full">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-xs"></i>
               <input
-                type="text" placeholder="Search..." value={searchTerm}
+                type="text" placeholder="Search events..." value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-8 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-xs text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-primary-300 w-32 sm:w-44 transition-all"
+                className="h-10 w-full rounded-xl border border-background-200 bg-background-50 pl-9 pr-3 text-xs font-medium text-foreground-900 placeholder:text-foreground-400 transition-all focus:outline-none focus:ring-2 focus:ring-primary-200"
               />
             </div>
-            <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-              {(['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled'] as StatusFilter[]).map(status => {
-                const isActive = filterStatus === status;
-                return (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={() => setFilterStatus(isActive ? 'all' : status)}
-                    title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
-                    className={`border px-2 py-1 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                      isActive
-                        ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20 ring-2 ring-primary-200'
-                        : 'border-transparent text-foreground-500 hover:bg-background-50 hover:text-foreground-800'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : STATUS_FILTER_DOTS[status]}`}></span>
-                    {STATUS_FILTER_LABELS[status]}
-                    <span className={`text-[9px] ${isActive ? 'opacity-90' : 'opacity-55'}`}>({statusFilterCounts[status]})</span>
-                  </button>
-                );
-              })}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-start gap-3 border-t border-background-100 pt-3">
+            <div className="w-fit max-w-full rounded-xl bg-background-50 p-2.5">
+              <div className="mb-2 flex items-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
+                <span className="text-[10px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {sourceFilterOptions.map(option => {
+                  const isActive = filterSource === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterSource(isActive ? 'all' : option.value)}
+                      title={`${option.label} (${option.count})`}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? 'border-primary-300 bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                          : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : option.dot}`}></span>
+                      {option.label}
+                      <span className={isActive ? 'opacity-90' : 'text-foreground-400'}>{option.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-              {sourceFilterOptions.map(option => {
-                const isActive = filterSource === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    onClick={() => setFilterSource(isActive ? 'all' : option.value)}
-                    title={`${option.label} (${option.count})`}
-                    className={`border px-2 py-1 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                      isActive
-                        ? 'border-primary-400 bg-primary-500 text-white shadow-md shadow-primary-500/20 ring-2 ring-primary-200'
-                        : 'border-transparent text-foreground-500 hover:bg-background-50 hover:text-foreground-800'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : option.dot}`}></span>
-                    {option.label}
-                    <span className={`text-[9px] ${isActive ? 'opacity-90' : 'opacity-55'}`}>({option.count})</span>
-                  </button>
-                );
-              })}
+            <div className="w-fit max-w-full rounded-xl bg-background-50 p-2.5">
+              <div className="mb-2 flex items-center gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
+                <span className="truncate text-[10px] font-bold text-foreground-400">{activeFilterLabel}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {STATUS_FILTER_ORDER.map(status => {
+                  const isActive = filterStatus === status;
+                  return (
+                    <button
+                      key={status}
+                      type="button"
+                      onClick={() => setFilterStatus(isActive ? 'all' : status)}
+                      title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
+                        isActive
+                          ? 'border-primary-300 bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                          : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : STATUS_FILTER_DOTS[status]}`}></span>
+                      {STATUS_FILTER_LABELS[status]}
+                      <span className={isActive ? 'opacity-90' : 'text-foreground-400'}>{statusFilterCounts[status]}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
 
         {/* â•â•â•â•â•â•â•â•â•â•â• MAIN CONTENT â•â•â•â•â•â•â•â•â•â•â• */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
           {/* â”€â”€ Calendar Area (2/3) â”€â”€ */}
-          <div className="lg:col-span-2 space-y-4">
+          <div className="space-y-4">
 
             {/* MONTH VIEW */}
             {viewMode === 'month' && (
-              <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-sm">
-                <div className="grid grid-cols-7 border-b border-background-300">
+              <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
+                <div className="grid grid-cols-7 border-b border-background-200 bg-background-100/70">
                   {DAYS_OF_WEEK.map(d => (
-                    <div key={d} className="bg-background-50 px-2 py-4 text-center">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-500">{d}</span>
+                    <div key={d} className="px-2 py-3 text-center">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-500">{d}</span>
                     </div>
                   ))}
                 </div>
@@ -1349,51 +1511,79 @@ export default function CoachTimetablePage() {
                       return (
                         <div
                           key={`empty-${idx}`}
-                          className="min-h-[170px] border-b border-r border-background-300 bg-background-50/70"
+                          className="min-h-[118px] border-b border-r border-background-100 bg-background-100/35 xl:min-h-[132px]"
                         />
                       );
                     }
                     const eventsForDay = filteredEvents.filter(e => e.dayOfMonth === day && e.month === viewMonth && e.year === viewYear);
                     const isSel = day === selectedDay;
                     const isTdy = isToday(day, viewMonth, viewYear);
+                    const dateValue = new Date(viewYear, viewMonth, day).getTime();
+                    const isPast = dateValue < todayStart.getTime();
+                    const isWeekend = [0, 6].includes(new Date(viewYear, viewMonth, day).getDay());
+                    const hasEvents = eventsForDay.length > 0;
                     return (
                       <button
                         key={`d-${day}`}
                         onClick={() => handleDayClick(day)}
-                        className={`relative min-h-[170px] border-b border-r p-3 text-left transition-all duration-200 ease-out ${
+                        className={`group relative flex min-h-[118px] flex-col border-b border-r p-2.5 text-left transition-all duration-200 ease-out xl:min-h-[132px] ${
                           isSel
-                            ? 'z-10 border-primary-400 bg-primary-50/35 ring-1 ring-primary-300/70 ring-inset'
-                            : 'border-background-300 bg-background-50 hover:bg-primary-50/15'
+                            ? 'z-10 border-primary-300 bg-primary-50/60 shadow-[inset_0_0_0_1px_rgba(124,58,237,0.28)]'
+                            : isWeekend
+                              ? 'border-background-100 bg-background-100/20 hover:bg-primary-50/20'
+                              : 'border-background-100 bg-white hover:bg-primary-50/15'
                         }`}
                       >
-                        <span className={`mb-2 flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold transition-all duration-200 ${
-                          isSel || isTdy
-                            ? 'bg-primary-200 text-primary-800'
-                            : 'text-foreground-700'
-                        }`}>
-                          {day}
-                        </span>
-                        <div className="flex w-full flex-1 flex-col gap-1 overflow-hidden">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <span className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-sm font-bold transition-all duration-200 ${
+                            isTdy
+                              ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                              : isSel
+                                ? 'bg-primary-100 text-primary-800'
+                                : isPast
+                                  ? 'text-foreground-400'
+                                  : 'text-foreground-800'
+                          }`}>
+                            {day}
+                          </span>
+                          {hasEvents && (
+                            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                              {eventsForDay.length}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
                           {eventsForDay.slice(0, 3).map(ev => {
                             const tc = eventConfig(ev);
                             return (
                               <div
                                 key={ev.id}
                                 onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }}
-                                className="flex items-center gap-1.5 rounded-md px-1 py-0.5 text-[11px] font-medium text-foreground-800 transition-all duration-150 hover:bg-background-100/80"
+                                className={`w-full rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[11px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md`}
                                 title={ev.title}
                               >
-                                <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
-                                <span className="truncate leading-tight">
-                                  {formatTime(ev.startHour)} {ev.title}
-                                </span>
+                                <div className="flex min-w-0 items-center gap-1.5">
+                                  <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
+                                  <span className="shrink-0 tabular-nums">{formatTime(ev.startHour)}</span>
+                                  <span className="truncate leading-tight">{ev.title}</span>
+                                </div>
+                                {(ev.learner || ev.programme) && (
+                                  <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
+                                    {ev.learner || ev.programme}
+                                  </p>
+                                )}
                               </div>
                             );
                           })}
                           {eventsForDay.length > 3 && (
-                            <span className="pl-1 text-[10px] font-semibold text-foreground-400">+{eventsForDay.length - 3} more</span>
+                            <span className="rounded-md bg-background-100 px-2 py-1 text-[10px] font-semibold text-foreground-500">
+                              +{eventsForDay.length - 3} more
+                            </span>
                           )}
                         </div>
+                        {!hasEvents && (
+                          <span className="pointer-events-none mt-auto h-1 w-8 rounded-full bg-background-100 opacity-0 transition-opacity group-hover:opacity-100"></span>
+                        )}
                       </button>
                     );
                   })}
@@ -1554,161 +1744,167 @@ export default function CoachTimetablePage() {
             )}
 
             {/* â”€â”€ Day events list when in month view â”€â”€ */}
-            {viewMode === 'month' && (
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            {viewMode === 'month' && selectedDayEvents.length === 0 && (
+              <div className="flex flex-col gap-3 rounded-2xl border border-background-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-foreground-400">
+                    <i className="ri-calendar-2-line"></i>
+                  </span>
+                  <div>
+                    <p className="text-sm font-heading font-bold text-foreground-950">{selectedDayLabel}</p>
+                    <p className="text-[11px] font-medium text-foreground-400">No events scheduled</p>
+                  </div>
+                </div>
+                <button onClick={() => setViewMode('day')} className="text-[11px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
+                  Day view <i className="ri-arrow-right-line ml-0.5"></i>
+                </button>
+              </div>
+            )}
+
+            {viewMode === 'month' && selectedDayEvents.length > 0 && (
+              <div className="rounded-2xl border border-background-200 bg-white p-4 shadow-sm md:p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">
-                    {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {selectedDay} {MONTH_NAMES[viewMonth]}
+                  <h3 className="text-sm font-heading font-bold text-foreground-950">
+                    {selectedDayLabel}
                   </h3>
-                  <button onClick={() => setViewMode('day')} className="text-[11px] font-semibold text-primary-600 hover:text-primary-700 cursor-pointer whitespace-nowrap">
+                  <button onClick={() => setViewMode('day')} className="text-[11px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
                     Day view <i className="ri-arrow-right-line ml-0.5"></i>
                   </button>
                 </div>
-                {selectedDayEvents.length === 0 ? (
-                  <div className="text-center py-8">
-                    <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-2">
-                      <i className="ri-calendar-2-line text-foreground-300"></i>
-                    </span>
-                    <p className="text-sm text-foreground-400">No events for this day</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
-                      const tc = eventConfig(ev);
-                      return (
-                        <div
-                          key={ev.id}
-                          onClick={() => setSelectedEvent(ev)}
-                          className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-smooth hover:shadow-sm hover:brightness-95 ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
-                        >
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tc.bg} ${tc.text}`}>
-                            <i className={tc.icon}></i>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-semibold ${tc.text}`}>{ev.title}</p>
-                            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
-                              <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
-                              {ev.learner && <span className="text-foreground-400">- {ev.learner}</span>}
-                              {ev.employer && <span className="text-foreground-400">- {ev.employer}</span>}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {ev.priority !== 'normal' && (
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${priorityBadge(ev.priority)}`}>
-                                {ev.priority === 'urgent' ? 'Urgent' : 'High'}
-                              </span>
-                            )}
-                            <span className={`w-2 h-2 rounded-full ${tc.dot}`}></span>
+                <div className="space-y-2">
+                  {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
+                    const tc = eventConfig(ev);
+                    return (
+                      <div
+                        key={ev.id}
+                        onClick={() => setSelectedEvent(ev)}
+                        className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
+                      >
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-white/70 ${tc.text}`}>
+                          <i className={tc.icon}></i>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-bold ${tc.text}`}>{ev.title}</p>
+                          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
+                            <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
+                            {ev.learner && <span className="truncate text-foreground-400">· {ev.learner}</span>}
+                            {ev.employer && <span className="truncate text-foreground-400">· {ev.employer}</span>}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <span className={`w-2 h-2 rounded-full ${tc.dot}`}></span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
 
           {/* â”€â”€ Sidebar (1/3) â”€â”€ */}
-          <div className="space-y-4">
+          <div className="space-y-4 xl:sticky xl:top-4 xl:self-start">
             {/* Event Detail */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
               {selectedEvent ? (
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-heading font-semibold text-foreground-900">Event Details</h3>
-                    <button onClick={() => setSelectedEvent(null)} className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer">
+                <div className="p-4 md:p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
+                      <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${eventConfig(selectedEvent).bg} ${eventConfig(selectedEvent).text}`}>
+                        <i className={eventConfig(selectedEvent).icon}></i>
+                      </span>
+                      Event Details
+                    </h3>
+                    <button onClick={() => setSelectedEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-xl text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Clear selected event">
                       <i className="ri-close-line"></i>
                     </button>
                   </div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${eventConfig(selectedEvent).bg}`}>
-                      <i className={`${eventConfig(selectedEvent).icon} ${eventConfig(selectedEvent).text} text-sm`}></i>
-                    </span>
-                    <div>
-                      <h4 className="text-sm font-heading font-semibold text-foreground-900">{selectedEvent.title}</h4>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${priorityBadge(selectedEvent.priority)}`}>
-                        {selectedEvent.priority === 'urgent' ? 'Urgent' : selectedEvent.priority === 'high' ? 'High Priority' : 'Normal'}
-                      </span>
+                  <div className={`mb-4 overflow-hidden rounded-2xl border ${eventConfig(selectedEvent).border} bg-white`}>
+                    <div className={`${eventConfig(selectedEvent).bg} px-4 py-4`}>
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold ${eventConfig(selectedEvent).text}`}>
+                              <i className={eventConfig(selectedEvent).icon}></i>
+                              {eventConfig(selectedEvent).label}
+                            </span>
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusBadge(selectedEvent.status)}`}>
+                              {statusLabel(selectedEvent.status)}
+                            </span>
+                          </div>
+                          <h4 className={`text-lg font-heading font-bold leading-snug ${eventConfig(selectedEvent).text}`}>{selectedEvent.title}</h4>
+                        </div>
+                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-bold ${priorityBadge(selectedEvent.priority)}`}>
+                          {selectedEvent.priority === 'urgent' ? 'Urgent' : selectedEvent.priority === 'high' ? 'High' : 'Normal'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <EventDetailTile icon="ri-calendar-line" label="Date" value={formatEventDateLabel(selectedEvent)} />
+                        <EventDetailTile
+                          icon="ri-time-line"
+                          label="Time"
+                          value={`${formatTime(selectedEvent.startHour)} - ${formatTime(selectedEvent.endHour)}`}
+                          sub={`${selectedEvent.endHour - selectedEvent.startHour}h duration`}
+                        />
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-2.5">
-                    <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                      <i className="ri-calendar-line text-foreground-400 w-4 text-center"></i>
-                      <span className="font-medium">{formatEventDateLabel(selectedEvent)}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                      <i className="ri-time-line text-foreground-400 w-4 text-center"></i>
-                      <span className="font-medium">{formatTime(selectedEvent.startHour)} - {formatTime(selectedEvent.endHour)}</span>
-                      <span className="text-foreground-300">({selectedEvent.endHour - selectedEvent.startHour}h)</span>
-                    </div>
+
+                  <div className="space-y-2">
                     {selectedEvent.targetDate && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-flag-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">Target date: {selectedEvent.targetDate}</span>
-                      </div>
+                      <EventDetailLine icon="ri-flag-line">
+                        Target date: <span className="font-bold text-foreground-900">{formatCompactDate(selectedEvent.targetDate)}</span>
+                      </EventDetailLine>
                     )}
                     {selectedEvent.scheduledDate && selectedEvent.scheduledTime && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-calendar-schedule-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">Scheduled for {selectedEvent.scheduledDate} at {selectedEvent.scheduledTime}</span>
-                      </div>
+                      <EventDetailLine icon="ri-calendar-schedule-line">
+                        Scheduled: <span className="font-bold text-foreground-900">{formatCompactDate(selectedEvent.scheduledDate)} at {selectedEvent.scheduledTime.slice(0, 5)}</span>
+                      </EventDetailLine>
                     )}
                     {selectedEvent.learner && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-user-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">{selectedEvent.learner}</span>
-                        {selectedEvent.programme && <span className="text-foreground-300">- {selectedEvent.programme}</span>}
-                      </div>
+                      <EventDetailLine icon="ri-user-line">
+                        <span className="font-bold text-foreground-900">{selectedEvent.learner}</span>
+                        {selectedEvent.programme && <span className="text-foreground-400"> · {selectedEvent.programme}</span>}
+                      </EventDetailLine>
                     )}
                     {selectedEvent.employer && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-building-2-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">{selectedEvent.employer}</span>
-                      </div>
+                      <EventDetailLine icon="ri-building-2-line">
+                        <span className="font-bold text-foreground-900">{selectedEvent.employer}</span>
+                      </EventDetailLine>
                     )}
                     {selectedEvent.tutor && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-user-settings-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">Tutor: {selectedEvent.tutor}</span>
-                      </div>
+                      <EventDetailLine icon="ri-user-settings-line">
+                        Tutor: <span className="font-bold text-foreground-900">{selectedEvent.tutor}</span>
+                      </EventDetailLine>
                     )}
                     {selectedEvent.platform && selectedEvent.platform !== '--' && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-video-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">{selectedEvent.platform}</span>
-                        {selectedEvent.location && selectedEvent.location !== '--' && <span className="text-foreground-300">/ {selectedEvent.location}</span>}
-                      </div>
+                      <EventDetailLine icon="ri-video-line">
+                        <span className="font-bold text-foreground-900">{selectedEvent.platform}</span>
+                        {selectedEvent.location && selectedEvent.location !== '--' && <span className="text-foreground-400"> · {selectedEvent.location}</span>}
+                      </EventDetailLine>
                     )}
                     {selectedEvent.cohort && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-group-line text-foreground-400 w-4 text-center"></i>
-                        <span className="font-medium">{selectedEvent.cohort}</span>
-                      </div>
+                      <EventDetailLine icon="ri-group-line">
+                        <span className="font-bold text-foreground-900">{selectedEvent.cohort}</span>
+                      </EventDetailLine>
                     )}
-                    <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                      <i className="ri-checkbox-circle-line text-foreground-400 w-4 text-center"></i>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusBadge(selectedEvent.status)}`}>
-                        {statusLabel(selectedEvent.status)}
-                      </span>
-                    </div>
                     {selectedEvent.meetingLink && (
-                      <div className="flex items-center gap-2 text-[11px] text-foreground-500">
-                        <i className="ri-links-line text-foreground-400 w-4 text-center"></i>
+                      <EventDetailLine icon="ri-links-line">
                         <a
                           href={selectedEvent.meetingLink}
                           target="_blank"
                           rel="noreferrer"
-                          className="font-medium text-primary-600 hover:text-primary-700 hover:underline"
+                          className="font-bold text-primary-600 hover:text-primary-700 hover:underline"
                         >
                           Open meeting link
                         </a>
-                      </div>
+                      </EventDetailLine>
                     )}
                     {selectedEvent.notes && (
-                      <div className="bg-background-100 rounded-lg p-3 mt-2">
-                        <p className="text-[10px] text-foreground-400 uppercase font-semibold mb-1">Notes</p>
-                        <p className="text-[11px] text-foreground-600 leading-relaxed">{selectedEvent.notes}</p>
+                      <div className="rounded-xl border border-background-100 bg-background-50 p-3">
+                        <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
+                          <i className="ri-sticky-note-line"></i>
+                          Notes
+                        </p>
+                        <p className="text-[11px] leading-5 text-foreground-700">{selectedEvent.notes}</p>
                       </div>
                     )}
                   </div>
@@ -1718,11 +1914,16 @@ export default function CoachTimetablePage() {
                     </div>
                   )}
                   {selectedEvent.status !== 'completed' && (
-                    <div className="mt-4 rounded-xl border border-background-200/60 bg-background-100/60 p-3">
-                      <div className="flex items-center justify-between gap-3 mb-3">
-                        <h4 className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Schedule Meeting</h4>
+                    <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
+                          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
+                            <i className="ri-calendar-schedule-line"></i>
+                          </span>
+                          Schedule Meeting
+                        </h4>
                         {selectedEvent.status === 'not-scheduled' && (
-                          <span className="text-[10px] font-medium text-amber-700">Needs scheduling</span>
+                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">Needs scheduling</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1732,7 +1933,7 @@ export default function CoachTimetablePage() {
                             type="date"
                             value={scheduleDate}
                             onChange={(e) => setScheduleDate(e.target.value)}
-                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           />
                         </label>
                         <label className="block">
@@ -1741,7 +1942,7 @@ export default function CoachTimetablePage() {
                             type="time"
                             value={scheduleTime}
                             onChange={(e) => setScheduleTime(e.target.value)}
-                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           />
                         </label>
                         <label className="block">
@@ -1749,7 +1950,7 @@ export default function CoachTimetablePage() {
                           <select
                             value={scheduleDuration}
                             onChange={(e) => setScheduleDuration(Number(e.target.value))}
-                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           >
                             {[30, 45, 60, 90].map(minutes => (
                               <option key={minutes} value={minutes}>{minutes} min</option>
@@ -1757,11 +1958,11 @@ export default function CoachTimetablePage() {
                           </select>
                         </label>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2 mt-3">
+                      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-background-100 pt-3">
                         <button
                           onClick={handleScheduleSave}
                           disabled={eventActionBusy}
-                          className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                          className="rounded-xl bg-primary-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <i className="ri-calendar-check-line mr-1"></i>
                           {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
@@ -1770,7 +1971,7 @@ export default function CoachTimetablePage() {
                         <button
                           onClick={() => handleEventAction('start')}
                           disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
-                          className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                          className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <i className="ri-play-circle-line mr-1"></i>Start
                           </button>
@@ -1779,7 +1980,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={() => handleEventAction('complete')}
                             disabled={eventActionBusy}
-                            className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                            className="rounded-xl bg-secondary-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-secondary-500/20 transition-smooth hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <i className="ri-check-double-line mr-1"></i>Complete
                           </button>
@@ -1788,7 +1989,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={() => handleEventAction('cancel')}
                             disabled={eventActionBusy}
-                            className="px-3 py-2 bg-background-50 border border-red-200 text-red-700 rounded-lg text-[11px] font-medium hover:bg-red-50 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
+                            className="rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-[11px] font-bold text-red-700 transition-smooth hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <i className="ri-close-circle-line mr-1"></i>Cancel
                           </button>
@@ -1798,57 +1999,117 @@ export default function CoachTimetablePage() {
                   )}
                 </div>
               ) : (
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-4 flex items-center gap-2">
-                    <i className="ri-information-line text-foreground-400"></i>Event Details
-                  </h3>
-                  <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <span className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mb-3">
-                      <i className="ri-calendar-event-line text-foreground-300 text-lg"></i>
+                <div className="p-4 md:p-5">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+                        <i className="ri-information-line"></i>
+                      </span>
+                      Event Details
+                    </h3>
+                    <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                      {selectedDayEvents.length} today
                     </span>
-                    <p className="text-sm font-semibold text-foreground-400">Select an event</p>
-                    <p className="text-[11px] text-foreground-300 mt-1">Click on any event in the calendar to view details here</p>
+                  </div>
+                  <div className="rounded-2xl border border-dashed border-background-300 bg-gradient-to-br from-background-50 to-primary-50/50 px-4 py-6 text-center">
+                    <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary-500 shadow-sm">
+                      <i className="ri-calendar-event-line text-lg"></i>
+                    </span>
+                    <p className="text-sm font-heading font-bold text-foreground-900">No event selected</p>
+                    <p className="mx-auto mt-1 max-w-[240px] text-[11px] leading-5 text-foreground-500">
+                      {selectedDayEvents.length > 0
+                        ? `${selectedDayEvents.length} event${selectedDayEvents.length === 1 ? '' : 's'} on the selected day.`
+                        : 'The selected day has no scheduled events.'}
+                    </p>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-left">
+                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Selected Day</p>
+                        <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
+                      </div>
+                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Upcoming</p>
+                        <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
 
             {/* Upcoming Events */}
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-                <i className="ri-calendar-todo-line text-accent-500"></i>Upcoming
-              </h3>
-              <div className="space-y-2">
-                {events
-                  .filter(ev => {
-                    const evDate = parseEventDate(ev);
-                    return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
-                  })
-                  .slice(0, 5)
+            <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
+              <div className="flex items-center justify-between gap-3 border-b border-background-100 bg-background-50/80 px-4 py-3 md:px-5">
+                <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                    <i className="ri-calendar-todo-line"></i>
+                  </span>
+                  Upcoming
+                </h3>
+                <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-foreground-500 shadow-sm">
+                  {upcomingEvents.length}
+                </span>
+              </div>
+              <div className="space-y-2 p-3 md:p-4">
+                {upcomingEvents
                   .map(ev => {
                     const tc = eventConfig(ev);
+                    const sourceLabel = ev.source && isSchedulableSource(ev.source)
+                      ? SOURCE_FILTER_CHIP_LABELS[ev.source]
+                      : typeConfig(ev.type).label;
                     return (
-                      <div
+                      <button
                         key={ev.id}
                         onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setViewYear(ev.year); setSelectedEvent(ev); }}
-                        className="flex items-start gap-2.5 p-2 -mx-2 rounded-lg cursor-pointer transition-smooth hover:bg-background-100"
+                        className={`group flex w-full items-stretch gap-3 rounded-xl border p-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+                          selectedEvent?.id === ev.id
+                            ? 'border-primary-300 bg-primary-50/60 ring-2 ring-primary-100'
+                            : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/20'
+                        }`}
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${tc.dot}`}></span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-[11px] font-semibold text-foreground-800 leading-tight truncate">{ev.title}</p>
-                          <p className="text-[10px] text-foreground-400">
-                            {ev.dayOfMonth} {MONTH_NAMES[ev.month]} - {formatTime(ev.startHour)}
-                            {ev.learner && <span> - {ev.learner}</span>}
+                        <div className="flex w-12 shrink-0 flex-col overflow-hidden rounded-xl border border-background-200 bg-background-50 text-center">
+                          <span className="bg-background-100 px-1 py-1 text-[9px] font-bold uppercase tracking-wide text-foreground-500">
+                            {MONTH_NAMES[ev.month].slice(0, 3)}
+                          </span>
+                          <span className="px-1 py-1.5 text-lg font-heading font-bold leading-none text-foreground-950">
+                            {ev.dayOfMonth}
+                          </span>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-1 flex items-center gap-1.5">
+                            <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
+                            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tc.bg} ${tc.text}`}>
+                              {sourceLabel}
+                            </span>
+                            <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${statusBadge(ev.status)}`}>
+                              {statusLabel(ev.status)}
+                            </span>
+                          </div>
+                          <p className="truncate text-[12px] font-heading font-bold leading-tight text-foreground-950">{ev.title}</p>
+                          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-foreground-500">
+                            <i className="ri-time-line text-foreground-400"></i>
+                            <span className="shrink-0">{formatTime(ev.startHour)}</span>
+                            {(ev.learner || ev.programme) && (
+                              <>
+                                <span className="text-foreground-300">·</span>
+                                <span className="truncate">{ev.learner || ev.programme}</span>
+                              </>
+                            )}
                           </p>
                         </div>
-                      </div>
+                        <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-foreground-300 transition-smooth group-hover:bg-background-100 group-hover:text-primary-600">
+                          <i className="ri-arrow-right-s-line"></i>
+                        </span>
+                      </button>
                     );
                   })}
-                {events.filter(ev => {
-                  const evDate = parseEventDate(ev);
-                  return evDate >= todayStart && ev.status !== 'completed' && ev.status !== 'cancelled';
-                }).length === 0 && (
-                  <p className="text-[11px] text-foreground-400 text-center py-3">No upcoming events</p>
+                {upcomingEvents.length === 0 && (
+                  <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
+                    <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white text-foreground-300">
+                      <i className="ri-calendar-check-line text-lg"></i>
+                    </span>
+                    <p className="text-sm font-heading font-bold text-foreground-800">No upcoming events</p>
+                    <p className="mt-1 text-[11px] text-foreground-500">The forward schedule is clear.</p>
+                  </div>
                 )}
               </div>
             </div>

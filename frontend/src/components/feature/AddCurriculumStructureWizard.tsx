@@ -15,23 +15,34 @@ import {
   createCurriculumHoliday,
   createCurriculumModule,
   createCurriculumProgramme,
+  fetchCurriculumModules,
+  fetchCurriculumKsbSets,
+  fetchCurriculumProgrammeDetail,
+  fetchCurriculumStandards,
   fetchFreeProgrammeModules,
   saveFreeProgrammeModules,
   saveCurriculumProgrammeTree,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumHoliday,
+  updateCurriculumKsbFramework,
+  updateCurriculumModule,
   updateCurriculumProgramme,
   type CurriculumCohort,
+  type CurriculumComponent,
   type CurriculumCohortInput,
   type CurriculumGroup,
   type CurriculumGroupInput,
   type CurriculumHoliday,
   type CurriculumHolidayInput,
+  type CurriculumKsbSet,
   type CurriculumModule,
   type CurriculumModuleAttachmentInput,
   type CurriculumProgramme,
+  type CurriculumProgrammeDetail,
+  type CurriculumSession,
   type CurriculumStaffProfile,
+  type CurriculumStandard,
   type FreeProgrammeModule,
   type FreeProgrammeModuleInput,
 } from '@/lib/curriculumApi';
@@ -120,6 +131,11 @@ interface TutorSessionSummary {
   moduleLocalId?: string;
   groupLocalId?: string;
   cohortLocalId?: string;
+  programmeSourceId?: string;
+  cohortSourceId?: string;
+  groupSourceId?: string;
+  moduleSourceId?: string;
+  external?: boolean;
 }
 
 interface TutorScheduleConflict {
@@ -159,12 +175,43 @@ interface CohortDraft {
 interface AddCurriculumStructureWizardProps {
   isOpen: boolean;
   onClose: () => void;
-  onSaved?: () => void;
+  onSaved?: () => void | Promise<void>;
   initialProgrammeId?: string;
   initialProgramme?: CurriculumProgramme;
   initialCohortId?: string;
   initialGroupId?: string;
   startStep?: WizardStep;
+  modulePlacementMode?: boolean;
+}
+
+function wizardDraftSnapshot(
+  programmeForm: {
+    name: string;
+    standard: string;
+    level: string;
+    color: string;
+    description: string;
+    structureType: ProgrammeStructureType;
+  },
+  ksbSourceKind: 'profile' | 'standard',
+  ksbSourceValue: string,
+  cohortDrafts: CohortDraft[],
+) {
+  return JSON.stringify({
+    programmeForm,
+    ksbSourceKind,
+    ksbSourceValue,
+    cohortDrafts: cohortDrafts.map(cohort => ({
+      ...cohort,
+      groups: cohort.groups.map(group => ({
+        ...group,
+        modules: group.modules.map(module => ({
+          ...module,
+          weeks: module.weeks.map(({ open: _open, ...week }) => week),
+        })),
+      })),
+    })),
+  });
 }
 
 const steps: Array<{ key: WizardStep; label: string; icon: string }> = [
@@ -172,7 +219,7 @@ const steps: Array<{ key: WizardStep; label: string; icon: string }> = [
   { key: 'cohort', label: 'Cohort', icon: 'ri-calendar-event-line' },
   { key: 'group', label: 'Group', icon: 'ri-team-line' },
   { key: 'modules', label: 'Modules', icon: 'ri-stack-line' },
-  { key: 'weeks', label: 'Module Content', icon: 'ri-layout-row-line' },
+  { key: 'weeks', label: 'Components', icon: 'ri-layout-row-line' },
   { key: 'review', label: 'Review', icon: 'ri-checkbox-circle-line' },
 ];
 
@@ -205,6 +252,41 @@ function normalise(value: unknown) {
 
 function slugify(value: unknown) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
+}
+
+function uniqueTextValues(values: Array<unknown>) {
+  const seen = new Set<string>();
+  return values
+    .map(value => String(value || '').trim())
+    .filter(value => {
+      if (!value) return false;
+      const key = normalise(value);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function wizardKsbSourceId(profile: CurriculumKsbSet) {
+  return String(profile.frameworkId || profile.ksbProfileId || profile.profileId || profile.programmeId || profile.standard || profile.programmeName || '');
+}
+
+function wizardKsbSetCountsLabel(profile: CurriculumKsbSet) {
+  const counts = profile.ksbs.reduce((total, item) => {
+    const type = String(item.type || '').toLowerCase();
+    if (type.startsWith('knowledge')) total.knowledge += 1;
+    else if (type.startsWith('skill')) total.skill += 1;
+    else if (type.startsWith('behaviour')) total.behaviour += 1;
+    return total;
+  }, { knowledge: 0, skill: 0, behaviour: 0 });
+  return `${counts.knowledge} K / ${counts.skill} S / ${counts.behaviour} B`;
+}
+
+function wizardStandardCountsLabel(standard: CurriculumStandard) {
+  const knowledge = Number(standard.knowledge) || standard.ksbs?.filter(item => String(item.type).toLowerCase().startsWith('knowledge')).length || 0;
+  const skills = Number(standard.skills) || standard.ksbs?.filter(item => String(item.type).toLowerCase().startsWith('skill')).length || 0;
+  const behaviours = Number(standard.behaviours) || standard.ksbs?.filter(item => String(item.type).toLowerCase().startsWith('behaviour')).length || 0;
+  return `${knowledge} K / ${skills} S / ${behaviours} B`;
 }
 
 function generatedCurriculumId(prefix: 'COHORT' | 'GROUP') {
@@ -738,6 +820,34 @@ function moduleBuilderStructureId(module: CurriculumModule) {
   return canonical || String(module.moduleCatalogueId || module.catalogueId || module.structureId || module.moduleId || curriculumModuleToCatalogue(module).catalogueId || '');
 }
 
+function wizardProgrammeModulesForKsbCascade(programmeId: string, programmeName: string, modules: CurriculumModule[]) {
+  const programmeKeys = [programmeId, programmeName].map(normalise).filter(Boolean);
+  const uniqueModules = new Map<string, CurriculumModule>();
+  modules.forEach(module => {
+    const moduleProgrammeKeys = [module.programmeId, module.programme].map(normalise).filter(Boolean);
+    if (!programmeKeys.some(key => moduleProgrammeKeys.includes(key))) return;
+    const id = moduleBuilderStructureId(module);
+    if (!id || id.startsWith('training-module-')) return;
+    uniqueModules.set(id, module);
+  });
+  return Array.from(uniqueModules.entries()).map(([id, module]) => ({ id, module }));
+}
+
+async function cascadeWizardKsbSourceToProgrammeModules(programmeId: string, programmeName: string, modules: CurriculumModule[], ksbProfileSourceId: string) {
+  const programmeModules = wizardProgrammeModulesForKsbCascade(programmeId, programmeName, modules);
+  if (!programmeModules.length) return 0;
+  await Promise.all(programmeModules.map(({ id, module }) => updateCurriculumModule(id, {
+    name: module.name,
+    programmeId,
+    programmeName,
+    programme: programmeName,
+    color: module.color,
+    notes: module.notes,
+    ksbProfileSourceId,
+  })));
+  return programmeModules.length;
+}
+
 function moduleSessionCount(module?: CurriculumModule) {
   return Math.max(1, Number(module?.sessionsNumber || module?.weeks || module?.sessionNames?.length || 1));
 }
@@ -770,13 +880,47 @@ function curriculumModuleComponentCount(module: CurriculumModule) {
 }
 
 function userFacingNotes(value: unknown) {
-  return String(value || '')
+  return stripInternalMetadata(value)
     .split(/\r?\n/)
-    .map(line => line.replace(/(^|\s)__[a-zA-Z0-9_]+:[\s\S]*?(?=\s__[a-zA-Z0-9_]+:|$)/g, ' ').trim())
     .filter(line => !/^\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours)$/i.test(line))
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+function stripInternalMetadata(value: unknown) {
+  return String(value || '')
+    .replace(/(^|\s)__[a-zA-Z0-9_]+(?::|=)?[\s\S]*?(?=\s__[a-zA-Z0-9_]+(?::|=)?|$)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function userFacingComponentDescription(component: ModuleComponent) {
+  return userFacingNotes(component.description);
+}
+
+function isDisplayableModuleBuilderComponent(component: ModuleComponent, weekTitle = '') {
+  const description = userFacingComponentDescription(component);
+  const title = String(component.title || '').trim();
+  const type = normalise(component.type);
+  const titleIsOnlySessionShell = normalise(title) && normalise(title) === normalise(weekTitle);
+  if (!description && (titleIsOnlySessionShell || type.includes('livesession') || type === 'session')) return false;
+  const hasUsefulSettings = Object.values(component.settings || {}).some(value => {
+    if (Array.isArray(value)) return value.some(item => String(item || '').trim());
+    if (typeof value === 'boolean') return value;
+    return Boolean(userFacingNotes(value));
+  });
+  return Boolean(description || hasUsefulSettings || (title && !titleIsOnlySessionShell));
+}
+
+function moduleDraftDisplayableComponents(draft: Pick<ModuleDraft, 'weeks'>, freeMode = false) {
+  return draft.weeks.flatMap(week => (
+    freeMode ? week.components : week.components.filter(component => isDisplayableModuleBuilderComponent(component, week.title))
+  ));
+}
+
+function moduleDraftDisplayComponentCount(draft: Pick<ModuleDraft, 'weeks'>, freeMode = false) {
+  return moduleDraftDisplayableComponents(draft, freeMode).length;
 }
 
 function toTimeInput(value: unknown) {
@@ -881,6 +1025,88 @@ function uniqueModulesByName(modules: CurriculumModule[]) {
   });
 }
 
+function nestedGroupsForCohort(cohort: CurriculumCohort) {
+  const nestedGroups = (cohort as CurriculumCohort & { groups?: unknown[] }).groups;
+  if (!Array.isArray(nestedGroups)) return [];
+  return nestedGroups.filter((group): group is CurriculumGroup & { modules?: CurriculumModule[] } => Boolean(group && typeof group === 'object'));
+}
+
+function nestedModulesForGroup(group: CurriculumGroup) {
+  const nestedModules = (group as CurriculumGroup & { modules?: unknown[] }).modules;
+  if (!Array.isArray(nestedModules)) return [];
+  return nestedModules.filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object'));
+}
+
+function curriculumComponentBelongsToModule(component: CurriculumComponent, module: CurriculumModule) {
+  const moduleKeys = moduleAssignmentKeyVariants([
+    moduleBuilderStructureId(module),
+    module.moduleCatalogueId,
+    module.moduleId,
+    module.structureId,
+    module.catalogueId,
+    module.deliveryModuleId,
+    module.legacyModuleId,
+    module.id,
+    module.sourceId,
+  ]);
+  const componentKeys = moduleAssignmentKeyVariants([
+    component.moduleCatalogueId,
+    component.moduleId,
+    component.module,
+  ]);
+  return Array.from(componentKeys).some(key => moduleKeys.has(key))
+    || normalise(component.module) === normalise(module.name);
+}
+
+function isPlaceholderCurriculumComponent(component: CurriculumComponent) {
+  return /placeholder lesson derived from the existing module catalogue/i.test(String(component.description || ''));
+}
+
+function enrichModulesWithDetailComponents(modules: CurriculumModule[], components: CurriculumComponent[] = []) {
+  if (!components.length) return modules;
+
+  return modules.map(module => {
+    const relatedComponents = components.filter(component => curriculumComponentBelongsToModule(component, module));
+    if (!relatedComponents.length) return module;
+
+    const existingWeeks = module.weekStructure || [];
+    const hasActualWeekComponents = existingWeeks.some(week => (
+      (week.components || []).some(component => !isPlaceholderCurriculumComponent(component))
+    ));
+    if (hasActualWeekComponents) return module;
+
+    const weekCount = Math.max(1, Number(module.sessionsNumber || module.weeks || existingWeeks.length || module.sessionNames?.length || 1) || 1);
+    const weeks = Array.from({ length: weekCount }, (_, index) => {
+      const existing = existingWeeks[index];
+      return {
+        id: existing?.id || `${moduleBuilderStructureId(module) || module.id}-week-${index + 1}`,
+        weekNumber: existing?.weekNumber || index + 1,
+        title: existing?.title || module.sessionNames?.[index] || `Week ${index + 1}`,
+        displayOrder: existing?.displayOrder ?? index,
+        components: [] as CurriculumComponent[],
+      };
+    });
+
+    relatedComponents.forEach((component, componentIndex) => {
+      const componentWeekKey = normalise(component.weekId || component.weekTitle || component.week);
+      const weekByIdentity = weeks.find(week => (
+        normalise(week.id) === componentWeekKey
+        || normalise(week.title) === componentWeekKey
+        || normalise(`Week ${week.weekNumber}`) === componentWeekKey
+      ));
+      const fallbackWeek = weeks[Math.min(Math.max(componentIndex, 0), weeks.length - 1)] || weeks[0];
+      const targetWeek = weekByIdentity || fallbackWeek;
+      targetWeek.components = [...(targetWeek.components || []), component];
+    });
+
+    return {
+      ...module,
+      weekStructure: weeks,
+      lessons: relatedComponents.length,
+    };
+  });
+}
+
 function moduleStaffValues(module: CurriculumModule, group?: CurriculumGroup) {
   const deliveryMetadata = (module as CurriculumModule & { deliveryMetadata?: Record<string, string> }).deliveryMetadata;
   return {
@@ -930,6 +1156,7 @@ function buildExistingProgrammeDrafts(
   holidays: CurriculumHoliday[],
   initialCohortId?: string,
   initialGroupId?: string,
+  components: CurriculumComponent[] = [],
 ) {
   const programmeCohorts = cohorts.filter(cohort => cohortBelongsToProgramme(cohort, programme));
 
@@ -951,8 +1178,9 @@ function buildExistingProgrammeDrafts(
       groups: [],
     };
 
-    const cohortGroups = groups.filter(group => groupBelongsToCohort(group, cohort));
-    cohortDraft.groups = cohortGroups.flatMap(group => {
+    const cohortGroups = nestedGroupsForCohort(cohort);
+    const resolvedCohortGroups = cohortGroups.length ? cohortGroups : groups.filter(group => groupBelongsToCohort(group, cohort));
+    cohortDraft.groups = resolvedCohortGroups.flatMap(group => {
       const times = scheduleTimes(group.schedule);
       const groupDraft: GroupDraft = {
         localId: `group-existing-${group.id}`,
@@ -965,7 +1193,11 @@ function buildExistingProgrammeDrafts(
         color: String((group as { color?: string }).color || '#334155'),
         modules: [],
       };
-      const groupModules = uniqueModulesByName(modules.filter(module => moduleBelongsToGroup(module, group, cohort, programme)));
+      const nestedModules = nestedModulesForGroup(group);
+      const groupModules = uniqueModulesByName(enrichModulesWithDetailComponents(
+        nestedModules.length ? nestedModules : modules.filter(module => moduleBelongsToGroup(module, group, cohort, programme)),
+        components,
+      ));
       groupDraft.modules = groupModules.map(module => existingModuleDraft(module, groupDraft, activeHolidays, group));
       return [groupDraft];
     });
@@ -997,6 +1229,59 @@ function emptyModuleDraft(groupDay = '', groupTime = '09:30', activeHolidays: Cu
     skippedHolidaySessions: plan.skippedHolidaySessions,
     originalEndDate: plan.originalEndDate,
     extensionDays: plan.extensionDays,
+  };
+}
+
+function wizardCloneId(prefix: string) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function cloneModuleDraft(draft: ModuleDraft): ModuleDraft {
+  const localId = wizardCloneId('module');
+  const baseName = draft.name || draft.existingName || 'Module';
+  return {
+    ...draft,
+    localId,
+    sourceId: undefined,
+    mode: 'new',
+    catalogueId: '',
+    name: `${baseName} copy`,
+    existingCatalogueId: undefined,
+    existingName: undefined,
+    existingSessionsNumber: undefined,
+    newName: `${baseName} copy`,
+    newSessionsNumber: draft.sessionsNumber,
+    weeks: draft.weeks.map((week, index) => ({
+      ...week,
+      id: `${localId}-week-${week.sessionNumber || index + 1}-${Math.random().toString(36).slice(2)}`,
+      open: false,
+      components: week.components.map(component => ({
+        ...component,
+        id: wizardCloneId('component'),
+        sourceId: undefined,
+        moduleId: localId,
+      })),
+    })),
+  };
+}
+
+function cloneGroupDraftForEditing(group: GroupDraft): GroupDraft {
+  return {
+    ...group,
+    localId: wizardCloneId('group'),
+    sourceId: undefined,
+    name: group.name ? `${group.name} copy` : 'New group copy',
+    modules: group.modules.map(cloneModuleDraft),
+  };
+}
+
+function cloneCohortDraftForEditing(cohort: CohortDraft): CohortDraft {
+  return {
+    ...cohort,
+    localId: wizardCloneId('cohort'),
+    sourceId: undefined,
+    name: cohort.name ? `${cohort.name} copy` : 'New cohort copy',
+    groups: cohort.groups.map(cloneGroupDraftForEditing),
   };
 }
 
@@ -1131,8 +1416,24 @@ function componentTotalHours(components: ModuleComponent[]) {
   return components.reduce((total, component) => total + Math.max(0, Number(component.expectedOtjh) || 0), 0);
 }
 
+function moduleDraftActualComponentHours(draft: Pick<ModuleDraft, 'weeks'>, freeMode = false) {
+  return componentTotalHours(moduleDraftDisplayableComponents(draft, freeMode));
+}
+
+function groupActualComponentHours(group: GroupDraft, freeMode = false) {
+  return group.modules.filter(isConfiguredModule).reduce((total, draft) => total + moduleDraftActualComponentHours(draft, freeMode), 0);
+}
+
+function cohortActualComponentHours(cohort: CohortDraft, freeMode = false) {
+  return cohort.groups.filter(isConfiguredGroup).reduce((total, group) => total + groupActualComponentHours(group, freeMode), 0);
+}
+
+function programmeActualComponentHours(cohorts: CohortDraft[], freeMode = false) {
+  return cohorts.reduce((total, cohort) => total + cohortActualComponentHours(cohort, freeMode), 0);
+}
+
 function moduleDraftAuthoredHours(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
-  const authoredTotal = draft.weeks.reduce((total, week) => total + componentTotalHours(week.components), 0);
+  const authoredTotal = componentTotalHours(moduleDraftDisplayableComponents(draft));
   if (authoredTotal > 0) return authoredTotal;
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   const moduleTotals = selectedModule as (CurriculumModule & { declaredTotalOtjh?: number; totalOtjh?: number }) | undefined;
@@ -1203,14 +1504,79 @@ function timeRangesOverlap(leftStart: string, leftEnd: string, rightStart: strin
   return left.start < right.end && right.start < left.end;
 }
 
+function dateRangesOverlap(leftStart: string, leftEnd: string, rightStart: string, rightEnd: string) {
+  const leftStartDate = dateFromInput(leftStart);
+  const leftEndDate = dateFromInput(leftEnd || leftStart);
+  const rightStartDate = dateFromInput(rightStart);
+  const rightEndDate = dateFromInput(rightEnd || rightStart);
+  if (!leftStartDate || !leftEndDate || !rightStartDate || !rightEndDate) return true;
+  return leftStartDate <= rightEndDate && rightStartDate <= leftEndDate;
+}
+
 function formatTimeRange(startTime: string, endTime: string) {
   return `${startTime || '--:--'}-${endTime || addHoursToTime(startTime, 2) || '--:--'}`;
+}
+
+function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: string, savedGroups: CurriculumGroup[] = []) {
+  const groups = cohortDrafts.flatMap(cohort => cohort.groups.map(group => ({ cohort, group })));
+  const target = groups.find(item => item.group.localId === activeGroupId);
+  if (!target) return null;
+  const coach = staffAssignment(target.group.coach);
+  if (!coach || normalise(coach) === 'unassigned') return null;
+  const targetDays = new Set(target.group.deliveryDays);
+  if (!targetDays.size || !target.group.startTime) return null;
+
+  for (const item of groups) {
+    if (item.group.localId === target.group.localId) continue;
+    if (normalise(staffAssignment(item.group.coach)) !== normalise(coach)) continue;
+    const overlappingDays = item.group.deliveryDays.filter(day => targetDays.has(day));
+    if (!overlappingDays.length) continue;
+    if (!timeRangesOverlap(target.group.startTime, target.group.endTime, item.group.startTime, item.group.endTime)) continue;
+    if (!dateRangesOverlap(target.cohort.startDate, target.cohort.endDate, item.cohort.startDate, item.cohort.endDate)) continue;
+    return {
+      coach,
+      groupName: item.group.name || 'another group',
+      cohortName: cohortDisplayName(item.cohort),
+      programmeName: '',
+      days: overlappingDays,
+      time: formatTimeRange(item.group.startTime, item.group.endTime || addHoursToTime(item.group.startTime, 2)),
+    };
+  }
+
+  for (const group of savedGroups) {
+    if (target.group.sourceId && normalise(group.id) === normalise(target.group.sourceId)) continue;
+    if (normalise(staffAssignment(group.coach)) !== normalise(coach)) continue;
+    const schedule = String(group.schedule || '');
+    const savedDays = scheduleDeliveryDays(schedule);
+    const overlappingDays = savedDays.filter(day => targetDays.has(day));
+    if (!overlappingDays.length) continue;
+    const savedTimes = scheduleTimes(schedule);
+    if (!timeRangesOverlap(target.group.startTime, target.group.endTime, savedTimes.startTime, savedTimes.endTime)) continue;
+    if (!dateRangesOverlap(target.cohort.startDate, target.cohort.endDate, group.startDate, group.endDate)) continue;
+    return {
+      coach,
+      groupName: group.name || 'another group',
+      cohortName: group.cohort || 'another cohort',
+      programmeName: group.programme || '',
+      days: overlappingDays,
+      time: formatTimeRange(savedTimes.startTime, savedTimes.endTime),
+    };
+  }
+  return null;
 }
 
 function tutorSessionsOverlap(left: TutorSessionSummary, right: TutorSessionSummary) {
   if (!left.tutor || normalise(left.tutor) !== normalise(right.tutor)) return false;
   if (!left.date || left.date !== right.date) return false;
   return timeRangesOverlap(left.startTime, left.endTime, right.startTime, right.endTime);
+}
+
+function sameSavedSessionContext(left: TutorSessionSummary, right: TutorSessionSummary) {
+  if (!left.external && !right.external) return false;
+  const sameCohort = Boolean(left.cohortSourceId && right.cohortSourceId && normalise(left.cohortSourceId) === normalise(right.cohortSourceId));
+  const sameGroup = Boolean(left.groupSourceId && right.groupSourceId && normalise(left.groupSourceId) === normalise(right.groupSourceId));
+  const sameModule = Boolean(left.moduleSourceId && right.moduleSourceId && normalise(left.moduleSourceId) === normalise(right.moduleSourceId));
+  return sameCohort && sameGroup && sameModule && left.date === right.date && left.startTime === right.startTime;
 }
 
 function conflictSessionLabel(session: TutorSessionSummary) {
@@ -1231,7 +1597,7 @@ function buildTutorConflict(proposed: TutorSessionSummary, conflicting: TutorSes
   };
 }
 
-function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: CurriculumModule[], programmeName: string) {
+function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: CurriculumModule[], programmeName: string, programmeSourceId = '') {
   return cohortDrafts.flatMap(cohort => cohort.groups.flatMap(group => group.modules.flatMap((draft, moduleIndex) => {
     const tutor = staffAssignment(draft.tutor);
     if (!tutor || !isConfiguredModule(draft)) return [];
@@ -1253,22 +1619,61 @@ function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: Curricul
       moduleLocalId: draft.localId,
       groupLocalId: group.localId,
       cohortLocalId: cohort.localId,
+      programmeSourceId,
+      cohortSourceId: cohort.sourceId,
+      groupSourceId: group.sourceId,
+      moduleSourceId: draft.sourceId || draft.catalogueId || selectedModule?.moduleCatalogueId || selectedModule?.moduleId || selectedModule?.id,
     }));
   })));
+}
+
+function savedTutorSessions(sessions: CurriculumSession[]) {
+  return sessions
+    .filter(session => staffAssignment(session.tutor))
+    .filter(session => !['cancelled', 'archived'].includes(normalise(session.status)))
+    .map((session): TutorSessionSummary => ({
+      id: `saved-${session.id}`,
+      tutor: staffAssignment(session.tutor),
+      date: session.date,
+      startTime: session.startTime,
+      endTime: session.endTime || addHoursToTime(session.startTime, 2),
+      programme: session.programme,
+      cohort: session.cohort,
+      group: session.group,
+      module: session.module,
+      sessionNumber: Number(session.week) || 1,
+      title: session.title || session.module || 'Saved session',
+      programmeSourceId: session.programmeSourceId || session.programmeId,
+      cohortSourceId: session.cohortId,
+      groupSourceId: session.groupId,
+      moduleSourceId: session.moduleCatalogueId || session.moduleId || session.deliveryModuleId || session.legacyModuleId,
+      external: true,
+    }));
 }
 
 function findTutorScheduleConflicts(
   cohortDrafts: CohortDraft[],
   moduleOptions: CurriculumModule[],
   programmeName: string,
+  programmeSourceId = '',
+  externalSessions: CurriculumSession[] = [],
 ) {
-  const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, programmeName);
+  const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, programmeName, programmeSourceId);
+  const savedSessions = savedTutorSessions(externalSessions);
   const conflicts: TutorScheduleConflict[] = [];
   const seen = new Set<string>();
 
   proposedSessions.forEach((proposed, index) => {
     proposedSessions.slice(index + 1).forEach(other => {
       if (proposed.moduleLocalId === other.moduleLocalId) return;
+      if (!tutorSessionsOverlap(proposed, other)) return;
+      const key = [proposed.id, other.id].sort().join('|');
+      if (seen.has(key)) return;
+      seen.add(key);
+      conflicts.push(buildTutorConflict(proposed, other));
+    });
+    savedSessions.forEach(other => {
+      if (sameSavedSessionContext(proposed, other)) return;
       if (!tutorSessionsOverlap(proposed, other)) return;
       const key = [proposed.id, other.id].sort().join('|');
       if (seen.has(key)) return;
@@ -1315,7 +1720,16 @@ function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partia
   };
 }
 
-function moduleBuilderUrlForDraft(draft: ModuleDraft, moduleOptions: CurriculumModule[], programmeName: string, programmeId = '', cohort?: CohortDraft, group?: GroupDraft) {
+function moduleBuilderUrlForDraft(
+  draft: ModuleDraft,
+  moduleOptions: CurriculumModule[],
+  programmeName: string,
+  programmeId = '',
+  cohort?: CohortDraft,
+  group?: GroupDraft,
+  ksbSourceId = '',
+  ksbSourceLabel = '',
+) {
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   const moduleIdentifier = draft.mode === 'existing' ? (selectedModule ? moduleBuilderStructureId(selectedModule) : draft.catalogueId) : '';
   const title = draft.name.trim();
@@ -1326,6 +1740,11 @@ function moduleBuilderUrlForDraft(draft: ModuleDraft, moduleOptions: CurriculumM
   if (title) params.set('moduleTitle', title);
   params.set('programmeId', programmeId);
   params.set('programme', programmeName || 'Unassigned programme');
+  if (ksbSourceId) {
+    params.set('ksbSourceId', ksbSourceId);
+    params.set('ksbProfileSourceId', ksbSourceId);
+  }
+  if (ksbSourceLabel) params.set('ksbSourceLabel', ksbSourceLabel);
   params.set('cohortId', cohort?.sourceId || cohort?.localId || '');
   params.set('cohortName', cohort ? cohortDisplayName(cohort) : '');
   params.set('groupId', group?.sourceId || group?.localId || '');
@@ -1754,6 +2173,7 @@ export function AddCurriculumStructureWizard({
   initialCohortId,
   initialGroupId,
   startStep = 'programme',
+  modulePlacementMode = false,
 }: AddCurriculumStructureWizardProps) {
   const { data, loading, error, reload } = useCurriculumData({ compact: true, includeHolidays: true, refreshModules: true });
   const { modules: catalogueModules, reload: reloadCatalogueModules } = useCurriculumModules({ autoLoad: false });
@@ -1767,6 +2187,15 @@ export function AddCurriculumStructureWizard({
     description: '',
     structureType: 'scheduled' as ProgrammeStructureType,
   });
+  const [ksbSourceKind, setKsbSourceKind] = useState<'profile' | 'standard'>('profile');
+  const [ksbSourceValue, setKsbSourceValue] = useState('');
+  const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
+  const [standards, setStandards] = useState<CurriculumStandard[]>([]);
+  const [ksbSourcesLoading, setKsbSourcesLoading] = useState(false);
+  const [programmeDetail, setProgrammeDetail] = useState<CurriculumProgrammeDetail | null>(null);
+  const [programmeDetailLoading, setProgrammeDetailLoading] = useState(false);
+  const [programmeDetailFailed, setProgrammeDetailFailed] = useState(false);
+  const [chosenProgrammeId, setChosenProgrammeId] = useState('');
   const [cohortDrafts, setCohortDrafts] = useState<CohortDraft[]>([]);
   const [activeCohortId, setActiveCohortId] = useState('');
   const [expandedCohortId, setExpandedCohortId] = useState('');
@@ -1789,13 +2218,44 @@ export function AddCurriculumStructureWizard({
   const loadedBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
+  const openedDraftSnapshotRef = useRef('');
+  const userEditedWizardRef = useRef(false);
   const requestedStaffProfilesRef = useRef(false);
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
   const selectedProgramme = useMemo(
-    () => initialProgramme || programmes.find(programme => programme.id === initialProgrammeId || programme.sourceId === initialProgrammeId),
-    [initialProgramme, initialProgrammeId, programmes],
+    () => initialProgramme || programmes.find(programme => (
+      programme.id === (chosenProgrammeId || initialProgrammeId)
+      || programme.sourceId === (chosenProgrammeId || initialProgrammeId)
+    )),
+    [chosenProgrammeId, initialProgramme, initialProgrammeId, programmes],
   );
+  const ksbProfileOptions = useMemo(() => (
+    ksbSets
+      .map(profile => ({ profile, id: wizardKsbSourceId(profile) }))
+      .filter(item => item.id)
+      .sort((left, right) => String(left.profile.standard || left.profile.programmeName).localeCompare(String(right.profile.standard || right.profile.programmeName)))
+  ), [ksbSets]);
+  const standardOptions = useMemo(() => (
+    standards
+      .filter(standard => standard.id || standard.standardRef || standard.name)
+      .sort((left, right) => String(left.name || left.standardRef).localeCompare(String(right.name || right.standardRef)))
+  ), [standards]);
+  const selectedKsbProfile = useMemo(() => {
+    if (!ksbSourceValue.startsWith('profile:')) return undefined;
+    const sourceId = ksbSourceValue.slice('profile:'.length);
+    return ksbProfileOptions.find(item => item.id === sourceId)?.profile;
+  }, [ksbProfileOptions, ksbSourceValue]);
+  const selectedKsbStandard = useMemo(() => {
+    if (!ksbSourceValue.startsWith('standard:')) return undefined;
+    const sourceId = ksbSourceValue.slice('standard:'.length);
+    return standardOptions.find(standard => String(standard.id) === sourceId);
+  }, [ksbSourceValue, standardOptions]);
+  const selectedKsbSourceLabel = useMemo(() => {
+    if (selectedKsbProfile) return selectedKsbProfile.standard || selectedKsbProfile.programmeName || 'KSB profile';
+    if (selectedKsbStandard) return selectedKsbStandard.name || selectedKsbStandard.standardRef || selectedKsbStandard.code || 'KSB source';
+    return '';
+  }, [selectedKsbProfile, selectedKsbStandard]);
   const modules = useMemo(() => {
     const merged = new Map<string, CurriculumModule>();
     (data?.modules ?? []).forEach(module => {
@@ -2083,6 +2543,11 @@ export function AddCurriculumStructureWizard({
     () => buildHolidayAdjustedCohortPlan(cohortForm.startDate, cohortForm.durationMonths, activeHolidays),
     [activeHolidays, cohortForm.durationMonths, cohortForm.startDate],
   );
+  const activeProgrammeSourceId = selectedProgramme?.sourceId || selectedProgramme?.id || slugify(programmeForm.name);
+  const activeGroupCoachConflict = useMemo(
+    () => groupCoachScheduleConflict(cohortDrafts, activeGroup.localId, data?.groups || []),
+    [activeGroup.localId, cohortDrafts, data?.groups],
+  );
   const tutors = uniqueStaffNames(staffTutors.map(staffName));
   const coaches = uniqueStaffNames(staffCoaches.map(staffName));
   useEffect(() => {
@@ -2106,8 +2571,14 @@ export function AddCurriculumStructureWizard({
     });
   }, [cohortDrafts.length, isOpen, staffTutors]);
   const tutorScheduleConflicts = useMemo(
-    () => isFreeProgramme ? [] : findTutorScheduleConflicts(cohortDrafts, moduleOptions, selectedProgramme?.name || programmeForm.name),
-    [cohortDrafts, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
+    () => isFreeProgramme ? [] : findTutorScheduleConflicts(
+      cohortDrafts,
+      moduleOptions,
+      selectedProgramme?.name || programmeForm.name,
+      activeProgrammeSourceId,
+      data?.sessions || [],
+    ),
+    [activeProgrammeSourceId, cohortDrafts, data?.sessions, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
   );
   const tutorScheduleIssues = useMemo(() => {
     if (isFreeProgramme) return [];
@@ -2151,6 +2622,7 @@ export function AddCurriculumStructureWizard({
   };
 
   const addCohortDraft = () => {
+    userEditedWizardRef.current = true;
     const next = emptyCohortDraft();
     setCohortDrafts(previous => [...previous, next]);
     setActiveCohortId(next.localId);
@@ -2161,9 +2633,26 @@ export function AddCurriculumStructureWizard({
     setExpandedModuleId('');
   };
 
+  const cloneCohortDraft = (sourceId = activeCohort.localId, options: { focusCohortStep?: boolean } = {}) => {
+    const source = cohortDrafts.find(cohort => cohort.localId === sourceId);
+    if (!source) return;
+    userEditedWizardRef.current = true;
+    const next = cloneCohortDraftForEditing(source);
+    const firstGroup = next.groups[0];
+    setCohortDrafts(previous => [...previous, next]);
+    setActiveCohortId(next.localId);
+    setExpandedCohortId(next.localId);
+    setActiveGroupId(firstGroup?.localId || '');
+    setExpandedGroupId(firstGroup?.localId || '');
+    setActiveModuleId(firstGroup?.modules[0]?.localId || '');
+    setExpandedModuleId('');
+    if (options.focusCohortStep) setStep('cohort');
+  };
+
   const removeCohortDraft = async (id: string) => {
     const target = cohortDrafts.find(cohort => cohort.localId === id);
     if (!target || removingDraftId) return;
+    userEditedWizardRef.current = true;
     await confirmDraftRemoval('cohort', cohortDisplayName(target), async () => {
       setRemovingDraftId(id);
       const removeIndex = cohortDrafts.findIndex(cohort => cohort.localId === id);
@@ -2184,6 +2673,7 @@ export function AddCurriculumStructureWizard({
   };
 
   const addGroupDraft = (options: { focusGroupStep?: boolean } = {}) => {
+    userEditedWizardRef.current = true;
     const next = emptyGroupDraft();
     setCohortDrafts(previous => previous.map(cohort => cohort.localId === activeCohort.localId ? { ...cohort, groups: [...cohort.groups, next] } : cohort));
     setActiveGroupId(next.localId);
@@ -2193,9 +2683,23 @@ export function AddCurriculumStructureWizard({
     if (options.focusGroupStep) setStep('group');
   };
 
+  const cloneGroupDraft = (sourceId = activeGroup.localId, options: { focusGroupStep?: boolean } = {}) => {
+    const source = activeCohort.groups.find(group => group.localId === sourceId);
+    if (!source) return;
+    userEditedWizardRef.current = true;
+    const next = cloneGroupDraftForEditing(source);
+    setCohortDrafts(previous => previous.map(cohort => cohort.localId === activeCohort.localId ? { ...cohort, groups: [...cohort.groups, next] } : cohort));
+    setActiveGroupId(next.localId);
+    setExpandedGroupId(next.localId);
+    setActiveModuleId(next.modules[0]?.localId || '');
+    setExpandedModuleId('');
+    if (options.focusGroupStep) setStep('group');
+  };
+
   const removeGroupDraft = async (id: string) => {
     const target = activeCohort.groups.find(group => group.localId === id);
     if (!target || removingDraftId) return;
+    userEditedWizardRef.current = true;
     await confirmDraftRemoval('group', target.name || 'this group', async () => {
       setRemovingDraftId(id);
       const removeIndex = activeCohort.groups.findIndex(group => group.localId === id);
@@ -2213,6 +2717,7 @@ export function AddCurriculumStructureWizard({
   };
 
   const addModuleDraft = (options: { focusModulesStep?: boolean } = {}) => {
+    userEditedWizardRef.current = true;
     const baseDraft = emptyModuleDraft(groupForm.deliveryDay, groupForm.startTime, activeHolidays);
     const next = isFreeProgramme
       ? {
@@ -2230,9 +2735,21 @@ export function AddCurriculumStructureWizard({
     if (options.focusModulesStep) setStep('modules');
   };
 
+  const cloneModuleDraftForActiveGroup = (sourceId = activeModule?.localId, options: { focusModulesStep?: boolean } = {}) => {
+    const source = moduleDrafts.find(draft => draft.localId === sourceId);
+    if (!source) return;
+    userEditedWizardRef.current = true;
+    const next = cloneModuleDraft(source);
+    setModuleDrafts(previous => [...previous, next]);
+    setActiveModuleId(next.localId);
+    setExpandedModuleId(next.localId);
+    if (options.focusModulesStep) setStep('modules');
+  };
+
   const removeModuleDraft = async (id: string) => {
     const target = moduleDrafts.find(draft => draft.localId === id);
     if (!target || removingDraftId) return;
+    userEditedWizardRef.current = true;
     const selectedModule = target.mode === 'existing' ? findModuleOption(moduleOptions, target.catalogueId) : undefined;
     await confirmDraftRemoval('module', target.name.trim() || selectedModule?.name || 'this module', async () => {
       setRemovingDraftId(id);
@@ -2316,7 +2833,9 @@ export function AddCurriculumStructureWizard({
   ];
 
   const validation = {
-    programme: !programmeForm.name.trim() ? ['Programme name is required.'] : [],
+    programme: modulePlacementMode && !selectedProgramme
+      ? ['Choose the programme this module will be added to.']
+      : !programmeForm.name.trim() ? ['Programme name is required.'] : [],
     cohort: isFreeProgramme ? [] : cohortDrafts.length
       ? cohortDrafts.flatMap((cohort, index) => [
           !cohort.name.trim() ? `Cohort ${index + 1}: name is required.` : '',
@@ -2353,7 +2872,7 @@ export function AddCurriculumStructureWizard({
   const canSaveDraft = canSave || canSaveProgrammeDetails;
   const reviewGroupsForSave = cohortDrafts.flatMap(cohort => cohort.groups.filter(isConfiguredGroup));
   const reviewModulesForSave = reviewGroupsForSave.flatMap(group => group.modules.filter(isConfiguredModule));
-  const reviewComponentsForSave = reviewModulesForSave.reduce((total, draft) => total + draft.weeks.reduce((weekTotal, week) => weekTotal + week.components.length, 0), 0);
+  const reviewComponentsForSave = reviewModulesForSave.reduce((total, draft) => total + moduleDraftDisplayComponentCount(draft, isFreeProgramme), 0);
   const reviewSaveSummary = `${reviewModulesForSave.length} modules - ${reviewComponentsForSave} components`;
   const currentStepMeta = visibleSteps[stepIndex] || visibleSteps[0];
   const nextStepMeta = visibleSteps[Math.min(stepIndex + 1, visibleSteps.length - 1)] || visibleSteps[visibleSteps.length - 1];
@@ -2387,6 +2906,12 @@ export function AddCurriculumStructureWizard({
     setSubmitted(false);
     setSaving(null);
     setProgrammeForm({ name: '', standard: '', level: '', color: '#2563eb', description: '', structureType: 'scheduled' });
+    setKsbSourceKind('profile');
+    setKsbSourceValue('');
+    setProgrammeDetail(null);
+    setProgrammeDetailLoading(false);
+    setProgrammeDetailFailed(false);
+    setChosenProgrammeId('');
     setCohortDrafts([]);
     setActiveCohortId('');
     setExpandedCohortId('');
@@ -2400,8 +2925,61 @@ export function AddCurriculumStructureWizard({
     loadedBuilderStructureKeysRef.current.clear();
     loadingBuilderStructureKeysRef.current.clear();
     loadedFreeProgrammeRef.current = '';
+    openedDraftSnapshotRef.current = '';
+    userEditedWizardRef.current = false;
     requestedStaffProfilesRef.current = false;
   }, [initialProgrammeId, isOpen, startStep]);
+
+  const chooseExistingProgramme = (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
+    setChosenProgrammeId(programmeId);
+    setProgrammeForm({
+      name: programme.name || '',
+      standard: programme.standard || programme.name || '',
+      level: programme.level || '',
+      color: programme.color || '#2563eb',
+      description: programme.description || '',
+      structureType: programme.structureType === 'free' ? 'free' : 'scheduled',
+    });
+    setMessage(null);
+    setCohortDrafts([]);
+    setActiveCohortId('');
+    setExpandedCohortId('');
+    setActiveGroupId('');
+    setExpandedGroupId('');
+    setActiveModuleId('');
+    setExpandedModuleId('');
+    hydratedProgrammeRef.current = '';
+    hydratedCohortIdsRef.current.clear();
+    hydratedGroupIdsRef.current.clear();
+    loadedBuilderStructureKeysRef.current.clear();
+    loadingBuilderStructureKeysRef.current.clear();
+    loadedFreeProgrammeRef.current = '';
+    openedDraftSnapshotRef.current = '';
+    userEditedWizardRef.current = true;
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const controller = new AbortController();
+    setKsbSourcesLoading(true);
+    Promise.all([
+      fetchCurriculumKsbSets(controller.signal),
+      fetchCurriculumStandards(controller.signal),
+    ])
+      .then(([nextKsbSets, nextStandards]) => {
+        setKsbSets(nextKsbSets);
+        setStandards(nextStandards);
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        console.warn('Unable to load KSB sources.', error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setKsbSourcesLoading(false);
+      });
+    return () => controller.abort();
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !selectedProgramme) return;
@@ -2414,6 +2992,32 @@ export function AddCurriculumStructureWizard({
       structureType: selectedProgramme.structureType === 'free' ? 'free' : 'scheduled',
     });
   }, [isOpen, selectedProgramme]);
+
+  useEffect(() => {
+    if (!isOpen || !selectedProgramme) return;
+    const programmeIds = uniqueTextValues([selectedProgramme.sourceId, selectedProgramme.id, selectedProgramme.name]);
+    const linkedProfile = ksbProfileOptions.find(({ profile }) => {
+      const profileProgrammeIds = uniqueTextValues([
+        profile.programmeId,
+        ...(profile.programmeIds || []),
+      ]);
+      return programmeIds.some(id => profileProgrammeIds.some(profileId => normalise(profileId) === normalise(id)));
+    });
+    if (linkedProfile) {
+      setKsbSourceKind('profile');
+      setKsbSourceValue(`profile:${linkedProfile.id}`);
+      return;
+    }
+    const linkedStandard = standardOptions.find(standard => (
+      normalise(standard.id) === normalise(selectedProgramme.standard)
+      || normalise(standard.name) === normalise(selectedProgramme.standard)
+      || normalise(standard.standardRef) === normalise(selectedProgramme.standard)
+    ));
+    if (linkedStandard) {
+      setKsbSourceKind('standard');
+      setKsbSourceValue(`standard:${linkedStandard.id}`);
+    }
+  }, [isOpen, ksbProfileOptions, selectedProgramme, standardOptions]);
 
   useEffect(() => {
     if (!isOpen || !isFreeProgramme) return;
@@ -2454,15 +3058,63 @@ export function AddCurriculumStructureWizard({
   }, [step, visibleSteps]);
 
   useEffect(() => {
+    if (!isOpen || !selectedProgramme || isFreeProgramme) {
+      setProgrammeDetail(null);
+      setProgrammeDetailLoading(false);
+      setProgrammeDetailFailed(false);
+      return;
+    }
+    const programmeId = selectedProgramme.sourceId || selectedProgramme.id || '';
+    if (!programmeId) return;
+
+    let active = true;
+    const controller = new AbortController();
+    setProgrammeDetail(null);
+    setProgrammeDetailFailed(false);
+    setProgrammeDetailLoading(true);
+    fetchCurriculumProgrammeDetail(programmeId, controller.signal)
+      .then(detail => {
+        if (!active) return;
+        setProgrammeDetail(detail);
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        console.warn('Unable to load programme detail for editing.', error);
+        if (active) setProgrammeDetailFailed(true);
+      })
+      .finally(() => {
+        if (active) setProgrammeDetailLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [isFreeProgramme, isOpen, selectedProgramme?.id, selectedProgramme?.sourceId]);
+
+  useEffect(() => {
     if (!isOpen || !data || !selectedProgramme || loading || cohortDrafts.length || hydratedProgrammeRef.current) return;
+    if (!isFreeProgramme && programmeDetailLoading) return;
+    if (!isFreeProgramme && !programmeDetail && !programmeDetailFailed) return;
+    const detailCohorts = programmeDetail?.cohorts || [];
+    const detailFlat = programmeDetail?.flat;
+    const sourceCohorts = detailCohorts.length ? detailCohorts : (detailFlat?.cohorts || data.cohorts || []);
+    const sourceGroups = detailCohorts.length
+      ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort))
+      : (detailFlat?.groups || data.groups || []);
+    const sourceModules = detailCohorts.length
+      ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort).flatMap(group => nestedModulesForGroup(group)))
+      : (detailFlat?.modules || modules);
+    const detailComponents = detailFlat?.components || [];
     const existingDrafts = buildExistingProgrammeDrafts(
-      selectedProgramme,
-      data.cohorts || [],
-      data.groups || [],
-      modules,
+      programmeDetail?.programme || selectedProgramme,
+      sourceCohorts,
+      sourceGroups,
+      enrichModulesWithDetailComponents(sourceModules, detailComponents),
       holidays,
       initialCohortId,
       initialGroupId,
+      detailComponents,
     );
 
     hydratedProgrammeRef.current = selectedProgramme.id || selectedProgramme.sourceId || selectedProgramme.name;
@@ -2487,7 +3139,26 @@ export function AddCurriculumStructureWizard({
     setExpandedGroupId('');
     setActiveModuleId('');
     setExpandedModuleId('');
-  }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, isOpen, loading, modules, selectedProgramme]);
+  }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, isFreeProgramme, isOpen, loading, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme]);
+
+  useEffect(() => {
+    if (!isOpen || openedDraftSnapshotRef.current) return;
+    if (selectedProgramme) {
+      if (loading || ksbSourcesLoading || !programmeForm.name.trim()) return;
+      if (!isFreeProgramme && !hydratedProgrammeRef.current) return;
+    }
+    openedDraftSnapshotRef.current = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts);
+  }, [
+    cohortDrafts,
+    isFreeProgramme,
+    isOpen,
+    ksbSourceKind,
+    ksbSourceValue,
+    ksbSourcesLoading,
+    loading,
+    programmeForm,
+    selectedProgramme,
+  ]);
 
   useEffect(() => {
     if (!isOpen || !cohortDrafts.length || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
@@ -2648,18 +3319,9 @@ export function AddCurriculumStructureWizard({
 
   const requestClose = () => {
     if (saving) return;
-    const hasDraft = Boolean(
-      programmeForm.name.trim() ||
-      cohortDrafts.some(cohort => (
-        cohort.name.trim() ||
-        cohort.holidayIds.length > 0 ||
-        cohort.groups.some(group => (
-          group.name.trim() ||
-          group.modules.some(draft => draft.catalogueId || draft.name.trim() || draft.weeks.some(week => week.components.length))
-        ))
-      )),
-    );
-    if (hasDraft && !submitted) {
+    const currentSnapshot = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts);
+    const hasUnsavedChanges = Boolean(userEditedWizardRef.current && openedDraftSnapshotRef.current && openedDraftSnapshotRef.current !== currentSnapshot);
+    if (hasUnsavedChanges && !submitted) {
       setDiscardConfirmOpen(true);
       return;
     }
@@ -2678,6 +3340,7 @@ export function AddCurriculumStructureWizard({
   };
 
   const updateModuleDraft = (localId: string, patch: Partial<ModuleDraft>) => {
+    userEditedWizardRef.current = true;
     setModuleDrafts(prev => prev.map(draft => {
       if (draft.localId !== localId) return draft;
       if (isFreeProgramme) return { ...draft, ...patch, mode: 'new', catalogueId: '', tutor: '', coach: '', sessionsNumber: '1' };
@@ -2688,6 +3351,7 @@ export function AddCurriculumStructureWizard({
 
   const selectExistingModule = async (draft: ModuleDraft, catalogueId: string) => {
     if (isFreeProgramme) return;
+    userEditedWizardRef.current = true;
     const module = findModuleOption(moduleOptions, catalogueId);
     if (!catalogueId || !module) {
       updateModuleDraft(draft.localId, {
@@ -2777,6 +3441,77 @@ export function AddCurriculumStructureWizard({
     }
   };
 
+  const applySelectedKsbSource = useCallback(async (programme: CurriculumProgramme | undefined, programmeSourceId: string, programmeName: string) => {
+    if (!ksbSourceValue || !programmeSourceId) return;
+    const [kind, ...idParts] = ksbSourceValue.split(':');
+    const sourceId = idParts.join(':');
+
+    if (kind === 'profile') {
+      const selectedProfile = ksbSets.find(profile => wizardKsbSourceId(profile) === sourceId);
+      if (!selectedProfile) return;
+      const selectedProfileId = wizardKsbSourceId(selectedProfile);
+      const programmeCandidates = uniqueTextValues([programmeSourceId, programme?.id, programme?.sourceId, programmeName]);
+      const previouslyLinkedProfiles = ksbSets.filter(profile => {
+        if (wizardKsbSourceId(profile) === selectedProfileId) return false;
+        const linkedProgrammeIds = uniqueTextValues([profile.programmeId, ...(profile.programmeIds || [])]);
+        return programmeCandidates.some(candidate => linkedProgrammeIds.some(linked => normalise(linked) === normalise(candidate)));
+      });
+      await Promise.all(previouslyLinkedProfiles.map(profile => {
+        const nextProgrammeIds = uniqueTextValues([...(profile.programmeIds || []), profile.programmeId])
+          .filter(value => !programmeCandidates.some(candidate => normalise(candidate) === normalise(value)));
+        return updateCurriculumKsbFramework(wizardKsbSourceId(profile), {
+          name: profile.standard || profile.programmeName || 'KSB profile',
+          programmeId: nextProgrammeIds[0] || '',
+          programmeIds: nextProgrammeIds,
+          notes: profile.notes,
+        });
+      }));
+      const programmeIds = uniqueTextValues([
+        ...(selectedProfile.programmeIds || []),
+        selectedProfile.programmeId,
+        programmeSourceId,
+        programme?.id,
+        programme?.sourceId,
+        programmeName,
+      ]);
+      await updateCurriculumKsbFramework(selectedProfileId, {
+        name: selectedProfile.standard || selectedProfile.programmeName || programme?.standard || programmeName,
+        ksbProfileId: selectedProfile.ksbProfileId || String(selectedProfile.profileId || ''),
+        programmeId: programmeSourceId,
+        programmeIds,
+        notes: selectedProfile.notes,
+      });
+      await updateCurriculumProgramme(programmeSourceId, {
+        name: programme?.name || programmeName,
+        standard: programme?.standard || selectedProfile.standard || selectedProfile.programmeName || programmeName,
+        level: programme?.level || programmeForm.level,
+        color: programme?.color || programmeForm.color,
+        description: programme?.description || programmeForm.description,
+        structureType: programme?.structureType || programmeForm.structureType,
+        ksbProfileSourceId: `profile:${selectedProfileId}`,
+      });
+      const modulesForCascade = modules.length ? modules : await fetchCurriculumModules();
+      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, `profile:${selectedProfileId}`);
+      return;
+    }
+
+    if (kind === 'standard') {
+      const selectedStandard = standards.find(standard => String(standard.id) === sourceId);
+      if (!selectedStandard) return;
+      await updateCurriculumProgramme(programmeSourceId, {
+        name: programme?.name || programmeName,
+        standard: selectedStandard.name || selectedStandard.standardRef || programme?.standard || programmeName,
+        level: selectedStandard.levelValue || selectedStandard.level || programme?.level || programmeForm.level,
+        color: programme?.color || programmeForm.color,
+        description: programme?.description || programmeForm.description,
+        structureType: programme?.structureType || programmeForm.structureType,
+        ksbProfileSourceId: `standard:${selectedStandard.id}`,
+      });
+      const modulesForCascade = modules.length ? modules : await fetchCurriculumModules();
+      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, `standard:${selectedStandard.id}`);
+    }
+  }, [ksbSets, ksbSourceValue, modules, programmeForm.color, programmeForm.description, programmeForm.level, programmeForm.structureType, standards]);
+
   const persistStructure = async (intent: SaveIntent) => {
     if (!canSaveDraft) {
       setMessage('Complete the required fields before saving.');
@@ -2793,24 +3528,26 @@ export function AddCurriculumStructureWizard({
         ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, {
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
+            ksbProfileSourceId: ksbSourceValue || matchingProgramme.ksbProfileSourceId || '',
           })
         : await createCurriculumProgramme({
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
+            ksbProfileSourceId: ksbSourceValue,
           });
       const savedProgramme = programmeResult.programme;
       const programmeName = savedProgramme?.name || programmeForm.name;
+      const programmeSourceId = matchingProgramme?.sourceId || matchingProgramme?.id || savedProgramme?.sourceId || savedProgramme?.id || slugify(programmeName);
 
       if (selectedProgramme && step === 'programme') {
+        await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
         await reload();
         setSubmitted(true);
         showWizardSwalToast('Programme updated', 'The programme details were saved.');
-        onSaved?.();
+        await onSaved?.();
         onClose();
         return;
       }
-
-      const programmeSourceId = matchingProgramme?.sourceId || matchingProgramme?.id || savedProgramme?.sourceId || savedProgramme?.id || slugify(programmeName);
 
       if (isFreeProgramme) {
         const freeModules = cohortDrafts.flatMap(cohort => cohort.groups.flatMap(group => group.modules)).map((draft, index) => {
@@ -2822,13 +3559,14 @@ export function AddCurriculumStructureWizard({
           programmeName,
           modules: freeModules,
         });
+        await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
         await reload();
         setSubmitted(true);
         showWizardSwalToast(
           matchingProgramme ? 'Free modules updated' : (intent === 'draft' ? 'Draft free modules saved' : 'Free modules created'),
           'The free modules and components were saved.',
         );
-        onSaved?.();
+        await onSaved?.();
         onClose();
         return;
       }
@@ -2949,11 +3687,13 @@ export function AddCurriculumStructureWizard({
           sourceId: programmeSourceId,
           ...programmeForm,
           standard: programmeForm.standard || programmeForm.name,
+          ksbProfileSourceId: ksbSourceValue,
         },
         cohorts: treeCohorts,
         archiveMissing: Boolean(selectedProgramme),
         hydrationComplete,
       });
+      await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
 
       await reload();
       setSubmitted(true);
@@ -2963,7 +3703,7 @@ export function AddCurriculumStructureWizard({
           ? 'The free modules and custom module links were saved. Module content remains managed in Module Builder.'
           : 'The programme, cohorts, groups and module links were saved through scoped curriculum endpoints. Module content remains managed in Module Builder.',
       );
-      onSaved?.();
+      await onSaved?.();
       onClose();
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Unable to save programme structure.';
@@ -2977,15 +3717,8 @@ export function AddCurriculumStructureWizard({
   if (!isOpen) return null;
 
   return createPortal((
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-2 backdrop-blur-md sm:p-5">
-      <NestedPopupBackdrop
-        stepIndex={stepIndex}
-        programme={activeProgramme}
-        cohort={cohortForm}
-        group={groupForm}
-        freeMode={isFreeProgramme}
-      />
-      <div key={step} className={`relative z-10 flex max-h-[94vh] w-full ${dialogWidth} flex-col overflow-hidden rounded-2xl border border-white/20 bg-background-50 shadow-2xl`} onClick={event => event.stopPropagation()}>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/35 p-2 backdrop-blur-sm sm:p-5">
+      <div key={step} className={`relative z-10 flex max-h-[94vh] w-full ${dialogWidth} flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-xl`} onClick={event => event.stopPropagation()}>
         <header className="border-b border-foreground-200/70 bg-background-50 px-5 py-4 sm:px-6">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
@@ -3003,12 +3736,71 @@ export function AddCurriculumStructureWizard({
         </header>
 
         <div className="flex-1 min-h-0 overflow-y-auto bg-background-100/70">
-          <main className="min-w-0 p-3 sm:p-5">
+          <main className="min-w-0 p-3 sm:p-5" onChangeCapture={() => { userEditedWizardRef.current = true; }}>
               {error && <PanelTone icon="ri-error-warning-line" text={`Curriculum API error: ${error}`} tone="error" />}
               {message && <PanelTone icon="ri-information-line" text={message} tone={message.includes('Unable') || message.includes('returned') || message.includes('Complete') ? 'error' : 'info'} />}
 
               {step === 'programme' && (
-                <StepPanel title="Programme details" description="Enter the programme details users need to recognise this curriculum path.">
+                <StepPanel
+                  title={modulePlacementMode ? 'Choose a programme' : 'Programme details'}
+                  description={modulePlacementMode ? 'Select the existing programme where this module should be added.' : 'Enter the programme details users need to recognise this curriculum path.'}
+                >
+                  {modulePlacementMode ? (
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-primary-100 bg-primary-50/70 px-4 py-3 text-[12px] font-semibold text-primary-800">
+                        <div className="flex items-start gap-3">
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white">
+                            <i className="ri-folder-add-line"></i>
+                          </span>
+                          <div>
+                            <p className="font-heading text-[13px] font-bold">Add module to an existing programme</p>
+                            <p className="mt-0.5 text-[11px] leading-5 text-primary-700">Choose a programme first, then select its cohort and group before adding the module.</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid max-h-[46vh] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                        {programmes.map(programme => {
+                          const id = programme.sourceId || programme.id;
+                          const selected = Boolean(selectedProgramme && (
+                            normalise(selectedProgramme.sourceId || selectedProgramme.id) === normalise(id)
+                            || normalise(selectedProgramme.name) === normalise(programme.name)
+                          ));
+                          return (
+                            <button
+                              key={id || programme.name}
+                              type="button"
+                              onClick={() => chooseExistingProgramme(programme)}
+                              className={`rounded-xl border px-4 py-3 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 text-primary-950 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200 hover:bg-primary-50/40'}`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white shadow-sm" style={{ backgroundColor: programme.color || '#6d28d9' }}>
+                                  <i className="ri-book-2-line"></i>
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-[13px] font-heading font-bold">{programme.name || 'Untitled programme'}</p>
+                                  <p className="mt-1 truncate text-[11px] font-semibold text-foreground-500">{programme.level || 'Level not set'}</p>
+                                  <div className="mt-2 flex flex-wrap gap-1.5">
+                                    <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{programme.cohorts || 0} cohorts</span>
+                                    <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{programme.groups || 0} groups</span>
+                                    <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{programme.modules || 0} modules</span>
+                                  </div>
+                                </div>
+                                {selected && <i className="ri-check-line shrink-0 text-lg text-primary-600"></i>}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {!loading && !programmes.length && (
+                        <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center text-[12px] font-semibold text-foreground-500">
+                          No programmes found yet. Create a programme from Curriculum Studio first, then come back to add modules.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
                   {selectedProgramme && (
                     <PanelTone icon="ri-pencil-line" text="Editing the existing programme. Cohorts, groups and modules are loaded below using their saved IDs." />
                   )}
@@ -3026,13 +3818,96 @@ export function AddCurriculumStructureWizard({
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
                     <Field label="Programme name" value={programmeForm.name} onChange={value => setProgrammeForm(prev => ({ ...prev, name: value }))} required error={validation.programme[0]} placeholder="Example: Project Controls Technician" />
                     <ColorField label="Programme colour" value={programmeForm.color} onChange={value => setProgrammeForm(prev => ({ ...prev, color: value }))} />
-                    <div className="lg:col-span-2">
+                    <div>
                       <Field label="Level" value={programmeForm.level} onChange={value => setProgrammeForm(prev => ({ ...prev, level: value }))} placeholder="Example: L4" />
+                    </div>
+                    <div className="lg:col-span-2 rounded-xl border border-primary-100 bg-background-50 p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase text-primary-700">Apply KSB source</p>
+                          <p className="mt-1 text-[12px] font-medium text-foreground-500">
+                            {selectedKsbProfile
+                              ? `${selectedKsbProfile.standard || selectedKsbProfile.programmeName} - ${wizardKsbSetCountsLabel(selectedKsbProfile)}`
+                            : selectedKsbStandard
+                            ? `${selectedKsbStandard.name} - ${wizardStandardCountsLabel(selectedKsbStandard)}`
+                            : ksbSourcesLoading
+                            ? 'Loading KSB sources...'
+                            : 'Choose the KSB source this programme must satisfy.'}
+                          </p>
+                        </div>
+                        <div className="flex rounded-lg bg-background-100 p-1">
+                          {(['profile', 'standard'] as const).map(kind => (
+                            <button
+                              key={kind}
+                              type="button"
+                              onClick={() => {
+                                userEditedWizardRef.current = true;
+                                setKsbSourceKind(kind);
+                                setKsbSourceValue('');
+                              }}
+                              className={`rounded-md px-3 py-2 text-[11px] font-bold ${ksbSourceKind === kind ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-50'}`}
+                            >
+                              {kind === 'profile' ? 'KSB profile' : 'KSB source'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="mt-3 grid max-h-52 gap-2 overflow-y-auto pr-1 md:grid-cols-2">
+                        {ksbSourceKind === 'profile' && ksbProfileOptions.map(({ profile, id }) => {
+                          const value = `profile:${id}`;
+                          const selected = ksbSourceValue === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => {
+                                userEditedWizardRef.current = true;
+                                setKsbSourceValue(value);
+                              }}
+                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
+                            >
+                              <span className="block truncate text-[12px] font-bold">{profile.standard || profile.programmeName || 'KSB profile'}</span>
+                              <span className="mt-1 block text-[10px] font-semibold text-foreground-500">{wizardKsbSetCountsLabel(profile)}</span>
+                            </button>
+                          );
+                        })}
+                        {ksbSourceKind === 'standard' && standardOptions.map(standard => {
+                          const value = `standard:${standard.id}`;
+                          const selected = ksbSourceValue === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => {
+                                userEditedWizardRef.current = true;
+                                setKsbSourceValue(value);
+                                setProgrammeForm(prev => ({
+                                  ...prev,
+                                  standard: standard.name || standard.standardRef || prev.standard,
+                                  level: standard.levelValue || standard.level || prev.level,
+                                }));
+                              }}
+                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
+                            >
+                              <span className="block truncate text-[12px] font-bold">{standard.name || standard.standardRef}</span>
+                              <span className="mt-1 block text-[10px] font-semibold text-foreground-500">{wizardStandardCountsLabel(standard)}</span>
+                            </button>
+                          );
+                        })}
+                        {!ksbSourcesLoading && ksbSourceKind === 'profile' && !ksbProfileOptions.length && (
+                          <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-[12px] font-medium text-foreground-500">No KSB profiles found.</p>
+                        )}
+                        {!ksbSourcesLoading && ksbSourceKind === 'standard' && !standardOptions.length && (
+                          <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-[12px] font-medium text-foreground-500">No KSB sources found.</p>
+                        )}
+                      </div>
                     </div>
                     <div className="lg:col-span-2">
                       <TextArea label="Description" value={programmeForm.description} onChange={value => setProgrammeForm(prev => ({ ...prev, description: value }))} rows={3} />
                     </div>
                   </div>
+                    </>
+                  )}
                 </StepPanel>
               )}
 
@@ -3061,21 +3936,11 @@ export function AddCurriculumStructureWizard({
                     }}
                     onAdd={addCohortDraft}
                     addLabel="Add cohort"
+                    onCloneItem={cloneCohortDraft}
                     onRemoveItem={removeCohortDraft}
                     removingId={removingDraftId}
-                    expandedId={expandedCohortId}
-                    onToggleItem={id => {
-                      const nextCohort = cohortDrafts.find(cohort => cohort.localId === id);
-                      const nextGroup = nextCohort?.groups[0];
-                      setActiveCohortId(id);
-                      setActiveGroupId(nextGroup?.localId || '');
-                      setExpandedGroupId('');
-                      setActiveModuleId(nextGroup?.modules[0]?.localId || '');
-                      setExpandedModuleId('');
-                      setExpandedCohortId(current => current === id ? '' : id);
-                    }}
                   />
-                  {cohortDrafts.length > 0 && expandedCohortId === activeCohort.localId && (
+                  {cohortDrafts.length > 0 && (
                     <div className="space-y-4">
                       <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
                         <div className="mb-4 flex items-center justify-between gap-3">
@@ -3088,14 +3953,6 @@ export function AddCurriculumStructureWizard({
                               <h4 className="truncate text-sm font-heading font-bold text-foreground-950">{cohortForm.name || 'Name this cohort'}</h4>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setExpandedCohortId('')}
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-                            aria-label="Collapse cohort details"
-                          >
-                            <i className="ri-arrow-up-s-line text-lg"></i>
-                          </button>
                         </div>
                         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_220px]">
                           <Field label="Cohort name" value={cohortForm.name} onChange={value => setCohortForm(prev => ({ ...prev, name: value }))} required error={validation.cohort.find(item => item.includes('Cohort'))} placeholder="Example: Jan 2026 Cohort" />
@@ -3131,7 +3988,7 @@ export function AddCurriculumStructureWizard({
                     <aside className="space-y-3 xl:sticky xl:top-3 xl:self-start">
                       <DraftSwitcher
                         label="Cohorts"
-                        items={cohortDrafts.map(cohort => ({ id: cohort.localId, label: cohortDisplayName(cohort), meta: `${formatGroupCount(configuredGroupCount(cohort))} - ${formatHoursValue(cohortTotalHours(cohort, moduleOptions))}`, color: cohort.color }))}
+                        items={cohortDrafts.map(cohort => ({ id: cohort.localId, label: cohortDisplayName(cohort), meta: formatGroupCount(configuredGroupCount(cohort)), color: cohort.color }))}
                         activeId={activeCohort.localId}
                         onSelect={id => {
                           const nextCohort = cohortDrafts.find(cohort => cohort.localId === id);
@@ -3142,9 +3999,6 @@ export function AddCurriculumStructureWizard({
                           setActiveModuleId(nextGroup?.modules[0]?.localId || '');
                           setExpandedModuleId('');
                         }}
-                        onAdd={addCohortDraft}
-                        addLabel="Add cohort"
-                        onRemoveItem={removeCohortDraft}
                         removingId={removingDraftId}
                         compact
                       />
@@ -3161,16 +4015,13 @@ export function AddCurriculumStructureWizard({
                               <p className="text-[10px] font-bold uppercase text-foreground-400">Groups in selected cohort</p>
                               <h4 className="truncate text-base font-heading font-bold text-foreground-950">{cohortForm.name || 'Unnamed cohort'}</h4>
                               <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">
-                                {formatGroupCount(configuredGroupCount(activeCohort))} - {formatModuleCount(configuredModuleCount(activeGroup))} in selected group - {formatHoursValue(groupTotalHours(activeGroup, moduleOptions))}
+                                {formatGroupCount(configuredGroupCount(activeCohort))} - {formatModuleCount(configuredModuleCount(activeGroup))} in selected group
                               </p>
                             </div>
                           </div>
                           <div className="flex shrink-0 flex-wrap items-center gap-2">
                             <span className="rounded-full bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 shadow-sm">
                               {groupForm.name || 'No group selected'}
-                            </span>
-                            <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 shadow-sm">
-                              {formatHoursValue(groupTotalHours(activeGroup, moduleOptions))} total
                             </span>
                             <button
                               type="button"
@@ -3191,11 +4042,10 @@ export function AddCurriculumStructureWizard({
                               const active = group.localId === activeGroup.localId;
                               const removing = removingDraftId === group.localId;
                               const schedule = `${group.deliveryDays.join(', ') || 'No days'} ${group.startTime || ''}-${group.endTime || addHoursToTime(group.startTime, 2)}`.trim();
-                              const hours = groupTotalHours(group, moduleOptions);
                               return (
                                 <div
                                   key={group.localId}
-                                  className={`flex min-w-[190px] overflow-hidden rounded-xl border transition-smooth ${active ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100' : 'border-background-200 bg-background-100/60 hover:border-primary-200'} ${removing ? 'pointer-events-none opacity-60' : ''}`}
+                                  className={`group flex min-w-[190px] overflow-hidden rounded-xl border transition-smooth ${active ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100' : 'border-background-200 bg-background-100/60 hover:border-primary-200'} ${removing ? 'pointer-events-none opacity-60' : ''}`}
                                   style={{ borderLeftColor: group.color, borderLeftWidth: 4 }}
                                 >
                                   <button
@@ -3209,27 +4059,31 @@ export function AddCurriculumStructureWizard({
                                   >
                                     <span className="block truncate text-[12px] font-bold text-foreground-950">{group.name || `Group ${index + 1}`}</span>
                                     <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                                      {formatModuleCount(configuredModuleCount(group))} - {formatHoursValue(hours)} - {schedule}
+                                      {formatModuleCount(configuredModuleCount(group))} - {schedule}
                                     </span>
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => removeGroupDraft(group.localId)}
                                     disabled={removing}
-                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600 disabled:cursor-wait"
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:cursor-wait"
                                     aria-label={`Remove ${group.name || `Group ${index + 1}`}`}
                                   >
                                     <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => cloneGroupDraft(group.localId)}
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100"
+                                    aria-label={`Clone ${group.name || `Group ${index + 1}`}`}
+                                  >
+                                    <i className="ri-file-copy-line text-sm"></i>
                                   </button>
                                 </div>
                               );
                             })}
                           </div>
-                        ) : (
-                          <div className="rounded-xl border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-[12px] font-semibold text-foreground-500">
-                            No groups inside {cohortForm.name || 'this cohort'} yet. Add a group here to attach delivery details to this cohort.
-                          </div>
-                        )}
+                        ) : null}
                       </div>
 
                       {activeCohort.groups.length > 0 ? (
@@ -3260,6 +4114,22 @@ export function AddCurriculumStructureWizard({
                                 </div>
                               </div>
                               <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coaches} onOpen={() => reloadStaffProfiles({ silent: true })} />
+                              {activeGroupCoachConflict && (
+                                <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
+                                  <div className="flex items-start gap-2">
+                                    <i className="ri-information-line mt-0.5 shrink-0 text-sm"></i>
+                                    <div>
+                                      <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Coach availability hint</p>
+                                      <p>
+                                        {activeGroupCoachConflict.coach} also has {activeGroupCoachConflict.groupName}
+                                        {' '}in {[activeGroupCoachConflict.programmeName, activeGroupCoachConflict.cohortName].filter(Boolean).join(' / ')}
+                                        {' '}on {activeGroupCoachConflict.days.join(', ')}
+                                        {' '}at {activeGroupCoachConflict.time}. You can continue if this overlap is expected.
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3299,20 +4169,17 @@ export function AddCurriculumStructureWizard({
                       setActiveModuleId('');
                       setExpandedModuleId('');
                     }}
-                    onAddCohort={addCohortDraft}
-                    onRemoveCohort={removeCohortDraft}
                     onSelectGroup={id => {
                       setActiveGroupId(id);
                       setActiveModuleId('');
                       setExpandedModuleId('');
                     }}
-                    onAddGroup={() => addGroupDraft({ focusGroupStep: true })}
-                    onRemoveGroup={removeGroupDraft}
                     onSelectModule={id => {
                       setActiveModuleId(id);
                       setExpandedModuleId('');
                     }}
                     onAddModule={addModuleDraft}
+                    onCloneModule={id => cloneModuleDraftForActiveGroup(id, { focusModulesStep: true })}
                     onRemoveModule={removeModuleDraft}
                     onChangeModule={updateModuleDraft}
                     onSelectExistingModule={selectExistingModule}
@@ -3322,7 +4189,7 @@ export function AddCurriculumStructureWizard({
               )}
 
               {step === 'weeks' && (
-                <StepPanel title="Review module content" description={isFreeProgramme ? 'Add the components that learners complete inside each free module.' : 'Check the Module Builder content attached to this group before review.'}>
+                <StepPanel title="Review components" description={isFreeProgramme ? 'Add the components that learners complete inside each free module.' : 'Check the components attached to this group before review.'}>
                   {isFreeProgramme ? (
                     <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
                       <div className="border-b border-background-200 bg-gradient-to-r from-background-100 via-background-50 to-primary-50/50 px-4 py-4">
@@ -3356,6 +4223,8 @@ export function AddCurriculumStructureWizard({
                             moduleOptions={moduleOptions}
                             programmeId={selectedProgramme?.sourceId || selectedProgramme?.id || slugify(activeProgramme.name || programmeForm.name)}
                             programmeName={activeProgramme.name || programmeForm.name}
+                            ksbSourceId={ksbSourceValue}
+                            ksbSourceLabel={selectedKsbSourceLabel}
                             cohort={activeCohort}
                             group={activeGroup}
                             onAddFreeComponent={addFreeComponent}
@@ -3384,8 +4253,7 @@ export function AddCurriculumStructureWizard({
                       setActiveModuleId(nextGroup?.modules[0]?.localId || '');
                       setExpandedModuleId('');
                     }}
-                    onAdd={addCohortDraft}
-                    addLabel="Add another cohort"
+                    onCloneItem={id => cloneCohortDraft(id, { focusCohortStep: true })}
                     onRemoveItem={removeCohortDraft}
                     removingId={removingDraftId}
                   />
@@ -3409,8 +4277,7 @@ export function AddCurriculumStructureWizard({
                         setActiveModuleId(nextGroup?.modules[0]?.localId || '');
                         setExpandedModuleId('');
                       }}
-                      onAdd={() => addGroupDraft({ focusGroupStep: true })}
-                      addLabel="Add group"
+                      onCloneItem={id => cloneGroupDraft(id, { focusGroupStep: true })}
                       onRemoveItem={removeGroupDraft}
                       removingId={removingDraftId}
                       defaultOpen={false}
@@ -3418,26 +4285,18 @@ export function AddCurriculumStructureWizard({
                     {activeCohort.groups.length > 0 && (
                       <NestedScopeCard
                         icon="ri-team-line"
-                        label="Module-builder content in selected group"
+                        label="Components in selected group"
                         title={groupForm.name || 'Unnamed group'}
                         meta={`${groupForm.deliveryDay || 'No delivery days'} - ${groupForm.startTime}-${groupForm.endTime}`}
                         color={groupForm.color}
                         badge={`${formatModuleCount(configuredModuleCount(activeGroup))} inside this group`}
                         defaultOpen
                       >
-                        <div className="mb-4 flex flex-col gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[12px] font-semibold text-sky-800 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[12px] font-semibold text-sky-800">
                           <span className="flex items-start gap-2">
                             <i className="ri-information-line mt-0.5 text-sm"></i>
-                            <span>Weeks and components are managed in Module Builder. This wizard only consumes that content and applies cohort/group scheduling.</span>
+                            <span>Components are managed in Module Builder. This wizard applies cohort and group scheduling before review.</span>
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => addModuleDraft({ focusModulesStep: true })}
-                            className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
-                          >
-                            <i className="ri-add-line"></i>
-                            Add Module to {groupForm.name.trim() || 'this group'}
-                          </button>
                         </div>
                         <div className="space-y-4">
                           {moduleDrafts.map(draft => (
@@ -3448,6 +4307,8 @@ export function AddCurriculumStructureWizard({
                               moduleOptions={moduleOptions}
                               programmeId={selectedProgramme?.sourceId || selectedProgramme?.id || slugify(activeProgramme.name || programmeForm.name)}
                               programmeName={activeProgramme.name || programmeForm.name}
+                              ksbSourceId={ksbSourceValue}
+                              ksbSourceLabel={selectedKsbSourceLabel}
                               cohort={activeCohort}
                               group={activeGroup}
                               onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
@@ -3502,10 +4363,12 @@ export function AddCurriculumStructureWizard({
                 {selectedProgramme ? 'Ready to update' : 'Ready to save'}: <span className="text-foreground-950">{reviewSaveSummary}</span>
               </div>
             )}
-            <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
-              <i className="ri-save-3-line"></i>
-              {saving === 'draft' ? 'Saving...' : selectedProgramme && step === 'programme' ? 'Update Programme' : 'Save Draft'}
-            </button>
+            {(canSaveDraft || saving === 'draft') && (
+              <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
+                <i className="ri-save-3-line"></i>
+                {saving === 'draft' ? 'Saving...' : selectedProgramme && step === 'programme' ? 'Update Programme' : 'Save Draft'}
+              </button>
+            )}
             {step === 'review' ? (
               <button type="button" onClick={() => persistStructure('final')} disabled={Boolean(saving) || !canSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
                 <i className="ri-checkbox-circle-line"></i>
@@ -3533,26 +4396,41 @@ export function AddCurriculumStructureWizard({
         )}
 
         {embeddedModuleBuilderUrl && (
-          <div className="fixed inset-0 z-[10080] flex flex-col bg-background-50">
-            <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-background-200 bg-background-50 px-4 shadow-sm">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-600">Module Builder</p>
-                <p className="truncate text-sm font-heading font-bold text-foreground-950">Editing module content</p>
+          <div className="fixed inset-0 z-[10080] flex items-center justify-center bg-black/45 p-3 backdrop-blur-sm sm:p-5">
+            <div className="flex h-[min(88vh,920px)] w-[min(96vw,1500px)] flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl">
+              <div className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-background-200 bg-background-50 px-4 shadow-sm">
+                <div className="flex min-w-0 items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { void closeEmbeddedModuleBuilder(); }}
+                    className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700"
+                    aria-label="Back to Wizard"
+                    title="Back to Wizard"
+                  >
+                    <i className="ri-arrow-left-line"></i>
+                    Back to Wizard
+                  </button>
+                  <div className="min-w-0 border-l border-background-200 pl-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-600">Module Builder</p>
+                    <p className="truncate text-sm font-heading font-bold text-foreground-950">Editing module content from the wizard</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { void closeEmbeddedModuleBuilder(); }}
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100"
+                  aria-label="Close Module Builder and return to Wizard"
+                  title="Back to Wizard"
+                >
+                  <i className="ri-close-line text-lg"></i>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => { void closeEmbeddedModuleBuilder(); }}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-              >
-                <i className="ri-arrow-left-line"></i>
-                Back to Wizard
-              </button>
+              <iframe
+                title="Module Builder"
+                src={embeddedModuleBuilderUrl}
+                className="min-h-0 flex-1 border-0 bg-background-50"
+              />
             </div>
-            <iframe
-              title="Module Builder"
-              src={embeddedModuleBuilderUrl}
-              className="min-h-0 flex-1 border-0 bg-background-50"
-            />
           </div>
         )}
       </div>
@@ -3690,96 +4568,93 @@ function DraftSwitcher({
   onSelect,
   onAdd,
   addLabel,
-  expandedId,
-  onToggleItem,
+  onCloneItem,
   onRemoveItem,
   removingId,
   compact,
-  defaultOpen = true,
 }: {
   label: string;
   items: Array<{ id: string; label: string; meta: string; color?: string }>;
   activeId: string;
   onSelect: (id: string) => void;
-  onAdd: () => void;
-  addLabel: string;
-  expandedId?: string;
-  onToggleItem?: (id: string) => void;
+  onAdd?: () => void;
+  addLabel?: string;
+  onCloneItem?: (id: string) => void;
   onRemoveItem?: (id: string) => void | Promise<void>;
   removingId?: string;
   compact?: boolean;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-
   return (
     <div className={`${compact ? 'mb-3' : 'mb-4'} rounded-xl border border-background-200 bg-background-50 px-3 py-2 shadow-sm`}>
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
           <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
-          <button
-            type="button"
-            onClick={() => setOpen(value => !value)}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-            aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
-            title={open ? `Collapse ${label}` : `Expand ${label}`}
-          >
-            <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+          <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{items.length}</span>
+        </div>
+        {onAdd && (
+          <button type="button" onClick={onAdd} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+            <i className="ri-add-line"></i>
+            {addLabel || 'Add'}
           </button>
-        </div>
-        <button type="button" onClick={onAdd} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-          <i className="ri-add-line"></i>
-          {addLabel}
-        </button>
+        )}
       </div>
-      {open && (
-        <div className={`${compact ? 'mt-1.5' : 'mt-2'} min-w-0`}>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {items.map(item => {
-              const removing = removingId === item.id;
-              return (
-              <div
-                key={item.id}
-                className={`flex ${compact ? 'min-w-[150px]' : 'min-w-[172px]'} overflow-hidden rounded-lg border text-left transition-smooth ${removing ? 'pointer-events-none opacity-60' : ''} ${item.id === activeId ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-100/60 hover:border-primary-200'}`}
-                style={{ borderLeftColor: item.color || undefined, borderLeftWidth: item.color ? 4 : undefined }}
-                aria-busy={removing}
-              >
-                <button type="button" onClick={() => onSelect(item.id)} disabled={removing} className={`min-w-0 flex-1 px-3 ${compact ? 'py-1.5' : 'py-2'} text-left disabled:cursor-wait`}>
-                  <span className="flex items-center gap-2">
-                    {item.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }}></span>}
-                    <span className="block min-w-0 truncate text-[12px] font-bold text-foreground-950">{item.label}</span>
+      <div className={`${compact ? 'mt-1.5' : 'mt-2'} min-w-0`}>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {items.map(item => {
+            const removing = removingId === item.id;
+            return (
+            <div
+              key={item.id}
+              className={`group flex ${compact ? 'min-w-[150px]' : 'min-w-[172px]'} overflow-hidden rounded-lg border text-left transition-smooth ${removing ? 'pointer-events-none opacity-60' : ''} ${item.id === activeId ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-100/60 hover:border-primary-200'}`}
+              style={{ borderLeftColor: item.color || undefined, borderLeftWidth: item.color ? 4 : undefined }}
+              aria-busy={removing}
+            >
+              <button type="button" onClick={() => onSelect(item.id)} disabled={removing} className={`min-w-0 flex-1 px-3 ${compact ? 'py-1.5' : 'py-2'} text-left disabled:cursor-wait`}>
+                <span className="flex items-center gap-2">
+                  {item.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }}></span>}
+                  <span
+                    className="block min-w-0 truncate rounded-md px-2 py-0.5 text-[12px] font-black text-foreground-950 ring-1"
+                    style={{
+                      backgroundColor: item.color ? `${item.color}14` : undefined,
+                      color: item.color || undefined,
+                      ['--tw-ring-color' as string]: item.color ? `${item.color}33` : undefined,
+                    }}
+                  >
+                    {item.label}
                   </span>
-                  <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">{item.meta}</span>
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">{item.meta}</span>
+              </button>
+              {onCloneItem && (
+                <button
+                  type="button"
+                  onClick={() => onCloneItem(item.id)}
+                  disabled={removing}
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 disabled:cursor-wait"
+                  aria-label={`Clone ${item.label}`}
+                  title={`Clone ${item.label}`}
+                >
+                  <i className="ri-file-copy-line text-sm"></i>
                 </button>
-                {onToggleItem && (
-                  <button
-                    type="button"
-                    onClick={() => onToggleItem(item.id)}
-                    disabled={removing}
-                    className={`flex w-8 shrink-0 items-center justify-center border-l transition-smooth ${expandedId === item.id ? 'border-primary-200 text-primary-700' : 'border-background-200 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
-                    aria-label={`${expandedId === item.id ? 'Collapse' : 'Expand'} ${item.label}`}
-                  >
-                    <i className={`${expandedId === item.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
-                  </button>
-                )}
-                {onRemoveItem && (
-                  <button
-                    type="button"
-                    onClick={() => onRemoveItem(item.id)}
-                    disabled={removing}
-                    className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600 disabled:cursor-wait"
-                    aria-label={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
-                    title={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
-                  >
-                    <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
-                  </button>
-                )}
-              </div>
-              );
-            })}
-          </div>
+              )}
+              {onRemoveItem && (
+                <button
+                  type="button"
+                  onClick={() => onRemoveItem(item.id)}
+                  disabled={removing}
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:cursor-wait"
+                  aria-label={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
+                  title={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
+                >
+                  <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                </button>
+              )}
+            </div>
+            );
+          })}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -3812,7 +4687,16 @@ function ScopeCard({
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
-            <h4 className={`${compact ? 'text-sm' : 'text-base'} mt-0.5 truncate font-heading font-bold text-foreground-950`}>{title}</h4>
+            <h4
+              className={`${compact ? 'text-sm' : 'text-base'} mt-1 inline-flex max-w-full rounded-lg px-2.5 py-1 font-heading font-black ring-1`}
+              style={{
+                backgroundColor: `${color}14`,
+                color,
+                ['--tw-ring-color' as string]: `${color}33`,
+              }}
+            >
+              <span className="truncate">{title}</span>
+            </h4>
             <p className={`${compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[12px]'} font-semibold text-foreground-500`}>{meta}</p>
           </div>
         </div>
@@ -3866,7 +4750,16 @@ function NestedScopeCard({
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase" style={{ color }}>{label}</p>
-            <h4 className={`${compact ? 'text-sm' : 'text-base'} mt-0.5 truncate font-heading font-bold text-foreground-950`}>{title}</h4>
+            <h4
+              className={`${compact ? 'text-sm' : 'text-base'} mt-1 inline-flex max-w-full rounded-lg px-2.5 py-1 font-heading font-black ring-1`}
+              style={{
+                backgroundColor: `${color}14`,
+                color,
+                ['--tw-ring-color' as string]: `${color}33`,
+              }}
+            >
+              <span className="truncate">{title}</span>
+            </h4>
             <p className={`${compact ? 'mt-0.5 text-[11px]' : 'mt-1 text-[12px]'} font-semibold text-foreground-500`}>{meta}</p>
           </div>
         </div>
@@ -3926,26 +4819,15 @@ function WeekdayCheckboxes({ label, value, onChange, error, compact }: { label: 
 }
 
 function StepPanel({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  const [open, setOpen] = useState(true);
-
   return (
     <section className="rounded-2xl bg-background-50 p-4 sm:p-5">
-      <div className={`${open ? 'mb-5' : ''} flex items-start justify-between gap-3`}>
+      <div className="mb-5 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-base font-heading font-bold text-foreground-950">{title}</h3>
           <p className="mt-1 text-[12px] leading-5 text-foreground-500">{description}</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen(value => !value)}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-          aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
-          title={open ? 'Collapse section' : 'Expand section'}
-        >
-          <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xl`}></i>
-        </button>
       </div>
-      {open && children}
+      {children}
     </section>
   );
 }
@@ -4051,22 +4933,21 @@ function HolidaySelector({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-background-200/70 p-4">
-        <button type="button" onClick={() => onChange(selectableIds)} className="rounded-lg border border-amber-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-700 hover:bg-amber-100 transition-smooth">
+        <button type="button" onClick={() => onChange(selectableIds)} className="rounded-lg bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-600">
           Select in range ({selectableIds.length})
-        </button>
-        <button type="button" onClick={() => onChange(selectableIds)} className="rounded-lg border border-amber-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-700 hover:bg-amber-100 transition-smooth">
-          Select all
-        </button>
-        <button type="button" onClick={() => onChange([])} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-100 transition-smooth">
-          Clear selected
         </button>
         <button type="button" onClick={() => setExpanded(current => !current)} className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100 transition-smooth">
           <i className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} mr-1`}></i>
           {expanded ? 'Hide holiday list' : 'Browse holidays'}
         </button>
-        <button type="button" onClick={onManage} className="rounded-lg bg-primary-600 px-3 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+        {selectedInRangeIds.length > 0 && (
+          <button type="button" onClick={() => onChange([])} className="rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 hover:bg-background-100 transition-smooth">
+            Clear selected
+          </button>
+        )}
+        <button type="button" onClick={onManage} className="rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
           <i className="ri-settings-3-line mr-1"></i>
-          Manage global holidays
+          Manage holidays
         </button>
         <span className="ml-auto rounded-full bg-background-100 px-3 py-1.5 text-[11px] font-bold text-foreground-600">
           {selectedInRangeIds.length} selected in cohort range
@@ -4753,13 +5634,10 @@ function ModulesStepWorkspace({
   tutorConflicts,
   onRefreshStaffProfiles,
   onSelectCohort,
-  onAddCohort,
-  onRemoveCohort,
   onSelectGroup,
-  onAddGroup,
-  onRemoveGroup,
   onSelectModule,
   onAddModule,
+  onCloneModule,
   onRemoveModule,
   onChangeModule,
   onSelectExistingModule,
@@ -4780,13 +5658,10 @@ function ModulesStepWorkspace({
   tutorConflicts: TutorScheduleConflict[];
   onRefreshStaffProfiles: () => void;
   onSelectCohort: (id: string) => void;
-  onAddCohort: () => void;
-  onRemoveCohort: (id: string) => void | Promise<void>;
   onSelectGroup: (id: string) => void;
-  onAddGroup: () => void;
-  onRemoveGroup: (id: string) => void | Promise<void>;
   onSelectModule: (id: string) => void;
   onAddModule: () => void;
+  onCloneModule: (id: string) => void;
   onRemoveModule: (id: string) => void | Promise<void>;
   onChangeModule: (localId: string, patch: Partial<ModuleDraft>) => void;
   onSelectExistingModule: (draft: ModuleDraft, catalogueId: string) => void;
@@ -4796,7 +5671,6 @@ function ModulesStepWorkspace({
   const groupSchedule = `${groupForm.deliveryDay || 'No delivery days'} ${groupForm.startTime || ''}-${groupForm.endTime || addHoursToTime(groupForm.startTime, 2)}`.trim();
   const workspaceTitle = freeMode ? 'Custom modules' : (groupForm.name || 'Select a group');
   const workspaceMeta = freeMode ? (programmeName || 'Module course') : groupSchedule;
-  const activeGroupHours = groupTotalHours(activeGroup, moduleOptions);
 
   return (
     <div className={`grid grid-cols-1 gap-4 ${freeMode ? '' : 'xl:grid-cols-[300px_minmax(0,1fr)]'}`}>
@@ -4816,17 +5690,14 @@ function ModulesStepWorkspace({
           label="Cohorts"
           context={programmeName ? `Inside ${programmeName}` : 'Inside programme'}
           count={cohortDrafts.length}
-          addLabel="Add cohort"
-          onAdd={onAddCohort}
           items={cohortDrafts.map(cohort => ({
             id: cohort.localId,
             label: cohortDisplayName(cohort),
-            meta: `${formatGroupCount(configuredGroupCount(cohort))} - ${formatHoursValue(cohortTotalHours(cohort, moduleOptions))}`,
+            meta: formatGroupCount(configuredGroupCount(cohort)),
             color: cohort.color,
           }))}
           activeId={activeCohort.localId}
           onSelect={onSelectCohort}
-          onRemove={onRemoveCohort}
           removingId={removingDraftId}
         />
 
@@ -4834,17 +5705,14 @@ function ModulesStepWorkspace({
           label="Groups"
           context={`Inside ${cohortDisplayName(activeCohort)}`}
           count={activeCohort.groups.length}
-          addLabel="Add group"
-          onAdd={onAddGroup}
           items={activeCohort.groups.map((group, index) => ({
             id: group.localId,
             label: group.name || `Group ${index + 1}`,
-            meta: `${formatHoursValue(groupTotalHours(group, moduleOptions))} - ${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${group.coach ? ` - Coach: ${group.coach}` : ''}`,
+            meta: `${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${group.coach ? ` - Coach: ${group.coach}` : ''}`,
             color: group.color,
           }))}
           activeId={activeGroup.localId}
           onSelect={onSelectGroup}
-          onRemove={onRemoveGroup}
           removingId={removingDraftId}
           emptyText="Add a group before assigning modules."
         />
@@ -4860,15 +5728,12 @@ function ModulesStepWorkspace({
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase text-foreground-400">Selected group modules</p>
                 <h4 className="truncate text-base font-heading font-bold text-foreground-950">{workspaceTitle}</h4>
-                <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">{workspaceMeta} - {formatHoursValue(activeGroupHours)} total</p>
+                <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">{workspaceMeta}</p>
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <span className="rounded-full bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 shadow-sm">
                 {formatModuleCount(configuredModuleCount(activeGroup))}
-              </span>
-              <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700 shadow-sm">
-                {formatHoursValue(activeGroupHours)}
               </span>
               <button
                 type="button"
@@ -4899,7 +5764,6 @@ function ModulesStepWorkspace({
                 const active = activeModule?.localId === draft.localId;
                 const title = moduleDraftDisplayName(draft, index, moduleOptions);
                 const removing = removingDraftId === draft.localId;
-                const hours = moduleDraftTotalHours(draft, activeGroup, moduleOptions);
                 return (
                   <div
                     key={draft.localId}
@@ -4909,8 +5773,18 @@ function ModulesStepWorkspace({
                     <button type="button" onClick={() => onSelectModule(draft.localId)} className="min-w-0 flex-1 px-3 py-1.5 text-left">
                       <span className="block truncate text-[12px] font-bold text-foreground-950">{title}</span>
                       <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                        {isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components - ${formatHoursValue(hours)}` : `${formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))} - ${formatHoursValue(hours)}`) : 'Not configured'}
+                        {isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components` : formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))) : 'Not configured'}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onCloneModule(draft.localId)}
+                      disabled={removing}
+                      className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-700 disabled:cursor-wait"
+                      aria-label={`Clone ${title}`}
+                      title={`Clone ${title}`}
+                    >
+                      <i className="ri-file-copy-line text-sm"></i>
                     </button>
                     <button
                       type="button"
@@ -4949,6 +5823,7 @@ function ModulesStepWorkspace({
               onRefreshStaffProfiles={onRefreshStaffProfiles}
               canRemove={!removingDraftId}
               onRemove={() => onRemoveModule(activeModule.localId)}
+              onClone={() => onCloneModule(activeModule.localId)}
               onChange={patch => onChangeModule(activeModule.localId, patch)}
               onSelectExisting={catalogueId => onSelectExistingModule(activeModule, catalogueId)}
             />
@@ -5027,6 +5902,7 @@ function EntityPickerPanel({
   onSelect,
   onAdd,
   addLabel,
+  onClone,
   onRemove,
   removingId,
   emptyText = 'Nothing here yet.',
@@ -5037,8 +5913,9 @@ function EntityPickerPanel({
   items: Array<{ id: string; label: string; meta: string; color?: string }>;
   activeId: string;
   onSelect: (id: string) => void;
-  onAdd: () => void;
-  addLabel: string;
+  onAdd?: () => void;
+  addLabel?: string;
+  onClone?: (id: string) => void;
   onRemove?: (id: string) => void | Promise<void>;
   removingId?: string;
   emptyText?: string;
@@ -5058,10 +5935,12 @@ function EntityPickerPanel({
           {context && <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-500">{context}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <button type="button" onClick={onAdd} className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background-100 px-2.5 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-primary-50 hover:text-primary-700">
-            <i className="ri-add-line"></i>
-            {addLabel}
-          </button>
+          {onAdd && (
+            <button type="button" onClick={onAdd} className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background-100 px-2.5 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-primary-50 hover:text-primary-700">
+              <i className="ri-add-line"></i>
+              {addLabel || 'Add'}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setOpen(value => !value)}
@@ -5085,9 +5964,30 @@ function EntityPickerPanel({
                 style={{ borderLeftColor: item.color, borderLeftWidth: item.color ? 4 : undefined }}
               >
                 <button type="button" onClick={() => onSelect(item.id)} className="min-w-0 flex-1 px-3 py-2 text-left">
-                  <span className="block truncate text-[12px] font-bold text-foreground-950">{item.label}</span>
+                  <span
+                    className="inline-flex max-w-full rounded-md px-2 py-0.5 text-[12px] font-black ring-1"
+                    style={{
+                      backgroundColor: item.color ? `${item.color}14` : undefined,
+                      color: item.color || undefined,
+                      ['--tw-ring-color' as string]: item.color ? `${item.color}33` : undefined,
+                    }}
+                  >
+                    <span className="truncate">{item.label}</span>
+                  </span>
                   <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">{item.meta}</span>
                 </button>
+                {onClone && (
+                  <button
+                    type="button"
+                    onClick={() => onClone(item.id)}
+                    disabled={removing}
+                    className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-700 disabled:cursor-wait"
+                    aria-label={`Clone ${item.label}`}
+                    title={`Clone ${item.label}`}
+                  >
+                    <i className="ri-file-copy-line text-sm"></i>
+                  </button>
+                )}
                 {onRemove && (
                   <button
                     type="button"
@@ -5125,6 +6025,7 @@ function ModulePlanningPanel({
   onRefreshStaffProfiles,
   canRemove,
   onRemove,
+  onClone,
   onChange,
   onSelectExisting,
 }: {
@@ -5141,6 +6042,7 @@ function ModulePlanningPanel({
   onRefreshStaffProfiles: () => void;
   canRemove: boolean;
   onRemove: () => void;
+  onClone: () => void;
   onChange: (patch: Partial<ModuleDraft>) => void;
   onSelectExisting: (catalogueId: string) => void;
 }) {
@@ -5149,7 +6051,7 @@ function ModulePlanningPanel({
   const selectedModuleId = selectedModule ? moduleOptionId(selectedModule) : draft.catalogueId;
   const moduleTitle = draft.name || selectedModule?.name || `Module ${index + 1}`;
   const plannedSessionCount = moduleDraftSessionCount(draft, selectedModule);
-  const componentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
+  const componentCount = moduleDraftDisplayComponentCount(draft, freeMode);
   const startDateError = draft.startDate && cohortStartDate && compareDateInputs(draft.startDate, cohortStartDate) < 0
     ? `Module cannot start before cohort start (${cohortStartDate}).`
     : draft.startDate && cohortEndDate && compareDateInputs(draft.startDate, cohortEndDate) > 0
@@ -5181,6 +6083,10 @@ function ModulePlanningPanel({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 self-start">
+          <button type="button" onClick={onClone} className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100 transition-smooth">
+            <i className="ri-file-copy-line mr-1"></i>
+            Clone
+          </button>
           <button type="button" onClick={onRemove} disabled={!canRemove} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40 transition-smooth">
             <i className="ri-delete-bin-line mr-1"></i>
             Remove
@@ -5406,6 +6312,8 @@ function ModuleBuilderContentPreview({
   moduleOptions,
   programmeId,
   programmeName,
+  ksbSourceId,
+  ksbSourceLabel,
   cohort,
   group,
   onAddFreeComponent,
@@ -5419,6 +6327,8 @@ function ModuleBuilderContentPreview({
   moduleOptions: CurriculumModule[];
   programmeId: string;
   programmeName: string;
+  ksbSourceId?: string;
+  ksbSourceLabel?: string;
   cohort: CohortDraft;
   group: GroupDraft;
   onAddFreeComponent?: (moduleId: string, type: ModuleComponentType) => void;
@@ -5435,10 +6345,14 @@ function ModuleBuilderContentPreview({
   const [newComponentType, setNewComponentType] = useState<ModuleComponentType>('video');
   const knownComponentIdsRef = useRef<Set<string>>(new Set());
   const title = draft.name || 'Untitled module';
-  const componentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
+  const displayWeeks = useMemo(() => draft.weeks.map(week => ({
+    ...week,
+    components: freeMode ? week.components : week.components.filter(component => isDisplayableModuleBuilderComponent(component, week.title)),
+  })), [draft.weeks, freeMode]);
+  const componentCount = moduleDraftDisplayComponentCount(draft, freeMode);
   const components = useMemo(() => draft.weeks.flatMap(week => week.components), [draft.weeks]);
   const componentIdSignature = components.map(component => component.id).join('|');
-  const moduleBuilderUrl = moduleBuilderUrlForDraft(draft, moduleOptions, programmeName, programmeId, cohort, group);
+  const moduleBuilderUrl = moduleBuilderUrlForDraft(draft, moduleOptions, programmeName, programmeId, cohort, group, ksbSourceId, ksbSourceLabel);
 
   useEffect(() => {
     setModuleOpen(false);
@@ -5449,7 +6363,7 @@ function ModuleBuilderContentPreview({
 
   useEffect(() => {
     if (freeMode || !componentCount) return;
-    const weeksWithComponents = draft.weeks.filter(week => week.components.length).map(week => week.id);
+    const weeksWithComponents = displayWeeks.filter(week => week.components.length).map(week => week.id);
     if (!weeksWithComponents.length) return;
     setModuleOpen(true);
     setExpandedWeekIds(previous => {
@@ -5458,7 +6372,7 @@ function ModuleBuilderContentPreview({
       if (next.size === previous.size && Array.from(next).every(id => previous.has(id))) return previous;
       return next;
     });
-  }, [componentCount, componentIdSignature, draft.weeks, freeMode]);
+  }, [componentCount, componentIdSignature, displayWeeks, freeMode]);
 
   useEffect(() => {
     if (!freeMode) return;
@@ -5627,18 +6541,24 @@ function ModuleBuilderContentPreview({
           </div>
         ) : (
         <div className="divide-y divide-background-200/70">
-          {draft.weeks.map(week => {
-            const open = expandedWeekIds.has(week.id);
+          {displayWeeks.map(week => {
+            const hasComponents = week.components.length > 0;
+            const open = hasComponents && expandedWeekIds.has(week.id);
             return (
               <div key={week.id}>
-                <button type="button" onClick={() => toggleWeek(week.id)} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-background-100/60 transition-smooth">
+                <button
+                  type="button"
+                  onClick={() => hasComponents && toggleWeek(week.id)}
+                  disabled={!hasComponents}
+                  className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-smooth hover:bg-background-100/60 disabled:cursor-default disabled:hover:bg-transparent"
+                >
                   <span>
                     <span className="block text-[13px] font-bold text-foreground-900">{week.title}</span>
                     <span className="mt-0.5 block text-[11px] text-foreground-500">{week.day} {week.date} at {week.startTime}</span>
                   </span>
                   <span className="flex items-center gap-3">
                     <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">{week.components.length} components</span>
-                    <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+                    <i className={`ri-arrow-down-s-line text-lg transition-transform ${hasComponents ? 'text-foreground-400' : 'text-foreground-300'} ${open ? 'rotate-180' : ''}`}></i>
                   </span>
                 </button>
                 {open && (
@@ -5928,6 +6848,7 @@ function FreeCheckbox({ label, checked, onChange }: { label: string; checked: bo
 
 function ReadOnlyComponentCard({ component }: { component: ModuleComponent }) {
   const typeMeta = componentTypes.find(item => item.type === component.type);
+  const description = userFacingComponentDescription(component);
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex gap-3">
@@ -5945,7 +6866,7 @@ function ReadOnlyComponentCard({ component }: { component: ModuleComponent }) {
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">{Number(component.points || 0)} pts</span>
             </div>
           </div>
-          {component.description ? <p className="mt-2 text-[12px] leading-5 text-foreground-600">{component.description}</p> : null}
+          {description ? <p className="mt-2 text-[12px] leading-5 text-foreground-600">{description}</p> : null}
         </div>
       </div>
     </div>
@@ -6087,10 +7008,10 @@ function ReviewSummary({
   const cohortCount = configuredCohorts.length;
   const groupCount = configuredGroups.length;
   const moduleCount = configuredModules.length;
-  const componentCount = configuredModules.reduce((total, draft) => total + draft.weeks.reduce((weekTotal, week) => weekTotal + week.components.length, 0), 0);
+  const componentCount = configuredModules.reduce((total, draft) => total + moduleDraftDisplayComponentCount(draft, freeMode), 0);
   const skippedCount = configuredModules.reduce((total, draft) => total + draft.skippedHolidaySessions.length, 0);
   const programmeColor = programme?.color || '#5b21b6';
-  const totalHours = programmeTotalHours(configuredCohorts, moduleOptions);
+  const totalHours = programmeActualComponentHours(configuredCohorts, freeMode);
   const averageGroupHours = groupCount ? totalHours / groupCount : 0;
   const averageModuleHours = moduleCount ? totalHours / moduleCount : 0;
   const coachCount = uniqueStaffNames(configuredGroups.map(group => group.coach)).length;
@@ -6115,7 +7036,7 @@ function ReviewSummary({
         <ReviewReadinessPanel
           tone={readinessTone}
           title={readinessLabel}
-          summary={`${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'} - ${formatHoursValue(totalHours)}`}
+          summary={`${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'} - ${formatHoursValue(totalHours)} OTJH`}
           warnings={readinessWarnings}
         />
         <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
@@ -6135,7 +7056,7 @@ function ReviewSummary({
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 lg:w-[27rem]">
-                <ReviewStat label="Total hours" value={formatHoursValue(totalHours)} />
+                <ReviewStat label="Programme OTJH" value={formatHoursValue(totalHours)} />
                 <ReviewStat label="Modules" value={String(moduleCount)} />
                 <ReviewStat label="Components" value={String(componentCount)} />
                 <ReviewStat label="Avg/module" value={formatHoursValue(averageModuleHours)} />
@@ -6146,7 +7067,7 @@ function ReviewSummary({
           <div className="p-4 sm:p-5">
             <ReviewInsightGrid
               items={[
-                { icon: 'ri-time-line', label: 'Programme hours', value: formatHoursValue(totalHours), detail: 'Across all custom modules', tone: 'emerald' },
+                { icon: 'ri-time-line', label: 'Programme OTJH', value: formatHoursValue(totalHours), detail: 'From component OTJH across all modules', tone: 'emerald' },
                 { icon: 'ri-stack-line', label: 'Module average', value: formatHoursValue(averageModuleHours), detail: `${componentCount} components total`, tone: 'primary' },
                 { icon: 'ri-checkbox-circle-line', label: 'Completion model', value: 'Certificate', detail: 'Issued after all components are complete', tone: 'amber' },
               ]}
@@ -6165,14 +7086,14 @@ function ReviewSummary({
               <div className="flex flex-wrap gap-2">
                 <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
                 <ReviewBadge tone="success">{componentCount} components</ReviewBadge>
-                <ReviewBadge tone="success">{formatHoursValue(totalHours)}</ReviewBadge>
+                <ReviewBadge tone="success">{formatHoursValue(totalHours)} OTJH</ReviewBadge>
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               {configuredModules.length ? configuredModules.map((draft, moduleIndex) => {
-                const draftComponentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
-                const moduleHours = moduleDraftTotalHours(draft, configuredGroups[0] || { startTime: '', endTime: '' }, moduleOptions);
+                const draftComponentCount = moduleDraftDisplayComponentCount(draft, true);
+                const moduleHours = moduleDraftActualComponentHours(draft, true);
                 const moduleColor = draft.color || '#7c3aed';
                 return (
                   <div
@@ -6187,12 +7108,12 @@ function ReviewSummary({
                           <ReviewBadge tone={draft.mode === 'existing' ? 'info' : 'success'}>{draft.mode === 'existing' ? 'Module Builder' : 'Custom module'}</ReviewBadge>
                         </div>
                         <p className="mt-1 text-[11px] text-foreground-500">
-                          {draftComponentCount} components - {formatHoursValue(moduleHours)} - certificate on completion
+                          {draftComponentCount} components - {formatHoursValue(moduleHours)} OTJH - certificate on completion
                         </p>
                       </div>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      <ReviewMiniMetric label="Hours" value={formatHoursValue(moduleHours)} tone="success" />
+                      <ReviewMiniMetric label="OTJH" value={formatHoursValue(moduleHours)} tone="success" />
                       <ReviewMiniMetric label="Components" value={String(draftComponentCount)} tone="info" />
                       <ReviewMiniMetric label="Certificate" value="On completion" tone="success" />
                     </div>
@@ -6233,7 +7154,7 @@ function ReviewSummary({
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:w-[36rem]">
-              <ReviewStat label="Total hours" value={formatHoursValue(totalHours)} />
+              <ReviewStat label="Programme OTJH" value={formatHoursValue(totalHours)} />
               <ReviewStat label="Cohorts" value={String(cohortCount)} />
               <ReviewStat label="Groups" value={String(groupCount)} />
               <ReviewStat label="Modules" value={String(moduleCount)} />
@@ -6246,7 +7167,7 @@ function ReviewSummary({
         <div className="p-4 sm:p-5">
           <ReviewInsightGrid
             items={[
-              { icon: 'ri-time-line', label: 'Programme hours', value: formatHoursValue(totalHours), detail: `${formatHoursValue(averageModuleHours)} average per module`, tone: 'emerald' },
+              { icon: 'ri-time-line', label: 'Programme OTJH', value: formatHoursValue(totalHours), detail: `${formatHoursValue(averageModuleHours)} average per module from components`, tone: 'emerald' },
               { icon: 'ri-calendar-schedule-line', label: 'Delivery pattern', value: `${deliveryDayCount} day${deliveryDayCount === 1 ? '' : 's'}`, detail: `${skippedCount} skipped session${skippedCount === 1 ? '' : 's'} from holidays`, tone: skippedCount ? 'amber' : 'primary' },
               { icon: 'ri-user-star-line', label: 'Coaching cover', value: `${assignedGroupCount}/${groupCount}`, detail: unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need a coach` : `${coachCount} coach${coachCount === 1 ? '' : 'es'} assigned`, tone: unassignedGroups ? 'amber' : 'emerald' },
               { icon: 'ri-user-line', label: 'Tutor cover', value: `${assignedModuleCount}/${moduleCount}`, detail: unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need a tutor` : `${tutorCount} tutor${tutorCount === 1 ? '' : 's'} assigned`, tone: unassignedModules ? 'amber' : 'emerald' },
@@ -6268,7 +7189,7 @@ function ReviewSummary({
             <div className="flex flex-wrap gap-2">
               <ReviewBadge>{formatGroupCount(groupCount)}</ReviewBadge>
               <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
-              <ReviewBadge tone="success">{formatHoursValue(totalHours)}</ReviewBadge>
+              <ReviewBadge tone="success">{formatHoursValue(totalHours)} OTJH</ReviewBadge>
               <ReviewBadge tone={skippedCount ? 'warning' : 'success'}>{skippedCount} skipped sessions</ReviewBadge>
             </div>
           </div>
@@ -6278,7 +7199,7 @@ function ReviewSummary({
               const cohortColor = cohort.color || '#0f766e';
               const selectedForCohort = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
               const groups = cohort.groups.filter(isConfiguredGroup);
-              const cohortHours = cohortTotalHours(cohort, moduleOptions);
+              const cohortHours = cohortActualComponentHours(cohort);
               const hasExtension = cohort.localId === 'current-cohort' && cohortHolidayExtensionDays > 0;
               return (
                 <div key={cohort.localId} className="relative pl-8">
@@ -6292,7 +7213,7 @@ function ReviewSummary({
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-500">Cohort {cohortIndex + 1}</p>
                           <ReviewBadge>{formatGroupCount(groups.length)}</ReviewBadge>
-                          <ReviewBadge tone="success">{formatHoursValue(cohortHours)}</ReviewBadge>
+                          <ReviewBadge tone="success">{formatHoursValue(cohortHours)} OTJH</ReviewBadge>
                           <ReviewBadge tone={selectedForCohort.length ? 'warning' : 'muted'}>{selectedForCohort.length} holidays</ReviewBadge>
                           {hasExtension ? <ReviewBadge tone="warning">extended {cohortHolidayExtensionDays}d</ReviewBadge> : null}
                         </div>
@@ -6307,8 +7228,7 @@ function ReviewSummary({
                       {groups.length ? groups.map((group, groupIndex) => {
                         const groupColor = group.color || '#334155';
                         const modules = group.modules.filter(isConfiguredModule);
-                        const groupHours = groupTotalHours(group, moduleOptions);
-                        const groupDeliveryHours = modules.reduce((total, draft) => total + moduleDraftScheduledHours(draft, group, moduleOptions), 0);
+                        const groupHours = groupActualComponentHours(group);
                         return (
                           <div key={group.localId} className="relative rounded-xl border p-3 pl-4 shadow-[0_1px_0_rgba(15,23,42,0.03)]" style={reviewTintStyle(groupColor, 0.052, 0.18)}>
                             <span className="absolute -left-[1.05rem] top-5 h-px w-4" style={{ backgroundColor: hexToRgba(cohortColor, 0.24) }} aria-hidden="true"></span>
@@ -6321,7 +7241,7 @@ function ReviewSummary({
                                   <div className="flex flex-wrap items-center gap-2">
                                     <p className="text-[10px] font-bold uppercase text-foreground-400">Group {groupIndex + 1}</p>
                                     <ReviewBadge tone="info">{formatModuleCount(modules.length)}</ReviewBadge>
-                                    <ReviewBadge tone="success">{formatHoursValue(groupHours)}</ReviewBadge>
+                                    <ReviewBadge tone="success">{formatHoursValue(groupHours)} OTJH</ReviewBadge>
                                   </div>
                                   <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{group.name || `Group ${groupIndex + 1}`}</p>
                                   <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
@@ -6333,18 +7253,16 @@ function ReviewSummary({
                                 </div>
                               </div>
                             </div>
-                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              <ReviewMiniMetric label="Total hours" value={formatHoursValue(groupHours)} tone="success" />
-                              <ReviewMiniMetric label="Delivery hours" value={formatHoursValue(groupDeliveryHours)} tone="info" />
+                            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              <ReviewMiniMetric label="Group OTJH" value={formatHoursValue(groupHours)} tone="success" />
                               <ReviewMiniMetric label="Modules" value={String(modules.length)} />
                               <ReviewMiniMetric label="Coach" value={group.coach || 'Unassigned'} tone={group.coach ? 'success' : 'warning'} />
                             </div>
 
                             <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-2">
                               {modules.length ? modules.map((draft, moduleIndex) => {
-                                const draftComponentCount = draft.weeks.reduce((total, week) => total + week.components.length, 0);
-                                const moduleHours = moduleDraftTotalHours(draft, group, moduleOptions);
-                                const deliveryHours = moduleDraftScheduledHours(draft, group, moduleOptions);
+                                const draftComponentCount = moduleDraftDisplayComponentCount(draft);
+                                const moduleHours = moduleDraftActualComponentHours(draft);
                                 const moduleColor = draft.color || '#7c3aed';
                                 return (
                                   <div
@@ -6360,13 +7278,12 @@ function ReviewSummary({
                                           {draft.extensionDays > 0 ? <ReviewBadge tone="warning">extended {draft.extensionDays}d</ReviewBadge> : null}
                                         </div>
                                         <p className="mt-1 text-[11px] text-foreground-500">
-                                          {draft.startDate || 'No start'} to {draft.endDate || 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)}
+                                          {draft.startDate || 'No start'} to {draft.endDate || 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)} OTJH
                                         </p>
                                       </div>
                                     </div>
-                                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-                                      <ReviewMiniMetric label="Hours" value={formatHoursValue(moduleHours)} tone="success" />
-                                      <ReviewMiniMetric label="Delivery" value={formatHoursValue(deliveryHours)} tone="info" />
+                                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                      <ReviewMiniMetric label="Module OTJH" value={formatHoursValue(moduleHours)} tone="success" />
                                       <ReviewMiniMetric label="Skipped" value={String(draft.skippedHolidaySessions.length)} tone={draft.skippedHolidaySessions.length ? 'warning' : 'success'} />
                                       <ReviewMiniMetric label="Content" value={String(draftComponentCount)} tone="info" />
                                       <ReviewMiniMetric label="Tutor" value={draft.tutor || 'Unassigned'} tone={draft.tutor ? 'success' : 'warning'} />
@@ -6770,8 +7687,21 @@ function ValidationList({ items }: { items: string[] }) {
   if (!items.length) return null;
   return (
     <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">
-      {items.map(item => <p key={item}>{item}</p>)}
+      {items.map(item => <p key={item}>{renderValidationItem(item)}</p>)}
     </div>
+  );
+}
+
+function renderValidationItem(item: string) {
+  const match = item.match(/^(Cohort\s+\d+\s+\([^)]+\)),\s+(Group\s+\d+\s+\([^)]+\)):(.*)$/);
+  if (!match) return item;
+  return (
+    <>
+      <span className="inline-flex rounded-md bg-white px-2 py-0.5 font-black text-red-800 ring-1 ring-red-200">{match[1]}</span>
+      <span className="mx-1 text-red-500">+</span>
+      <span className="inline-flex rounded-md bg-white px-2 py-0.5 font-black text-red-800 ring-1 ring-red-200">{match[2]}</span>
+      <span>:{match[3]}</span>
+    </>
   );
 }
 

@@ -31,7 +31,7 @@ const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComp
 const ATTENDANCE_ENDPOINT = `/coach_api/coach/attendance?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const ABSENCE_REPORTS_ENDPOINT = `/coach_api/coach/absence-reports?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const EVIDENCE_AWAITING_REVIEW_ENDPOINT = `/coach_api/coach/evidence-awaiting-review?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const CASELOAD_PAGE_SIZE = 5;
+const AT_RISK_SCROLL_THRESHOLD = 8;
 
 interface CoachLearner {
   id: string;
@@ -128,6 +128,16 @@ function isVisibleRiskFlag(value?: string | null) {
     && normalized !== 'otjh at risk';
 }
 
+function isLowHoursRiskFlag(value?: string | null) {
+  return displayValue(value).toLowerCase().includes('low hours');
+}
+
+function riskFlagClass(value?: string | null) {
+  return isLowHoursRiskFlag(value)
+    ? 'border-red-100 bg-red-50 text-red-600'
+    : 'border-amber-100 bg-amber-50 text-amber-700';
+}
+
 function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
   if (normalized === 'atrisk') return 'at-risk';
@@ -203,7 +213,7 @@ const OTJH_STATUS_META: Record<OtjhStatusKey, { label: string; cardLabel: string
     bg: 'bg-red-50 border-red-200/50',
     text: 'text-red-700',
     bar: 'bg-red-500',
-    avatar: 'bg-red-100 text-red-700 ring-red-200',
+    avatar: 'bg-primary-50 text-primary-600 ring-primary-100',
   },
   'need-attention': {
     label: 'Need Attention',
@@ -510,6 +520,16 @@ function curriculumSessionToCalendarEvent(session: CurriculumSession): CoachCale
   };
 }
 
+function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
+  if (event.timeLabel && event.timeLabel !== 'Time TBC') {
+    return event.timeLabel;
+  }
+  if (event.scheduledTime) {
+    return event.scheduledTime.slice(0, 5);
+  }
+  return 'Time TBC';
+}
+
 function formatCalendarMonth(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
@@ -599,22 +619,6 @@ function SectionReveal({ children, className = '', delay = 0 }: { children: Reac
 /* ═══════════════════════════════════════════════════════════
    Donut Ring
    ═══════════════════════════════════════════════════════════ */
-function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-white/8' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(pct, 100) / 100) * circ;
-  const colorMap: Record<string, string> = {
-    primary: 'stroke-primary-400', accent: 'stroke-accent-400', secondary: 'stroke-secondary-400',
-    emerald: 'stroke-emerald-400', amber: 'stroke-amber-400', red: 'stroke-red-400',
-  };
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-    </svg>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════
    Progress Bar
    ═══════════════════════════════════════════════════════════ */
@@ -631,10 +635,7 @@ function ProgressBar({ pct, color, height = 3 }: { pct: number; color: string; h
 }
 
 export default function CoachDashboard() {
-  const [viewMode, setViewMode] = useState<OtjhFilter>('all');
-  const [caseloadPage, setCaseloadPage] = useState(1);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [selectedLearner, setSelectedLearner] = useState<CoachLearner | null>(null);
   const [ownerName, setOwnerName] = useState('Med Maher');
   const [ownerEmail, setOwnerEmail] = useState(DEFAULT_COACH_EMAIL);
   const [learners, setLearners] = useState<CoachLearner[]>([]);
@@ -738,22 +739,10 @@ export default function CoachDashboard() {
   const gatewayLearners = enrichedLearners.filter(isGatewayLearner);
   const epaLearners = enrichedLearners.filter(isEpaLearner);
 
-  const filteredLearners = viewMode === 'all'
-    ? enrichedLearners
-    : activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === viewMode);
-  const caseloadPageCount = Math.max(1, Math.ceil(filteredLearners.length / CASELOAD_PAGE_SIZE));
-  const paginatedLearners = filteredLearners.slice(
-    (caseloadPage - 1) * CASELOAD_PAGE_SIZE,
-    caseloadPage * CASELOAD_PAGE_SIZE,
-  );
-
-  useEffect(() => {
-    if (caseloadPage > caseloadPageCount) setCaseloadPage(caseloadPageCount);
-  }, [caseloadPage, caseloadPageCount]);
-
   const atRiskLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk');
   const needAttentionLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention');
   const onTrackLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track');
+  const atRiskCaseloadHasOverflow = atRiskLearners.length > AT_RISK_SCROLL_THRESHOLD;
   const evidenceLearners = evidenceQueue
     .filter(learner => learner.pendingEvidence > 0)
     .sort((a, b) => b.pendingEvidence - a.pendingEvidence || a.learner.localeCompare(b.learner));
@@ -793,18 +782,9 @@ export default function CoachDashboard() {
   );
   const riskSummary = buildRiskSummary(atRiskLearners);
   const pendingAbsenceReports = absenceReports.filter(report => report.status === 'pending');
+  const dashboardPanelClass = 'rounded-[24px] border border-foreground-200/70 bg-background-50/95 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)] backdrop-blur-sm';
 
-  const openCaseloadFilter = (filter: OtjhFilter) => {
-    setViewMode(filter);
-    setCaseloadPage(1);
-    window.requestAnimationFrame(() => {
-      document.getElementById('learner-caseload')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  };
-
-  const goToCaseloadPage = (page: number) => {
-    setCaseloadPage(Math.min(Math.max(page, 1), caseloadPageCount));
-    setSelectedLearner(null);
+  const openCaseloadFilter = (_filter: OtjhFilter) => {
     window.requestAnimationFrame(() => {
       document.getElementById('learner-caseload')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -816,16 +796,18 @@ export default function CoachDashboard() {
       pageTitle="Coach Dashboard" pageSubtitle="Monitor learner progress, manage coaching sessions, and review evidence"
       userName={ownerName} userRole="Progress Coach"
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <div className="space-y-6 p-3 md:p-6">
 
         {/* ═══════════════════════════════════════════════════
             SECTION 1 — HERO BANNER
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={0}>
-          <section className="relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+          <section
+            className="relative overflow-hidden rounded-2xl h-36 md:h-40"
+            style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
+          >
             <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
             <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
-            {/* blobs */}
             <div className="absolute inset-0 pointer-events-none overflow-hidden">
               <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
               <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
@@ -847,7 +829,7 @@ export default function CoachDashboard() {
             SECTION 2 — KPI STAT CARDS
             ═══════════════════════════════════════════════════ */}
         <SectionReveal delay={60}>
-          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Caseload" value={String(totalCaseload)} sub={`${onTrackCount} on track`} icon="ri-group-line" color="primary" active={selectedKpi === 'caseload'} onClick={() => setSelectedKpi('caseload')} />
             <StatCard label="Active Learners" value={String(activeLearners.length)} sub="Currently active" icon="ri-user-follow-line" color="emerald" active={selectedKpi === 'active'} onClick={() => setSelectedKpi('active')} />
             <StatCard label="Gateway" value={String(gatewayLearners.length)} sub="At gateway stage" icon="ri-flag-line" color="accent" active={selectedKpi === 'gateway'} onClick={() => setSelectedKpi('gateway')} />
@@ -872,13 +854,13 @@ export default function CoachDashboard() {
 
         {atRiskCount > 0 && (
           <SectionReveal delay={80}>
-            <div className="bg-red-50/70 border border-red-200/50 rounded-xl p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <div className="rounded-xl border border-red-200/50 bg-red-50/70 p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
               <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
                 <i className="ri-alert-fill text-red-600 text-base"></i>
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-800">Risk Alert: {atRiskCount} learners need immediate attention</p>
-                <p className="text-[12px] text-red-600 mt-0.5 truncate">
+                <p className="mt-0.5 truncate text-[12px] text-red-600">
                   {riskSummary || EMPTY_VALUE}
                 </p>
               </div>
@@ -889,162 +871,95 @@ export default function CoachDashboard() {
         {/* ═══════════════════════════════════════════════════
             MAIN CONTENT — 2 Columns
             ═══════════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 md:gap-6">
+        <div className="space-y-6">
 
           {/* ─────── Left Column (2/3) ─────── */}
-          <div className="lg:col-span-2 space-y-5 md:space-y-6">
+          <div className="space-y-6">
 
             {/* Learner Caseload */}
             <SectionReveal delay={100}>
-              <section id="learner-caseload" className="scroll-mt-4">
-                <div className="flex items-center justify-between mb-4">
+              <section id="learner-caseload" className={`${dashboardPanelClass} scroll-mt-4 p-4 md:p-5`}>
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Caseload</h2>
-                    <p className="text-sm text-foreground-400 mt-0.5">All {totalCaseload} learners assigned to you — click to expand details</p>
+                    <h2 className="text-lg font-heading font-semibold text-foreground-900">At Risk Learners</h2>
+                    <p className="mt-1 text-sm text-foreground-400">Showing only learners currently flagged at risk</p>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <Link to="/coach/caseload" className="text-xs font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
-                      <i className="ri-table-line mr-1"></i> Full Overview
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <p className="whitespace-nowrap pt-0.5 text-sm font-medium text-foreground-400">{atRiskCount} learners</p>
+                    <Link
+                      to="/coach/caseload"
+                      className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 transition-colors hover:bg-primary-100"
+                    >
+                      <i className="ri-group-line"></i>
+                      All Learners
                     </Link>
-                    <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
-                    {([
-                      { key: 'all', label: 'All', count: totalCaseload },
-                      { key: 'at-risk', label: OTJH_STATUS_META['at-risk'].cardLabel, count: atRiskCount },
-                      { key: 'need-attention', label: OTJH_STATUS_META['need-attention'].cardLabel, count: needAttentionCount },
-                      { key: 'on-track', label: OTJH_STATUS_META['on-track'].cardLabel, count: onTrackCount },
-                    ] as { key: OtjhFilter; label: string; count: number }[]).map(tab => (
-                      <button
-                        key={tab.key}
-                        onClick={() => { setViewMode(tab.key); setCaseloadPage(1); setSelectedLearner(null); }}
-                        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                          viewMode === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
-                        }`}
-                      >
-                        {tab.label} <span className="text-[10px] opacity-60">({tab.count})</span>
-                      </button>
-                    ))}
-                  </div>
                   </div>
                 </div>
-                <div className="space-y-2">
-                  {paginatedLearners.map(learner => (
+                <div className={`${atRiskCaseloadHasOverflow ? 'max-h-[36rem] overflow-y-auto pr-2' : ''} space-y-3`}>
+                  {atRiskLearners.map(learner => (
                     <LearnerRow
                       key={learner.id}
                       learner={learner}
-                      isSelected={selectedLearner?.id === learner.id}
-                      onSelect={() => setSelectedLearner(selectedLearner?.id === learner.id ? null : learner)}
                     />
                   ))}
-                  {filteredLearners.length === 0 && (
+                  {atRiskLearners.length === 0 && (
                     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6 text-center text-[12px] text-foreground-400">
-                      {loading ? 'Loading learners...' : 'No learners found.'}
+                      {loading ? 'Loading learners...' : 'No at-risk learners right now.'}
                     </div>
                   )}
                 </div>
-                {filteredLearners.length > CASELOAD_PAGE_SIZE && (
-                  <div className="mt-4 flex flex-col items-center justify-between gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 sm:flex-row">
-                    <p className="text-[10px] text-foreground-400">
-                      Showing {(caseloadPage - 1) * CASELOAD_PAGE_SIZE + 1}–{Math.min(caseloadPage * CASELOAD_PAGE_SIZE, filteredLearners.length)} of {filteredLearners.length} learners
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <button type="button" onClick={() => goToCaseloadPage(caseloadPage - 1)} disabled={caseloadPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-35" aria-label="Previous page"><i className="ri-arrow-left-s-line"></i></button>
-                      {Array.from({ length: caseloadPageCount }, (_, index) => index + 1).map(page => (
-                        <button key={page} type="button" onClick={() => goToCaseloadPage(page)} className={`h-8 min-w-8 rounded-lg px-2 text-[10px] font-semibold transition-colors ${caseloadPage === page ? 'bg-primary-600 text-white' : 'border border-foreground-200 text-foreground-600 hover:bg-background-100'}`} aria-label={`Page ${page}`} aria-current={caseloadPage === page ? 'page' : undefined}>{page}</button>
-                      ))}
-                      <button type="button" onClick={() => goToCaseloadPage(caseloadPage + 1)} disabled={caseloadPage === caseloadPageCount} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-35" aria-label="Next page"><i className="ri-arrow-right-s-line"></i></button>
-                    </div>
-                  </div>
-                )}
               </section>
             </SectionReveal>
 
+            <div className="grid grid-cols-1 items-stretch gap-6 lg:h-[680px] lg:grid-cols-2">
             {/* Upcoming Live Sessions */}
-            <SectionReveal delay={140}>
-              <section>
-                <div className="mb-4 flex items-center justify-between">
+            <SectionReveal delay={140} className="lg:min-h-0">
+              <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
+                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                   <div>
-                    <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
-                    <p className="mt-0.5 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
+                    <h2 className="text-lg font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
+                    <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
                   </div>
-                  <Link to="/coach/timetable" className="whitespace-nowrap text-xs font-semibold text-primary-600 hover:text-primary-700">
-                    <i className="ri-calendar-line mr-1"></i> Full Calendar
+                  <Link to="/coach/timetable" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100">
+                    <i className="ri-calendar-line"></i> Full Calendar
                   </Link>
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
                   {upcomingLiveSessionCards.map(event => {
                     const sessionDate = eventDisplayDate(event);
                     return (
-                      <Link to="/coach/timetable" key={event.eventKey || event.id} className="group w-full rounded-xl border border-sky-100 bg-background-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-sm">
-                        <div className="mb-3 flex items-center justify-between gap-2">
-                          <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[9px] font-semibold text-sky-700"><i className="ri-live-line mr-1"></i>Live Session</span>
-                          <span className="text-[9px] font-medium text-foreground-400">{formatDateLabel(sessionDate)}</span>
+                      <Link to="/coach/timetable" key={event.eventKey || event.id} className="group flex flex-col rounded-2xl border border-sky-100/80 bg-sky-50/35 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_45px_-32px_rgba(14,165,233,0.55)]">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <span className="rounded-full border border-sky-100 bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-sky-700"><i className="ri-live-line mr-1"></i>Live Session</span>
+                          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-foreground-500">{formatDateLabel(sessionDate)}</span>
                         </div>
-                        <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.title)}</p>
+                        <p className="line-clamp-2 text-[15px] font-semibold leading-6 text-foreground-900">{displayValue(event.title)}</p>
                         <p className="mt-1 truncate text-[10px] text-foreground-400">{displayValue(event.programme)} · {displayValue(event.cohort)}{event.location ? ` · ${event.location}` : ''}</p>
-                        <div className="mt-3 flex items-center justify-between border-t border-background-200/60 pt-3 text-[10px]">
-                          <span className="text-foreground-500"><i className="ri-time-line mr-1 text-sky-500"></i>{formatTimeLabel(event)}</span>
-                          <span className="text-foreground-400"><i className="ri-video-line mr-1 text-sky-500"></i>{displayValue(event.platform)}</span>
+                        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-background-200/70 bg-background-50/80 px-3 py-2.5 text-[10px]">
+                          <span className="text-foreground-600"><i className="ri-time-line mr-1 text-sky-500"></i>{upcomingLiveSessionTimeLabel(event)}</span>
+                          <span className="text-foreground-500"><i className="ri-video-line mr-1 text-sky-500"></i>{displayValue(event.platform)}</span>
                         </div>
                       </Link>
                     );
                   })}
                   {!upcomingLiveSessionCards.length && (
-                    <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center text-[11px] text-foreground-400 sm:col-span-2 xl:col-span-3">No upcoming live sessions scheduled.</div>
+                    <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center text-[11px] text-foreground-400 lg:col-span-2">No upcoming live sessions scheduled.</div>
                   )}
                 </div>
               </section>
             </SectionReveal>
 
-            {/* Evidence Queue */}
-            <SectionReveal delay={180}>
-              <section>
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Awaiting Review</h2>
-                    <p className="text-sm text-foreground-400 mt-0.5">Learners with evidence waiting to be reviewed</p>
-                  </div>
-                  <Link to="/coach/marking-queue" className="text-xs font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
-                    View All <i className="ri-arrow-right-line ml-1"></i>
-                  </Link>
-                </div>
-                <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
-                  {evidenceLearners.map(learner => (
-                    <Link
-                      key={learner.id}
-                      to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
-                      state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
-                      className="flex items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 p-3 transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
-                    >
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary-50 text-secondary-600"><i className="ri-file-list-3-line"></i></span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p>
-                        <p className="truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
-                      </div>
-                      <span className="text-right">
-                        <span className="block text-[10px] font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</span>
-                        <span className="block text-[7px] text-foreground-400">Pending / Total</span>
-                        {learner.lastSubmission !== EMPTY_VALUE && <span className="block text-[7px] text-foreground-400">Last {learner.lastSubmission}</span>}
-                      </span>
-                      <i className="ri-arrow-right-s-line text-foreground-300"></i>
-                    </Link>
-                  ))}
-                  {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
-                </div>
-              </section>
-            </SectionReveal>
-          </div>
-
-          {/* ─────── Right Column (1/3) ─────── */}
-          <div className="space-y-5 md:space-y-5">
-
             {/* Coaching Calendar */}
-            <SectionReveal delay={120}>
-              <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+            <SectionReveal delay={120} className="lg:min-h-0">
+              <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
                 <div className="flex items-center justify-between mb-3 md:mb-4">
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">Coaching Calendar</h3>
-                  <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{visibleCalendarEvents.length} sessions</span>
+                  <div>
+                    <h3 className="text-base font-heading font-semibold text-foreground-900">Coaching Calendar</h3>
+                    <p className="mt-1 text-[11px] text-foreground-400">Upcoming learner sessions and review activity</p>
+                  </div>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] text-foreground-500">{visibleCalendarEvents.length} sessions</span>
                 </div>
-                <div className="space-y-2 max-h-[420px] overflow-y-auto">
+                <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
                   {visibleCalendarEvents.length === 0 && (
                     <div className="p-6 text-center text-[12px] text-foreground-400">
                       {loading ? 'Loading calendar...' : 'No calendar events found.'}
@@ -1054,15 +969,15 @@ export default function CoachDashboard() {
                     const classes = eventStatusClasses(event);
                     const displayDate = eventDisplayDate(event);
                     return (
-                      <div key={event.eventKey || event.id} className={`flex items-start gap-3 p-2.5 rounded-lg transition-smooth cursor-pointer ${classes.row}`}>
-                        <div className="text-center shrink-0 min-w-[42px]">
+                      <div key={event.eventKey || event.id} className={`flex items-start gap-3 rounded-2xl border border-foreground-200/50 p-3 transition-smooth cursor-pointer ${classes.row}`}>
+                        <div className="min-w-[50px] shrink-0 rounded-xl bg-background-50/90 py-2 text-center">
                           <p className={`text-[10px] font-semibold uppercase tracking-wider ${classes.date}`}>{formatCalendarMonth(displayDate)}</p>
                           <p className={`text-base font-bold ${isAtRiskEvent(event) ? 'text-red-700' : 'text-foreground-900'}`}>{formatCalendarDayNumber(displayDate)}</p>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-[13px] font-medium text-foreground-900">{displayValue(event.learner)}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                            <span className="text-[10px] text-foreground-400">{formatTimeLabel(event)}</span>
+                          <p className="text-[13px] font-semibold text-foreground-900">{displayValue(event.learner)}</p>
+                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] text-foreground-500">{formatTimeLabel(event)}</span>
                             <span className="text-[8px] text-foreground-300">&middot;</span>
                             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${classes.badge}`}>{eventTypeLabel(event)}</span>
                           </div>
@@ -1074,23 +989,68 @@ export default function CoachDashboard() {
                 </div>
               </section>
             </SectionReveal>
+            </div>
 
+            {/* Evidence Queue */}
+            <SectionReveal delay={180}>
+              <section className={`${dashboardPanelClass} p-4 md:p-5`}>
+                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg font-heading font-semibold text-foreground-900">Evidence Awaiting Review</h2>
+                      <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[10px] font-semibold text-secondary-700">{evidenceLearners.length}</span>
+                    </div>
+                    <p className="mt-1 text-sm text-foreground-400">Learners with evidence waiting to be reviewed</p>
+                  </div>
+                  <Link to="/coach/marking-queue" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100 cursor-pointer">
+                    View All <i className="ri-arrow-right-line"></i>
+                  </Link>
+                </div>
+                <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                  {evidenceLearners.map(learner => (
+                    <Link
+                      key={learner.id}
+                      to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
+                      state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
+                      className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/70 p-3.5 transition-all hover:-translate-y-0.5 hover:border-secondary-200 hover:bg-secondary-50/30"
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-50 text-secondary-600"><i className="ri-file-list-3-line"></i></span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
+                        <p className="truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
+                      </div>
+                      <span className="text-right">
+                        <span className="block text-[11px] font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</span>
+                        <span className="block text-[8px] text-foreground-400">Pending / Total</span>
+                        {learner.lastSubmission !== EMPTY_VALUE && <span className="block text-[8px] text-foreground-400">Last {learner.lastSubmission}</span>}
+                      </span>
+                      <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                    </Link>
+                  ))}
+                  {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
+                </div>
+              </section>
+            </SectionReveal>
+          </div>
+
+          {/* ─────── Right Column (1/3) ─────── */}
+          <div className="space-y-5">
             {/* Absence Reports */}
             <SectionReveal delay={160}>
-              <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
+              <section className={`${dashboardPanelClass} p-4 md:p-5`}>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">
+                  <h3 className="text-base font-heading font-semibold text-foreground-900">
                     Absence Reports
                     <span className="ml-2 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{pendingAbsenceReports.length} pending</span>
                   </h3>
                   <Link to="/coach/absence-reports" className="text-[10px] font-semibold text-primary-600 hover:text-primary-700">View All <i className="ri-arrow-right-s-line"></i></Link>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {pendingAbsenceReports.slice(0, 4).map(report => (
-                    <Link key={report.id} to="/coach/absence-reports" className="flex items-center gap-3 rounded-lg bg-background-100/50 p-2.5 transition-colors hover:bg-background-100">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600"><i className="ri-emotion-sad-line text-sm"></i></span>
+                    <Link key={report.id} to="/coach/absence-reports" className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/60 p-3 transition-colors hover:bg-background-100">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><i className="ri-emotion-sad-line text-sm"></i></span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[12px] font-medium text-foreground-900">{report.learner}</p>
+                        <p className="truncate text-[12px] font-semibold text-foreground-900">{report.learner}</p>
                         <p className="truncate text-[10px] text-foreground-400">{formatDateLabel(report.sessionDate)} · {report.reason}</p>
                       </div>
                       <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[8px] font-semibold capitalize text-amber-700">{report.reasonCategory}</span>
@@ -1150,7 +1110,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
   };
   const current = meta[type];
-  const filterForType: Partial<Record<DashboardKpi, OtjhFilter>> = { caseload: 'all', 'on-track': 'on-track', 'at-risk': 'at-risk', 'need-attention': 'need-attention' };
+  const filterForType: Partial<Record<DashboardKpi, OtjhFilter>> = { 'at-risk': 'at-risk' };
   const modalLearners = type === 'caseload'
     ? learners
     : type === 'active'
@@ -1168,50 +1128,53 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const evidenceLearners = evidenceQueue;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
-      <button type="button" onClick={onClose} className="absolute inset-0 cursor-default bg-foreground-950/40 backdrop-blur-[2px]" aria-label="Close popup"></button>
-      <div className="relative flex max-h-[86vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl">
-        <header className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4 md:px-6">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
+      <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/45 backdrop-blur-[5px]" aria-label="Close popup"></button>
+      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-foreground-200/70 bg-background-50/95 shadow-[0_36px_90px_-38px_rgba(15,23,42,0.5)]">
+        <header className="flex items-start justify-between gap-4 border-b border-foreground-100/80 bg-background-50/95 px-5 py-5 md:px-6">
           <div className="flex items-center gap-3">
-            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${current.iconStyle}`}><i className={`${current.icon} text-lg`}></i></span>
+            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><i className={`${current.icon} text-lg`}></i></span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 id="kpi-modal-title" className="font-heading text-base font-bold text-foreground-900">{current.title}</h2>
-                <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
+                <h2 id="kpi-modal-title" className="font-heading text-lg font-bold text-foreground-900">{current.title}</h2>
+                <span className="rounded-full border border-foreground-200/70 bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
               </div>
-              <p className="mt-0.5 text-[10px] text-foreground-400">{current.subtitle}</p>
+              <p className="mt-1 text-[11px] text-foreground-400">{current.subtitle}</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 transition-colors hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-4 md:p-5">
+        <div className="flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/35 p-4 md:p-5">
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'gateway' || type === 'epa') && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
+                const badge = learnerStageBadge(learner);
                 return (
-                  <div key={learner.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 p-3 transition-colors hover:bg-background-100/60">
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-2 ${status.avatar}`}><span className="text-[10px] font-bold">{learner.initials}</span></span>
+                  <div key={learner.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-all hover:-translate-y-px hover:border-foreground-300/70 hover:shadow-[0_14px_32px_-24px_rgba(15,23,42,0.28)]">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${badge.avatarClass}`}><span>{learner.initials}</span></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-[11px] font-semibold text-foreground-900">{learner.name}</p>
+                        <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.name}</p>
                         {type === 'active' || type === 'on-break' ? (
-                          <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
                         ) : type === 'gateway' || type === 'epa' ? (
-                          <span className="rounded-full border border-secondary-100 bg-secondary-50 px-1.5 py-0.5 text-[8px] font-bold text-secondary-700">{type === 'gateway' ? 'Gateway' : 'EPA'}</span>
+                          <span className="rounded-full border border-secondary-100 bg-secondary-50 px-2 py-0.5 text-[9px] font-semibold text-secondary-700">{type === 'gateway' ? 'Gateway' : 'EPA'}</span>
                         ) : (
-                          <span className={`rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${status.bg} ${status.text}`}>{status.label}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${status.bg} ${status.text}`}>{status.label}</span>
                         )}
                       </div>
                       <p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
                     </div>
-                    <div className="hidden items-center gap-4 text-center sm:flex">
-                      <div><p className="text-[10px] font-bold text-foreground-800">{otjh}</p><p className="text-[7px] text-foreground-400">OTJH</p></div>
-                      <div><p className="text-[10px] font-bold text-foreground-800">{learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE}</p><p className="text-[7px] text-foreground-400">KSB</p></div>
-                      <div><p className="text-[10px] font-bold text-foreground-800">{attendance}</p><p className="text-[7px] text-foreground-400">Attendance</p></div>
+                    <div className="hidden grid-cols-3 gap-2 text-center md:grid md:min-w-[250px]">
+                      <ModalMiniMetric label="OTJH" value={otjh} />
+                      <ModalMiniMetric label="KSB" value={learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE} />
+                      <ModalMiniMetric label="Attendance" value={attendance} tone={toneFromPercent(learner.attendanceRateAvailable ? learner.attendanceRate : null, 80, 90)} />
+                    </div>
                     </div>
                   </div>
                 );
@@ -1221,16 +1184,16 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
           )}
 
           {type === 'evidence' && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {evidenceLearners.map(learner => (
                 <Link
                   key={learner.id}
                   to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
                   state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
                   onClick={onClose}
-                  className="flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 p-3 transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
+                  className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-all hover:-translate-y-px hover:border-secondary-200 hover:bg-secondary-50/30 hover:shadow-[0_14px_32px_-24px_rgba(15,23,42,0.28)]"
                 >
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-secondary-50 text-[10px] font-bold text-secondary-700">{learner.initials}</span>
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-50 text-[10px] font-bold text-secondary-700">{learner.initials}</span>
                   <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p><p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p></div>
                   <div className="text-right"><p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p><p className="text-[8px] text-foreground-400">Pending / Total</p>{learner.isOverdue && <p className="mt-0.5 text-[8px] font-semibold text-red-600">Overdue</p>}</div>
                   <i className="ri-arrow-right-s-line text-foreground-300"></i>
@@ -1251,67 +1214,54 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
           )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-foreground-100 bg-background-100/40 px-5 py-3">
-          <button type="button" onClick={onClose} className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[10px] font-semibold text-foreground-600 hover:bg-background-100">Close</button>
-          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-lg bg-primary-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-primary-700">Show in dashboard</button>}
-          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-lg bg-primary-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-primary-700">Open marking queue</Link>}
-          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-lg bg-primary-600 px-3 py-2 text-[10px] font-semibold text-white hover:bg-primary-700">Open reviews</Link>}
+        <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-foreground-100 bg-background-100/50 px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-2 text-[10px] font-semibold text-foreground-600 transition-colors hover:bg-background-100">Close</button>
+          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Jump to at-risk list</button>}
+          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Open marking queue</Link>}
+          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Open reviews</Link>}
         </footer>
       </div>
     </div>
   );
 }
 
-function ModalEmpty({ icon, title, description }: { icon: string; title: string; description: string }) {
-  return <div className="py-12 text-center"><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-background-100 text-foreground-400"><i className={`${icon} text-lg`}></i></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
-}
+function ModalMiniMetric({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: MetricTone }) {
+  const toneClass = tone === 'danger'
+    ? 'border-red-100 bg-red-50/70 text-red-700'
+    : tone === 'warning'
+      ? 'border-amber-100 bg-amber-50/70 text-amber-700'
+      : tone === 'success'
+        ? 'border-emerald-100 bg-emerald-50/70 text-emerald-700'
+        : tone === 'primary'
+          ? 'border-primary-100 bg-primary-50/70 text-primary-700'
+          : 'border-foreground-200/60 bg-background-50 text-foreground-800';
 
-function HeroStatPill({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) {
-  const colorMap: Record<string, string> = {
-    accent: 'bg-accent-400/15 text-accent-300 border-accent-400/20',
-    primary: 'bg-primary-400/15 text-primary-300 border-primary-400/20',
-    secondary: 'bg-secondary-400/15 text-secondary-300 border-secondary-400/20',
-    emerald: 'bg-emerald-400/15 text-emerald-300 border-emerald-400/20',
-    red: 'bg-red-400/15 text-red-300 border-red-400/20',
-    amber: 'bg-amber-400/15 text-amber-300 border-amber-400/20',
-  };
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${colorMap[color] || colorMap.primary} backdrop-blur-sm`}>
-      <i className={`${icon} text-xs opacity-70`}></i>
-      <span className="text-[10px] font-bold">{value}</span>
-      <span className="text-[10px] opacity-60 whitespace-nowrap">{label}</span>
+    <div className={`rounded-xl border px-2.5 py-2 ${toneClass}`}>
+      <p className="text-[10px] font-bold leading-none">{value}</p>
+      <p className="mt-1 text-[7px] font-semibold uppercase tracking-[0.14em] opacity-70">{label}</p>
     </div>
   );
+}
+
+function ModalEmpty({ icon, title, description }: { icon: string; title: string; description: string }) {
+  return <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50/80 py-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><i className={`${icon} text-lg`}></i></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
 }
 
 /* ═══════════════════════════════════════════════════════════
    Mini Donut Stat (Hero)
    ═══════════════════════════════════════════════════════════ */
-function MiniDonutStat({ label, pct, color }: { label: string; pct: number; color: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="relative">
-        <DonutRing pct={pct} size={44} stroke={4} color={color} trackClass="text-white/8" />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-[10px] font-bold text-white">{pct}%</span>
-        </div>
-      </div>
-      <span className="text-[9px] text-white/40 font-medium">{label}</span>
-    </div>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════
    Stat Card
    ═══════════════════════════════════════════════════════════ */
 function StatCard({ label, value, sub, icon, color, active = false, onClick }: { label: string; value: string; sub: string; icon: string; color: string; active?: boolean; onClick: () => void }) {
-  const colorMap: Record<string, { iconBg: string; iconText: string; accent: string }> = {
-    primary: { iconBg: 'bg-primary-100', iconText: 'text-primary-600', accent: 'text-primary-700' },
-    accent: { iconBg: 'bg-accent-50', iconText: 'text-accent-700', accent: 'text-accent-700' },
-    secondary: { iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', accent: 'text-secondary-700' },
-    red: { iconBg: 'bg-red-100', iconText: 'text-red-600', accent: 'text-red-700' },
-    amber: { iconBg: 'bg-amber-100', iconText: 'text-amber-600', accent: 'text-amber-700' },
-    emerald: { iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', accent: 'text-emerald-700' },
+  const colorMap: Record<string, { iconBg: string; iconText: string; accent: string; glow: string; border: string }> = {
+    primary: { iconBg: 'bg-primary-100', iconText: 'text-primary-600', accent: 'text-primary-700', glow: 'from-primary-500/70 to-primary-300/50', border: 'border-primary-200/80' },
+    accent: { iconBg: 'bg-accent-50', iconText: 'text-accent-700', accent: 'text-accent-700', glow: 'from-accent-500/70 to-accent-300/50', border: 'border-accent-200/80' },
+    secondary: { iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', accent: 'text-secondary-700', glow: 'from-secondary-500/70 to-secondary-300/50', border: 'border-secondary-200/80' },
+    red: { iconBg: 'bg-red-100', iconText: 'text-red-600', accent: 'text-red-700', glow: 'from-red-500/70 to-red-300/50', border: 'border-red-200/80' },
+    amber: { iconBg: 'bg-amber-100', iconText: 'text-amber-600', accent: 'text-amber-700', glow: 'from-amber-500/70 to-amber-300/50', border: 'border-amber-200/80' },
+    emerald: { iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', accent: 'text-emerald-700', glow: 'from-emerald-500/70 to-emerald-300/50', border: 'border-emerald-200/80' },
   };
   const c = colorMap[color] || colorMap.primary;
   return (
@@ -1319,17 +1269,18 @@ function StatCard({ label, value, sub, icon, color, active = false, onClick }: {
       type="button"
       onClick={onClick}
       aria-label={`Open ${label}`}
-      className={`group w-full rounded-xl border bg-background-50 p-3 text-left card-premium cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-primary-200 md:p-4 ${active ? 'border-primary-300 ring-1 ring-primary-100' : 'border-foreground-200/60 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md'}`}
+      className={`group relative isolate w-full overflow-hidden rounded-2xl border bg-background-50/95 p-4 text-left card-premium cursor-pointer transition-all focus:outline-none focus:ring-2 focus:ring-primary-200 md:p-5 ${active ? `${c.border} ring-1 ring-primary-100 shadow-[0_22px_45px_-34px_rgba(79,70,229,0.48)]` : 'border-foreground-200/60 hover:-translate-y-0.5 hover:border-foreground-300/70 hover:shadow-[0_22px_45px_-34px_rgba(15,23,42,0.24)]'}`}
     >
-      <div className="flex items-center gap-2.5 mb-2">
-        <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
+      <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.glow}`}></span>
+      <div className="mb-3 flex items-center gap-3">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${c.iconBg} ${c.iconText}`}>
           <i className={`${icon} text-sm`}></i>
         </span>
-        <span className="text-[10px] md:text-[11px] text-foreground-400 font-medium">{label}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{label}</span>
         <i className="ri-arrow-right-up-line ml-auto text-[11px] text-foreground-300 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary-500"></i>
       </div>
-      <p className={`text-lg md:text-xl font-heading font-bold leading-tight ${c.accent}`}>{value}</p>
-      <p className="text-[10px] md:text-[11px] text-foreground-400 mt-1">{sub}</p>
+      <p className={`text-2xl font-heading font-bold leading-tight ${c.accent}`}>{value}</p>
+      <p className="mt-2 text-[11px] leading-5 text-foreground-400">{sub}</p>
     </button>
   );
 }
@@ -1337,108 +1288,279 @@ function StatCard({ label, value, sub, icon, color, active = false, onClick }: {
 /* ═══════════════════════════════════════════════════════════
    Learner Row
    ═══════════════════════════════════════════════════════════ */
-function ScheduleDateLine({ label, value, status = 'none' }: { label: string; value: string; status?: ScheduleStatus }) {
-  const hasDate = displayValue(value) !== EMPTY_VALUE;
-  const statusClass = status === 'overdue'
-    ? 'border-red-100 bg-red-50 text-red-700'
-    : status === 'needs-schedule'
-      ? 'border-amber-100 bg-amber-50 text-amber-700'
-    : status === 'upcoming'
-      ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
-      : 'border-foreground-100 bg-background-50 text-foreground-400';
-  const statusLabel = status === 'overdue' ? 'Overdue' : status === 'needs-schedule' ? 'Need Schedule' : 'Next';
+type MetricTone = 'neutral' | 'success' | 'warning' | 'danger' | 'primary';
+
+function toneFromPercent(value?: number | null, warningThreshold = 50, successThreshold = 75): MetricTone {
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'neutral';
+  if (value >= successThreshold) return 'success';
+  if (value >= warningThreshold) return 'warning';
+  return 'danger';
+}
+
+function CompactProgressRail({
+  label,
+  value,
+  progress,
+  tone = 'primary',
+}: {
+  label: string;
+  value: string;
+  progress?: number;
+  tone?: MetricTone;
+}) {
+  const barClass = tone === 'danger'
+    ? 'bg-amber-400'
+    : tone === 'warning'
+      ? 'bg-amber-500'
+      : tone === 'success'
+        ? 'bg-emerald-500'
+        : tone === 'primary'
+          ? 'bg-primary-500'
+          : 'bg-foreground-400';
+  const width = typeof progress === 'number' ? Math.max(0, Math.min(progress, 100)) : 0;
 
   return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5">
-      <span className="text-[10px] font-bold text-foreground-500">{label}</span>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <span className="truncate text-[11px] font-semibold text-foreground-900">{hasDate ? value : EMPTY_VALUE}</span>
-        {hasDate && status !== 'none' && (
-          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[8px] font-bold ${statusClass}`}>
-            {statusLabel}
-          </span>
-        )}
+    <div className="min-w-0">
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-medium text-foreground-500">{label}</p>
+        <p className="text-[11px] font-semibold text-foreground-700">{value}</p>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-[#eadfd9]">
+        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${width}%` }}></div>
       </div>
     </div>
   );
 }
 
-function LearnerRow({ learner, isSelected, onSelect }: { learner: CoachLearner; isSelected: boolean; onSelect: () => void }) {
-  const sc = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
-  const otjhLabel = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
+function MetricTile({
+  label,
+  value,
+  tone = 'primary',
+  progress,
+}: {
+  label: string;
+  value: string;
+  icon: string;
+  tone?: MetricTone;
+  progress?: number;
+  helper?: string;
+}) {
+  return <CompactProgressRail label={label} value={value} progress={progress} tone={tone} />;
+}
+
+function MiniScheduleTile({ label, value }: { label: string; value: string; status?: ScheduleStatus }) {
+  return (
+    <div className="rounded-2xl border border-foreground-200/60 bg-white px-3 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <p className="text-[11px] font-medium text-foreground-500">{label}</p>
+        <i className={`${label === 'PR' ? 'ri-calendar-event-line' : 'ri-user-voice-line'} text-[12px] text-foreground-400`}></i>
+      </div>
+      <p className="text-[11px] font-semibold text-foreground-700">{value}</p>
+    </div>
+  );
+}
+
+function learnerStageBadge(learner: CoachLearner): { label: string; className: string; avatarClass: string; arrowClass: string } {
+  const otjhStatus = normalizeOtjhStatus(learner.otjhStatus);
+  const programmeStatus = normalizedProgramStatus(learner);
+
+  if (otjhStatus === 'at-risk') {
+    return {
+      label: 'At Risk',
+      className: 'border-red-200 bg-red-50 text-red-700',
+      avatarClass: 'bg-primary-50 text-primary-600',
+      arrowClass: 'bg-primary-50 text-primary-400',
+    };
+  }
+  if (otjhStatus === 'need-attention') {
+    return {
+      label: 'Need Attention',
+      className: 'border-amber-200 bg-amber-50 text-amber-700',
+      avatarClass: 'bg-amber-50 text-amber-600',
+      arrowClass: 'bg-amber-50 text-amber-400',
+    };
+  }
+  if (programmeStatus === 'gateway') {
+    return {
+      label: 'Gateway',
+      className: 'border-violet-200 bg-violet-50 text-violet-700',
+      avatarClass: 'bg-violet-50 text-violet-700',
+      arrowClass: 'bg-violet-50 text-violet-400',
+    };
+  }
+  if (programmeStatus === 'epa') {
+    return {
+      label: 'EPA',
+      className: 'border-sky-200 bg-sky-50 text-sky-700',
+      avatarClass: 'bg-sky-50 text-sky-700',
+      arrowClass: 'bg-sky-50 text-sky-400',
+    };
+  }
+  return {
+    label: 'Apprentice',
+    className: 'border-primary-100 bg-primary-50 text-primary-700',
+    avatarClass: 'bg-primary-50 text-primary-600',
+    arrowClass: 'bg-primary-50 text-primary-400',
+  };
+}
+
+function LearnerRow({ learner }: { learner: CoachLearner }) {
+  const badge = learnerStageBadge(learner);
+  const otjhLabel = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget} hrs` : EMPTY_VALUE;
   const ksbLabel = learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE;
+  const otjhPercent = learner.otjhTarget > 0 ? clampPercent((learner.otjhCompleted / learner.otjhTarget) * 100) : 0;
+  const ksbPercent = learner.ksbProgressAvailable ? clampPercent(learner.ksbProgress) : 0;
+  const primaryRisk = learner.recentFlag || learner.riskFlags[0] || null;
+  const additionalFlags = learner.riskFlags.filter(flag => flag !== primaryRisk).slice(0, 1);
+  const programmeLine = learner.group !== EMPTY_VALUE ? learner.group : learner.programme;
+  const otjhTone = toneFromPercent(otjhPercent, 45, 75);
+  const ksbTone = toneFromPercent(learner.ksbProgressAvailable ? learner.ksbProgress : null, 45, 75);
+  const sc = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
   const attendanceLabel = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
   const progressLabel = learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE;
   const evidenceLabel = learner.evidenceCountAvailable ? String(learner.evidenceCount) : EMPTY_VALUE;
-  const attendanceTone = learner.attendanceRateAvailable
-    ? learner.attendanceRate >= 90 ? 'text-emerald-600' : learner.attendanceRate >= 80 ? 'text-amber-600' : 'text-red-600'
-    : 'text-foreground-900';
+  const attendanceTone = toneFromPercent(learner.attendanceRateAvailable ? learner.attendanceRate : null, 80, 90);
+  const progressTone = toneFromPercent(learner.overallProgressAvailable ? learner.overallProgress : null, 40, 75);
+  const evidenceTone: MetricTone = learner.evidenceCountAvailable && learner.evidenceCount > 0 ? 'primary' : 'neutral';
+  const visibleFlags = additionalFlags;
+  const remainingFlagCount = 0;
+  const compactLayout = Boolean(learner.id);
+  const learnerCaseFilePath = `/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`;
+  const learnerCaseFileState = { learnerId: learner.id, learnerName: learner.name };
+
+  if (compactLayout) {
+    return (
+      <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <Link
+              to={learnerCaseFilePath}
+              state={learnerCaseFileState}
+              aria-label={`Open ${learner.name} profile`}
+              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[18px] font-semibold transition-transform hover:scale-[1.03] ${badge.avatarClass}`}
+            >
+              {learner.initials}
+            </Link>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate text-[14px] font-semibold text-foreground-900">{learner.name}</p>
+                <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${badge.className}`}>
+                  {badge.label}
+                </span>
+              </div>
+              <p className="mt-1 truncate text-[12px] text-foreground-400">{programmeLine}</p>
+              {(primaryRisk || additionalFlags.length > 0) && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {primaryRisk && (
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${riskFlagClass(primaryRisk)}`}>
+                      {primaryRisk}
+                    </span>
+                  )}
+                  {additionalFlags.map(flag => (
+                    <span key={flag} className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${riskFlagClass(flag)}`}>
+                      {flag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-2">
+            <CompactProgressRail label="OTJH" value={otjhLabel} progress={otjhPercent} tone={otjhTone} />
+            <CompactProgressRail label="KSB" value={ksbLabel} progress={ksbPercent} tone={ksbTone} />
+          </div>
+
+          <Link
+            to={learnerCaseFilePath}
+            state={learnerCaseFileState}
+            aria-label={`Open ${learner.name} profile`}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all hover:scale-105 hover:shadow-sm ${badge.arrowClass}`}
+          >
+            <i className="ri-arrow-right-s-line text-lg"></i>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      className={`bg-background-50 rounded-xl border p-4 card-premium cursor-pointer transition-smooth ${isSelected ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60'}`}
-      onClick={onSelect}
-    >
-      <div className="flex items-center gap-4">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ring-2 ${sc.avatar}`}>
-          <span className="text-sm font-bold">{learner.initials}</span>
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-semibold text-foreground-900">{learner.name}</p>
-            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sc.bg} ${sc.text}`}>{sc.label}</span>
-            {learner.recentFlag && (
-              <span className="text-[9px] font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">{learner.recentFlag}</span>
-            )}
+    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-4 shadow-[0_1px_2px_rgba(16,24,40,0.03)]">
+      {/* Header row */}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-[18px] font-semibold ${badge.avatarClass}`}>
+            {learner.initials}
           </div>
-          <p className="text-[11px] text-foreground-400 mt-0.5">{learner.programme} · {learner.group}</p>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-[14px] font-semibold text-foreground-900">{learner.name}</p>
+              <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-medium ${badge.className}`}>
+                {badge.label}
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-[11px] text-foreground-400">{learner.programme} · {learner.group}</p>
+          </div>
         </div>
-        <div className="hidden lg:flex items-center gap-4 text-[11px] text-foreground-500 shrink-0">
-          <span>OTJH: {otjhLabel}</span>
-          <span>KSB: {ksbLabel}</span>
-          <span>Att: {attendanceLabel}</span>
-        </div>
-        <i className={`text-foreground-300 shrink-0 ${isSelected ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
       </div>
 
       {/* Risk flags */}
-      {learner.riskFlags.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mt-3 ml-14">
-          {learner.riskFlags.map(flag => (
-            <span key={flag} className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100">{flag}</span>
+      {primaryRisk && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold ${riskFlagClass(primaryRisk)}`}>
+            <i className="ri-error-warning-fill text-[10px]"></i>
+            {primaryRisk}
+          </span>
+          {visibleFlags.map(flag => (
+            <span key={flag} className="rounded-full border border-amber-100 bg-amber-50 px-2 py-1 text-[9px] font-medium text-amber-700">{flag}</span>
           ))}
+          {remainingFlagCount > 0 && (
+            <span className="rounded-full border border-foreground-200 bg-white px-2 py-1 text-[9px] font-medium text-foreground-500">+{remainingFlagCount} more</span>
+          )}
         </div>
       )}
 
-      {/* Expanded detail */}
-      {isSelected && (
-        <div className="mt-4 ml-14 grid grid-cols-1 sm:grid-cols-4 gap-3 pt-3 border-t border-background-200/30">
-          <div className="bg-background-100/50 rounded-lg p-3 text-center">
-            <p className="text-[10px] text-foreground-400 mb-1">OTJH Progress</p>
-            <div className="w-full bg-background-200 rounded-full h-2 mb-1.5">
-              <div className={`h-2 rounded-full transition-smooth ${sc.bar}`} style={{ width: `${learner.overallProgressAvailable ? learner.overallProgress : 0}%` }}></div>
-            </div>
-            <p className="text-lg font-bold text-foreground-900">{progressLabel}</p>
-          </div>
-          <div className="bg-background-100/50 rounded-lg p-3 text-center">
-            <p className="text-[10px] text-foreground-400 mb-1">Attendance</p>
-            <p className={`text-lg font-bold ${attendanceTone}`}>{attendanceLabel}</p>
-            <p className="text-[10px] text-foreground-400">{learner.attendanceRateAvailable ? learner.attendanceRate >= 90 ? 'On target' : 'Below 90%' : EMPTY_VALUE}</p>
-          </div>
-          <div className="bg-background-100/50 rounded-lg p-3">
-            <p className="text-center text-[10px] text-foreground-400 mb-2">Coaching & Reviews</p>
-            <div className="space-y-1.5">
-              <ScheduleDateLine label="MCM" value={learner.nextCoaching} status={learner.nextCoachingStatus} />
-              <ScheduleDateLine label="PR" value={learner.nextReview} status={learner.nextReviewStatus} />
-            </div>
-          </div>
-          <div className="bg-background-100/50 rounded-lg p-3 text-center">
-            <p className="text-[10px] text-foreground-400 mb-1">Evidence</p>
-            <p className="text-lg font-bold text-foreground-900">{evidenceLabel}</p>
-            <p className="text-[10px] text-foreground-400">items submitted</p>
-          </div>
-        </div>
-      )}
+      {/* Body */}
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-foreground-100 pt-3 sm:grid-cols-3 xl:grid-cols-7">
+        <MetricTile
+          label="OTJH"
+          value={otjhLabel}
+          icon="ri-time-line"
+          tone={otjhTone}
+          progress={otjhPercent}
+          helper={learner.otjhTarget > 0 ? `${otjhPercent}% of target` : 'No target'}
+        />
+        <MetricTile
+          label="KSB"
+          value={ksbLabel}
+          icon="ri-book-open-line"
+          tone={ksbTone}
+          progress={learner.ksbProgressAvailable ? learner.ksbProgress : undefined}
+        />
+        <MetricTile
+          label="Attendance"
+          value={attendanceLabel}
+          icon="ri-calendar-check-line"
+          tone={attendanceTone}
+          progress={learner.attendanceRateAvailable ? learner.attendanceRate : undefined}
+        />
+        <MetricTile
+          label="OTJH Progress"
+          value={progressLabel}
+          icon="ri-line-chart-line"
+          tone={progressTone}
+          progress={learner.overallProgressAvailable ? learner.overallProgress : undefined}
+        />
+        <MiniScheduleTile label="MCM" value={learner.nextCoaching} status={learner.nextCoachingStatus} />
+        <MiniScheduleTile label="PR" value={learner.nextReview} status={learner.nextReviewStatus} />
+        <MetricTile
+          label="Evidence"
+          value={evidenceLabel}
+          icon="ri-file-list-3-line"
+          tone={evidenceTone}
+          helper={learner.evidenceCountAvailable ? 'Awaiting coach review' : 'No evidence data'}
+        />
+      </div>
     </div>
   );
 }

@@ -9,8 +9,6 @@ const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
 const ATTENDANCE_DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 const MISSING_VALUE = '--';
-const ABSENCE_REASON_COLORS = ['#8b5cf6', '#ef4444', '#94a3b8', '#c4b5fd', '#d97706', '#a78bfa'];
-
 type RiskTone = 'red' | 'amber' | 'green' | null;
 type TrendView = 'week' | 'month' | 'year';
 type AttendanceKpi = 'average' | 'on-track' | 'at-risk' | 'needs-attention' | 'catchups';
@@ -258,30 +256,57 @@ function FilterDropdown({ value, onChange, options, allLabel }: { value: string;
 }
 
 function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { icon: string; label: string; value: string; hint?: string; tone?: 'primary' | 'emerald' | 'red' | 'amber'; onClick?: () => void }) {
-  const toneMap: Record<'primary' | 'emerald' | 'red' | 'amber', string> = {
-    primary: 'bg-primary-100 text-primary-600 border-primary-200/40',
-    emerald: 'bg-emerald-100 text-emerald-600 border-emerald-200/40',
-    red: 'bg-red-100 text-red-600 border-red-200/40',
-    amber: 'bg-amber-100 text-amber-600 border-amber-200/40',
+  const toneMap: Record<'primary' | 'emerald' | 'red' | 'amber', {
+    card: string; accent: string; icon: string; value: string; badge: string;
+  }> = {
+    primary: {
+      card: 'border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/70',
+      accent: 'bg-primary-500',
+      icon: 'bg-primary-100 text-primary-700 ring-primary-200/70',
+      value: 'text-primary-800',
+      badge: 'bg-primary-100 text-primary-700',
+    },
+    emerald: {
+      card: 'border-emerald-200/70 bg-gradient-to-br from-white via-white to-emerald-50/70',
+      accent: 'bg-emerald-500',
+      icon: 'bg-emerald-100 text-emerald-700 ring-emerald-200/70',
+      value: 'text-emerald-700',
+      badge: 'bg-emerald-100 text-emerald-700',
+    },
+    red: {
+      card: 'border-red-200/70 bg-gradient-to-br from-white via-white to-red-50/70',
+      accent: 'bg-red-500',
+      icon: 'bg-red-100 text-red-700 ring-red-200/70',
+      value: 'text-red-600',
+      badge: 'bg-red-100 text-red-700',
+    },
+    amber: {
+      card: 'border-amber-200/70 bg-gradient-to-br from-white via-white to-amber-50/70',
+      accent: 'bg-amber-500',
+      icon: 'bg-amber-100 text-amber-700 ring-amber-200/70',
+      value: 'text-amber-700',
+      badge: 'bg-amber-100 text-amber-700',
+    },
   };
-  const borderMap: Record<'primary' | 'emerald' | 'red' | 'amber', string> = {
-    primary: 'border-primary-200/40',
-    emerald: 'border-emerald-200/40',
-    red: 'border-red-200/40',
-    amber: 'border-amber-200/40',
-  };
+  const colors = toneMap[tone];
 
   return (
-    <button type="button" onClick={onClick} className={`flex min-h-[92px] flex-col gap-1.5 rounded-xl border bg-white p-3 text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer ${borderMap[tone]}`}>
-      <div className="flex items-center justify-between">
-        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneMap[tone]}`}>
-          <i className={`${icon} text-sm`}></i>
+    <button type="button" onClick={onClick} className={`group relative flex min-h-[126px] flex-col overflow-hidden rounded-2xl border p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer ${colors.card}`}>
+      <span className={`absolute inset-x-0 top-0 h-1 ${colors.accent}`} />
+      <div className="flex items-start justify-between gap-3">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${colors.icon}`}>
+          <i className={`${icon} text-lg`}></i>
         </span>
-        {hint && <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${toneMap[tone]}`}>{hint}</span>}
+        {hint && <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${colors.badge}`}>{hint}</span>}
       </div>
-      <div>
-        <p className={`text-xl font-heading font-bold ${tone === 'primary' ? 'text-foreground-900' : tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : 'text-amber-600'}`}>{value}</p>
-        <p className="text-[10px] text-foreground-400">{label}</p>
+      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
+        <div className="min-w-0">
+          <p className={`text-3xl font-heading font-bold leading-none tracking-tight ${colors.value}`}>{value}</p>
+          <p className="mt-2 truncate text-[10px] font-semibold text-foreground-600">{label}</p>
+        </div>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/80 text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition group-hover:translate-x-0.5 group-hover:text-primary-600">
+          <i className="ri-arrow-right-line text-xs"></i>
+        </span>
       </div>
     </button>
   );
@@ -302,7 +327,7 @@ export default function CoachAttendance() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [trendView, setTrendView] = useState<TrendView>('week');
+  const [trendView, setTrendView] = useState<TrendView>('month');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [selectedKpi, setSelectedKpi] = useState<AttendanceKpi | null>(null);
@@ -394,27 +419,22 @@ export default function CoachAttendance() {
   );
   const attendanceDistribution = useMemo(() => {
     return [
-      { label: 'On Track (90%+)', value: summary.onTrack, color: 'bg-emerald-500' },
-      { label: 'At Risk (<80%)', value: summary.atRisk, color: 'bg-red-500' },
-      { label: 'Needs Attention (80–89%)', value: summary.needsAttention, color: 'bg-amber-500' },
+      { label: 'On Track (90%+)', value: summary.onTrack, color: '#10b981' },
+      { label: 'At Risk (<80%)', value: summary.atRisk, color: '#ef4444' },
+      { label: 'Needs Attention (80–89%)', value: summary.needsAttention, color: '#f59e0b' },
     ];
   }, [summary.onTrack, summary.atRisk, summary.needsAttention]);
-  const absenceReasonEntries = useMemo(
-    () => Object.entries(summary.absenceReasons || {}).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1]),
-    [summary.absenceReasons],
-  );
-  const absenceReasonGradient = useMemo(() => {
-    const total = absenceReasonEntries.reduce((sum, [, count]) => sum + count, 0);
-    if (!total) return 'conic-gradient(#e5e7eb 0 100%)';
+  const attendanceDistributionTotal = attendanceDistribution.reduce((total, item) => total + item.value, 0);
+  const attendanceDistributionGradient = useMemo(() => {
+    if (!attendanceDistributionTotal) return 'conic-gradient(#e5e7eb 0 100%)';
     let cursor = 0;
-    const stops = absenceReasonEntries.map(([, count], index) => {
+    const stops = attendanceDistribution.map((item) => {
       const start = cursor;
-      cursor += (count / total) * 100;
-      return `${ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length]} ${start}% ${cursor}%`;
+      cursor += (item.value / attendanceDistributionTotal) * 100;
+      return `${item.color} ${start}% ${cursor}%`;
     });
     return `conic-gradient(${stops.join(', ')})`;
-  }, [absenceReasonEntries]);
-
+  }, [attendanceDistribution, attendanceDistributionTotal]);
   const trendUp = attendanceTrendValues.length >= 2 && attendanceTrendValues[attendanceTrendValues.length - 1] >= attendanceTrendValues[0];
   const knownLearnerCount = summary.learnersWithAttendance;
   const atRiskLearners = filteredData.filter((learner) => learner.risk === 'red' && !learner.isOnBreak).slice(0, 5);
@@ -448,6 +468,16 @@ export default function CoachAttendance() {
     present: attendanceDetails.filter((item) => item.status === 'present').length,
     absent: attendanceDetails.filter((item) => item.status === 'absent').length,
   }), [attendanceDetails]);
+  const hasActiveFilters = Boolean(
+    cohortFilter !== 'all'
+    || programmeFilter !== 'all'
+    || groupFilter !== 'all'
+    || employerFilter !== 'all'
+    || riskFilter !== 'all'
+    || dateFrom
+    || dateTo
+    || searchQuery.trim()
+  );
 
   const openAttendanceDetails = async (learner: AttendanceLearner, filter: AttendanceDetailFilter) => {
     setSelectedAttendanceLearner(learner);
@@ -526,22 +556,25 @@ export default function CoachAttendance() {
           </div>
         </section>
 
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          <button type="button" onClick={() => setSelectedKpi('average')} className="flex min-h-[92px] flex-col gap-1.5 rounded-xl border border-foreground-200/60 bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-primary-300/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer">
-            <div className="flex items-center justify-between">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-100">
-                <i className="ri-bar-chart-line text-primary-600 text-sm"></i>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <button type="button" onClick={() => setSelectedKpi('average')} className="group relative flex min-h-[126px] flex-col overflow-hidden rounded-2xl border border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/70 p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer">
+            <span className="absolute inset-x-0 top-0 h-1 bg-primary-500" />
+            <div className="flex items-start justify-between gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
+                <i className="ri-bar-chart-line text-lg"></i>
               </span>
-              <div className="w-20 h-8">
-                <SparklineChart data={attendanceTrendValues.slice(-6)} color={(summary.averageAttendance || 0) >= 90 ? 'emerald' : (summary.averageAttendance || 0) >= 80 ? 'amber' : 'red'} width={80} height={32} showDots={false} showFill={false} />
+              <div className="h-9 w-24 overflow-hidden rounded-lg bg-white/70 px-1 ring-1 ring-primary-100">
+                <SparklineChart data={attendanceTrendValues.slice(-6)} color={(summary.averageAttendance || 0) >= 90 ? 'emerald' : (summary.averageAttendance || 0) >= 80 ? 'amber' : 'red'} width={88} height={36} showDots={false} showFill={false} />
               </div>
             </div>
-            <div>
-              <p className="text-xl font-heading font-bold text-foreground-900">{formatPercent(summary.averageAttendance)}</p>
-              <p className="text-[10px] text-foreground-400">Average Attendance</p>
-              <div className="flex items-center gap-1 mt-1">
-                <i className={`${trendUp ? 'ri-arrow-up-line text-emerald-500' : 'ri-arrow-down-line text-red-500'} text-[10px]`}></i>
-                <span className={`text-[10px] font-medium ${trendUp ? 'text-emerald-600' : 'text-red-500'}`}>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
+            <div className="mt-auto flex items-end justify-between gap-3 pt-4">
+              <div className="min-w-0">
+                <p className="text-3xl font-heading font-bold leading-none tracking-tight text-primary-800">{formatPercent(summary.averageAttendance)}</p>
+                <p className="mt-2 text-[10px] font-semibold text-foreground-600">Overall Attendance · All Months</p>
+              </div>
+              <div className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold ${trendUp ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                <i className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>
+                <span>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
               </div>
             </div>
           </button>
@@ -590,7 +623,7 @@ export default function CoachAttendance() {
               <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
               <span className="text-[10px] text-foreground-400">to</span>
               <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
-              {(cohortFilter !== 'all' || programmeFilter !== 'all' || groupFilter !== 'all' || employerFilter !== 'all' || riskFilter !== 'all' || dateFrom || dateTo || searchQuery) && (
+              {hasActiveFilters && (
                 <button onClick={resetFilters} className="h-10 rounded-xl px-3 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-foreground-800">Clear Filters</button>
               )}
             </div>
@@ -621,48 +654,37 @@ export default function CoachAttendance() {
 
           <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Distribution</h3>
-            <div className="mt-6 flex h-[220px] items-end justify-around gap-3 border-b border-l border-dashed border-foreground-200 px-4">
-              {attendanceDistribution.map((bucket) => {
-                const maxValue = Math.max(...attendanceDistribution.map((item) => item.value), 1);
-                const height = bucket.value ? Math.max(12, (bucket.value / maxValue) * 165) : 4;
-                return (
-                  <div key={bucket.label} className="flex h-full flex-1 flex-col items-center justify-end">
-                    <span className="mb-1 text-[9px] font-semibold text-foreground-500">{bucket.value}</span>
-                    <div className={`w-full max-w-[46px] rounded-t-md ${bucket.color}`} style={{ height }}></div>
-                    <span className="mt-2 whitespace-nowrap text-[8px] text-foreground-400">{bucket.label}</span>
+            <div className="flex h-[245px] items-center justify-center gap-8 px-2 lg:gap-10 xl:gap-12">
+              <div className="relative h-44 w-44 shrink-0 rounded-full" style={{ background: attendanceDistributionGradient }}>
+                <div className="absolute inset-[31px] flex items-center justify-center rounded-full bg-white">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-foreground-900">{attendanceDistributionTotal}</p>
+                    <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-foreground-400">Learners</p>
                   </div>
-                );
-              })}
+                </div>
+              </div>
+              <div className="w-full max-w-[280px] space-y-2.5">
+                {attendanceDistribution.map((bucket) => {
+                  const percentage = attendanceDistributionTotal
+                    ? Math.round((bucket.value / attendanceDistributionTotal) * 100)
+                    : 0;
+                  return (
+                    <div key={bucket.label} className="flex items-center gap-3 rounded-xl bg-background-50 px-3.5 py-3">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }}></span>
+                      <span className="min-w-0 flex-1 text-[10px] font-medium text-foreground-700">{bucket.label}</span>
+                      <span className="text-[11px] font-bold text-foreground-900">{bucket.value}</span>
+                      <span className="w-8 text-right text-[9px] text-foreground-400">({percentage}%)</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </section>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
-            <h3 className="text-sm font-heading font-semibold text-foreground-900">Absence Reasons</h3>
-            <div className="mt-5 flex min-h-[230px] flex-col items-center justify-center">
-              <div className="relative h-36 w-36 rounded-full" style={{ background: absenceReasonGradient }}>
-                <div className="absolute inset-[28px] flex items-center justify-center rounded-full bg-white">
-                  <div className="text-center">
-                    <p className="text-xl font-bold text-foreground-900">{summary.totalAbsent}</p>
-                    <p className="text-[8px] uppercase tracking-wide text-foreground-400">Absences</p>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-5 flex max-w-xl flex-wrap justify-center gap-x-4 gap-y-2">
-                {absenceReasonEntries.length ? absenceReasonEntries.map(([reason, count], index) => (
-                  <span key={reason} className="inline-flex items-center gap-1.5 text-[9px] text-foreground-500">
-                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: ABSENCE_REASON_COLORS[index % ABSENCE_REASON_COLORS.length] }}></span>
-                    {reason}: {count}
-                  </span>
-                )) : (
-                  <span className="text-[10px] text-foreground-400">No recorded absence reasons.</span>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
+        {!hasActiveFilters && (
+          <div>
+            <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
@@ -694,19 +716,24 @@ export default function CoachAttendance() {
                 </div>
               )}
             </div>
-          </section>
-        </div>
+            </section>
+          </div>
+        )}
 
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-foreground-100 px-3 py-2">
-            <div className="flex rounded-xl bg-background-100 p-1">
-              <span className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-[10px] font-semibold text-primary-700 shadow-sm">
-                <i className="ri-table-line"></i> Table View
+        <div className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-[0_12px_32px_rgba(46,16,101,0.08)] ring-1 ring-primary-50">
+          <div className="flex items-center justify-between border-b border-primary-100 bg-gradient-to-r from-primary-50/90 via-white to-background-50 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white shadow-md shadow-primary-600/20">
+                <i className="ri-table-line text-base"></i>
               </span>
+              <div>
+                <h3 className="text-[13px] font-heading font-bold text-foreground-900">Learner Attendance</h3>
+                <p className="mt-0.5 text-[10px] text-foreground-400">{filteredData.length} learners matching the current filters</p>
+              </div>
             </div>
-            <label className="flex items-center gap-2 text-[10px] text-foreground-500">
-              Rows:
-              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="rounded-lg border border-foreground-200 bg-white px-2 py-1.5 text-[10px] text-foreground-700 focus:outline-none">
+            <label className="flex items-center gap-2 rounded-xl border border-foreground-100 bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500 shadow-sm">
+              Rows per page
+              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="rounded-lg border-0 bg-background-100 px-2.5 py-1.5 text-[10px] font-bold text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-200">
                 <option value={10}>10</option>
                 <option value={25}>25</option>
                 <option value={50}>50</option>
@@ -715,28 +742,36 @@ export default function CoachAttendance() {
             </label>
           </div>
           <div className="overflow-x-auto">
-            <table className="min-w-[1180px] w-full text-left">
-              <thead>
-                <tr className="border-b border-foreground-200/60">
-                  <th className="w-12 px-4 py-3"><input type="checkbox" aria-label="Select all learners" className="h-3.5 w-3.5 accent-primary-600" /></th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Learner</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Attendance</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Present / Absent</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Authorised / Unauthorised</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Catch-up</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Consecutive Absences</th>
-                  <th className="px-3 py-3 text-[9px] font-semibold uppercase tracking-wider text-foreground-500 whitespace-nowrap">Last Session</th>
+            <table className="w-full min-w-[1295px] table-fixed text-left">
+              <colgroup>
+                <col className="w-12" />
+                <col className="w-[310px]" />
+                <col className="w-[220px]" />
+                <col className="w-[165px]" />
+                <col className="w-[145px]" />
+                <col className="w-[190px]" />
+                <col className="w-[175px]" />
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-primary-50/95 backdrop-blur">
+                <tr className="border-b border-primary-100">
+                  <th className="px-4 py-4"><input type="checkbox" aria-label="Select all learners" className="h-4 w-4 accent-primary-600" /></th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Learner</th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Attendance</th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Present / Absent</th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Catch-up</th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Consecutive Absences</th>
+                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Last Session</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-background-200/30">
+              <tbody className="divide-y divide-foreground-100 bg-white">
                 {loading && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
                   </tr>
                 )}
                 {!loading && error && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center">
+                    <td colSpan={7} className="py-16 text-center">
                       <div className="inline-flex flex-col items-center gap-2 text-red-600">
                         <i className="ri-error-warning-line text-2xl"></i>
                         <span className="text-sm font-semibold">Unable to load live attendance data.</span>
@@ -747,74 +782,79 @@ export default function CoachAttendance() {
                 )}
                 {!loading && !error && paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
+                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
                   </tr>
                 )}
                 {!loading && !error && paginatedData.map(row => {
-                  const rowPadding = 'py-3.5';
+                  const rowPadding = 'py-4';
                   return (
-                    <tr key={row.id} className="transition-smooth hover:bg-background-100/50">
-                      <td className={`px-4 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-3.5 w-3.5 accent-primary-600" /></td>
-                      <td className={`px-3 ${rowPadding}`}>
-                        <div className="flex min-w-[270px] items-center gap-3">
-                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
-                            <span className="text-[10px] font-bold">{row.initials}</span>
+                    <tr key={row.id} className="group border-l-[3px] border-l-transparent transition-all even:bg-background-50/40 hover:border-l-primary-500 hover:bg-primary-50/50">
+                      <td className={`px-4 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-4 w-4 accent-primary-600" /></td>
+                      <td className={`px-4 ${rowPadding}`}>
+                        <div className="flex items-center gap-3.5">
+                          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
+                            <span className="text-[11px] font-bold">{row.initials}</span>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[11px] font-bold text-foreground-900 hover:text-primary-700">{row.learner}</button>
-                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
+                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[12px] font-bold text-foreground-900 hover:text-primary-700">{row.learner}</button>
+                              <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
                             </div>
-                            <p className="truncate text-[9px] text-foreground-400">{displayText(row.email)}</p>
-                            <p className="mt-1 truncate text-[8px] text-foreground-400">{displayText(row.cohort)} <span className="mx-1.5">·</span> {displayText(row.programme)}</p>
+                            <p className="mt-0.5 truncate text-[10px] text-foreground-500">{displayText(row.email)}</p>
+                            <p className="mt-1 truncate text-[9px] text-foreground-400">{displayText(row.cohort)} <span className="mx-1.5">·</span> {displayText(row.programme)}</p>
                           </div>
                         </div>
                       </td>
-                      <td className={`px-3 ${rowPadding}`}>
+                      <td className={`px-4 ${rowPadding}`}>
                         {row.attendance === null ? (
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <div className="min-w-[105px]">
+                          <div className="max-w-[180px]">
                             <div className="flex items-center gap-2">
-                              <span className={`text-[13px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
-                              <span className={`rounded-full border px-1.5 py-0.5 text-[7px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
+                              <span className={`text-[15px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
+                              <span className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
                             </div>
-                            <div className="mt-1.5 h-1.5 w-full rounded-full bg-background-200">
+                            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-background-200">
                               <div className={`h-full rounded-full ${getAttendanceBar(row.attendance)}`} style={{ width: `${row.attendance}%` }}></div>
                             </div>
                           </div>
                         )}
                       </td>
-                      <td className={`px-3 ${rowPadding}`}>
+                      <td className={`px-4 ${rowPadding}`}>
                         {row.present === null || row.absent === null ? (
                           <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
                         ) : (
-                          <div className="space-y-0.5 text-[9px]">
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="block text-foreground-600 hover:text-emerald-600">Present: <strong>{row.present}</strong></button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="block text-foreground-600 hover:text-red-600">Absent: <strong>{row.absent}</strong></button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="block text-foreground-400 hover:text-primary-600">Total: {row.sessions ?? (row.present + row.absent)}</button>
+                          <div className="flex flex-wrap gap-1.5 text-[9px]">
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100">
+                              <i className="ri-check-line"></i> Present <strong>{row.present}</strong>
+                            </button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 font-semibold text-red-700 ring-1 ring-red-100 hover:bg-red-100">
+                              <i className="ri-close-line"></i> Absent <strong>{row.absent}</strong>
+                            </button>
+                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[9px] font-medium text-foreground-400 hover:text-primary-600">Total sessions: {row.sessions ?? (row.present + row.absent)}</button>
                           </div>
                         )}
                       </td>
-                      <td className={`px-3 ${rowPadding}`}>
-                        <div className="space-y-0.5 text-[9px] text-foreground-600">
-                          <p>Authorised: <strong>{formatCount(row.authorisedAbsent)}</strong></p>
-                          <p>Unauthorised: <strong className={(row.unauthorisedAbsent || 0) > 0 ? 'text-red-600' : ''}>{formatCount(row.unauthorisedAbsent)}</strong></p>
+                      <td className={`px-4 ${rowPadding}`}>
+                        <div className="space-y-1.5 text-[10px] text-foreground-600">
+                          <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 font-semibold text-amber-700 ring-1 ring-amber-100">
+                            <i className="ri-history-line"></i> {formatCount(row.catchup)} recorded
+                          </span>
+                          <p className="truncate text-[9px] text-foreground-400">Next: {displayText(row.nextSession)}</p>
                         </div>
                       </td>
-                      <td className={`px-3 ${rowPadding}`}>
-                        <div className="space-y-0.5 text-[9px] text-foreground-600">
-                          <p>Recorded: <strong>{formatCount(row.catchup)}</strong></p>
-                          <p className="text-foreground-400">Next: {displayText(row.nextSession)}</p>
-                        </div>
+                      <td className={`px-4 ${rowPadding}`}>
+                        <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${(row.consecutiveMissed || 0) >= 2 ? 'bg-red-50 text-red-700 ring-1 ring-red-100' : 'bg-background-100 text-foreground-600'}`}>
+                          <i className={(row.consecutiveMissed || 0) >= 2 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></i>
+                          {formatCount(row.consecutiveMissed)} current
+                        </span>
+                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1.5 text-[9px] font-medium text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
                       </td>
-                      <td className={`px-3 ${rowPadding}`}>
-                        <p className={`text-[10px] font-semibold ${(row.consecutiveMissed || 0) >= 2 ? 'text-red-600' : 'text-foreground-700'}`}>Current: {formatCount(row.consecutiveMissed)}</p>
-                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1 text-[8px] text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
-                      </td>
-                      <td className={`px-3 ${rowPadding}`}>
-                        <p className="text-[10px] font-semibold text-foreground-700">{displayText(row.lastSession)}</p>
-                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-1 text-[8px] font-semibold text-primary-600 hover:text-primary-700">View attendance profile</button>
+                      <td className={`px-4 ${rowPadding}`}>
+                        <p className="inline-flex items-center gap-1.5 rounded-lg bg-background-100 px-2.5 py-1.5 text-[10px] font-semibold text-foreground-700">
+                          <i className="ri-calendar-check-line text-primary-500"></i>{displayText(row.lastSession)}
+                        </p>
+                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">View profile <i className="ri-arrow-right-line"></i></button>
                       </td>
                     </tr>
                   );
@@ -823,15 +863,15 @@ export default function CoachAttendance() {
             </table>
           </div>
 
-          <div className="px-4 py-3 bg-background-100/30 border-t border-background-200/30 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-[11px] text-foreground-400">
+          <div className="flex flex-col items-center justify-between gap-3 border-t border-primary-100 bg-gradient-to-r from-background-50 to-primary-50/40 px-5 py-4 sm:flex-row">
+            <div className="flex items-center gap-2 text-[10px] font-medium text-foreground-500">
               <span>Showing {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}-{Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} learners</span>
               <span className="text-foreground-300">|</span>
               <span>Page {currentPage} of {totalPages}</span>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-skip-back-line"></i></button>
-              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-arrow-left-s-line"></i></button>
+              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-skip-back-line"></i></button>
+              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-arrow-left-s-line"></i></button>
               <div className="flex items-center gap-1">
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                   let pageNum: number;
@@ -840,12 +880,12 @@ export default function CoachAttendance() {
                   else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
                   else pageNum = currentPage - 2 + i;
                   return (
-                    <button key={pageNum} onClick={() => setCurrentPage(pageNum)} className={`w-7 h-7 rounded-lg text-[11px] font-medium transition-smooth cursor-pointer ${currentPage === pageNum ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-background-200'}`}>{pageNum}</button>
+                    <button key={pageNum} onClick={() => setCurrentPage(pageNum)} className={`h-8 w-8 rounded-lg text-[11px] font-bold shadow-sm transition cursor-pointer ${currentPage === pageNum ? 'bg-primary-600 text-white shadow-primary-600/20' : 'border border-foreground-100 bg-white text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}>{pageNum}</button>
                   );
                 })}
               </div>
-              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-arrow-right-s-line"></i></button>
-              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"><i className="ri-skip-forward-line"></i></button>
+              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-arrow-right-s-line"></i></button>
+              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-skip-forward-line"></i></button>
             </div>
           </div>
         </div>

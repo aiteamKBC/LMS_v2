@@ -8,6 +8,7 @@ export type CoachCalendarStatus =
   | 'completed'
   | 'scheduled'
   | 'in-progress'
+  | 'awaiting-signature'
   | 'confirmed'
   | 'pending'
   | 'cancelled'
@@ -53,6 +54,8 @@ export interface CoachCalendarEvent {
   syncWarning?: string;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  managerSignedAt?: string | null;
+  managerSignedBy?: string;
 }
 
 interface CoachTimetableResponse {
@@ -69,7 +72,7 @@ export interface ScheduleFormState {
   durationMinutes: number;
 }
 
-export type CalendarAction = 'start' | 'complete' | 'cancel';
+export type CalendarAction = 'start' | 'complete' | 'sign' | 'cancel';
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({}));
@@ -108,7 +111,7 @@ export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form
 export async function runCoachCalendarAction(
   event: CoachCalendarEvent,
   action: CalendarAction,
-  options: { reviewResponses?: Record<string, string> } = {},
+  options: { reviewResponses?: Record<string, string>; managerName?: string } = {},
 ) {
   if (!event.eventKey || !event.ownerEmail) {
     throw new Error('This event is missing its calendar key.');
@@ -213,10 +216,11 @@ export function statusLabel(status: CoachCalendarStatus) {
     completed: 'Completed',
     scheduled: 'Scheduled',
     'in-progress': 'In Progress',
+    'awaiting-signature': 'Awaiting Signature',
     confirmed: 'Confirmed',
     pending: 'Pending',
     cancelled: 'Cancelled',
-    'not-scheduled': 'Needs Schedule',
+    'not-scheduled': 'Not Scheduled',
   };
   return labels[status] || status;
 }
@@ -225,6 +229,7 @@ export function statusPillClass(status: CoachCalendarStatus) {
   if (status === 'completed' || status === 'confirmed') return 'bg-emerald-100 text-emerald-700';
   if (status === 'scheduled') return 'bg-amber-100 text-amber-700';
   if (status === 'in-progress') return 'bg-primary-100 text-primary-700';
+  if (status === 'awaiting-signature') return 'bg-violet-100 text-violet-700';
   if (status === 'cancelled') return 'bg-red-100 text-red-700';
   return 'bg-orange-100 text-orange-700';
 }
@@ -252,6 +257,10 @@ export function isInProgressEvent(event: CoachCalendarEvent) {
   return event.status === 'in-progress';
 }
 
+export function isAwaitingSignatureEvent(event: CoachCalendarEvent) {
+  return event.status === 'awaiting-signature';
+}
+
 export function isCancelledEvent(event: CoachCalendarEvent) {
   return event.status === 'cancelled';
 }
@@ -262,6 +271,13 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
   return event.status === 'completed' || event.status === 'confirmed';
+}
+
+export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {
+  if (!['scheduled', 'in-progress'].includes(event.status) || !meetingUrl(event)) return false;
+  const scheduledDate = parseLocalDate(event.scheduledDate);
+  if (!scheduledDate) return false;
+  return scheduledDate.getTime() <= startOfDay(referenceDate).getTime();
 }
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {

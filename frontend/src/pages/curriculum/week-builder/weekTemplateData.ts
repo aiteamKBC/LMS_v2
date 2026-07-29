@@ -280,8 +280,8 @@ export interface WorkspaceQuizSummary {
   passingGrade?: number | null;
 }
 
-export async function fetchWorkspaceQuizzes(signal?: AbortSignal): Promise<WorkspaceQuizSummary[]> {
-  const response = await fetch(`${QUIZ_API_BASE}/quizzes/?status=all&assessmentType=quiz`, { signal });
+export async function fetchWorkspaceQuizzes(_signal?: AbortSignal): Promise<WorkspaceQuizSummary[]> {
+  const response = await fetch(`${QUIZ_API_BASE}/quizzes/?status=all&assessmentType=quiz`);
   if (!response.ok) throw new Error(`Quiz API returned ${response.status} for quizzes`);
   const data = await response.json();
   return Array.isArray(data?.results) ? data.results : [];

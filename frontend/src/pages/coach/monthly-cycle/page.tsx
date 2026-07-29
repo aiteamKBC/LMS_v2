@@ -117,6 +117,8 @@ interface CoachingDeliveryItem {
   timeLabel: string;
 }
 
+type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up';
+
 interface CoachingDeliverySummary {
   byKind: Record<CoachingDeliveryKind, {
     items: CoachingDeliveryItem[];
@@ -292,6 +294,13 @@ function coachingDeliveryStatusKey(activity: MonthlyActivityItem): CoachingDeliv
   if (rawStatus.includes('cancelled') || rawStatus.includes('canceled')) return 'cancelled';
   if (rawStatus.includes('not-scheduled') || rawStatus.includes('needs schedule') || rawStatus.includes('need schedule')) return 'needs-schedule';
   return 'booked';
+}
+
+function coachingDeliveryScheduleSource(kind: CoachingDeliveryKind): CoachingDeliveryScheduleSource | null {
+  if (kind === 'mcr') return 'mcr';
+  if (kind === 'pr') return 'progress-review';
+  if (kind === 'catch-up') return 'catch-up';
+  return null;
 }
 
 function emptyCoachingDeliveryCounts(): Record<CoachingDeliveryStatus, number> {
@@ -785,6 +794,25 @@ export default function CoachMonthlyCycle() {
     setSelectedLearnerId(learnerId);
   };
 
+  const handleOpenScheduleCalendar = (item: CoachingDeliveryItem) => {
+    const source = coachingDeliveryScheduleSource(item.kind);
+    if (!source) {
+      handleOpenLearnerOverview(item.learnerId);
+      return;
+    }
+
+    navigate('/coach/timetable', {
+      state: {
+        scheduleIntent: {
+          source,
+          learnerId: item.learnerId,
+          targetDate: item.date,
+          title: item.title,
+        },
+      },
+    });
+  };
+
   const handleCloseLearnerOverview = () => {
     setSelectedLearnerId(null);
   };
@@ -861,6 +889,7 @@ export default function CoachMonthlyCycle() {
               delivery={coachingDelivery}
               monthLabel={monthLabel}
               onOpenLearner={handleOpenLearnerOverview}
+              onScheduleItem={handleOpenScheduleCalendar}
             />
           )}
 
@@ -1113,10 +1142,12 @@ function CoachDeliveryPanel({
   delivery,
   monthLabel,
   onOpenLearner,
+  onScheduleItem,
 }: {
   delivery: CoachingDeliverySummary;
   monthLabel: string;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const totalCaptured = COACHING_DELIVERY_ORDER.reduce(
     (sum, kind) => sum + COACHING_DELIVERY_STATUS_ORDER.reduce((kindSum, status) => kindSum + delivery.byKind[kind].counts[status], 0),
@@ -1149,6 +1180,7 @@ function CoachDeliveryPanel({
             counts={delivery.byKind[kind].counts}
             monthLabel={monthLabel}
             onOpenLearner={onOpenLearner}
+            onScheduleItem={onScheduleItem}
           />
         ))}
       </div>
@@ -1162,12 +1194,14 @@ function CoachDeliveryKindCard({
   counts,
   monthLabel,
   onOpenLearner,
+  onScheduleItem,
 }: {
   kind: CoachingDeliveryKind;
   items: CoachingDeliveryItem[];
   counts: Record<CoachingDeliveryStatus, number>;
   monthLabel: string;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const config = COACHING_DELIVERY_CONFIG[kind];
   const tone = safeTone(config.tone);
@@ -1204,7 +1238,7 @@ function CoachDeliveryKindCard({
         ) : (
           <div className="mt-3 space-y-2">
             {items.map((item) => (
-              <CoachDeliveryRecentItem key={item.id} item={item} onOpenLearner={onOpenLearner} />
+              <CoachDeliveryRecentItem key={item.id} item={item} onOpenLearner={onOpenLearner} onScheduleItem={onScheduleItem} />
             ))}
           </div>
         )}
@@ -1226,16 +1260,25 @@ function CoachDeliveryStatusStat({ status, value }: { status: CoachingDeliverySt
 function CoachDeliveryRecentItem({
   item,
   onOpenLearner,
+  onScheduleItem,
 }: {
   item: CoachingDeliveryItem;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const status = COACHING_DELIVERY_STATUS_CONFIG[item.status];
+  const handleClick = () => {
+    if (item.status === 'needs-schedule') {
+      onScheduleItem(item);
+      return;
+    }
+    onOpenLearner(item.learnerId);
+  };
 
   return (
     <button
       type="button"
-      onClick={() => onOpenLearner(item.learnerId)}
+      onClick={handleClick}
       className="w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/30 cursor-pointer"
     >
       <div className="flex items-center justify-between gap-3">
