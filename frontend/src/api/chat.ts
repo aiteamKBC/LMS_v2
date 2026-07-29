@@ -63,7 +63,10 @@ export class ChatApiError extends Error {
   }
 }
 
-const CHAT_BASE = '/api/chat';
+const productionChatBase = window.location.hostname === 'lms.kentbusinesscollege.net'
+  ? 'https://api.kentbusinesscollege.net/api/chat'
+  : '/api/chat';
+const CHAT_BASE = (import.meta.env.VITE_CHAT_API_BASE_URL || productionChatBase).replace(/\/$/, '');
 
 function readCookie(name: string): string | null {
   const encodedName = `${encodeURIComponent(name)}=`;
@@ -206,5 +209,9 @@ export function markChatMessageRead(messageId: number): Promise<{ message: numbe
 
 export function chatSocketUrl(conversationId: number): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/chat/${conversationId}/`;
+  const socketBase = import.meta.env.VITE_CHAT_WS_BASE_URL
+    || (window.location.hostname === 'lms.kentbusinesscollege.net'
+      ? 'wss://api.kentbusinesscollege.net/ws'
+      : `${protocol}//${window.location.host}/ws`);
+  return `${socketBase.replace(/\/$/, '')}/chat/${conversationId}/`;
 }
