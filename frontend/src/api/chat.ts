@@ -36,7 +36,7 @@ export interface ChatConversation {
   unread_count: number;
 }
 
-interface PaginatedMessages {
+export interface PaginatedMessages {
   count: number;
   next: string | null;
   previous: string | null;
@@ -63,7 +63,10 @@ export class ChatApiError extends Error {
   }
 }
 
-const CHAT_BASE = '/api/chat';
+const productionChatBase = window.location.hostname === 'lms.kentbusinesscollege.net'
+  ? 'https://api.kentbusinesscollege.net/api/chat'
+  : '/api/chat';
+const CHAT_BASE = (import.meta.env.VITE_CHAT_API_BASE_URL || productionChatBase).replace(/\/$/, '');
 
 function readCookie(name: string): string | null {
   const encodedName = `${encodeURIComponent(name)}=`;
@@ -158,6 +161,24 @@ export function fetchChatMessages(conversationId: number): Promise<PaginatedMess
   return request<PaginatedMessages>(`/conversations/${conversationId}/messages/`);
 }
 
+export function fetchLearnerMessages(page = 1, pageSize = 100): Promise<PaginatedMessages> {
+  return request<PaginatedMessages>(`/learner-messages/?page=${page}&page_size=${pageSize}`);
+}
+
+export async function fetchAllLearnerMessages(): Promise<ChatMessage[]> {
+  const messages: ChatMessage[] = [];
+  let page = 1;
+  let response: PaginatedMessages;
+
+  do {
+    response = await fetchLearnerMessages(page, 100);
+    messages.push(...response.results);
+    page += 1;
+  } while (response.next && response.results.length > 0);
+
+  return messages;
+}
+
 export function createChatMessage(conversationId: number, body: string): Promise<ChatMessage> {
   return request<ChatMessage>(`/conversations/${conversationId}/messages/`, {
     method: 'POST',
@@ -188,5 +209,9 @@ export function markChatMessageRead(messageId: number): Promise<{ message: numbe
 
 export function chatSocketUrl(conversationId: number): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws/chat/${conversationId}/`;
+  const socketBase = import.meta.env.VITE_CHAT_WS_BASE_URL
+    || (window.location.hostname === 'lms.kentbusinesscollege.net'
+      ? 'wss://api.kentbusinesscollege.net/ws'
+      : `${protocol}//${window.location.host}/ws`);
+  return `${socketBase.replace(/\/$/, '')}/chat/${conversationId}/`;
 }

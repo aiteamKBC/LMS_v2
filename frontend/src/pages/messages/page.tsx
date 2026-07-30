@@ -40,6 +40,16 @@ function formatDateLabel(value: string): string {
   return date.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function canGroupMessages(previous: ChatMessage | undefined, current: ChatMessage | undefined): boolean {
+  if (!previous || !current || previous.is_mine !== current.is_mine) return false;
+  if (formatDateLabel(previous.created_at) !== formatDateLabel(current.created_at)) return false;
+
+  const previousTime = new Date(previous.created_at).getTime();
+  const currentTime = new Date(current.created_at).getTime();
+  return Number.isFinite(previousTime) && Number.isFinite(currentTime)
+    && currentTime - previousTime <= 5 * 60 * 1000;
+}
+
 function formatListTime(value: string): string {
   const date = new Date(value);
   const ageHours = Math.max(0, (Date.now() - date.getTime()) / 3_600_000);
@@ -54,6 +64,22 @@ function mergeMessage(messages: ChatMessage[], next: ChatMessage): ChatMessage[]
   const copy = [...messages];
   copy[existingIndex] = next;
   return copy;
+}
+
+function mergeFetchedMessages(current: ChatMessage[], fetched: ChatMessage[], hiddenIds: Set<number>): ChatMessage[] {
+  const fetchedIds = new Set(fetched.map(message => message.id));
+  const newestFetchedId = fetched.reduce((latest, message) => Math.max(latest, message.id), 0);
+
+  // Keep a message that arrived through the socket while this HTTP request was
+  // in flight. Older messages omitted by the server response are still
+  // removed, including messages deleted for this participant.
+  const liveMessages = current.filter(message => (
+    !fetchedIds.has(message.id)
+    && !hiddenIds.has(message.id)
+    && message.id > newestFetchedId
+  ));
+
+  return [...fetched, ...liveMessages].sort((a, b) => a.id - b.id);
 }
 
 function socketMessageToChatMessage(message: ChatSocketMessage, role: string): ChatMessage {
@@ -121,7 +147,7 @@ export default function MessagesPage() {
       setActiveConversationId(current => (
         current ?? (Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
           ? requestedConversation
-          : data[0]?.id ?? null)
+          : null)
       ));
       setError(null);
     } catch (cause) {
@@ -135,6 +161,28 @@ export default function MessagesPage() {
     if (auth.isAuthenticated) void loadConversations();
     else setLoadingConversations(false);
   }, [auth.isAuthenticated, loadConversations]);
+
+  // Keep the inbox list and unread badges current even when the production
+  // WebSocket proxy is unavailable.
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+
+    const syncConversationList = async () => {
+      try {
+        const data = await fetchChatConversations();
+        if (!Array.isArray(data)) return;
+        setConversations(data);
+        setActiveConversationId(current => (
+          current !== null && !data.some(item => item.id === current) ? null : current
+        ));
+      } catch {
+        // The initial load displays the error; background refreshes stay quiet.
+      }
+    };
+
+    const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
+    return () => window.clearInterval(conversationTimer);
+  }, [auth.isAuthenticated]);
 
   useEffect(() => {
     if (activeConversationId === null) {
@@ -152,7 +200,7 @@ export default function MessagesPage() {
       try {
         const page = await fetchChatMessages(activeConversationId);
         if (cancelled) return;
-        setMessages(page.results);
+        setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
         const unread = page.results.filter(message => !message.is_mine && !message.read_at);
         await Promise.allSettled(unread.map(message => markChatMessageRead(message.id)));
@@ -256,7 +304,7 @@ export default function MessagesPage() {
       try {
         const page = await fetchChatMessages(activeConversationId);
         const unread = page.results.filter(message => !message.is_mine && !message.read_at);
-        setMessages(page.results);
+        setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
         const latest = page.results[page.results.length - 1];
         if (latest) {
@@ -280,7 +328,8 @@ export default function MessagesPage() {
       }
     };
 
-    const pollTimer = window.setInterval(() => { void syncMessages(); }, 2000);
+    void syncMessages();
+    const pollTimer = window.setInterval(() => { void syncMessages(); }, 1000);
     return () => window.clearInterval(pollTimer);
   }, [activeConversationId, auth.isAuthenticated]);
 
@@ -316,13 +365,11 @@ export default function MessagesPage() {
     setSending(true);
     setNewMessage('');
     try {
-      if (socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'send_message', body }));
-      } else {
-        const saved = await createChatMessage(activeConversationId, body);
-        setMessages(current => mergeMessage(current, saved));
-        await loadConversations();
-      }
+      // Persist through REST and merge the confirmed record immediately. The
+      // WebSocket remains responsible for messages sent by the other side.
+      const saved = await createChatMessage(activeConversationId, body);
+      setMessages(current => mergeMessage(current, saved));
+      await loadConversations();
       setError(null);
     } catch (cause) {
       setNewMessage(body);
@@ -577,16 +624,19 @@ export default function MessagesPage() {
                     </div>
                     {loadingMessages && <p className="text-sm text-foreground-400 text-center">Loading messages...</p>}
                     {!loadingMessages && messages.length === 0 && <p className="text-sm text-foreground-400 text-center mt-12">No messages yet. Send the first message.</p>}
-                    <div className="space-y-5">
+                    <div className="space-y-0.5">
                       {messages.map((message, index) => {
                         const previous = messages[index - 1];
+                        const next = messages[index + 1];
                         const showDate = Boolean(previous && formatDateLabel(previous.created_at) !== formatDateLabel(message.created_at));
+                        const isFirstInGroup = !canGroupMessages(previous, message);
+                        const isLastInGroup = !canGroupMessages(message, next);
                         return (
-                          <div key={message.id}>
+                          <div key={message.id} className={isLastInGroup ? 'pb-4' : 'pb-0.5'}>
                             {showDate && <div className="flex justify-center my-5"><span className="text-[10px] text-foreground-500 border border-foreground-200 bg-background-100 px-2.5 py-1 rounded-full">{formatDateLabel(message.created_at)}</span></div>}
                             <div className={`flex ${message.is_mine ? 'justify-end' : 'justify-start'} group`}>
                               <div className="max-w-[78%] flex flex-col">
-                                <span className={`text-[10px] text-foreground-400 mb-1 ${message.is_mine ? 'text-right' : 'text-left'}`}>{message.is_mine ? 'You' : participant.name}</span>
+                                {isFirstInGroup && <span className={`text-[10px] text-foreground-400 mb-1 ${message.is_mine ? 'text-right' : 'text-left'}`}>{message.is_mine ? 'You' : participant.name}</span>}
                                 {editingMessageId === message.id ? (
                                   <div className="rounded-2xl border border-primary-300 bg-background-50 p-3 shadow-sm">
                                     <textarea
@@ -610,7 +660,9 @@ export default function MessagesPage() {
                                   </div>
                                 ) : (
                                   <div className={`flex items-end gap-2 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`px-4 py-3 rounded-2xl shadow-sm ${message.is_mine ? 'bg-primary-600 text-white rounded-br-md' : 'bg-background-100 text-foreground-700 border border-foreground-200 rounded-bl-md'}`}>
+                                    <div className={`px-4 py-3 shadow-sm ${message.is_mine
+                                      ? `bg-primary-600 text-white ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-md'} ${isLastInGroup ? 'rounded-br-md rounded-b-2xl' : 'rounded-r-md rounded-b-md'}`
+                                      : `bg-background-100 text-foreground-700 border border-foreground-200 ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-md'} ${isLastInGroup ? 'rounded-bl-md rounded-b-2xl' : 'rounded-l-md rounded-b-md'}`}`}>
                                       <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.is_deleted ? 'Message deleted' : message.body}</p>
                                     </div>
                                     <div className={`relative mb-1 ${messageMenuId === message.id ? 'z-20' : ''}`}>
@@ -645,10 +697,10 @@ export default function MessagesPage() {
                                     </div>
                                   </div>
                                 )}
-                                <div className={`flex items-center gap-1 mt-1 text-[10px] text-foreground-400 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
+                                {isLastInGroup && <div className={`flex items-center gap-1 mt-1 text-[10px] text-foreground-400 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
                                   <span>{formatTime(message.created_at)}{message.edited_at && <span> · edited</span>}</span>
                                   {message.is_mine && <i className={`${message.read_at ? 'ri-check-double-line text-primary-500' : 'ri-check-line'} text-xs`} />}
-                                </div>
+                                </div>}
                               </div>
                             </div>
                           </div>
@@ -680,7 +732,6 @@ export default function MessagesPage() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-[10px] text-foreground-300 mt-2 text-right">Messages are stored securely in PostgreSQL</p>
                   </div>
                 </>
               ) : (

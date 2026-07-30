@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from decimal import Decimal, InvalidOperation
 
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from django.db import connections
 from django.db import router
 from django.db.models.functions import Lower, Trim
@@ -16,6 +19,7 @@ from learner_api.models import LearnerProfile
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
+logger = logging.getLogger(__name__)
 COACH_RAG_LABELS = {
     "green": "Green",
     "amber": "Amber",
@@ -580,6 +584,33 @@ def _insert_coach_message(conversation_id: int, learner_id: int, coach_id: str, 
     }
 
 
+def _broadcast_coach_message(conversation_id: int, message: dict, coach_id: str) -> None:
+    """Notify an open learner chat when the coach endpoint sends a message."""
+
+    channel_layer = get_channel_layer()
+    if channel_layer is None or not message.get("createdAt"):
+        return
+
+    try:
+        async_to_sync(channel_layer.group_send)(
+            f"chat.conversation.{int(conversation_id)}",
+            {
+                "type": "chat.new_message",
+                "message": {
+                    "id": int(message["id"]),
+                    "conversation": int(conversation_id),
+                    "sender": {"type": "coach", "id": str(coach_id)},
+                    "body": message["body"],
+                    "created_at": message["createdAt"],
+                    "edited_at": None,
+                    "is_deleted": False,
+                },
+            },
+        )
+    except Exception:
+        logger.exception("Unable to broadcast coach chat message %s", message.get("id"))
+
+
 def _resolve_owner_name(rows: list[LearnerProfile]) -> str:
     return next((clean_text(row.coach_name) for row in rows if clean_text(row.coach_name)), "Med Maher")
 
@@ -666,6 +697,7 @@ def coach_message_thread(request, learner_id: int):
             coach_id = _resolve_chat_coach_id(owner_email, int(learner_id))
             conversation_id = _create_or_get_conversation(int(learner_id), coach_id)
             message = _insert_coach_message(conversation_id, int(learner_id), coach_id, body)
+            _broadcast_coach_message(conversation_id, message, coach_id)
             summary = _fetch_latest_conversation_summaries([int(learner_id)]).get(int(learner_id))
             thread = _serialize_thread(learner, summary)
         except Exception as exc:
