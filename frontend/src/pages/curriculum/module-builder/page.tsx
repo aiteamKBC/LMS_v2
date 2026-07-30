@@ -13,6 +13,7 @@ import {
   componentTypeGroups,
   componentTypes,
   createEmptyComponent,
+  createTeamsMeeting,
   createEmptyWeek,
   createLocalModuleDraft,
   createNewModule,
@@ -23,6 +24,7 @@ import {
   getDefaultStructure,
   getDefaultComponentSettings,
   loadModuleStructure,
+  loadTeamsMeetingConfiguration,
   makeAuthoringId,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
@@ -38,6 +40,8 @@ import {
   type ModuleComponent,
   type ModuleComponentType,
   type ModuleWeek,
+  type TeamsMeetingInput,
+  type TeamsMeetingResult,
 } from './moduleAuthoringData';
 import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel, type GroupOption, type WeekComponentUploader, type WeekScope } from '@/pages/curriculum/week-builder/page';
 import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
@@ -1205,13 +1209,29 @@ export default function ModuleBuilder() {
               {selectedComponent && selectedWeek ? (
                 <WeekComponentEditor
                   component={selectedComponent}
-                  onChange={updates => updateWorkingModule(module => ({
-                    ...module,
-                    weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
-                      ...week,
-                      components: week.components.map(component => component.id === selectedComponent.id ? { ...component, ...updates } : component),
-                    } : week),
-                  }))}
+                  onChange={updates => updateWorkingModule(module => {
+                    const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
+                    const sharesTeamsLink = selectedComponent.type === 'live-session'
+                      && updatedSettings
+                      && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
+                    const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                    return {
+                      ...module,
+                      weekStructure: module.weekStructure.map(week => ({
+                        ...week,
+                        components: week.components.map(component => {
+                          if (component.id === selectedComponent.id) return { ...component, ...updates };
+                          if (sharesTeamsLink && component.type === 'live-session') {
+                            return {
+                              ...component,
+                              settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
+                            };
+                          }
+                          return component;
+                        }),
+                      })),
+                    };
+                  })}
                   onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
                   groupOptions={componentGroupOptions}
                   rulePoints={componentPointsByType[selectedComponent.type]}
@@ -2233,6 +2253,7 @@ function TypeSpecificFields({
   const getStringArray = (key: string) => Array.isArray(s[key]) ? (s[key] as string[]).map(value => String(value || '').trim()).filter(Boolean) : [];
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
   const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'assignment') => {
     setUploadingResource(true);
@@ -2284,7 +2305,9 @@ function TypeSpecificFields({
     };
     return (
       <EditorBlock title="Live Teams session">
-        <p className="rounded-lg bg-primary-50 border border-primary-100 px-3 py-2 text-[11px] font-medium text-primary-700">Teams link, date and attendance sync are added later by MIS when this module is allocated to a cohort.</p>
+        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium text-primary-700">
+          Create the Microsoft Teams meeting here, invite attendees, and keep its join link with this live-session component.
+        </p>
         <div className="rounded-xl border border-background-200 bg-background-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2325,16 +2348,63 @@ function TypeSpecificFields({
             </p>
           )}
         </div>
-        {!!selectedGroupKeys.length && (
-          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-            <div className="mb-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Teams link</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
+        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
+              {getString('liveSessionUrl') ? (
+                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
+                  <i className="ri-microsoft-teams-line mr-1"></i>
+                  Open meeting link
+                </a>
+              ) : (
+                <p className="mt-1 text-[11px] font-semibold text-foreground-500">No Teams meeting has been created yet.</p>
+              )}
+              {getString('teamsOrganizerEmail') && <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">Organizer: {getString('teamsOrganizerEmail')}</p>}
             </div>
-            <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            <button
+              type="button"
+              onClick={() => setTeamsMeetingOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
+            >
+              <i className="ri-calendar-event-line"></i>
+              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+            </button>
           </div>
-        )}
+          {getString('liveSessionUrl') && (
+            <div className="mt-3">
+              <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            </div>
+          )}
+        </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
+        {teamsMeetingOpen && (
+          <TeamsMeetingModal
+            component={component}
+            onClose={() => setTeamsMeetingOpen(false)}
+            onCreated={(result, input) => {
+              const meeting = result.meeting;
+              onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsEventId', meeting.eventId);
+              onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
+              onSettingChange('teamsMeetingOptionsUrl', meeting.meetingOptionsUrl);
+              onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
+              onSettingChange('teamsAttendees', meeting.attendees);
+              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
+              onSettingChange('durationMinutes', meeting.durationMinutes);
+              onSettingChange('teamsProvider', meeting.provider);
+              onSettingChange('teamsRepeat', meeting.repeat);
+              onSettingChange('teamsRepeatOccurrences', meeting.repeatOccurrences);
+              onSettingChange('teamsLobbyBypass', input.lobbyBypass);
+              onSettingChange('teamsRecording', input.recording);
+              onSettingChange('teamsSpokenLanguage', input.spokenLanguage);
+              onSettingChange('teamsMeetingType', input.meetingType);
+              onSettingChange('teamsRequestResponses', input.requestResponses);
+              onSettingChange('teamsAllowTimeProposals', input.allowNewTimeProposals);
+              onSettingChange('teamsHideAttendees', input.hideAttendees);
+            }}
+          />
+        )}
       </EditorBlock>
     );
   }
@@ -2496,6 +2566,226 @@ function TypeSpecificFields({
       <TextInput label="Checkpoint title" value={getString('checkpointTitle')} onChange={value => onSettingChange('checkpointTitle', value)} />
       <TextArea label="Checkpoint questions" value={getString('checkpointQuestions')} onChange={value => onSettingChange('checkpointQuestions', value)} rows={4} />
     </EditorBlock>
+  );
+}
+
+function localDateTimeValue(value?: string) {
+  const parsed = value ? new Date(value) : new Date(Date.now() + 30 * 60 * 1000);
+  const date = Number.isNaN(parsed.getTime()) ? new Date(Date.now() + 30 * 60 * 1000) : parsed;
+  date.setMinutes(Math.ceil(date.getMinutes() / 15) * 15, 0, 0);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function meetingSettingString(component: ModuleComponent, key: string, fallback = '') {
+  return String(component.settings[key] ?? fallback);
+}
+
+function meetingSettingBool(component: ModuleComponent, key: string, fallback: boolean) {
+  const value = component.settings[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function TeamsMeetingModal({
+  component,
+  onClose,
+  onCreated,
+}: {
+  component: ModuleComponent;
+  onClose: () => void;
+  onCreated: (result: TeamsMeetingResult, input: TeamsMeetingInput) => void;
+}) {
+  const storedAttendees = Array.isArray(component.settings.teamsAttendees)
+    ? (component.settings.teamsAttendees as string[]).join('\n')
+    : '';
+  const [title, setTitle] = useState(component.title || 'Live session');
+  const [organizerEmail, setOrganizerEmail] = useState(meetingSettingString(component, 'teamsOrganizerEmail'));
+  const [attendees, setAttendees] = useState(storedAttendees);
+  const [startDateTime, setStartDateTime] = useState(localDateTimeValue(meetingSettingString(component, 'sessionDateTimeUtc')));
+  const [durationMinutes, setDurationMinutes] = useState(Number(component.settings.durationMinutes || 60));
+  const [repeat, setRepeat] = useState<TeamsMeetingInput['repeat']>(meetingSettingString(component, 'teamsRepeat', 'none') as TeamsMeetingInput['repeat']);
+  const [repeatOccurrences, setRepeatOccurrences] = useState(Number(component.settings.teamsRepeatOccurrences || 12));
+  const [lobbyBypass, setLobbyBypass] = useState(meetingSettingString(component, 'teamsLobbyBypass', 'invited'));
+  const [recording, setRecording] = useState(meetingSettingString(component, 'teamsRecording', 'record-transcribe'));
+  const [spokenLanguage, setSpokenLanguage] = useState(meetingSettingString(component, 'teamsSpokenLanguage', 'en-GB'));
+  const [meetingType, setMeetingType] = useState(meetingSettingString(component, 'teamsMeetingType', 'live-session'));
+  const [details, setDetails] = useState(meetingSettingString(component, 'sessionPurpose', component.description));
+  const [requestResponses, setRequestResponses] = useState(meetingSettingBool(component, 'teamsRequestResponses', true));
+  const [allowNewTimeProposals, setAllowNewTimeProposals] = useState(meetingSettingBool(component, 'teamsAllowTimeProposals', true));
+  const [hideAttendees, setHideAttendees] = useState(meetingSettingBool(component, 'teamsHideAttendees', false));
+  const [configurationLoading, setConfigurationLoading] = useState(true);
+  const [graphConfigured, setGraphConfigured] = useState(true);
+  const [graphTimeZone, setGraphTimeZone] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<TeamsMeetingResult | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadTeamsMeetingConfiguration()
+      .then(configuration => {
+        if (!active) return;
+        setGraphConfigured(configuration.configured);
+        setGraphTimeZone(configuration.timeZone);
+        setOrganizerEmail(current => current || configuration.defaultOrganizer || '');
+      })
+      .catch(err => {
+        if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
+      })
+      .finally(() => {
+        if (active) setConfigurationLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const submit = async () => {
+    setError('');
+    if (!title.trim()) return setError('Meeting title is required.');
+    if (!organizerEmail.trim()) return setError('Enter the Microsoft 365 organizer email.');
+    const start = new Date(startDateTime);
+    if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
+    const input: TeamsMeetingInput = {
+      title: title.trim(),
+      organizerEmail: organizerEmail.trim(),
+      attendees: attendees.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+      localStartDateTime: startDateTime,
+      startDateTimeUtc: start.toISOString(),
+      durationMinutes,
+      repeat,
+      repeatOccurrences,
+      lobbyBypass,
+      recording,
+      spokenLanguage,
+      meetingType,
+      details,
+      requestResponses,
+      allowNewTimeProposals,
+      hideAttendees,
+      transactionId: makeAuthoringId('TEAMS'),
+    };
+    setSubmitting(true);
+    try {
+      const result = await createTeamsMeeting(input);
+      setCreated(result);
+      onCreated(result, input);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5" onClick={submitting ? undefined : onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="teams-meeting-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300">
+              <i className="ri-microsoft-teams-line text-xl"></i>
+            </span>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Live session</p>
+              <h3 id="teams-meeting-title" className="mt-0.5 text-base font-heading font-bold text-white">Create Microsoft Teams meeting</h3>
+              <p className="mt-1 text-[11px] font-medium text-white/65">Set the calendar invitation and meeting preferences, then generate the join link.</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white hover:bg-white/20 disabled:opacity-50" aria-label="Close">
+            <i className="ri-close-line"></i>
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
+          {created ? (
+            <div className="mx-auto max-w-2xl space-y-4 py-4">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-center">
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><i className="ri-check-line text-3xl"></i></span>
+                <h4 className="mt-3 text-base font-heading font-bold text-emerald-900">Teams meeting created</h4>
+                <p className="mt-1 text-[12px] font-medium text-emerald-700">The join link is now attached to this Live Session component.</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {(created.meeting.joinUrl || created.meeting.webLink) && (
+                    <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white hover:bg-primary-600">
+                      <i className="ri-external-link-line"></i> Open Teams meeting
+                    </a>
+                  )}
+                  {created.meeting.meetingOptionsUrl && (
+                    <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100">
+                      <i className="ri-settings-3-line"></i> Teams Meeting options
+                    </a>
+                  )}
+                </div>
+              </div>
+              {!!created.warnings.length && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  {created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
+              <section className="space-y-4 rounded-2xl border border-background-200 bg-background-50 p-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Meeting details</p>
+                  <h4 className="mt-1 text-[13px] font-heading font-bold text-foreground-900">Calendar invitation</h4>
+                </div>
+                <TextInput label="Title" value={title} onChange={setTitle} required />
+                <TextInput label="Organizer Microsoft 365 email" value={organizerEmail} onChange={setOrganizerEmail} required />
+                <div>
+                  <TextArea label="Attendees" value={attendees} onChange={setAttendees} rows={4} />
+                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">One email per line, or separate emails with commas or semicolons.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-[10px] font-semibold uppercase text-foreground-400">Start</span>
+                    <input type="datetime-local" value={startDateTime} onChange={event => setStartDateTime(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-[13px] text-foreground-900 focus:border-primary-300 focus:outline-none" />
+                  </label>
+                  <SelectInput label="Duration" value={String(durationMinutes)} options={['30', '45', '60', '90', '120', '180']} labels={{ '30': '30 minutes', '45': '45 minutes', '60': '1 hour', '90': '1 hour 30 minutes', '120': '2 hours', '180': '3 hours' }} onChange={value => setDurationMinutes(Number(value))} />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <SelectInput label="Repeat" value={repeat} options={['none', 'daily', 'weekdays', 'weekly']} labels={{ none: 'Does not repeat', daily: 'Daily', weekdays: 'Every weekday', weekly: 'Weekly' }} onChange={value => setRepeat(value as TeamsMeetingInput['repeat'])} />
+                  {repeat !== 'none' && <NumberInput label="Number of sessions" value={repeatOccurrences} min={2} max={52} step={1} onChange={setRepeatOccurrences} />}
+                </div>
+                <TextArea label="Details" value={details} onChange={setDetails} rows={5} />
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-primary-100 bg-primary-50/40 p-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Advanced options</p>
+                  <p className="mt-1 text-[11px] font-semibold text-foreground-500">Saved with the component. Microsoft 365 policy can override some options.</p>
+                </div>
+                <SelectInput label="Who can bypass the lobby?" value={lobbyBypass} options={['invited', 'organization', 'organization-excluding-guests', 'everyone', 'organizer']} labels={{ invited: 'People invited to this meeting', organization: 'People in my organization', 'organization-excluding-guests': 'Organization, excluding guests', everyone: 'Everyone', organizer: 'Only organizers' }} onChange={setLobbyBypass} />
+                <SelectInput label="Recording" value={recording} options={['none', 'record', 'record-transcribe']} labels={{ none: 'Do not start automatically', record: 'Record automatically', 'record-transcribe': 'Record and transcribe' }} onChange={setRecording} />
+                <SelectInput label="Spoken language" value={spokenLanguage} options={['en-GB', 'en-US', 'ar-EG', 'fr-FR']} labels={{ 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' }} onChange={setSpokenLanguage} />
+                <SelectInput label="Type" value={meetingType} options={['teams-meeting', 'live-session']} labels={{ 'teams-meeting': 'Teams meeting', 'live-session': 'Teams meeting / live session' }} onChange={setMeetingType} />
+                <div className="space-y-2 rounded-xl border border-dashed border-primary-200 bg-background-50/80 p-3">
+                  <Checkbox label="Request responses" checked={requestResponses} onChange={setRequestResponses} />
+                  <Checkbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
+                  <Checkbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
+                </div>
+                {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Microsoft calendar time zone: {graphTimeZone}</p>}
+              </section>
+            </div>
+          )}
+
+          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</p>}
+          {!configurationLoading && !graphConfigured && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">Microsoft Graph credentials are missing from the backend environment.</p>}
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-5 py-4">
+          <p className="text-[10px] font-semibold text-foreground-400">Creating sends calendar invitations to the attendee emails.</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
+            {!created && (
+              <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[175px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+                <i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>
+                {submitting ? 'Creating meeting...' : 'Create with these options'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

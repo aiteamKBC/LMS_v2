@@ -25,6 +25,10 @@ export interface LearnerCalendarEvent {
   notes: string;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  programme?: string;
+  cohort?: string;
+  group?: string;
+  module?: string;
 }
 
 export interface LearnerCalendarResponse {

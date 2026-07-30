@@ -698,6 +698,148 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
   return apiForm<ComponentUploadResult>(`/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form, { timeoutMs: 90000 });
 }
 
+export interface TeamsMeetingInput {
+  title: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters?: string[];
+  localStartDateTime: string;
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  repeat: 'none' | 'daily' | 'weekdays' | 'weekly';
+  repeatOccurrences: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  meetingType: string;
+  details: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  hideAttendees: boolean;
+  transactionId: string;
+  moduleDraftId?: string;
+  moduleCatalogueId?: string;
+  moduleTitle?: string;
+  scheduledOccurrences?: Array<{
+    sessionNumber: number;
+    startDateTimeUtc: string;
+    durationMinutes: number;
+  }>;
+}
+
+export interface TeamsMeetingResult {
+  created: boolean;
+  meeting: {
+    liveSessionId: string;
+    eventId: string;
+    onlineMeetingId: string;
+    joinUrl: string;
+    webLink: string;
+    meetingOptionsUrl: string;
+    organizerEmail: string;
+    attendees: string[];
+    presenters: string[];
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    repeat: string;
+    repeatOccurrences: number;
+    trackedOccurrences: number;
+    provider: string;
+    trackingReady: boolean;
+    settingsApplied: boolean;
+  };
+  warnings: string[];
+}
+
+export interface TeamsMeetingConfiguration {
+  configured: boolean;
+  defaultOrganizer: string;
+  timeZone: string;
+}
+
+export function loadTeamsMeetingConfiguration() {
+  return apiJson<TeamsMeetingConfiguration>('/curriculum/teams-meetings/', { timeoutMs: 15000 });
+}
+
+export function createTeamsMeeting(input: TeamsMeetingInput) {
+  return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    timeoutMs: 45000,
+  });
+}
+
+export interface TeamsArtifactSyncResult {
+  synced: {
+    attendanceReports: number;
+    attendanceRecords: number;
+    transcripts: number;
+    recordings: number;
+  };
+  errors: string[];
+  partial: boolean;
+}
+
+export interface TeamsAttendanceRecord {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  total_attendance_seconds: number;
+  intervals?: Array<{
+    joinDateTime?: string;
+    leaveDateTime?: string;
+  }> | string;
+}
+
+export interface TeamsMeetingArtifact {
+  id: string;
+  artifact_type: 'transcript' | 'recording' | string;
+  created_datetime?: string;
+  end_datetime?: string;
+}
+
+export interface TeamsMeetingOccurrence {
+  id: string;
+  session_number: number;
+  scheduled_start: string;
+  scheduled_end: string;
+  actual_start?: string;
+  actual_end?: string;
+  participant_count: number;
+  status: string;
+  attendance: TeamsAttendanceRecord[];
+  artifacts: TeamsMeetingArtifact[];
+}
+
+export interface TeamsMeetingArtifactsResult {
+  series: {
+    id: string;
+    module_title: string;
+    organizer_email: string;
+    join_url: string;
+    online_meeting_id: string;
+  };
+  occurrences: TeamsMeetingOccurrence[];
+}
+
+export function syncTeamsMeetingArtifacts(liveSessionId: string) {
+  return apiJson<TeamsArtifactSyncResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
+    method: 'POST',
+    timeoutMs: 45000,
+  });
+}
+
+export function loadTeamsMeetingArtifacts(liveSessionId: string) {
+  return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
+    timeoutMs: 30000,
+  });
+}
+
+export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId: string) {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
+}
+
 class ApiError extends Error {
   status: number;
 
