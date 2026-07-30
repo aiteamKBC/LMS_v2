@@ -219,6 +219,19 @@ export default function LearnersPage() {
     navigate(`/workspace/learner/${kind}/${id}`);
   };
 
+  const openCoachChat = async () => {
+    // This delivery screen is also used to enter the local learner demo.
+    // Initialise the same Django chat session before opening the real coach
+    // conversation so the learner is not sent to an unauthenticated inbox.
+    login('learner@kbc.test');
+    try {
+      await bootstrapChatSession('learner@kbc.test');
+    } catch (cause) {
+      error('Learner chat could not be connected', cause instanceof Error ? cause.message : 'Please try again.');
+    }
+    navigate('/learner/messages?contact=med-maher');
+  };
+
   return (
     <WorkspaceShell
       role="compliance"
@@ -235,6 +248,16 @@ export default function LearnersPage() {
           icon="ri-briefcase-4-line"
           title="Enrolled learners"
           subtitle={<><strong>{total} learners</strong> — {commercial.length} commercial, {apprentices.length} apprenticeship. Select a learner to build their training plan.</>}
+          right={
+            <button
+              type="button"
+              onClick={() => void openCoachChat()}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/15 px-3.5 py-2.5 text-[12px] font-semibold text-white backdrop-blur-sm transition-smooth hover:bg-white/25 cursor-pointer"
+            >
+              <i className="ri-chat-3-line" />
+              Chat with coach
+            </button>
+          }
         />
 
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
