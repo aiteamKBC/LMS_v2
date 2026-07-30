@@ -46,6 +46,7 @@ export interface LearnerComponentEntry {
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
+  teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
