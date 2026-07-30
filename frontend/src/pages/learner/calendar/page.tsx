@@ -46,21 +46,24 @@ function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarE
     time = `${ev.scheduledTime}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
   }
   const confirmed = ev.status === 'scheduled' || ev.status === 'in-progress' || ev.status === 'completed';
+  const isLiveSession = ev.source === 'live-session';
   return {
     id: ev.id,
-    title: ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+    title: !isLiveSession && ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
     date: `${d} ${MONTH_NAMES[m - 1].substring(0, 3)}`,
     dayName,
     time,
-    club: 'Coaching',
+    club: isLiveSession ? (ev.module || 'Live Session') : 'Coaching',
     clubId: '',
-    type: ev.type === 'review' ? 'Assessment' : ev.type === 'welfare' ? 'Study Group' : 'Coaching',
-    format: '1:1 Teams',
+    type: isLiveSession ? 'Workshop' : ev.type === 'review' ? 'Assessment' : ev.type === 'welfare' ? 'Study Group' : 'Coaching',
+    format: isLiveSession ? 'Live Teams session' : '1:1 Teams',
     location: ev.meetingLink ? 'Microsoft Teams' : ev.scheduledTime ? 'Online' : 'To be confirmed',
-    host: ev.coachName || 'Your coach',
+    host: ev.coachName || (isLiveSession ? 'Your tutor' : 'Your coach'),
     points: 0,
     status: confirmed ? 'confirmed' : 'pending',
-    description: ev.notes || `${ev.title} session with ${ev.coachName || 'your coach'} for ${learnerName}.`,
+    description: ev.notes || (isLiveSession
+      ? `${ev.module || ev.title} live session${ev.group ? ` for ${ev.group}` : ''}.`
+      : `${ev.title} session with ${ev.coachName || 'your coach'} for ${learnerName}.`),
     isoDate: iso,
     meetingLink: ev.meetingLink || undefined,
   };

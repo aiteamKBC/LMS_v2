@@ -391,12 +391,13 @@ def _resolve_from_master(modules, weeks, components):
             master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
 
             cur.execute(
-                "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, display_order "
+                "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, "
+                "live_sessions_link, display_order "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
-            master_components = cur.fetchall()  # [(comp_id, week_id, module_id, type, title, description, settings_json, display_order)]
+            master_components = cur.fetchall()
 
             # Quiz components are linked either through settings_json.linkedQuizId
             # (the Module Builder save format) or the normalized link table.
@@ -404,7 +405,7 @@ def _resolve_from_master(modules, weeks, components):
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
             component_ids = [row[0] for row in master_components]
-            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _order in master_components:
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order in master_components:
                 if isinstance(settings, str):
                     try:
                         settings = json.loads(settings) if settings else {}
@@ -495,7 +496,7 @@ def _resolve_from_master(modules, weeks, components):
         weeks_by_module.setdefault(mid, []).append((week_id, live_title))
 
     comps_by_week = {}
-    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, _order in master_components:
+    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order in master_components:
         # settings_json comes back from the raw cursor as a JSON string (JSONField
         # auto-parsing only happens through the ORM), so parse it here.
         if isinstance(settings, str):
@@ -505,6 +506,12 @@ def _resolve_from_master(modules, weeks, components):
                 settings = {}
         if not isinstance(settings, dict):
             settings = {}
+        live_session_url = (
+            _s(stored_live_link)
+            or _s(settings.get("liveSessionUrl"))
+            or _s(settings.get("teamsMeetingUrl"))
+            or None
+        )
         video_url = _s(settings.get("videoUrl")) or None
         # Generalised content payload per component type (mirrors the authoring
         # settings_json keys in the Module Builder). Lets the learner open a
@@ -557,6 +564,10 @@ def _resolve_from_master(modules, weeks, components):
             "downloadAllowed": download_allowed,
             "reflectionPrompt": reflection_prompt,
             "resourceUrl": resource_url,
+            "liveSessionUrl": live_session_url,
+            "sessionDate": _s(settings.get("sessionDate")) or None,
+            "sessionTime": _s(settings.get("sessionTime")) or None,
+            "sessionDateTimeUtc": _s(settings.get("sessionDateTimeUtc")) or None,
             "durationMinutes": duration if isinstance(duration, (int, float)) else None,
             "ksbWeightTotal": ksb_weight,
             "ksbMappingCount": ksb_count,
@@ -609,6 +620,10 @@ def _resolve_from_master(modules, weeks, components):
                     "downloadAllowed": comp["downloadAllowed"],
                     "reflectionPrompt": comp["reflectionPrompt"],
                     "resourceUrl": comp["resourceUrl"],
+                    "liveSessionUrl": comp["liveSessionUrl"],
+                    "sessionDate": comp["sessionDate"],
+                    "sessionTime": comp["sessionTime"],
+                    "sessionDateTimeUtc": comp["sessionDateTimeUtc"],
                     "durationMinutes": comp["durationMinutes"],
                     "ksbWeightTotal": comp["ksbWeightTotal"],
                     "ksbMappingCount": comp["ksbMappingCount"],

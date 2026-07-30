@@ -1,17 +1,23 @@
 import json
 import logging
 import calendar
+import os
 import re
 import threading
+import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+from html import escape
 from pathlib import Path
+from urllib import parse as urllib_parse
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import urlparse
 
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, connection, transaction
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -43,7 +49,13 @@ _STAFF_PROFILE_TABLES_READY = False
 _PROGRAMME_CONFIG_DEDUP_READY = False
 _KSB_PROFILE_PROGRAMME_ID_READY = False
 _TRAINING_PLAN_CANONICAL_READY = False
+_LIVE_SESSIONS_TABLE_READY = False
+_LIVE_SESSION_TRACKING_TABLES_READY = False
 SUPPORTED_KSB_SOURCE_TYPES = {'standard', 'framework'}
+LIVE_SESSIONS_TABLE = 'live_sessions'
+LIVE_SESSION_OCCURRENCES_TABLE = 'live_session_occurrences'
+LIVE_SESSION_ATTENDANCE_TABLE = 'live_session_attendance'
+LIVE_SESSION_ARTIFACTS_TABLE = 'live_session_artifacts'
 
 
 def invalidate_curriculum_cache():
@@ -403,6 +415,876 @@ def json_error(message, status=400, **extra):
     payload = {'error': message}
     payload.update(extra)
     return JsonResponse(payload, status=status)
+
+
+TEAMS_REPEAT_VALUES = {'none', 'daily', 'weekdays', 'weekly'}
+TEAMS_LOBBY_VALUES = {
+    'invited': 'invited',
+    'organization': 'organization',
+    'organization-excluding-guests': 'organizationExcludingGuests',
+    'everyone': 'everyone',
+    'organizer': 'organizer',
+}
+
+
+def ensure_live_sessions_table():
+    global _LIVE_SESSIONS_TABLE_READY
+    if _LIVE_SESSIONS_TABLE_READY:
+        return
+    json_type = 'jsonb' if connection.vendor == 'postgresql' else 'text'
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name(LIVE_SESSIONS_TABLE)} (
+                id varchar(128) primary key,
+                module_catalogue_id varchar(128),
+                module_draft_id varchar(255) not null default '',
+                module_title varchar(500) not null default '',
+                provider varchar(64) not null default 'Microsoft Teams',
+                graph_event_id varchar(512),
+                join_url text not null default '',
+                web_link text not null default '',
+                meeting_options_url text not null default '',
+                organizer_email varchar(320) not null,
+                attendees {json_type},
+                presenters {json_type},
+                start_datetime timestamp,
+                timezone varchar(128) not null default '',
+                duration_minutes integer not null default 60,
+                repeat_pattern varchar(32) not null default 'none',
+                repeat_occurrences integer not null default 1,
+                lobby_bypass varchar(64) not null default 'invited',
+                recording varchar(64) not null default 'none',
+                spoken_language varchar(32) not null default 'en-GB',
+                meeting_type varchar(64) not null default 'live-session',
+                request_responses boolean not null default true,
+                allow_time_proposals boolean not null default true,
+                hide_attendees boolean not null default false,
+                status varchar(32) not null default 'active',
+                warnings {json_type},
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                foreign key (module_catalogue_id)
+                    references {authoring_table_name(AUTHORING_MODULES_TABLE)} (module_catalogue_id)
+                    on delete cascade
+            )
+        ''')
+        cursor.execute(
+            f'create index if not exists curriculum_live_sessions_module_idx '
+            f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (module_catalogue_id)'
+        )
+        cursor.execute(
+            f'create index if not exists curriculum_live_sessions_draft_idx '
+            f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (module_draft_id)'
+        )
+        cursor.execute(
+            f'create index if not exists curriculum_live_sessions_graph_event_idx '
+            f'on {authoring_table_name(LIVE_SESSIONS_TABLE)} (graph_event_id)'
+        )
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{LIVE_SESSIONS_TABLE}', None)
+    _LIVE_SESSIONS_TABLE_READY = True
+
+
+def ensure_live_session_tracking_tables():
+    global _LIVE_SESSION_TRACKING_TABLES_READY
+    if _LIVE_SESSION_TRACKING_TABLES_READY:
+        return
+    ensure_live_sessions_table()
+    live_sessions = authoring_table_name(LIVE_SESSIONS_TABLE)
+    occurrences = authoring_table_name(LIVE_SESSION_OCCURRENCES_TABLE)
+    attendance = authoring_table_name(LIVE_SESSION_ATTENDANCE_TABLE)
+    artifacts = authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)
+    json_type = 'jsonb' if connection.vendor == 'postgresql' else 'text'
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f"alter table {live_sessions} add column if not exists online_meeting_id text not null default ''")
+            cursor.execute(f"alter table {live_sessions} add column if not exists presenters {json_type} not null default '[]'")
+        elif 'online_meeting_id' not in column_names(LIVE_SESSIONS_TABLE):
+            cursor.execute(f"alter table {live_sessions} add column online_meeting_id text not null default ''")
+        if connection.vendor != 'postgresql' and 'presenters' not in column_names(LIVE_SESSIONS_TABLE):
+            cursor.execute(f"alter table {live_sessions} add column presenters {json_type} not null default '[]'")
+        cursor.execute(f'''
+            create table if not exists {occurrences} (
+                id varchar(128) primary key, live_session_id varchar(128) not null,
+                session_number integer not null, graph_event_id varchar(512) not null default '',
+                scheduled_start timestamp not null, scheduled_end timestamp not null,
+                actual_start timestamp, actual_end timestamp, join_url text not null default '',
+                attendance_report_id varchar(512) not null default '', participant_count integer not null default 0,
+                status varchar(32) not null default 'scheduled', artifacts_synced_at timestamp,
+                last_sync_error text not null default '', created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                foreign key (live_session_id) references {live_sessions} (id) on delete cascade,
+                unique (live_session_id, session_number)
+            )
+        ''')
+        cursor.execute(f'''
+            create table if not exists {attendance} (
+                id varchar(128) primary key, occurrence_id varchar(128) not null,
+                graph_record_id varchar(512) not null default '', email varchar(320) not null default '',
+                display_name varchar(500) not null default '', role varchar(64) not null default '',
+                total_attendance_seconds integer not null default 0, intervals {json_type}, raw_data {json_type},
+                created_at timestamp not null default current_timestamp, updated_at timestamp not null default current_timestamp,
+                foreign key (occurrence_id) references {occurrences} (id) on delete cascade
+            )
+        ''')
+        cursor.execute(f'''
+            create table if not exists {artifacts} (
+                id varchar(128) primary key, occurrence_id varchar(128) not null,
+                artifact_type varchar(32) not null, graph_artifact_id text not null,
+                call_id text not null default '', content_correlation_id text not null default '',
+                content_url text not null default '', created_datetime timestamp, end_datetime timestamp,
+                metadata {json_type}, created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                foreign key (occurrence_id) references {occurrences} (id) on delete cascade,
+                unique (occurrence_id, artifact_type, graph_artifact_id)
+            )
+        ''')
+        cursor.execute(f'create index if not exists curriculum_live_occurrence_series_idx on {occurrences} (live_session_id)')
+        cursor.execute(f'create index if not exists curriculum_live_occurrence_start_idx on {occurrences} (scheduled_start)')
+        cursor.execute(f'create index if not exists curriculum_live_attendance_occurrence_idx on {attendance} (occurrence_id)')
+        cursor.execute(f'create index if not exists curriculum_live_artifact_occurrence_idx on {artifacts} (occurrence_id)')
+    for table in (LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE, LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE):
+        _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
+    _LIVE_SESSION_TRACKING_TABLES_READY = True
+
+
+def parse_graph_datetime(value):
+    raw = clean_str(value)
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def scheduled_live_session_occurrences(payload, utc_start, duration, repeat, occurrences):
+    supplied = payload.get('scheduledOccurrences')
+    normalized = []
+    if isinstance(supplied, list):
+        for index, item in enumerate(supplied):
+            if not isinstance(item, dict):
+                continue
+            start = parse_graph_datetime(item.get('startDateTimeUtc'))
+            if not start:
+                continue
+            item_duration = max(15, min(1440, int(item.get('durationMinutes') or duration)))
+            normalized.append({
+                'session_number': max(1, int(item.get('sessionNumber') or index + 1)),
+                'start': start,
+                'end': start + timedelta(minutes=item_duration),
+            })
+    if normalized:
+        return sorted(normalized, key=lambda item: (item['session_number'], item['start']))
+    count = occurrences if repeat != 'none' else 1
+    current = utc_start
+    for index in range(count):
+        normalized.append({'session_number': index + 1, 'start': current, 'end': current + timedelta(minutes=duration)})
+        if repeat == 'daily':
+            current += timedelta(days=1)
+        elif repeat == 'weekdays':
+            current += timedelta(days=1)
+            while current.weekday() >= 5:
+                current += timedelta(days=1)
+        else:
+            current += timedelta(days=7)
+    return normalized
+
+
+def persist_live_session_occurrences(live_session_id, payload, event, utc_start, duration, repeat, occurrences):
+    ensure_live_session_tracking_tables()
+    now = datetime.utcnow()
+    join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl'))
+    rows = scheduled_live_session_occurrences(payload, utc_start, duration, repeat, occurrences)
+    for item in rows:
+        authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+            'id': f'OCC-{uuid.uuid4().hex.upper()}',
+            'live_session_id': live_session_id,
+            'session_number': item['session_number'],
+            'graph_event_id': clean_str(event.get('id')),
+            'scheduled_start': item['start'],
+            'scheduled_end': item['end'],
+            'join_url': join_url,
+            'status': 'scheduled',
+            'created_at': now,
+            'updated_at': now,
+        })
+    return rows
+
+
+def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id=''):
+    ensure_module_authoring_tables()
+    ensure_live_session_tracking_tables()
+    module_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
+    if module_catalogue_id and not authoring_module_exists(module_catalogue_id):
+        module_catalogue_id = ''
+    module_draft_id = clean_str(payload.get('moduleDraftId'))
+    now = datetime.utcnow()
+    supersede_filters = []
+    supersede_params = []
+    if module_catalogue_id:
+        supersede_filters.append('module_catalogue_id = %s')
+        supersede_params.append(module_catalogue_id)
+    elif module_draft_id:
+        supersede_filters.append('module_draft_id = %s')
+        supersede_params.append(module_draft_id)
+    if supersede_filters:
+        update_authoring_rows(
+            LIVE_SESSIONS_TABLE,
+            f"status = 'active' and ({' or '.join(supersede_filters)})",
+            supersede_params,
+            {'status': 'superseded', 'updated_at': now},
+        )
+
+    live_session_id = f'LIVE-{uuid.uuid4().hex.upper()}'
+    start_datetime = None
+    start_raw = clean_str(payload.get('startDateTimeUtc'))
+    if start_raw:
+        try:
+            start_datetime = datetime.fromisoformat(start_raw.replace('Z', '+00:00'))
+        except ValueError:
+            start_datetime = None
+    authoring_upsert(LIVE_SESSIONS_TABLE, ['id'], {
+        'id': live_session_id,
+        'module_catalogue_id': module_catalogue_id or None,
+        'module_draft_id': module_draft_id,
+        'module_title': clean_str(payload.get('moduleTitle') or payload.get('title')),
+        'provider': 'Microsoft Teams',
+        'graph_event_id': clean_str(event.get('id')) or None,
+        'online_meeting_id': online_meeting_id,
+        'join_url': clean_str((event.get('onlineMeeting') or {}).get('joinUrl')),
+        'web_link': clean_str(event.get('webLink')),
+        'meeting_options_url': clean_str(event.get('_meetingOptionsUrl')),
+        'organizer_email': organizer,
+        'attendees': json_db_value(attendees),
+        'presenters': json_db_value(presenters),
+        'start_datetime': start_datetime,
+        'timezone': graph_settings.get('timezone') or '',
+        'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
+        'repeat_pattern': clean_str(payload.get('repeat')).lower() or 'none',
+        'repeat_occurrences': max(1, min(52, int(payload.get('repeatOccurrences') or 1))),
+        'lobby_bypass': clean_str(payload.get('lobbyBypass')).lower() or 'invited',
+        'recording': clean_str(payload.get('recording')).lower() or 'none',
+        'spoken_language': clean_str(payload.get('spokenLanguage')) or 'en-GB',
+        'meeting_type': clean_str(payload.get('meetingType')) or 'live-session',
+        'request_responses': bool(payload.get('requestResponses', True)),
+        'allow_time_proposals': bool(payload.get('allowNewTimeProposals', True)),
+        'hide_attendees': bool(payload.get('hideAttendees', False)),
+        'status': 'active',
+        'warnings': json_db_value(warnings),
+        'created_at': now,
+        'updated_at': now,
+    })
+    occurrence_rows = persist_live_session_occurrences(
+        live_session_id,
+        payload,
+        event,
+        parse_graph_datetime(payload.get('startDateTimeUtc')) or now,
+        max(15, min(1440, int(payload.get('durationMinutes') or 60))),
+        clean_str(payload.get('repeat')).lower() or 'none',
+        max(1, min(52, int(payload.get('repeatOccurrences') or 1))),
+    )
+    return live_session_id, len(occurrence_rows)
+
+
+def link_live_session_series_to_module(module_catalogue_id, payload):
+    ensure_live_sessions_table()
+    live_session_ids = set()
+    for week in payload.get('weekStructure') or []:
+        for component in week.get('components') or []:
+            settings_payload = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+            live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
+            if live_session_id:
+                live_session_ids.add(live_session_id)
+    delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
+    metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
+    if metadata_id:
+        live_session_ids.add(metadata_id)
+    for live_session_id in live_session_ids:
+        update_authoring_rows(
+            LIVE_SESSIONS_TABLE,
+            'id = %s',
+            [live_session_id],
+            {'module_catalogue_id': module_catalogue_id, 'updated_at': datetime.utcnow()},
+        )
+
+
+def teams_meeting_default_organizer():
+    # Client credentials identify the application, not the licensed Microsoft
+    # 365 user whose calendar owns the event. Keep that UPN configurable.
+    return clean_str(
+        os.environ.get('MICROSOFT_TEAMS_ORGANIZER_EMAIL')
+        or os.environ.get('MICROSOFT_ORGANIZER_EMAIL')
+    )
+
+
+def teams_attendee_emails(value):
+    if isinstance(value, list):
+        candidates = value
+    else:
+        candidates = re.split(r'[\s,;]+', clean_str(value))
+    emails = []
+    seen = set()
+    for item in candidates:
+        email = clean_str(item).lower()
+        if not email or email in seen:
+            continue
+        if not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email):
+            raise ValueError(f'Invalid attendee email: {email}')
+        seen.add(email)
+        emails.append(email)
+    return emails
+
+
+def teams_event_recurrence(repeat, local_start, occurrences):
+    if repeat == 'none':
+        return None
+    start_date = local_start.date().isoformat()
+    day_name = local_start.strftime('%A').lower()
+    if repeat == 'daily':
+        pattern = {'type': 'daily', 'interval': 1}
+    elif repeat == 'weekdays':
+        pattern = {
+            'type': 'weekly',
+            'interval': 1,
+            'daysOfWeek': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+        }
+    else:
+        pattern = {'type': 'weekly', 'interval': 1, 'daysOfWeek': [day_name]}
+    return {
+        'pattern': pattern,
+        'range': {
+            'type': 'numbered',
+            'startDate': start_date,
+            'numberOfOccurrences': occurrences,
+        },
+    }
+
+
+def teams_event_payload(payload, graph_settings):
+    title = clean_str(payload.get('title')) or 'Live session'
+    local_start_raw = clean_str(payload.get('localStartDateTime'))
+    utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
+    try:
+        local_start = datetime.fromisoformat(local_start_raw)
+    except ValueError as exc:
+        raise ValueError('A valid meeting start date and time is required.') from exc
+    try:
+        utc_start = datetime.fromisoformat(utc_start_raw.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise ValueError('A valid UTC meeting start date and time is required.') from exc
+
+    duration = max(15, min(1440, int(payload.get('durationMinutes') or 60)))
+    repeat = clean_str(payload.get('repeat')).lower() or 'none'
+    if repeat not in TEAMS_REPEAT_VALUES:
+        raise ValueError('Unsupported repeat option.')
+    occurrences = max(2, min(52, int(payload.get('repeatOccurrences') or 12)))
+    attendees = teams_attendee_emails(payload.get('attendees'))
+    presenters = teams_attendee_emails(payload.get('presenters'))
+    invited_people = list(dict.fromkeys([*presenters, *attendees]))
+    details = clean_str(payload.get('details'))
+    body_parts = [
+        f'<p><strong>{escape(title)}</strong></p>',
+        '<p>Created from the KBC LearningOS Module Builder.</p>',
+    ]
+    if details:
+        body_parts.append(f'<p>{escape(details).replace(chr(10), "<br>")}</p>')
+
+    event = {
+        'subject': title,
+        'body': {'contentType': 'HTML', 'content': ''.join(body_parts)},
+        'start': {
+            'dateTime': local_start.replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': graph_settings['timezone'],
+        },
+        'end': {
+            'dateTime': (local_start + timedelta(minutes=duration)).replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': graph_settings['timezone'],
+        },
+        'attendees': [
+            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+            for email in invited_people
+        ],
+        'isOnlineMeeting': True,
+        'onlineMeetingProvider': 'teamsForBusiness',
+        'responseRequested': bool(payload.get('requestResponses', True)),
+        'allowNewTimeProposals': bool(payload.get('allowNewTimeProposals', True)),
+        'hideAttendees': bool(payload.get('hideAttendees', False)),
+    }
+    transaction_id = clean_str(payload.get('transactionId'))[:255]
+    if transaction_id:
+        event['transactionId'] = transaction_id
+    recurrence = teams_event_recurrence(repeat, local_start, occurrences)
+    if recurrence:
+        event['recurrence'] = recurrence
+    # Return normalized timing too, for the component settings response.
+    return event, invited_people, presenters, utc_start, duration, repeat, occurrences
+
+
+def teams_online_meeting_owner_id(organizer, join_url=''):
+    """Return the organizer object ID required by onlineMeetings Graph routes."""
+    configured_id = clean_str(os.environ.get('MICROSOFT_TEAMS_ORGANIZER_ID'))
+    if re.fullmatch(r'[0-9a-fA-F-]{36}', configured_id):
+        return configured_id
+    try:
+        decoded_url = urllib_parse.unquote(clean_str(join_url))
+        context_values = urllib_parse.parse_qs(urlparse(decoded_url).query).get('context') or []
+        if context_values:
+            context = json.loads(urllib_parse.unquote(context_values[0]))
+            organizer_id = clean_str(context.get('Oid') or context.get('oid'))
+            if re.fullmatch(r'[0-9a-fA-F-]{36}', organizer_id):
+                return organizer_id
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return clean_str(organizer)
+
+
+def teams_online_meeting_from_join_url(organizer, join_url):
+    """Find the onlineMeeting behind a calendar event when permissions allow."""
+    if not join_url:
+        return {}
+    escaped_url = join_url.replace("'", "''")
+    query = urllib_parse.urlencode({'$filter': f"joinWebUrl eq '{escaped_url}'"})
+    owner_key = urllib_parse.quote(teams_online_meeting_owner_id(organizer, join_url), safe='')
+    from coach_api.views import microsoft_graph_request
+    response = microsoft_graph_request('GET', f'users/{owner_key}/onlineMeetings?{query}')
+    values = response.get('value') if isinstance(response, dict) else []
+    return values[0] if values else {}
+
+
+@csrf_exempt
+def curriculum_teams_meeting(request):
+    """
+    Create a calendar-backed Teams meeting for a Module Builder live session.
+
+    The event endpoint sends real calendar invitations. Meeting-policy options
+    that Graph cannot set on a calendar event are returned as a warning and are
+    still persisted by the frontend for visibility.
+    """
+    from coach_api.views import get_graph_settings, has_graph_credentials, microsoft_graph_request
+
+    graph_settings = get_graph_settings()
+    default_organizer = teams_meeting_default_organizer()
+    if request.method == 'GET':
+        return JsonResponse({
+            'configured': has_graph_credentials(),
+            'defaultOrganizer': default_organizer,
+            'timeZone': graph_settings.get('timezone') or 'GMT Standard Time',
+        })
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    if not has_graph_credentials():
+        return json_error('Microsoft Graph credentials are not configured.', status=503)
+
+    payload = json_body(request)
+    if not isinstance(payload, dict):
+        return json_error('A valid JSON body is required.')
+    organizer = clean_str(payload.get('organizerEmail')) or default_organizer
+    if not organizer:
+        return json_error(
+            'Organizer email is required. Add it here or configure MICROSOFT_TEAMS_ORGANIZER_EMAIL.',
+            status=400,
+        )
+
+    try:
+        event_payload, attendees, presenters, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
+    except (TypeError, ValueError) as exc:
+        return json_error(str(exc), status=400)
+
+    owner_key = urllib_parse.quote(organizer, safe='')
+    try:
+        event = microsoft_graph_request('POST', f'users/{owner_key}/events', payload=event_payload)
+    except RuntimeError as exc:
+        logger.warning('Unable to create Module Builder Teams event: %s', exc)
+        return json_error('Microsoft Teams could not create the meeting.', status=502, detail=str(exc))
+
+    event_id = clean_str(event.get('id'))
+    online_meeting = event.get('onlineMeeting') or {}
+    join_url = clean_str(online_meeting.get('joinUrl'))
+    if event_id and not join_url:
+        try:
+            event_key = urllib_parse.quote(event_id, safe='')
+            event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
+            online_meeting = event.get('onlineMeeting') or {}
+            join_url = clean_str(online_meeting.get('joinUrl'))
+        except RuntimeError:
+            pass
+
+    warnings = []
+    meeting_options_url = ''
+    lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or 'invited'
+    if lobby_choice not in TEAMS_LOBBY_VALUES:
+        lobby_choice = 'invited'
+    recording = clean_str(payload.get('recording')).lower() or 'none'
+    spoken_language = clean_str(payload.get('spokenLanguage')) or 'en-GB'
+    # Calendar event creation reliably creates the Teams link and invitations.
+    # If OnlineMeetings.ReadWrite.All + an application access policy are also
+    # present, apply the lobby option to the underlying onlineMeeting.
+    graph_meeting = {}
+    try:
+        graph_meeting = teams_online_meeting_from_join_url(organizer, join_url)
+    except RuntimeError as exc:
+        logger.warning('Teams event created but onlineMeeting lookup failed: %s', exc)
+        warnings.append(
+            'The Teams link was created, but its online meeting could not be resolved. '
+            'Grant OnlineMeetings.ReadWrite.All and an application access policy to the organizer; '
+            'Sync results will retry the lookup.'
+        )
+
+    meeting_options_url = clean_str(graph_meeting.get('meetingOptionsWebUrl'))
+    meeting_id = clean_str(graph_meeting.get('id'))
+    settings_applied = False
+    if meeting_id:
+        meeting_patch = {
+            'lobbyBypassSettings': {
+                'scope': TEAMS_LOBBY_VALUES[lobby_choice],
+                'isDialInBypassEnabled': False,
+            },
+            'allowRecording': recording != 'none',
+            'recordAutomatically': recording != 'none',
+            'allowTranscription': recording == 'record-transcribe',
+            'meetingSpokenLanguageTag': spoken_language,
+        }
+        if presenters:
+            presenter_set = set(presenters)
+            meeting_patch.update({
+                'allowedPresenters': 'roleIsPresenter',
+                'participants': {
+                    'attendees': [
+                        {
+                            'upn': email,
+                            'role': 'presenter' if email in presenter_set else 'attendee',
+                        }
+                        for email in attendees
+                    ],
+                },
+            })
+        try:
+            online_owner_key = urllib_parse.quote(teams_online_meeting_owner_id(organizer, join_url), safe='')
+            microsoft_graph_request(
+                'PATCH',
+                f'users/{online_owner_key}/onlineMeetings/{urllib_parse.quote(meeting_id, safe="")}',
+                payload=meeting_patch,
+            )
+            settings_applied = True
+        except RuntimeError as exc:
+            logger.warning('Teams meeting created but meeting settings update failed: %s', exc)
+            warnings.append(
+                'The Teams meeting was created, but its lobby/recording/transcription settings were not applied. '
+                'Grant OnlineMeetings.ReadWrite.All and an application access policy to the organizer.'
+            )
+    elif not any('could not be resolved' in warning for warning in warnings):
+        warnings.append(
+            'The Teams link was created, but Microsoft Graph has not exposed its online meeting ID yet. '
+            'Sync results will retry the lookup.'
+        )
+    if not join_url:
+        warnings.append('Microsoft Graph created the calendar event but has not returned the Teams join URL yet.')
+
+    event['_meetingOptionsUrl'] = meeting_options_url
+    try:
+        live_session_id, tracked_occurrences = persist_live_session_series(
+            payload,
+            event,
+            warnings,
+            graph_settings,
+            organizer,
+            attendees,
+            presenters,
+            clean_str(graph_meeting.get('id')),
+        )
+    except Exception:
+        logger.exception('Teams meeting was created, but its live_sessions record could not be saved.')
+        return json_error(
+            'The Teams meeting was created, but the LMS could not save its live-session record.',
+            status=500,
+            meetingCreated=True,
+            eventId=event_id,
+            joinUrl=join_url,
+        )
+
+    return JsonResponse({
+        'created': True,
+        'meeting': {
+            'liveSessionId': live_session_id,
+            'eventId': event_id,
+            'onlineMeetingId': clean_str(graph_meeting.get('id')),
+            'joinUrl': join_url,
+            'webLink': clean_str(event.get('webLink')),
+            'meetingOptionsUrl': meeting_options_url,
+            'organizerEmail': organizer,
+            'attendees': attendees,
+            'presenters': presenters,
+            'startDateTimeUtc': utc_start.isoformat(),
+            'durationMinutes': duration,
+            'repeat': repeat,
+            'repeatOccurrences': occurrences if repeat != 'none' else 1,
+            'trackedOccurrences': tracked_occurrences,
+            'provider': 'Microsoft Teams',
+            'trackingReady': bool(meeting_id),
+            'settingsApplied': settings_applied,
+        },
+        'warnings': warnings,
+    }, status=201)
+
+
+def closest_live_occurrence(occurrences, timestamp):
+    if not occurrences or not timestamp:
+        return None
+    comparable_timestamp = timestamp.replace(tzinfo=None)
+
+    def distance(row):
+        scheduled = row.get('scheduled_start') or timestamp
+        return abs((scheduled.replace(tzinfo=None) - comparable_timestamp).total_seconds())
+
+    return min(
+        occurrences,
+        key=distance,
+    )
+
+
+def attendance_identity(record):
+    identity = record.get('identity') if isinstance(record.get('identity'), dict) else {}
+    for key in ('user', 'guest', 'phone', 'encrypted'):
+        value = identity.get(key)
+        if isinstance(value, dict):
+            return clean_str(value.get('displayName')), clean_str(value.get('id'))
+    return '', ''
+
+
+def attendance_interval_seconds(intervals):
+    total = 0
+    for interval in intervals if isinstance(intervals, list) else []:
+        if not isinstance(interval, dict):
+            continue
+        start = parse_graph_datetime(interval.get('joinDateTime'))
+        end = parse_graph_datetime(interval.get('leaveDateTime'))
+        if start and end and end >= start:
+            total += int((end - start).total_seconds())
+    return total
+
+
+def upsert_live_session_artifact(occurrence, artifact_type, artifact):
+    graph_id = clean_str(artifact.get('id'))
+    if not graph_id:
+        return False
+    authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
+        'id': f'ART-{uuid.uuid4().hex.upper()}',
+        'occurrence_id': occurrence['id'],
+        'artifact_type': artifact_type,
+        'graph_artifact_id': graph_id,
+        'call_id': clean_str(artifact.get('callId')),
+        'content_correlation_id': clean_str(artifact.get('contentCorrelationId')),
+        'content_url': clean_str(
+            artifact.get('transcriptContentUrl') if artifact_type == 'transcript'
+            else artifact.get('recordingContentUrl')
+        ),
+        'created_datetime': parse_graph_datetime(artifact.get('createdDateTime')),
+        'end_datetime': parse_graph_datetime(artifact.get('endDateTime')),
+        'metadata': json_db_value(artifact),
+    })
+    return True
+
+
+@csrf_exempt
+def curriculum_teams_meeting_artifacts(request, live_session_id):
+    """Read the tracked lecture plan or pull completed artifacts from Graph."""
+    from coach_api.views import has_graph_credentials, microsoft_graph_request
+
+    ensure_live_session_tracking_tables()
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    series = series_rows[0]
+    occurrences = authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s',
+        [live_session_id],
+        'session_number asc',
+    )
+    if request.method == 'GET':
+        for occurrence in occurrences:
+            occurrence['attendance'] = authoring_fetch_all(
+                LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']], 'display_name asc'
+            )
+            for attendance in occurrence['attendance']:
+                attendance['intervals'] = parse_json_value(attendance.get('intervals'), [])
+                attendance['raw_data'] = parse_json_value(attendance.get('raw_data'), {})
+            occurrence['artifacts'] = authoring_fetch_all(
+                LIVE_SESSION_ARTIFACTS_TABLE, 'occurrence_id = %s', [occurrence['id']], 'artifact_type asc'
+            )
+            for artifact in occurrence['artifacts']:
+                artifact['metadata'] = parse_json_value(artifact.get('metadata'), {})
+        return JsonResponse({'series': series, 'occurrences': occurrences})
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    if not has_graph_credentials():
+        return json_error('Microsoft Graph credentials are not configured.', status=503)
+    organizer = clean_str(series.get('organizer_email'))
+    meeting_id = clean_str(series.get('online_meeting_id'))
+    join_url = clean_str(series.get('join_url'))
+    if organizer and not meeting_id and join_url:
+        try:
+            graph_meeting = teams_online_meeting_from_join_url(organizer, join_url)
+        except RuntimeError as exc:
+            logger.warning('Unable to backfill onlineMeeting ID for %s: %s', live_session_id, exc)
+            return json_error(
+                'The Teams meeting exists, but Microsoft Graph cannot resolve it for tracking. '
+                'Grant OnlineMeetings.Read.All and an application access policy to the organizer, then retry.',
+                status=409,
+                detail=str(exc),
+            )
+        meeting_id = clean_str(graph_meeting.get('id'))
+        if meeting_id:
+            update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+                'online_meeting_id': meeting_id,
+                'meeting_options_url': clean_str(graph_meeting.get('meetingOptionsWebUrl')) or series.get('meeting_options_url'),
+                'updated_at': datetime.utcnow(),
+            })
+    if not organizer or not meeting_id:
+        return json_error(
+            'The Teams meeting exists, but its online meeting ID is not available yet. '
+            'Grant OnlineMeetings.Read.All and an application access policy to the organizer, then retry.',
+            status=409,
+        )
+    owner_key = urllib_parse.quote(teams_online_meeting_owner_id(organizer, join_url), safe='')
+    meeting_key = urllib_parse.quote(meeting_id, safe='')
+    base = f'users/{owner_key}/onlineMeetings/{meeting_key}'
+    errors = []
+    synced = {'attendanceReports': 0, 'attendanceRecords': 0, 'transcripts': 0, 'recordings': 0}
+    now = datetime.utcnow()
+
+    try:
+        response = microsoft_graph_request('GET', f'{base}/attendanceReports')
+        for report in response.get('value') or []:
+            report_id = clean_str(report.get('id'))
+            report_start = parse_graph_datetime(report.get('meetingStartDateTime'))
+            occurrence = closest_live_occurrence(occurrences, report_start)
+            if not occurrence or not report_id:
+                continue
+            report_key = urllib_parse.quote(report_id, safe='')
+            detail = microsoft_graph_request('GET', f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords')
+            records = detail.get('attendanceRecords') or []
+            update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                'attendance_report_id': report_id,
+                'participant_count': int(detail.get('totalParticipantCount') or len(records)),
+                'actual_start': parse_graph_datetime(detail.get('meetingStartDateTime')),
+                'actual_end': parse_graph_datetime(detail.get('meetingEndDateTime')),
+                'status': 'completed',
+                'artifacts_synced_at': now,
+                'last_sync_error': '',
+            })
+            for record in records:
+                display_name, identity_id = attendance_identity(record)
+                graph_record_id = clean_str(record.get('id') or identity_id or record.get('emailAddress'))
+                stable_key = graph_record_id or uuid.uuid4().hex
+                authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
+                    'id': f'ATT-{uuid.uuid5(uuid.NAMESPACE_URL, occurrence["id"] + stable_key).hex.upper()}',
+                    'occurrence_id': occurrence['id'],
+                    'graph_record_id': graph_record_id,
+                    'email': clean_str(record.get('emailAddress')).lower(),
+                    'display_name': display_name,
+                    'role': clean_str(record.get('role')),
+                    'total_attendance_seconds': attendance_interval_seconds(record.get('attendanceIntervals')),
+                    'intervals': json_db_value(record.get('attendanceIntervals') or []),
+                    'raw_data': json_db_value(record),
+                })
+                synced['attendanceRecords'] += 1
+            synced['attendanceReports'] += 1
+    except RuntimeError as exc:
+        errors.append(f'Attendance: {exc}')
+
+    for artifact_type, endpoint in (('transcript', 'transcripts'), ('recording', 'recordings')):
+        try:
+            response = microsoft_graph_request('GET', f'{base}/{endpoint}')
+            for artifact in response.get('value') or []:
+                timestamp = (
+                    parse_graph_datetime(artifact.get('endDateTime'))
+                    or parse_graph_datetime(artifact.get('createdDateTime'))
+                )
+                occurrence = closest_live_occurrence(occurrences, timestamp)
+                if occurrence and upsert_live_session_artifact(occurrence, artifact_type, artifact):
+                    synced[f'{artifact_type}s'] += 1
+                    update_authoring_rows(
+                        LIVE_SESSION_OCCURRENCES_TABLE,
+                        'id = %s',
+                        [occurrence['id']],
+                        {'artifacts_synced_at': now, 'last_sync_error': ''},
+                    )
+        except RuntimeError as exc:
+            errors.append(f'{artifact_type.title()}: {exc}')
+    return JsonResponse({'synced': synced, 'errors': errors, 'partial': bool(errors)}, status=207 if errors else 200)
+
+
+@require_GET
+def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact_id):
+    """Proxy a tracked transcript or recording without exposing a Graph token."""
+    from coach_api.views import get_graph_settings, microsoft_graph_token
+
+    ensure_live_session_tracking_tables()
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    series = series_rows[0]
+    occurrences = authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s',
+        [live_session_id],
+    )
+    occurrence_ids = {clean_str(row.get('id')) for row in occurrences}
+    artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE, 'id = %s', [artifact_id])
+    artifact = artifacts[0] if artifacts else None
+    if not artifact or clean_str(artifact.get('occurrence_id')) not in occurrence_ids:
+        return json_error('Meeting artifact not found.', status=404)
+
+    artifact_type = clean_str(artifact.get('artifact_type')).lower()
+    endpoint = 'transcripts' if artifact_type == 'transcript' else 'recordings' if artifact_type == 'recording' else ''
+    if not endpoint:
+        return json_error('Unsupported meeting artifact.', status=400)
+
+    organizer = clean_str(series.get('organizer_email'))
+    meeting_id = clean_str(series.get('online_meeting_id'))
+    join_url = clean_str(series.get('join_url'))
+    owner_id = teams_online_meeting_owner_id(organizer, join_url)
+    graph_artifact_id = clean_str(artifact.get('graph_artifact_id'))
+    if not owner_id or not meeting_id or not graph_artifact_id:
+        return json_error('The meeting artifact is missing its Graph identifiers.', status=409)
+
+    path = (
+        f'users/{urllib_parse.quote(owner_id, safe="")}/onlineMeetings/'
+        f'{urllib_parse.quote(meeting_id, safe="")}/{endpoint}/'
+        f'{urllib_parse.quote(graph_artifact_id, safe="")}/content'
+    )
+    graph_settings = get_graph_settings()
+    url = f'{graph_settings["base_url"].rstrip("/")}/{path}'
+    graph_request = urllib_request.Request(
+        url,
+        headers={
+            'Authorization': f'Bearer {microsoft_graph_token()}',
+            'Accept': 'text/vtt' if artifact_type == 'transcript' else 'video/mp4',
+        },
+        method='GET',
+    )
+    try:
+        graph_response = urllib_request.urlopen(graph_request, timeout=45)
+    except urllib_error.HTTPError as exc:
+        detail = exc.read().decode('utf-8', errors='ignore')
+        logger.warning('Unable to fetch Teams %s content: %s %s', artifact_type, exc.code, detail)
+        return json_error(f'Microsoft Graph could not return the {artifact_type} content.', status=exc.code)
+    except urllib_error.URLError as exc:
+        logger.warning('Unable to fetch Teams %s content: %s', artifact_type, exc)
+        return json_error(f'Microsoft Graph could not return the {artifact_type} content.', status=502)
+
+    content_type = graph_response.headers.get('Content-Type') or ('text/vtt' if artifact_type == 'transcript' else 'video/mp4')
+    filename = f'{live_session_id}-{artifact_type}.{"vtt" if artifact_type == "transcript" else "mp4"}'
+    if artifact_type == 'recording':
+        return FileResponse(graph_response, as_attachment=True, filename=filename, content_type=content_type)
+    content = graph_response.read()
+    graph_response.close()
+    response = HttpResponse(content, content_type=content_type)
+    response['Content-Disposition'] = f'inline; filename="{filename}"'
+    return response
 
 
 def require_fields(payload, fields):
@@ -4354,6 +5236,7 @@ def ensure_module_authoring_tables():
                 tutor_validation_required boolean not null default false,
                 display_order integer not null default 0,
                 settings_json {json_type},
+                live_sessions_link text,
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp
             )
@@ -4375,6 +5258,23 @@ def ensure_module_authoring_tables():
                 alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
                 add column if not exists settings_json {json_type}
             ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
+                add column if not exists live_sessions_link text
+            ''')
+            cursor.execute(f'''
+                update {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
+                set live_sessions_link = coalesce(
+                    nullif(settings_json->>'liveSessionUrl', ''),
+                    nullif(settings_json->>'teamsMeetingUrl', '')
+                )
+                where (live_sessions_link is null or trim(live_sessions_link) = '')
+                  and lower(replace(type, '_', '-')) = 'live-session'
+                  and coalesce(
+                    nullif(settings_json->>'liveSessionUrl', ''),
+                    nullif(settings_json->>'teamsMeetingUrl', '')
+                  ) is not null
+            ''')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} alter column expected_otjh set default 2')
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_COMPONENTS_TABLE)})')
@@ -4387,6 +5287,8 @@ def ensure_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column tutor_validation_required boolean not null default false')
             if 'settings_json' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column settings_json {json_type}')
+            if 'live_sessions_link' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column live_sessions_link text')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
@@ -5223,9 +6125,26 @@ COMPONENT_SETTINGS_SCHEMA = {
         'sessionPurpose': '',
         'sessionDate': '',
         'sessionTime': '',
+        'sessionDateTimeUtc': '',
+        'durationMinutes': 60,
         'selectedGroupKeys': [],
         'selectedGroupNames': [],
         'liveSessionUrl': '',
+        'teamsEventId': '',
+        'teamsLiveSessionId': '',
+        'teamsMeetingOptionsUrl': '',
+        'teamsOrganizerEmail': '',
+        'teamsAttendees': [],
+        'teamsProvider': '',
+        'teamsRepeat': 'none',
+        'teamsRepeatOccurrences': 1,
+        'teamsLobbyBypass': 'invited',
+        'teamsRecording': 'record-transcribe',
+        'teamsSpokenLanguage': 'en-GB',
+        'teamsMeetingType': 'live-session',
+        'teamsRequestResponses': True,
+        'teamsAllowTimeProposals': True,
+        'teamsHideAttendees': False,
         'preparationInstructions': '',
         'reflectionQuestions': '',
         'attendanceRequired': True,
@@ -5969,7 +6888,11 @@ def ensure_training_module_authoring_structure(module_identifier):
 
 def component_builder_settings(row):
     settings = as_json_value(row.get('settings_json'), {})
-    return settings if isinstance(settings, dict) else {}
+    settings = settings if isinstance(settings, dict) else {}
+    stored_live_link = clean_str(row.get('live_sessions_link'))
+    if stored_live_link and not clean_str(settings.get('liveSessionUrl')):
+        settings = {**settings, 'liveSessionUrl': stored_live_link}
+    return settings
 
 
 def component_week_label(row):
@@ -6212,6 +7135,7 @@ def save_component_builder_payload(payload, component_id=None):
             'tutor_validation_required': tutor_validation_required,
             'display_order': display_order,
             'settings_json': json_db_value(settings),
+            'live_sessions_link': clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl')),
         })
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id])
         mapping_payloads = payload.get('ksbMappings') if isinstance(payload.get('ksbMappings'), list) else []
@@ -6294,7 +7218,7 @@ def get_authoring_structure_payload(module_catalogue_id):
             'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
             'tutorValidationRequired': bool(row.get('tutor_validation_required')),
             'ksbMappings': mappings_by_component.get(component_id, []),
-            'settings': as_json_value(row.get('settings_json'), {}),
+            'settings': component_builder_settings(row),
         })
 
     weeks = []
@@ -6465,7 +7389,7 @@ def authoring_catalogue_summaries():
                 'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
                 'tutorValidationRequired': bool(row.get('tutor_validation_required')),
                 'ksbMappings': [],
-                'settings': as_json_value(row.get('settings_json'), {}),
+                'settings': component_builder_settings(row),
             })
             break
 
@@ -7046,6 +7970,7 @@ def save_module_authoring_structure(module_catalogue_id, payload):
             'tutor_name': payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or None,
             'coach_name': payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or None,
         })
+        link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         authoring_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
         authoring_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
@@ -7075,6 +8000,7 @@ def save_module_authoring_structure(module_catalogue_id, payload):
                 ))
             for component_index, component in enumerate(week.get('components') or []):
                 component_id = canonical_authoring_id('COMP', component.get('id'))
+                component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
                 component_payloads.append({
                     'id': component_id,
                     'week_id': week_id,
@@ -7088,7 +8014,8 @@ def save_module_authoring_structure(module_catalogue_id, payload):
                     'workplace_evidence_required': False,
                     'tutor_validation_required': bool_payload(component.get('tutorValidationRequired')),
                     'display_order': component_index,
-                    'settings_json': json_db_value(component.get('settings') or {}),
+                    'settings_json': json_db_value(component_settings),
+                    'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
                 })
                 for mapping in component.get('ksbMappings') or []:
                     mapping_payloads.append(authoring_mapping_payload(
