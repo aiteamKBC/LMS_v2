@@ -85,6 +85,15 @@ function bubbleDateLabel(previous: CoachMessage | null, current: CoachMessage) {
   return !previous || previous.dateLabel !== current.dateLabel;
 }
 
+function mergeCoachMessages(current: CoachMessage[], fetched: CoachMessage[]): CoachMessage[] {
+  const fetchedIds = new Set(fetched.map(message => message.id));
+  const newestFetchedId = fetched.reduce((latest, message) => Math.max(latest, Number(message.id) || 0), 0);
+  const liveMessages = current.filter(message => (
+    !fetchedIds.has(message.id) && (Number(message.id) || 0) > newestFetchedId
+  ));
+  return [...fetched, ...liveMessages].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+
 export default function CoachMessagesPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -157,6 +166,34 @@ export default function CoachMessagesPage() {
     }
   }, [searchParams, selectedLearnerId, threads]);
 
+  // Keep the coach inbox current when the learner sends a message. This page
+  // uses the coach_api endpoints, so it needs its own live refresh loop.
+  useEffect(() => {
+    let cancelled = false;
+
+    const syncThreads = async () => {
+      try {
+        const response = await fetchCoachMessageThreads(ownerEmail || undefined);
+        if (cancelled) return;
+        setOwnerName(response.owner.name || 'Progress Coach');
+        setOwnerEmail(response.owner.email || '');
+        setThreads(response.threads || []);
+        if (selectedLearnerId) {
+          const refreshedThread = response.threads.find(thread => thread.learnerId === selectedLearnerId);
+          if (refreshedThread) setActiveThread(refreshedThread);
+        }
+      } catch {
+        // The initial request displays errors; background refreshes stay quiet.
+      }
+    };
+
+    const timer = window.setInterval(() => { void syncThreads(); }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [ownerEmail, selectedLearnerId]);
+
   useEffect(() => {
     if (!selectedLearnerId) {
       setActiveThread(null);
@@ -189,6 +226,30 @@ export default function CoachMessagesPage() {
     loadThread();
     return () => controller.abort();
   }, [selectedLearnerId]);
+
+  useEffect(() => {
+    if (!selectedLearnerId) return;
+    let cancelled = false;
+
+    const syncActiveThread = async () => {
+      try {
+        const response = await fetchCoachMessageThread(selectedLearnerId, ownerEmail || undefined);
+        if (cancelled) return;
+        setActiveThread(response.thread);
+        setMessages(current => mergeCoachMessages(current, response.messages || []));
+        upsertThread(response.thread);
+      } catch {
+        // WebSocket/live refresh failures should not interrupt composing.
+      }
+    };
+
+    void syncActiveThread();
+    const timer = window.setInterval(() => { void syncActiveThread(); }, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedLearnerId, ownerEmail]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

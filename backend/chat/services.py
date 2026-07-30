@@ -192,6 +192,30 @@ def messages_queryset_for_user(conversation, user):
     )
 
 
+def learner_messages_queryset_for_coach(user):
+    """Return learner-sent messages across every conversation owned by a coach."""
+
+    principal = chat_principal_for_user(user)
+    if principal is None or principal.kind != "coach":
+        raise ChatAccessError("Only a coach can view all learner messages.")
+
+    receipt_filter = _receipt_recipient_filter(principal)
+    viewer_read_at = MessageReceipt.objects.filter(
+        message_id=OuterRef("pk"),
+        **receipt_filter,
+    ).values("read_at")[:1]
+    return (
+        Message.objects.filter(
+            conversation__coach_id=principal.id,
+            sender_type="learner",
+        )
+        .select_related("conversation", "sender_coach", "sender_learner")
+        .filter(~Exists(_hidden_message_filter(principal)))
+        .annotate(viewer_read_at=Subquery(viewer_read_at, output_field=DateTimeField()))
+        .order_by("created_at", "id")
+    )
+
+
 def get_message_for_user(message_id, user):
     principal = chat_principal_for_user(user)
     if principal is None:

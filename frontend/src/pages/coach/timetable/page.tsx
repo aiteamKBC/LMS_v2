@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
+import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
+import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
@@ -37,7 +39,7 @@ interface TimetableEvent {
   location?: string;
   platform?: string;
   priority: 'normal' | 'urgent' | 'high';
-  status: 'completed' | 'scheduled' | 'in-progress' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
+  status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
   sourceStatus?: string;
   sequence?: number;
@@ -56,6 +58,10 @@ interface TimetableEvent {
   meetingLink?: string;
   graphWebLink?: string;
   syncWarning?: string;
+  reviewResponses?: Record<string, string>;
+  reviewCompletedAt?: string | null;
+  managerSignedAt?: string | null;
+  managerSignedBy?: string;
   schedulerOnly?: boolean;
 }
 
@@ -151,80 +157,52 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
-  const isLiveSession = event.source === 'live-session' || event.type === 'live-session';
-  const catchUpTheme = {
-    label: 'Catch-up',
-    bg: 'bg-amber-100',
+  const mcrTheme = {
+    label: 'MCR',
+    bg: 'bg-amber-50',
     border: 'border-amber-300',
     text: 'text-amber-800',
-    icon: 'ri-timer-line',
+    icon: 'ri-chat-smile-2-line',
     dot: 'bg-amber-500',
     barBg: 'bg-amber-500',
   };
-  const base = event.source === 'catch-up' ? catchUpTheme : typeConfig(event.type);
-  const statusThemeMap: Partial<Record<TimetableEvent['status'], Pick<ReturnType<typeof typeConfig>, 'bg' | 'border' | 'text' | 'dot' | 'barBg'>>> = {
-    completed: {
-      bg: 'bg-emerald-50',
-      border: 'border-emerald-300',
-      text: 'text-emerald-800',
-      dot: 'bg-emerald-500',
-      barBg: 'bg-emerald-500',
-    },
-    confirmed: {
-      bg: 'bg-emerald-50',
-      border: 'border-emerald-300',
-      text: 'text-emerald-800',
-      dot: 'bg-emerald-500',
-      barBg: 'bg-emerald-500',
-    },
-    scheduled: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    pending: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    'not-scheduled': {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    'in-progress': {
-      bg: 'bg-secondary-50',
-      border: 'border-secondary-300',
-      text: 'text-secondary-800',
-      dot: 'bg-secondary-500',
-      barBg: 'bg-secondary-500',
-    },
-    cancelled: {
-      bg: 'bg-red-50',
-      border: 'border-red-300',
-      text: 'text-red-800',
-      dot: 'bg-red-500',
-      barBg: 'bg-red-500',
-    },
+  const progressReviewTheme = {
+    label: 'PR',
+    bg: 'bg-teal-50',
+    border: 'border-teal-300',
+    text: 'text-teal-800',
+    icon: 'ri-file-chart-line',
+    dot: 'bg-teal-500',
+    barBg: 'bg-teal-500',
   };
-
-  const statusTheme = statusThemeMap[event.status];
-  if (isLiveSession && !['completed', 'confirmed', 'cancelled'].includes(event.status)) {
-    return base;
-  }
-  if (statusTheme) {
-    return {
-      ...base,
-      ...statusTheme,
-    };
-  }
-  return base;
+  const supportTheme = {
+    label: 'Support',
+    bg: 'bg-indigo-50',
+    border: 'border-indigo-300',
+    text: 'text-indigo-800',
+    icon: 'ri-heart-2-line',
+    dot: 'bg-indigo-500',
+    barBg: 'bg-indigo-500',
+  };
+  const catchUpTheme = {
+    label: 'Catch-up',
+    bg: 'bg-rose-50',
+    border: 'border-rose-300',
+    text: 'text-rose-800',
+    icon: 'ri-timer-line',
+    dot: 'bg-rose-500',
+    barBg: 'bg-rose-500',
+  };
+  const sourceTheme = event.source === 'mcr'
+    ? mcrTheme
+    : event.source === 'progress-review'
+      ? progressReviewTheme
+      : event.source === 'catch-up'
+        ? catchUpTheme
+        : event.source === 'student-support' || event.type === 'welfare'
+          ? supportTheme
+          : null;
+  return sourceTheme || typeConfig(event.type);
 }
 
 function priorityBadge(p: TimetableEvent['priority']) {
@@ -336,7 +314,16 @@ function statusBadge(status: TimetableEvent['status']) {
   if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
   if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-50 text-amber-700 border-amber-200';
   if (status === 'in-progress') return 'bg-primary-50 text-primary-700 border-primary-200';
+  if (status === 'awaiting-signature') return 'bg-violet-50 text-violet-700 border-violet-200';
   return 'bg-red-50 text-red-700 border-red-200';
+}
+
+function statusDot(status: TimetableEvent['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-500';
+  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-500';
+  if (status === 'in-progress') return 'bg-primary-500';
+  if (status === 'awaiting-signature') return 'bg-violet-500';
+  return 'bg-red-500';
 }
 
 function statusLabel(status: TimetableEvent['status']) {
@@ -344,6 +331,7 @@ function statusLabel(status: TimetableEvent['status']) {
   if (status === 'scheduled') return 'Scheduled';
   if (status === 'not-scheduled') return 'Needs Schedule';
   if (status === 'in-progress') return 'In Progress';
+  if (status === 'awaiting-signature') return 'Awaiting Signature';
   if (status === 'confirmed') return 'Confirmed';
   if (status === 'pending') return 'Pending';
   return 'Cancelled';
@@ -436,12 +424,12 @@ function formatDateInputValue(year: number, month: number, day: number) {
 
 /* â”€â”€â”€ Donut Ring â”€â”€â”€ */
 type ViewMode = 'month' | 'week' | 'day';
-type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'completed' | 'cancelled';
-type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up';
+type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'scheduled' | 'in-progress' | 'completed' | 'cancelled';
+type SourceFilter = 'all' | 'live-session' | 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 type SchedulableSource = 'mcr' | 'progress-review' | 'catch-up';
 
-const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up'];
-const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'completed', 'cancelled'];
+const SOURCE_FILTER_ORDER: SourceFilter[] = ['all', 'live-session', 'mcr', 'progress-review', 'catch-up', 'student-support'];
+const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'completed', 'cancelled'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
@@ -449,6 +437,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   'due-soon': 'Due Soon',
   'needs-schedule': 'Needs Schedule',
   scheduled: 'Scheduled',
+  'in-progress': 'In Progress',
   completed: 'Completed',
   cancelled: 'Cancelled',
 };
@@ -459,6 +448,7 @@ const STATUS_FILTER_DOTS: Record<StatusFilter, string> = {
   'due-soon': 'bg-amber-500',
   'needs-schedule': 'bg-orange-500',
   scheduled: 'bg-accent-500',
+  'in-progress': 'bg-secondary-500',
   completed: 'bg-emerald-500',
   cancelled: 'bg-red-500',
 };
@@ -469,6 +459,7 @@ const SOURCE_FILTER_LABELS: Record<SourceFilter, string> = {
   mcr: 'MCR',
   'progress-review': 'Progress Reviews',
   'catch-up': 'Catch-up',
+  'student-support': 'Support',
 };
 
 const SOURCE_FILTER_CHIP_LABELS: Record<SourceFilter, string> = {
@@ -479,9 +470,10 @@ const SOURCE_FILTER_CHIP_LABELS: Record<SourceFilter, string> = {
 const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   all: 'bg-foreground-400',
   'live-session': 'bg-sky-500',
-  mcr: 'bg-primary-500',
-  'progress-review': 'bg-secondary-500',
-  'catch-up': 'bg-amber-500',
+  mcr: 'bg-amber-500',
+  'progress-review': 'bg-teal-500',
+  'catch-up': 'bg-rose-500',
+  'student-support': 'bg-indigo-500',
 };
 
 const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up'];
@@ -495,14 +487,14 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
   'progress-review': {
     description: 'Generated progress reviews that still need a date.',
     icon: 'ri-file-chart-line',
-    accent: 'text-secondary-700',
-    surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
+    accent: 'text-teal-700',
+    surface: 'from-teal-500/10 via-teal-400/5 to-transparent',
   },
   'catch-up': {
     description: 'Learner catch-up bookings waiting for placement.',
     icon: 'ri-timer-line',
-    accent: 'text-amber-700',
-    surface: 'from-amber-500/10 via-amber-400/5 to-transparent',
+    accent: 'text-rose-700',
+    surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
   },
 };
 
@@ -536,6 +528,7 @@ function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent
 function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
   if (source === 'all') return true;
   if (source === 'live-session') return event.source === 'live-session' || event.type === 'live-session';
+  if (source === 'student-support') return event.source === 'student-support' || event.type === 'welfare';
   return event.source === source;
 }
 
@@ -610,13 +603,31 @@ function compareSchedulablePriority(a: TimetableEvent, b: TimetableEvent) {
 
 function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
   if (!searchTerm) return true;
-  return [
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  if (!normalizedSearch) return true;
+
+  const searchableText = [
     event.title,
     event.learner,
+    event.email,
+    event.learnerId,
     event.employer,
+    event.managerEmail,
     event.tutor,
     event.programme,
-  ].some(value => value?.toLowerCase().includes(searchTerm));
+    event.cohort,
+    event.location,
+    event.notes,
+    event.timeLabel,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return normalizedSearch
+    .split(/\s+/)
+    .filter(Boolean)
+    .every(token => searchableText.includes(token));
 }
 
 function EventDetailTile({ icon, label, value, sub }: { icon: string; label: string; value: ReactNode; sub?: ReactNode }) {
@@ -682,6 +693,7 @@ export default function CoachTimetablePage() {
   const [eventActionBusy, setEventActionBusy] = useState(false);
   const [eventActionError, setEventActionError] = useState<string | null>(null);
   const [eventActionNotice, setEventActionNotice] = useState<string | null>(null);
+  const [progressReviewCompletionEvent, setProgressReviewCompletionEvent] = useState<TimetableEvent | null>(null);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalType, setScheduleModalType] = useState<SchedulableSource>('mcr');
   const [scheduleModalLearnerKey, setScheduleModalLearnerKey] = useState('');
@@ -1063,6 +1075,7 @@ export default function CoachTimetablePage() {
     if (filterStatus === 'due-soon' && !isDueSoonMetricEvent(e)) return false;
     if (filterStatus === 'needs-schedule' && !needsSchedulingMetricEvent(e)) return false;
     if (filterStatus === 'scheduled' && !isScheduledMetricEvent(e)) return false;
+    if (filterStatus === 'in-progress' && e.status !== 'in-progress') return false;
     if (filterStatus === 'completed' && !isCompletedMetricEvent(e)) return false;
     if (filterStatus === 'cancelled' && e.status !== 'cancelled') return false;
     return true;
@@ -1091,6 +1104,7 @@ export default function CoachTimetablePage() {
     'due-soon': sourceFilteredVisibleRangeEvents.filter(event => isDueSoonMetricEvent(event)).length,
     'needs-schedule': sourceFilteredVisibleRangeEvents.filter(needsSchedulingMetricEvent).length,
     scheduled: sourceFilteredVisibleRangeEvents.filter(isScheduledMetricEvent).length,
+    'in-progress': sourceFilteredVisibleRangeEvents.filter(event => event.status === 'in-progress').length,
     completed: sourceFilteredVisibleRangeEvents.filter(isCompletedMetricEvent).length,
     cancelled: sourceFilteredVisibleRangeEvents.filter(event => event.status === 'cancelled').length,
   };
@@ -1368,8 +1382,61 @@ export default function CoachTimetablePage() {
     updateSingleEvent,
   ]);
 
-  const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'cancel') => {
+  const openSelectedProgressReviewForm = useCallback(() => {
+    if (!selectedEvent || selectedEvent.source !== 'progress-review') return;
+    setEventActionError(null);
+    setEventActionNotice(null);
+    setProgressReviewCompletionEvent(selectedEvent);
+  }, [selectedEvent]);
+
+  const handleProgressReviewSubmit = useCallback(async (responses: ProgressReviewResponses) => {
+    if (!progressReviewCompletionEvent?.eventKey || !progressReviewCompletionEvent.ownerEmail) return;
+
+    setEventActionBusy(true);
+    setEventActionError(null);
+    setEventActionNotice(null);
+    try {
+      const response = await fetch(ACTION_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventKey: progressReviewCompletionEvent.eventKey,
+          ownerEmail: progressReviewCompletionEvent.ownerEmail,
+          action: 'complete',
+          reviewResponses: responses,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const updatedEvent = data.event as TimetableEvent;
+      updateSingleEvent(updatedEvent);
+      setProgressReviewCompletionEvent(null);
+      if (data.warning) setEventActionNotice(data.warning as string);
+    } catch (err) {
+      setEventActionError(err instanceof Error ? err.message : 'Unable to submit progress review');
+    } finally {
+      setEventActionBusy(false);
+    }
+  }, [progressReviewCompletionEvent, updateSingleEvent]);
+
+  const handleJoinSelectedMeeting = useCallback(() => {
+    if (!selectedEvent) return;
+    const url = selectedEvent.meetingLink || selectedEvent.graphWebLink;
+    if (!url) {
+      setEventActionError('This event does not have a meeting link yet. Schedule it again first.');
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, [selectedEvent]);
+
+  const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'sign' | 'cancel') => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+    if (action === 'complete' && selectedEvent.source === 'progress-review') {
+      setEventActionError(null);
+      setEventActionNotice(null);
+      setProgressReviewCompletionEvent(selectedEvent);
+      return;
+    }
 
     setEventActionBusy(true);
     setEventActionError(null);
@@ -1625,20 +1692,20 @@ export default function CoachTimetablePage() {
             <div className="relative w-full">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-xs"></i>
               <input
-                type="text" placeholder="Search events..." value={searchTerm}
+                type="text" placeholder="Search events or learner names..." value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="h-10 w-full rounded-xl border border-background-200 bg-background-50 pl-9 pr-3 text-xs font-medium text-foreground-900 placeholder:text-foreground-400 transition-all focus:outline-none focus:ring-2 focus:ring-primary-200"
               />
             </div>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-start gap-3 border-t border-background-100 pt-3">
-            <div className="w-fit max-w-full rounded-xl bg-background-50 p-2.5">
+          <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-4 border-t border-background-100 pt-4">
+            <div className="min-w-[360px] flex-1 rounded-xl bg-background-50 px-3 py-2.5">
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
                 <span className="text-[10px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
               </div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-x-2.5 gap-y-2">
                 {sourceFilterOptions.map(option => {
                   const isActive = filterSource === option.value;
                   return (
@@ -1661,12 +1728,12 @@ export default function CoachTimetablePage() {
                 })}
               </div>
             </div>
-            <div className="w-fit max-w-full rounded-xl bg-background-50 p-2.5">
+            <div className="min-w-[480px] flex-[1.4] rounded-xl bg-background-50 px-3 py-2.5">
               <div className="mb-2 flex items-center gap-2">
                 <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
                 <span className="truncate text-[10px] font-bold text-foreground-400">{activeFilterLabel}</span>
               </div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-x-2.5 gap-y-2">
                 {STATUS_FILTER_ORDER.map(status => {
                   const isActive = filterStatus === status;
                   return (
@@ -1768,6 +1835,10 @@ export default function CoachTimetablePage() {
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
                                   <span className="shrink-0 tabular-nums">{formatTime(ev.startHour)}</span>
                                   <span className="truncate leading-tight">{ev.title}</span>
+                                  <span
+                                    className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${statusDot(ev.status)}`}
+                                    title={statusLabel(ev.status)}
+                                  ></span>
                                 </div>
                                 {(ev.learner || ev.programme) && (
                                   <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
@@ -1850,7 +1921,13 @@ export default function CoachTimetablePage() {
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
-                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</p>
+                                    <p className="flex items-center gap-1.5 text-[8px] text-foreground-400 truncate">
+                                      <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
+                                      <span
+                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(ev.status)}`}
+                                        title={statusLabel(ev.status)}
+                                      ></span>
+                                    </p>
                                     {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
                                       <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
@@ -1993,7 +2070,9 @@ export default function CoachTimetablePage() {
                             {ev.employer && <span className="truncate text-foreground-400">· {ev.employer}</span>}
                           </div>
                         </div>
-                        <span className={`w-2 h-2 rounded-full ${tc.dot}`}></span>
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold ${statusBadge(ev.status)}`}>
+                          {statusLabel(ev.status)}
+                        </span>
                       </div>
                     );
                   })}
@@ -2115,7 +2194,7 @@ export default function CoachTimetablePage() {
                       {eventActionError || eventActionNotice}
                     </div>
                   )}
-                  {selectedEvent.status !== 'completed' && (
+                  {!['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
@@ -2169,7 +2248,7 @@ export default function CoachTimetablePage() {
                           <i className="ri-calendar-check-line mr-1"></i>
                           {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                         </button>
-                        {(selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress') && (
+                        {selectedEvent.status === 'scheduled' && (
                         <button
                           onClick={() => handleEventAction('start')}
                           disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
@@ -2178,13 +2257,23 @@ export default function CoachTimetablePage() {
                           <i className="ri-play-circle-line mr-1"></i>Start
                           </button>
                         )}
+                        {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
+                          <button
+                            onClick={handleJoinSelectedMeeting}
+                            disabled={eventActionBusy}
+                            className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-video-on-line mr-1"></i>Join
+                          </button>
+                        )}
                         {selectedEvent.status === 'in-progress' && (
                           <button
-                            onClick={() => handleEventAction('complete')}
+                            onClick={selectedEvent.source === 'progress-review' ? openSelectedProgressReviewForm : () => handleEventAction('complete')}
                             disabled={eventActionBusy}
                             className="rounded-xl bg-secondary-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-secondary-500/20 transition-smooth hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
-                            <i className="ri-check-double-line mr-1"></i>Complete
+                            <i className={`${selectedEvent.source === 'progress-review' ? 'ri-file-edit-line' : 'ri-check-double-line'} mr-1`}></i>
+                            {selectedEvent.source === 'progress-review' ? 'Open review form' : 'Complete'}
                           </button>
                         )}
                         {(selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress') && (
@@ -2197,6 +2286,25 @@ export default function CoachTimetablePage() {
                           </button>
                         )}
                       </div>
+                    </div>
+                  )}
+                  {selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
+                    <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                        <i className="ri-pen-nib-line"></i>
+                      </span>
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-violet-900">Waiting for line manager signature</p>
+                        <p className="mt-1 text-[11px] text-violet-700">The review form has been submitted. Confirm the manager signature to complete this PR.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleEventAction('sign')}
+                        disabled={eventActionBusy}
+                        className="whitespace-nowrap rounded-xl bg-violet-700 px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <i className="ri-quill-pen-line mr-1.5"></i>Confirm Signature
+                      </button>
                     </div>
                   )}
                 </div>
@@ -2822,6 +2930,18 @@ export default function CoachTimetablePage() {
             </div>
           </div>
         </div>
+      )}
+      {progressReviewCompletionEvent && (
+        <ProgressReviewCompletionModal
+          key={eventIdentity(progressReviewCompletionEvent)}
+          event={progressReviewCompletionEvent}
+          busy={eventActionBusy}
+          error={eventActionError}
+          onClose={() => {
+            if (!eventActionBusy) setProgressReviewCompletionEvent(null);
+          }}
+          onSubmit={handleProgressReviewSubmit}
+        />
       )}
     </WorkspaceShell>
   );
