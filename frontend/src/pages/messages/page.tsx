@@ -140,7 +140,6 @@ export default function MessagesPage() {
     setSearchParams(current => {
       const next = new URLSearchParams(current);
       next.delete('conversation');
-      next.delete('contact');
       return next;
     }, { replace: true });
   };
@@ -157,23 +156,10 @@ export default function MessagesPage() {
       setConversations(data);
 
       const requestedConversation = Number(searchParams.get('conversation'));
-      const requestedContact = searchParams.get('contact')?.trim().toLowerCase();
-      const contactConversation = requestedContact
-        ? data.find((conversation) => {
-          const participant = conversation.participant;
-          if (requestedContact === 'med-maher' || requestedContact === 'coach') {
-            return participant.type === 'coach';
-          }
-          return participant.email.toLowerCase() === requestedContact
-            || participant.id.toLowerCase() === requestedContact;
-        })
-        : null;
       setActiveConversationId(current => (
-        current ?? (
-          Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
-            ? requestedConversation
-            : contactConversation?.id ?? null
-        )
+        current ?? (Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
+          ? requestedConversation
+          : null)
       ));
       setError(null);
     } catch (cause) {
