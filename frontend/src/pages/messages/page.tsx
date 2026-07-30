@@ -102,7 +102,7 @@ function isWithinMessageActionWindow(message: ChatMessage): boolean {
 export default function MessagesPage() {
   const { auth } = useAuth();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const role = auth.roles[0]?.slug || 'learner';
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
@@ -126,11 +126,23 @@ export default function MessagesPage() {
   const socketRef = useRef<WebSocket | null>(null);
   const hiddenMessageIdsRef = useRef<Set<number>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const activeConversation = useMemo(
     () => conversations.find(conversation => conversation.id === activeConversationId) || null,
     [activeConversationId, conversations],
   );
+
+  const leaveConversation = () => {
+    setActiveConversationId(null);
+    setMessages([]);
+    setSearchParams(current => {
+      const next = new URLSearchParams(current);
+      next.delete('conversation');
+      return next;
+    }, { replace: true });
+  };
 
   const loadConversations = useCallback(async () => {
     setLoadingConversations(true);
@@ -300,6 +312,8 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!auth.isAuthenticated || activeConversationId === null) return;
 
+    shouldStickToBottomRef.current = true;
+
     const syncMessages = async () => {
       try {
         const page = await fetchChatMessages(activeConversationId);
@@ -333,9 +347,24 @@ export default function MessagesPage() {
     return () => window.clearInterval(pollTimer);
   }, [activeConversationId, auth.isAuthenticated]);
 
+  const latestMessageId = messages[messages.length - 1]?.id ?? null;
+
+  const handleMessagesScroll = () => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom <= 96;
+  };
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const container = messagesContainerRef.current;
+    if (!container || !messages.length || !shouldStickToBottomRef.current) return;
+
+    // Keep new messages visible without starting a long animation that can
+    // be restarted by a background refresh.
+    container.scrollTop = container.scrollHeight;
+  }, [activeConversationId, latestMessageId, messages.length]);
 
   const filteredConversations = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -476,7 +505,7 @@ export default function MessagesPage() {
           <span className="font-medium text-foreground-700">{isCoach ? 'Learner Messages' : 'Messages'}</span>
         </div>
 
-        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm overflow-hidden">
+        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm overflow-hidden min-h-0">
           <div className="px-5 py-5 md:px-7 md:py-6 border-b border-foreground-200/70">
             <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
               <div>
@@ -536,8 +565,8 @@ export default function MessagesPage() {
             </div>
           </div>
 
-          <div className="flex h-[min(700px,calc(100vh-330px))] min-h-[500px]">
-            <aside className="w-full md:w-[300px] lg:w-[330px] shrink-0 border-r border-foreground-200 bg-background-50 flex flex-col">
+          <div className="flex h-[min(700px,calc(100vh-330px))] min-h-[500px] min-h-0">
+            <aside className="w-full md:w-[300px] lg:w-[330px] shrink-0 min-h-0 border-r border-foreground-200 bg-background-50 flex flex-col">
               <div className="px-4 py-3 border-b border-foreground-200 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground-800">{inboxCopy.listTitle}</p>
@@ -581,10 +610,18 @@ export default function MessagesPage() {
               </div>
             </aside>
 
-            <main className="hidden md:flex flex-1 min-w-0 bg-background-50 flex-col">
+            <main className="hidden md:flex flex-1 min-w-0 min-h-0 bg-background-50 flex-col">
               {activeConversation && participant ? (
                 <>
-                  <div className="px-5 lg:px-6 py-4 border-b border-foreground-200 bg-background-50 flex items-start justify-between gap-4 shrink-0">
+                  <div className="px-5 lg:px-6 py-4 border-b border-foreground-200 bg-background-50 flex items-start justify-start gap-3 shrink-0">
+                    <button
+                      onClick={leaveConversation}
+                      title="Back"
+                      aria-label="Back"
+                      className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-full border border-foreground-200 text-foreground-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 transition-smooth cursor-pointer"
+                    >
+                      <i className="ri-arrow-left-line text-base" />
+                    </button>
                     <div className="flex items-start gap-3 min-w-0">
                       <div className="relative shrink-0">
                         <div className="w-12 h-12 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center font-bold">{initials(participant.name)}</div>
@@ -604,10 +641,7 @@ export default function MessagesPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button onClick={() => navigate(-1)} className="hidden lg:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-foreground-200 text-xs font-medium text-foreground-600 hover:border-primary-300 hover:text-primary-700 transition-smooth cursor-pointer">
-                        <i className="ri-arrow-left-line" /> Back
-                      </button>
+                    <div className="flex items-center gap-2 shrink-0 ml-auto">
                       <button onClick={() => navigate(`/learner/profile?learner=${participant.id}`)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-smooth cursor-pointer">
                         <i className="ri-user-line" /> Open Profile
                       </button>
@@ -616,7 +650,11 @@ export default function MessagesPage() {
 
                   {error && <div className="px-6 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700">{error}</div>}
 
-                  <div className="flex-1 overflow-y-auto px-5 lg:px-8 py-5 bg-background-50">
+                  <div
+                    ref={messagesContainerRef}
+                    onScroll={handleMessagesScroll}
+                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 lg:px-8 py-5 bg-background-50"
+                  >
                     <div className="flex justify-center mb-5">
                       <span className="text-[10px] text-foreground-500 border border-foreground-200 bg-background-100 px-2.5 py-1 rounded-full">
                         {messages[0] ? formatDateLabel(messages[0].created_at) : 'Conversation'}
@@ -635,7 +673,7 @@ export default function MessagesPage() {
                           <div key={message.id} className={isLastInGroup ? 'pb-4' : 'pb-0.5'}>
                             {showDate && <div className="flex justify-center my-5"><span className="text-[10px] text-foreground-500 border border-foreground-200 bg-background-100 px-2.5 py-1 rounded-full">{formatDateLabel(message.created_at)}</span></div>}
                             <div className={`flex ${message.is_mine ? 'justify-end' : 'justify-start'} group`}>
-                              <div className="max-w-[78%] flex flex-col">
+                              <div className="max-w-[70%] flex flex-col">
                                 {isFirstInGroup && <span className={`text-[10px] text-foreground-400 mb-1 ${message.is_mine ? 'text-right' : 'text-left'}`}>{message.is_mine ? 'You' : participant.name}</span>}
                                 {editingMessageId === message.id ? (
                                   <div className="rounded-2xl border border-primary-300 bg-background-50 p-3 shadow-sm">
@@ -649,7 +687,7 @@ export default function MessagesPage() {
                                       maxLength={5000}
                                       rows={3}
                                       autoFocus
-                                      className="w-full min-w-[220px] resize-none bg-transparent outline-none text-sm text-foreground-700"
+                                      className="w-full min-w-[220px] resize-none border-0 bg-transparent outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 text-sm text-foreground-700"
                                     />
                                     <div className="flex justify-end gap-2 mt-2">
                                       <button onClick={cancelEdit} disabled={savingEdit} className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-foreground-500 hover:bg-background-100 cursor-pointer disabled:opacity-50">Cancel</button>
@@ -660,10 +698,10 @@ export default function MessagesPage() {
                                   </div>
                                 ) : (
                                   <div className={`flex items-end gap-2 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`px-4 py-3 shadow-sm ${message.is_mine
+                                    <div className={`px-3.5 py-2.5 shadow-sm ${message.is_mine
                                       ? `bg-primary-600 text-white ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-md'} ${isLastInGroup ? 'rounded-br-md rounded-b-2xl' : 'rounded-r-md rounded-b-md'}`
                                       : `bg-background-100 text-foreground-700 border border-foreground-200 ${isFirstInGroup ? 'rounded-t-2xl' : 'rounded-t-md'} ${isLastInGroup ? 'rounded-bl-md rounded-b-2xl' : 'rounded-l-md rounded-b-md'}`}`}>
-                                      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.is_deleted ? 'Message deleted' : message.body}</p>
+                                      <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">{message.is_deleted ? 'Message deleted' : message.body}</p>
                                     </div>
                                     <div className={`relative mb-1 ${messageMenuId === message.id ? 'z-20' : ''}`}>
                                       <button
@@ -697,7 +735,7 @@ export default function MessagesPage() {
                                     </div>
                                   </div>
                                 )}
-                                {isLastInGroup && <div className={`flex items-center gap-1 mt-1 text-[10px] text-foreground-400 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
+                                {isLastInGroup && <div className={`flex items-center gap-1 mt-1 text-[9px] text-foreground-400 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
                                   <span>{formatTime(message.created_at)}{message.edited_at && <span> · edited</span>}</span>
                                   {message.is_mine && <i className={`${message.read_at ? 'ri-check-double-line text-primary-500' : 'ri-check-line'} text-xs`} />}
                                 </div>}
@@ -710,8 +748,8 @@ export default function MessagesPage() {
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div className="px-5 lg:px-6 py-3 border-t border-foreground-200 bg-background-50 shrink-0">
-                    <div className="rounded-2xl border border-foreground-200 bg-background-100/70 p-3 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100 transition-smooth">
+                  <div className="px-4 lg:px-5 py-2.5 border-t border-foreground-200 bg-background-50 shrink-0">
+                    <div className="rounded-xl border border-foreground-200 bg-background-100/70 p-2.5 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100 transition-smooth">
                       <textarea
                         value={newMessage}
                         onChange={event => setNewMessage(event.target.value)}
@@ -719,9 +757,9 @@ export default function MessagesPage() {
                         maxLength={5000}
                         rows={2}
                         placeholder={`Message ${participant.name.split(' ')[0]}...`}
-                        className="w-full resize-none bg-transparent outline-none text-sm text-foreground-700 placeholder:text-foreground-400"
+                        className="w-full resize-none border-0 bg-transparent outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 text-sm text-foreground-700 placeholder:text-foreground-400"
                       />
-                      <div className="flex items-center justify-between gap-3 mt-2">
+                      <div className="flex items-center justify-between gap-3 mt-1.5">
                         <p className="text-[10px] text-foreground-400">Press Enter to send, Shift + Enter for a new line.</p>
                         <button
                           onClick={() => void handleSend()}
