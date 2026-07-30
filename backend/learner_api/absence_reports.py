@@ -17,7 +17,7 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .models import LearnerProfile
 
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,9 @@ def _error(message, status=400):
 
 
 def _source_learner(kind, learner_id):
-    model = CommercialUser if kind == "commercial" else EnrolmentUser if kind == "apprenticeship" else None
-    return model.objects.filter(pk=learner_id).first() if model else None
+    if kind not in {"commercial", "apprenticeship"}:
+        return None
+    return LearnerProfile.objects.filter(pk=learner_id).first()
 
 
 def _fetch_missed_sessions(learner, learner_id):

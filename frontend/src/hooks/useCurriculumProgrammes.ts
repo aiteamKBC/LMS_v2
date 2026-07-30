@@ -7,10 +7,10 @@ export function useCurriculumProgrammes() {
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  const load = useCallback(async (signal?: AbortSignal, options: { silent?: boolean } = {}) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     try {
       const programmeResult = await fetchCurriculumProgrammes(signal);
       if (signal?.aborted || requestId !== requestIdRef.current) return [];
@@ -22,7 +22,7 @@ export function useCurriculumProgrammes() {
       setError(err instanceof Error ? err.message : 'Unable to load curriculum programmes');
       return [];
     } finally {
-      if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
+      if (!options.silent && !signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
   }, []);
 
@@ -32,5 +32,5 @@ export function useCurriculumProgrammes() {
     return () => controller.abort();
   }, [load]);
 
-  return { programmes, loading, error, reload: () => load() };
+  return { programmes, loading, error, reload: (options?: { silent?: boolean }) => load(undefined, options) };
 }

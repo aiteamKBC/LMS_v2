@@ -3,24 +3,23 @@
 Data source: normalized tables in the `curriculum` schema.
 
 Cascade (mirrors the builder UI):
-    programmes                -> distinct Training_plan.Program
-    cohorts?programme=        -> distinct Training_plan.Cohort_name
-    groups?programme=&cohort= -> distinct Training_plan.group_name
+    programmes                -> curriculum.programmes
+    cohorts?programme=        -> curriculum.cohorts
+    groups?programme=&cohort= -> curriculum.groups
     modules?programme=        -> authored modules for the programme (NOT filtered
                                  by cohort/group — modules belong to the programme)
     weeks?module=             -> weeks for a module
     components?week=          -> components for a week
 
 How the authoring tables link together:
-    Training_plan(id, Program, Cohort_name, group_name, module_name)
+    programmes(program_id, name)
         the master grid — one row per module scheduled for a group.
-    modules(module_catalogue_id, title, imported_from_training_plan_id)
-        authored module content; ties back to a Training_plan row (and, by
+    modules(module_catalogue_id, programme_id, title)
+        authored module content linked by programme/module ids (and, by
         title, to that group's module_name).
     weeks(id, module_catalogue_id)      -> belongs to a module
     components(id, week_id)             -> belongs to a week
-So a group's modules come from Training_plan.module_name; each module's weeks
-and components follow the module_catalogue_id / week_id chain.
+Modules, weeks and components follow the module_catalogue_id / week_id chain.
 """
 import json
 
@@ -111,7 +110,7 @@ def modules(request):
     programme = (request.GET.get("programme") or "").strip()
     if not programme:
         return _error("programme query param is required.", 400)
-    # Modules belong to the programme and are no longer sourced from Training_plan.
+    # Modules belong to the programme in the normalized curriculum schema.
     return _guard(lambda: [
         {"id": r["module_catalogue_id"], "title": r["title"] or r["module_catalogue_id"]}
         for r in _rows(
