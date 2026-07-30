@@ -2248,7 +2248,7 @@ export default function CoachTimetablePage() {
                       {eventActionError || eventActionNotice}
                     </div>
                   )}
-                  {!['completed', 'awaiting-signature'].includes(selectedEvent.status) && (
+                  {!['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
