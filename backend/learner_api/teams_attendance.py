@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from django.db import router
+from django.db import connections, router, transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -24,12 +24,16 @@ def _local_datetime(value):
 def fetch_verified_teams_attendance_rows(
     learner_ids: list[int] | None = None,
     learner_emails: list[str] | None = None,
+    module_refs: list[str] | None = None,
+    *,
+    all_learners: bool = False,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports."""
 
     ids = sorted({int(value) for value in (learner_ids or []) if value})
     emails = sorted({_email(value) for value in (learner_emails or []) if _email(value)})
-    if not ids and not emails:
+    modules = sorted({str(value).strip() for value in (module_refs or []) if str(value).strip()})
+    if not ids and not emails and not modules and not all_learners:
         return []
 
     database = router.db_for_read(LearnerProfile) or "default"
@@ -38,12 +42,13 @@ def fetch_verified_teams_attendance_rows(
         learner_filter |= Q(id__in=ids)
     if emails:
         learner_filter |= Q(email_normalized__in=emails)
+    if modules:
+        learner_filter |= Q(plan_modules__module_ref__in=modules)
 
-    learners = list(
-        LearnerProfile.objects.using(database)
-        .filter(learner_filter)
-        .prefetch_related("plan_modules")
-    )
+    learner_queryset = LearnerProfile.objects.using(database).prefetch_related("plan_modules")
+    if learner_filter:
+        learner_queryset = learner_queryset.filter(learner_filter)
+    learners = list(learner_queryset.distinct())
     if not learners:
         return []
 
@@ -116,6 +121,7 @@ def fetch_verified_teams_attendance_rows(
                     "learner_name": learner.full_name,
                     "learner_email": learner.email,
                     "session_id": occurrence.id,
+                    "live_session_id": session.id,
                     "session_title": title,
                     "session_type": "live_session",
                     "session_date": start.date(),
@@ -126,8 +132,139 @@ def fetch_verified_teams_attendance_rows(
                     "catchup_completed": False,
                     "absence_reason": "",
                     "attended_seconds": attendance["total_attendance_seconds"] if attendance else 0,
+                    "attendance_report_id": occurrence.attendance_report_id,
+                    "module_title": str(session.module_title or "").strip(),
+                    "coach_name": learner.coach_name,
                     "updated_at": occurrence.artifacts_synced_at or occurrence.updated_at,
                 }
             )
 
     return rows
+
+
+ATTENDANCE_REPORTING_TABLE = '"Learner"."learner_attendance_details"'
+
+
+def ensure_teams_attendance_reporting_columns(database: str = "default") -> None:
+    with connections[database].cursor() as cursor:
+        # This legacy trigger targets the removed Learner.Absence table and
+        # prevents every insert/update on the reporting table.
+        cursor.execute(
+            f"""
+            DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
+            ON {ATTENDANCE_REPORTING_TABLE}
+            """
+        )
+        cursor.execute(
+            f"""
+            ALTER TABLE {ATTENDANCE_REPORTING_TABLE}
+                ADD COLUMN IF NOT EXISTS attended_seconds integer NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS attendance_report_id text,
+                ADD COLUMN IF NOT EXISTS live_session_id text,
+                ADD COLUMN IF NOT EXISTS source varchar(40) NOT NULL DEFAULT 'legacy',
+                ADD COLUMN IF NOT EXISTS synced_at timestamp with time zone
+            """
+        )
+        cursor.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_attendance_details_source
+            ON {ATTENDANCE_REPORTING_TABLE} (source)
+            """
+        )
+        cursor.execute(
+            f"""
+            CREATE OR REPLACE VIEW "Learner"."verified_teams_attendance" AS
+            SELECT *
+            FROM {ATTENDANCE_REPORTING_TABLE}
+            WHERE source = 'microsoft_teams'
+            """
+        )
+
+
+def sync_verified_teams_attendance_reporting(
+    learner_ids: list[int] | None = None,
+    learner_emails: list[str] | None = None,
+    module_refs: list[str] | None = None,
+    *,
+    all_learners: bool = False,
+) -> int:
+    """Upsert verified Teams attendance into the flat reporting table."""
+
+    database = router.db_for_write(LearnerProfile) or "default"
+    rows = fetch_verified_teams_attendance_rows(
+        learner_ids,
+        learner_emails,
+        module_refs,
+        all_learners=all_learners,
+    )
+    ensure_teams_attendance_reporting_columns(database)
+    if not rows:
+        return 0
+
+    query = f"""
+        INSERT INTO {ATTENDANCE_REPORTING_TABLE} (
+            learner_id, learner_name, learner_email,
+            session_id, session_title, session_type,
+            session_date, session_start_time, session_end_time,
+            attendance_status, minutes_late, absence_reason,
+            catchup_completed, coach_name, module_title,
+            attended_seconds, attendance_report_id, live_session_id,
+            source, synced_at, updated_at
+        ) VALUES (
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            'microsoft_teams', CURRENT_TIMESTAMP, %s
+        )
+        ON CONFLICT (learner_id, session_id) DO UPDATE SET
+            learner_name = EXCLUDED.learner_name,
+            learner_email = EXCLUDED.learner_email,
+            session_title = EXCLUDED.session_title,
+            session_type = EXCLUDED.session_type,
+            session_date = EXCLUDED.session_date,
+            session_start_time = EXCLUDED.session_start_time,
+            session_end_time = EXCLUDED.session_end_time,
+            attendance_status = EXCLUDED.attendance_status,
+            minutes_late = EXCLUDED.minutes_late,
+            absence_reason = EXCLUDED.absence_reason,
+            catchup_completed = EXCLUDED.catchup_completed,
+            coach_name = EXCLUDED.coach_name,
+            module_title = EXCLUDED.module_title,
+            attended_seconds = EXCLUDED.attended_seconds,
+            attendance_report_id = EXCLUDED.attendance_report_id,
+            live_session_id = EXCLUDED.live_session_id,
+            source = EXCLUDED.source,
+            synced_at = CURRENT_TIMESTAMP,
+            updated_at = EXCLUDED.updated_at
+    """
+    params = [
+        (
+            row["learner_id"],
+            row["learner_name"],
+            row["learner_email"],
+            row["session_id"],
+            row["session_title"],
+            row["session_type"],
+            row["session_date"],
+            row["session_start_time"],
+            row["session_end_time"],
+            row["attendance_status"],
+            row["minutes_late"],
+            row["absence_reason"],
+            row["catchup_completed"],
+            row["coach_name"],
+            row["module_title"],
+            row["attended_seconds"],
+            row["attendance_report_id"],
+            row["live_session_id"],
+            row["updated_at"],
+        )
+        for row in rows
+    ]
+    with transaction.atomic(using=database):
+        with connections[database].cursor() as cursor:
+            cursor.executemany(query, params)
+    return len(rows)

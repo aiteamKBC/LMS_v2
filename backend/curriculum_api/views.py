@@ -1214,6 +1214,17 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     )
         except RuntimeError as exc:
             errors.append(f'{artifact_type.title()}: {exc}')
+
+    try:
+        from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
+
+        synced['reportingRows'] = sync_verified_teams_attendance_reporting(
+            module_refs=[clean_str(series.get('module_catalogue_id'))],
+        )
+    except Exception as exc:
+        logger.exception('Unable to refresh the learner attendance reporting table.')
+        errors.append(f'Attendance reporting: {exc}')
+
     return JsonResponse({'synced': synced, 'errors': errors, 'partial': bool(errors)}, status=207 if errors else 200)
 
 
