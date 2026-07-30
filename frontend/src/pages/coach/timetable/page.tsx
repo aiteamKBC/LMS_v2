@@ -157,7 +157,6 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
-  const isLiveSession = event.source === 'live-session' || event.type === 'live-session';
   const mcrTheme = {
     label: 'MCR',
     bg: 'bg-amber-50',
@@ -178,12 +177,12 @@ function eventConfig(event: TimetableEvent) {
   };
   const supportTheme = {
     label: 'Support',
-    bg: 'bg-cyan-50',
-    border: 'border-cyan-300',
-    text: 'text-cyan-800',
+    bg: 'bg-indigo-50',
+    border: 'border-indigo-300',
+    text: 'text-indigo-800',
     icon: 'ri-heart-2-line',
-    dot: 'bg-cyan-500',
-    barBg: 'bg-cyan-500',
+    dot: 'bg-indigo-500',
+    barBg: 'bg-indigo-500',
   };
   const catchUpTheme = {
     label: 'Catch-up',
@@ -203,80 +202,7 @@ function eventConfig(event: TimetableEvent) {
         : event.source === 'student-support' || event.type === 'welfare'
           ? supportTheme
           : null;
-  const base = sourceTheme || typeConfig(event.type);
-  const statusThemeMap: Partial<Record<TimetableEvent['status'], Pick<ReturnType<typeof typeConfig>, 'bg' | 'border' | 'text' | 'dot' | 'barBg'>>> = {
-    completed: {
-      bg: 'bg-emerald-50',
-      border: 'border-emerald-300',
-      text: 'text-emerald-800',
-      dot: 'bg-emerald-500',
-      barBg: 'bg-emerald-500',
-    },
-    confirmed: {
-      bg: 'bg-emerald-50',
-      border: 'border-emerald-300',
-      text: 'text-emerald-800',
-      dot: 'bg-emerald-500',
-      barBg: 'bg-emerald-500',
-    },
-    scheduled: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    pending: {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    'not-scheduled': {
-      bg: 'bg-amber-50',
-      border: 'border-amber-300',
-      text: 'text-amber-800',
-      dot: 'bg-amber-500',
-      barBg: 'bg-amber-500',
-    },
-    'in-progress': {
-      bg: 'bg-secondary-50',
-      border: 'border-secondary-300',
-      text: 'text-secondary-800',
-      dot: 'bg-secondary-500',
-      barBg: 'bg-secondary-500',
-    },
-    'awaiting-signature': {
-      bg: 'bg-violet-50',
-      border: 'border-violet-300',
-      text: 'text-violet-800',
-      dot: 'bg-violet-500',
-      barBg: 'bg-violet-500',
-    },
-    cancelled: {
-      bg: 'bg-red-50',
-      border: 'border-red-300',
-      text: 'text-red-800',
-      dot: 'bg-red-500',
-      barBg: 'bg-red-500',
-    },
-  };
-
-  const statusTheme = statusThemeMap[event.status];
-  if (isLiveSession && !['completed', 'confirmed', 'cancelled'].includes(event.status)) {
-    return base;
-  }
-  if (sourceTheme && ['scheduled', 'pending', 'not-scheduled'].includes(event.status)) {
-    return base;
-  }
-  if (statusTheme) {
-    return {
-      ...base,
-      ...statusTheme,
-    };
-  }
-  return base;
+  return sourceTheme || typeConfig(event.type);
 }
 
 function priorityBadge(p: TimetableEvent['priority']) {
@@ -390,6 +316,14 @@ function statusBadge(status: TimetableEvent['status']) {
   if (status === 'in-progress') return 'bg-primary-50 text-primary-700 border-primary-200';
   if (status === 'awaiting-signature') return 'bg-violet-50 text-violet-700 border-violet-200';
   return 'bg-red-50 text-red-700 border-red-200';
+}
+
+function statusDot(status: TimetableEvent['status']) {
+  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-500';
+  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-500';
+  if (status === 'in-progress') return 'bg-primary-500';
+  if (status === 'awaiting-signature') return 'bg-violet-500';
+  return 'bg-red-500';
 }
 
 function statusLabel(status: TimetableEvent['status']) {
@@ -539,7 +473,7 @@ const SOURCE_FILTER_DOTS: Record<SourceFilter, string> = {
   mcr: 'bg-amber-500',
   'progress-review': 'bg-teal-500',
   'catch-up': 'bg-rose-500',
-  'student-support': 'bg-cyan-500',
+  'student-support': 'bg-indigo-500',
 };
 
 const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'catch-up'];
@@ -1901,6 +1835,10 @@ export default function CoachTimetablePage() {
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
                                   <span className="shrink-0 tabular-nums">{formatTime(ev.startHour)}</span>
                                   <span className="truncate leading-tight">{ev.title}</span>
+                                  <span
+                                    className={`ml-auto h-2 w-2 shrink-0 rounded-full border border-white/80 ${statusDot(ev.status)}`}
+                                    title={statusLabel(ev.status)}
+                                  ></span>
                                 </div>
                                 {(ev.learner || ev.programme) && (
                                   <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
@@ -1983,7 +1921,13 @@ export default function CoachTimetablePage() {
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
                                     <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
-                                    <p className="text-[8px] text-foreground-400 truncate">{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</p>
+                                    <p className="flex items-center gap-1.5 text-[8px] text-foreground-400 truncate">
+                                      <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
+                                      <span
+                                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(ev.status)}`}
+                                        title={statusLabel(ev.status)}
+                                      ></span>
+                                    </p>
                                     {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
                                       <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
@@ -2126,7 +2070,9 @@ export default function CoachTimetablePage() {
                             {ev.employer && <span className="truncate text-foreground-400">· {ev.employer}</span>}
                           </div>
                         </div>
-                        <span className={`w-2 h-2 rounded-full ${tc.dot}`}></span>
+                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold ${statusBadge(ev.status)}`}>
+                          {statusLabel(ev.status)}
+                        </span>
                       </div>
                     );
                   })}

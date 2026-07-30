@@ -3428,8 +3428,6 @@ def collect_live_session_events(
             continue
         if not clean_text(row.get("module_name")):
             continue
-        if clean_text(row.get("status")).lower() in {"draft", "archived"}:
-            continue
 
         group_id = clean_text(row.get("_meta", {}).get("group_id"))
         if not group_id or group_id not in assigned_group_ids:

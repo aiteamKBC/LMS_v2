@@ -902,12 +902,12 @@ export default function CoachProgressReviews() {
                         onClick={(e) => { e.stopPropagation(); void handleCreateSlides(review); }}
                         disabled={isSlidesBusy || !review.learnerId}
                         title={!review.learnerId ? 'Learner id missing for this review' : 'Generate a 12-week slide deck for this learner'}
-                        className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-white px-4 py-2.5 text-[11px] font-semibold text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="cursor-pointer whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[11px] font-bold text-amber-800 shadow-sm transition-smooth hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <i className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1.5`}></i>
                         {isSlidesBusy ? 'Creating slides' : 'Create slides'}
                       </button>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(review); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50">
+                      <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(review); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-primary-600 bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:border-primary-700 hover:bg-primary-700">
                         {needsScheduling(review) ? 'Schedule' : 'Manage'}
                       </button>
                     </div>
@@ -960,7 +960,7 @@ export default function CoachProgressReviews() {
                               onClick={() => { void handleCreateSlides(review); }}
                               disabled={isSlidesBusy || !review.learnerId}
                               title={!review.learnerId ? 'Learner id missing for this review' : 'Generate a 12-week slide deck for this learner'}
-                              className="whitespace-nowrap rounded-lg border border-background-200 bg-white px-3 py-2 text-[11px] font-semibold text-foreground-700 transition hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              className="whitespace-nowrap rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800 shadow-sm transition hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <i className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1`}></i>
                               {isSlidesBusy ? 'Creating slides' : 'Create slides'}
