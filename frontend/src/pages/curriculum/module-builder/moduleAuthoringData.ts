@@ -807,6 +807,7 @@ export interface TeamsMeetingOccurrence {
   actual_start?: string;
   actual_end?: string;
   participant_count: number;
+  attendance_report_id?: string;
   status: string;
   attendance: TeamsAttendanceRecord[];
   artifacts: TeamsMeetingArtifact[];

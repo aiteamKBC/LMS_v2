@@ -14,6 +14,7 @@ export interface LearnerAttendance {
   consecutiveMissed: number;
   updatedAt: string | null;
   attendanceRate: number;
+  source?: 'microsoft-teams';
 }
 
 export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string): Promise<LearnerAttendance | null> {
