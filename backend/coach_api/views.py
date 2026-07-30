@@ -1053,6 +1053,7 @@ def resolve_schedule_window(
     learner_id: int,
     commercial_rows: dict[int, CommercialUser],
     enrolment_rows: dict[int, EnrolmentUser],
+    learner: LearnerProfile | None = None,
 ) -> tuple[date | None, date | None]:
     commercial_row = commercial_rows.get(learner_id)
     if commercial_row:
@@ -1067,6 +1068,8 @@ def resolve_schedule_window(
             or getattr(enrolment_row, "practical_period_end_date", None)
         ) if enrolment_row else None
 
+    start_value = start_value or getattr(learner, "start_date", None)
+    end_value = end_value or getattr(learner, "end_date", None)
     start_date = parse_date_value(start_value)
     end_date = parse_date_value(end_value)
     if isinstance(start_date, datetime):
@@ -3512,7 +3515,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         "learnersWithDates": 0,
     }
     for learner in active_rows:
-        learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows)
+        learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows, learner)
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
             continue
 
