@@ -24,6 +24,13 @@ export interface ReportSection {
   chart?: ReportChart;
   findings?: string[];
   recommendations?: string[];
+  approval?: {
+    checklistLabel: string;
+    actions: Array<{
+      label: string;
+      kind: 'download-pdf' | 'workflow';
+    }>;
+  };
 }
 
 export interface GeneratedReport {
