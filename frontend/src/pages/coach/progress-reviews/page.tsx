@@ -121,6 +121,30 @@ function displayValue(value?: string | number | null) {
   return text || '--';
 }
 
+function matchesReviewSearch(review: CoachCalendarEvent, searchTerm: string) {
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  if (!normalizedSearch) return true;
+
+  const searchableText = [
+    review.learner,
+    review.email,
+    review.programme,
+    review.cohort,
+    review.group,
+    review.learnerId,
+    eventPeriodLabel(review),
+    statusLabel(review.status),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return normalizedSearch
+    .split(/\s+/)
+    .filter(Boolean)
+    .every(token => searchableText.includes(token));
+}
+
 function titleCaseLabel(value?: string | null) {
   const normalized = String(value || '').trim().replace(/[_-]+/g, ' ');
   if (!normalized) return 'Activity';
@@ -605,6 +629,7 @@ function buildProgressReviewSlidesDeck(
 export default function CoachProgressReviews() {
   const [tab, setTab] = useState<ReviewTab>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Med Maher');
@@ -673,15 +698,25 @@ export default function CoachProgressReviews() {
                   : tab === 'all'
                     ? events
                     : [];
-  const pageCount = Math.ceil(data.length / REVIEWS_PER_PAGE);
+  const normalizedSearchTerm = searchTerm.trim();
+  const filteredData = normalizedSearchTerm
+    ? data.filter(review => matchesReviewSearch(review, normalizedSearchTerm))
+    : data;
+  const pageCount = Math.ceil(filteredData.length / REVIEWS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
-  const paginatedReviews = data.slice(
+  const paginatedReviews = filteredData.slice(
     (activePage - 1) * REVIEWS_PER_PAGE,
     activePage * REVIEWS_PER_PAGE,
   );
 
   const changeTab = (nextTab: ReviewTab) => {
     setTab(nextTab);
+    setCurrentPage(1);
+    setExpanded(null);
+  };
+
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
     setCurrentPage(1);
     setExpanded(null);
   };
@@ -837,14 +872,37 @@ export default function CoachProgressReviews() {
 
         <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_12px_40px_-30px_oklch(var(--foreground-950)/0.35)]">
           <div className="border-b border-background-200 px-4 pt-5 sm:px-6">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <h3 className="text-base font-bold text-foreground-900">{FILTER_COPY[tab].label} reviews</h3>
                 <p className="mt-1 max-w-3xl text-xs leading-5 text-foreground-400">{FILTER_COPY[tab].description}</p>
               </div>
-              <span className="w-fit rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">
-                {data.length} {data.length === 1 ? 'review' : 'reviews'}
-              </span>
+              <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center xl:w-auto">
+                <label className="relative block w-full sm:w-[320px]">
+                  <span className="sr-only">Search progress reviews by learner name</span>
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                  <input
+                    type="search"
+                    value={searchTerm}
+                    onChange={(event) => handleSearchChange(event.target.value)}
+                    placeholder="Search learner name..."
+                    className="h-10 w-full rounded-xl border border-background-200 bg-white pl-9 pr-9 text-xs font-medium text-foreground-900 shadow-sm outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => handleSearchChange('')}
+                      className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-foreground-400 transition hover:bg-background-100 hover:text-foreground-700"
+                      aria-label="Clear learner search"
+                    >
+                      <i className="ri-close-line"></i>
+                    </button>
+                  )}
+                </label>
+                <span className="w-fit whitespace-nowrap rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">
+                  {normalizedSearchTerm ? `${filteredData.length} of ${data.length}` : data.length} {filteredData.length === 1 ? 'review' : 'reviews'}
+                </span>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 pb-4">
               <TabButton active={tab === 'this-month'} onClick={() => changeTab('this-month')} label={FILTER_COPY['this-month'].label} count={thisMonth} description={FILTER_COPY['this-month'].description} />
@@ -862,6 +920,7 @@ export default function CoachProgressReviews() {
           <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
             {loading && <div className="xl:col-span-2"><EmptyState icon="ri-loader-4-line" title="Loading progress reviews..." /></div>}
             {!loading && !error && data.length === 0 && <div className="xl:col-span-2"><EmptyState icon="ri-file-chart-line" title="No progress reviews found." /></div>}
+            {!loading && !error && data.length > 0 && filteredData.length === 0 && <div className="xl:col-span-2"><EmptyState icon="ri-user-search-line" title="No learner matches this search." /></div>}
 
             {!loading && paginatedReviews.map(review => {
               const isOpen = expanded === eventIdentity(review);
@@ -871,10 +930,6 @@ export default function CoachProgressReviews() {
               return (
                 <article key={eventIdentity(review)} className={`group overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${isOpen ? 'border-primary-300 shadow-[0_12px_32px_-22px_oklch(var(--primary-700)/0.5)] xl:col-span-2' : 'border-background-200 hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm'}`}>
                   <div className="flex cursor-pointer items-center gap-3 p-4 sm:gap-4 sm:p-5" onClick={() => toggleExpanded(review)}>
-                    <div className="hidden h-14 w-14 shrink-0 flex-col items-center justify-center rounded-2xl border border-background-200 bg-background-100 sm:flex">
-                      <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-300">Review</span>
-                      <i className="ri-file-chart-line mt-1 text-lg text-primary-600"></i>
-                    </div>
                     <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-2 ring-offset-2 ring-offset-background-50 ${avatarClass(review)}`}>
                       <span className="text-sm font-bold">{initialsFor(review.learner)}</span>
                     </div>
@@ -883,7 +938,6 @@ export default function CoachProgressReviews() {
                         <p className="truncate text-sm font-bold text-foreground-900">{review.learner || 'Unknown learner'}</p>
                         <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${statusPillClass(review.status)}`}>{statusLabel(review.status)}</span>
                         {isAtRiskProgressReview(review) && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-bold text-red-700">Overdue</span>}
-                        <span className="rounded-full bg-background-100 px-2.5 py-1 text-[9px] font-semibold text-foreground-500">{eventPeriodLabel(review)}</span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
                         <span><i className="ri-book-open-line mr-1 text-primary-500"></i>{review.programme || '--'}</span>
@@ -999,7 +1053,7 @@ export default function CoachProgressReviews() {
               <Pagination
                 currentPage={activePage}
                 pageCount={pageCount}
-                totalItems={data.length}
+                totalItems={filteredData.length}
                 onPageChange={(page) => {
                   setCurrentPage(page);
                   setExpanded(null);
