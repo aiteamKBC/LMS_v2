@@ -1,5 +1,6 @@
 import json
 import threading
+from unittest.mock import patch
 
 from django.db import connection
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase

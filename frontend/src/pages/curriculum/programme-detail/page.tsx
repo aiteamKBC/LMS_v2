@@ -898,14 +898,6 @@ function isComponentForModule(component: CurriculumComponent, liveModule: { id: 
   return moduleKeys.some(key => key && componentModuleKeys.includes(key));
 }
 
-function isGeneratedWeekPlaceholderComponent(component: CurriculumComponent, weekNumber: number, weekTitle = '') {
-  const titleKey = normalise(component.title);
-  const expectedTitleKeys = [weekTitle, `Week ${weekNumber}`, `Week ${weekNumber}.`].map(normalise).filter(Boolean);
-  const typeKey = normalise(component.type);
-  const hasKsbMappings = Boolean((component.ksbRefs || []).length || (component.ksbMappings || []).length);
-  return !hasKsbMappings && expectedTitleKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
-}
-
 function buildModuleWeeks(
   moduleId: string,
   moduleName: string,
@@ -937,11 +929,7 @@ function buildModuleWeeks(
   return weekNumbers.map((weekNumber) => {
     const authoredWeek = authoredWeekByNumber.get(weekNumber);
     const weekSessions = byWeek.get(weekNumber) ?? [];
-    const rawWeekComponents = componentsByWeek.get(weekNumber) ?? [];
-    const authoredWeekTitle = clean(authoredWeek?.title);
-    const weekComponents = rawWeekComponents.filter(component => (
-      !isGeneratedWeekPlaceholderComponent(component, weekNumber, authoredWeekTitle)
-    )).sort((a, b) => {
+    const weekComponents = [...(componentsByWeek.get(weekNumber) ?? [])].sort((a, b) => {
       const orderDelta = Number(a.displayOrder ?? 9999) - Number(b.displayOrder ?? 9999);
       if (orderDelta !== 0) return orderDelta;
       return clean(a.title).localeCompare(clean(b.title));

@@ -55,6 +55,8 @@ _STAFF_PROFILE_TABLES_READY = False
 _PROGRAMME_CONFIG_DEDUP_READY = False
 _KSB_PROFILE_PROGRAMME_ID_READY = False
 _TRAINING_PLAN_CANONICAL_READY = False
+_LIVE_SESSIONS_TABLE_READY = False
+_LIVE_SESSION_TRACKING_TABLES_READY = False
 SUPPORTED_KSB_SOURCE_TYPES = {'standard', 'framework'}
 LIVE_SESSIONS_TABLE = 'live_sessions'
 LIVE_SESSION_OCCURRENCES_TABLE = 'live_session_occurrences'
@@ -3038,9 +3040,8 @@ def detail_is_archived(detail):
 
 
 def active_learner_programme_counts():
-    """Count assigned/enrolled learners per programme label."""
+    """Count learners per programme label from the canonical learner table."""
     counts = Counter()
-    seen_emails_by_programme = defaultdict(set)
     if connection.vendor != 'postgresql':
         return counts
     try:
@@ -3048,34 +3049,17 @@ def active_learner_programme_counts():
             cursor.execute("select to_regclass(%s)", ['\"Learner\".\"learners\"'])
             if cursor.fetchone()[0]:
                 cursor.execute(
-                    'select programme, email '
+                    'select programme '
                     'from "Learner"."learners" '
                     "where coalesce(btrim(programme), '') <> ''"
                 )
-                for programme_name, email in cursor.fetchall():
+                for (programme_name,) in cursor.fetchall():
                     programme_key = normalise(programme_name)
                     if not programme_key:
                         continue
                     counts[programme_key] += 1
-                    if clean_str(email):
-                        seen_emails_by_programme[programme_key].add(clean_str(email).lower())
     except Exception as exc:
         logger.warning('Could not count active learners by programme: %s', exc)
-    try:
-        from learner_api.models import CommercialUser, EnrolmentUser
-        for model in (EnrolmentUser, CommercialUser):
-            for programme_name, email in model.objects.exclude(programme__isnull=True).values_list('programme', 'email'):
-                programme_key = normalise(programme_name)
-                if not programme_key:
-                    continue
-                email_key = clean_str(email).lower()
-                if email_key and email_key in seen_emails_by_programme[programme_key]:
-                    continue
-                counts[programme_key] += 1
-                if email_key:
-                    seen_emails_by_programme[programme_key].add(email_key)
-    except Exception as exc:
-        logger.warning('Could not count enrolled source learners by programme: %s', exc)
     return dict(counts)
 
 
@@ -8848,6 +8832,20 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility):
         include_unused=False,
     )
     sessions = build_sessions_basic(programme_training_rows, curriculum_rows['modules'], curriculum_rows['program_configs'])
+    module_catalogue_ids = unique([
+        module.get('moduleCatalogueId')
+        or module.get('catalogueId')
+        or module.get('moduleId')
+        or module.get('id')
+        for module in modules
+        if (
+            module.get('moduleCatalogueId')
+            or module.get('catalogueId')
+            or module.get('moduleId')
+            or module.get('id')
+        )
+    ])
+    components = component_builder_rows(module_catalogue_ids)
 
     nested_cohorts = []
     for cohort in cohorts:
@@ -8870,7 +8868,7 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility):
             'groupIds': list(group_ids),
             'modules': modules,
             'sessions': sessions,
-            'components': [],
+            'components': components,
         },
     }
 
@@ -10200,7 +10198,12 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                            completed_hours, planned_hours, target_hours, progress_hours,
                            progress_variance, otjh_status
                     from "Learner"."learners"
-                    where lower(btrim(coalesce(programme, ''))) = any(%s)
+                    where regexp_replace(
+                        lower(btrim(coalesce(programme, ''))),
+                        '[^a-z0-9]+',
+                        '',
+                        'g'
+                    ) = any(%s)
                       {status_sql}
                     order by lower(full_name), id
                     ''',
@@ -10239,48 +10242,6 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
         }
         for row in canonical_rows
     ]
-    seen_emails = {clean_str(row.get('email')).lower() for row in learners if clean_str(row.get('email'))}
-    seen_source_keys = {('learner', str(row.get('sourceId'))) for row in learners if row.get('sourceId') is not None}
-    try:
-        from learner_api.models import CommercialUser, EnrolmentUser
-        for source_kind, model in (('apprenticeship', EnrolmentUser), ('commercial', CommercialUser)):
-            for source in model.objects.exclude(programme__isnull=True).only(
-                'id', 'username', 'email', 'programme', 'programme_status', 'cohort', 'group',
-            ):
-                if normalise(getattr(source, 'programme', '')) not in candidate_keys:
-                    continue
-                status_filter = clean_str(lifecycle_status).lower()
-                if status_filter and clean_str(getattr(source, 'programme_status', '')).lower() != status_filter:
-                    continue
-                email_key = clean_str(getattr(source, 'email', '')).lower()
-                source_key = (source_kind, str(source.id))
-                if (email_key and email_key in seen_emails) or source_key in seen_source_keys:
-                    continue
-                learners.append({
-                    'id': f'{source_kind}:{source.id}',
-                    'sourceId': source.id,
-                    'sourceKind': source_kind,
-                    'name': clean_str(getattr(source, 'username', '')),
-                    'email': clean_str(getattr(source, 'email', '')),
-                    'programme': clean_str(getattr(source, 'programme', '')),
-                    'programmeStatus': clean_str(getattr(source, 'programme_status', '')),
-                    'cohort': clean_str(getattr(source, 'cohort', '')),
-                    'group': clean_str(getattr(source, 'group', '')),
-                    'lifecycleStatus': clean_str(getattr(source, 'programme_status', '')).lower() or 'enrolled',
-                    'coachName': '',
-                    'coachEmail': '',
-                    'completedHours': 0,
-                    'plannedHours': 0,
-                    'targetHours': 0,
-                    'progressHours': 0,
-                    'progressVariance': '',
-                    'otjhStatus': '',
-                })
-                if email_key:
-                    seen_emails.add(email_key)
-                seen_source_keys.add(source_key)
-    except Exception as exc:
-        logger.warning('Could not load enrolled source learners for programme %s: %s', programme_id, exc)
     return sorted(learners, key=lambda row: (normalise(row.get('name') or row.get('email')), str(row.get('id'))))
 
 

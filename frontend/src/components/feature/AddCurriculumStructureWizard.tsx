@@ -53,6 +53,7 @@ import {
   getDefaultStructure,
   loadModuleStructure,
   loadModuleStructuresBatch,
+  loadTeamsMeetingConfiguration,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
   saveModuleStructure,
@@ -1283,6 +1284,20 @@ function metadataBoolean(value: unknown, fallback: boolean) {
   return fallback;
 }
 
+function normaliseTeamsEmailList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(item => String(item || '').trim()).filter(Boolean);
+  }
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed !== value) return normaliseTeamsEmailList(parsed);
+  } catch {
+    // Legacy records may store a plain delimited string instead of JSON.
+  }
+  return value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
+}
+
 function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | undefined {
   const metadata = (module as CurriculumModule & { deliveryMetadata?: Record<string, unknown> }).deliveryMetadata || {};
   const liveComponent = (module.weekStructure || [])
@@ -1293,20 +1308,8 @@ function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | u
   const joinUrl = String(setting('teamsMeetingUrl', 'liveSessionUrl') || '').trim();
   const eventId = String(setting('teamsEventId') || '').trim();
   if (!joinUrl && !eventId) return undefined;
-  let attendees: string[] = [];
-  let presenters: string[] = [];
-  try {
-    const raw = setting('teamsAttendees');
-    attendees = Array.isArray(raw) ? raw.map(String) : JSON.parse(String(raw || '[]'));
-  } catch {
-    attendees = [];
-  }
-  try {
-    const raw = setting('teamsPresenters');
-    presenters = Array.isArray(raw) ? raw.map(String) : JSON.parse(String(raw || '[]'));
-  } catch {
-    presenters = [];
-  }
+  const attendees = normaliseTeamsEmailList(setting('teamsAttendees'));
+  const presenters = normaliseTeamsEmailList(setting('teamsPresenters'));
   return {
     liveSessionId: String(setting('teamsLiveSessionId') || ''),
     eventId,
@@ -6867,7 +6870,16 @@ function ModulePlanningPanel({
                     {teamsSyncing ? 'Syncing...' : 'Sync results'}
                   </button>
                 ) : null}
-                <button type="button" onClick={() => setTeamsMeetingOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+                <button
+                  type="button"
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setTeamsMeetingOpen(true);
+                  }}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
                   <i className="ri-calendar-event-line"></i>
                   {draft.teamsMeeting ? 'Edit / create another' : 'Teams meeting options'}
                 </button>
@@ -6935,8 +6947,8 @@ function WizardTeamsMeetingModal({
   const defaultDuration = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || 60);
   const [title, setTitle] = useState(moduleTitle || 'Live session');
   const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || tutorEmail);
-  const [presenters, setPresenters] = useState((existing?.presenters || []).join('\n'));
-  const [attendees, setAttendees] = useState((existing?.attendees || []).join('\n'));
+  const [presenters, setPresenters] = useState(normaliseTeamsEmailList(existing?.presenters).join('\n'));
+  const [attendees, setAttendees] = useState(normaliseTeamsEmailList(existing?.attendees).join('\n'));
   const startDateTime = `${firstSessionDate}T${groupTime || '09:30'}`;
   const durationMinutes = defaultDuration;
   const repeat: TeamsMeetingInput['repeat'] = sessionCount > 1 ? 'weekly' : 'none';
@@ -7075,7 +7087,7 @@ function WizardTeamsMeetingModal({
                   {created.meeting.meetingOptionsUrl && <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800"><i className="ri-settings-3-line"></i>Meeting options</a>}
                 </div>
               </div>
-              {!!created.warnings.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">{created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}</div>}
+              {!!created.warnings?.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">{created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}</div>}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.85fr)]">
