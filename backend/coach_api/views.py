@@ -31,6 +31,7 @@ from learner_api.evidence_storage import (
 )
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
+from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
@@ -2252,61 +2253,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
     if not ids and not emails:
         return empty
 
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not relation:
-        return empty
-
-    columns = relation_columns(connection, relation)
-    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
-    session_date_column = first_existing_column(columns, "session_date", "date")
-    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
-    status_column = first_existing_column(columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
-    minutes_late_column = first_existing_column(columns, "minutes_late", "late", "lateness")
-    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
-    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
-
-    if not status_column or not any([learner_id_column, learner_email_column]):
-        return empty
-
-    selected_aliases: dict[str, str | None] = {
-        "learner_id": learner_id_column,
-        "learner_email": learner_email_column,
-        "session_date": session_date_column,
-        "session_start_time": start_time_column,
-        "attendance_status": status_column,
-        "minutes_late": minutes_late_column,
-        "catchup_completed": catchup_column,
-        "absence_reason": reason_column,
-    }
-    select_columns = [
-        f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}" if column else f"null as {quote_sql_identifier(alias)}"
-        for alias, column in selected_aliases.items()
-    ]
-
-    filters = []
-    params: list = []
-    if learner_id_column and ids:
-        placeholders = ", ".join(["%s"] * len(ids))
-        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
-        params.extend(ids)
-    if learner_email_column and emails:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
-        params.append(emails)
-    if not filters:
-        return empty
-
-    query = f"""
-        select {", ".join(select_columns)}
-        from {relation}
-        where {" or ".join(filters)}
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        result_columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
-
+    rows = fetch_verified_teams_attendance_rows(ids, emails)
     return build_attendance_detail_summary_payload(rows)
 
 
@@ -4273,87 +4220,10 @@ def normalize_attendance_detail_status(value) -> str:
 
 
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not relation:
-        return []
-
-    columns = relation_columns(connection, relation)
-    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
-    learner_name_column = first_existing_column(columns, "learner_name", "learner", "name")
-    session_id_column = first_existing_column(columns, "session_id", "sessionid")
-    session_title_column = first_existing_column(columns, "session_title", "title", "session")
-    session_type_column = first_existing_column(columns, "session_type", "type")
-    session_date_column = first_existing_column(columns, "session_date", "date")
-    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
-    end_time_column = first_existing_column(columns, "session_end_time", "end_time", "end")
-    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
-    status_column = first_existing_column(
-        columns,
-        "attendance_status",
-        "status",
-        "attendance",
-        "is_present",
-        "present",
-        "attended",
+    rows = fetch_verified_teams_attendance_rows(
+        [to_int(learner.get("id"))],
+        [normalize_email(learner.get("email"))],
     )
-    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
-
-    if not any([learner_id_column, learner_email_column, learner_name_column]):
-        return []
-
-    select_columns = []
-    selected_aliases: dict[str, str | None] = {
-        "learner_id": learner_id_column,
-        "learner_name": learner_name_column,
-        "learner_email": learner_email_column,
-        "session_id": session_id_column,
-        "session_title": session_title_column,
-        "session_type": session_type_column,
-        "session_date": session_date_column,
-        "session_start_time": start_time_column,
-        "session_end_time": end_time_column,
-        "attendance_status": status_column,
-        "reason": reason_column,
-        "catchup_completed": catchup_column,
-    }
-    for alias, column in selected_aliases.items():
-        if column:
-            select_columns.append(f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}")
-        else:
-            select_columns.append(f"null as {quote_sql_identifier(alias)}")
-
-    filters = []
-    params = []
-    if learner_id_column:
-        filters.append(f"{quote_sql_identifier(learner_id_column)}::text = %s")
-        params.append(str(learner["id"]))
-    if learner_email_column and normalize_email(learner.get("email")):
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = %s")
-        params.append(normalize_email(learner.get("email")))
-    if learner_name_column:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_name_column)}::text)) = %s")
-        params.append(normalize_person_name(learner.get("name")))
-
-    order_parts = []
-    if session_date_column:
-        order_parts.append(f"{quote_sql_identifier(session_date_column)} desc")
-    if start_time_column:
-        order_parts.append(f"{quote_sql_identifier(start_time_column)} desc")
-    order_clause = ", ".join(order_parts) or "1"
-
-    query = f"""
-        select {", ".join(select_columns)}
-        from {relation}
-        where {" or ".join(filters)}
-        order by {order_clause}
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        result_columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
 
     return [
         {
@@ -4368,8 +4238,9 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
             "startTime": format_time_value(row.get("session_start_time")) or "--",
             "endTime": format_time_value(row.get("session_end_time")) or "--",
             "status": normalize_attendance_detail_status(row.get("attendance_status")),
-            "reason": clean_text(row.get("reason")) or "--",
+            "reason": clean_text(row.get("absence_reason")) or "--",
             "catchupCompleted": is_truthy_value(row.get("catchup_completed")),
+            "attendedSeconds": to_int(row.get("attended_seconds")),
         }
         for row in rows
     ]

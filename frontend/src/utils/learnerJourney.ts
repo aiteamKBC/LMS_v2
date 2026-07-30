@@ -19,6 +19,7 @@ export interface JourneyComponent {
   reflectionPrompt?: string | null;
   resourceUrl?: string | null;
   liveSessionUrl?: string | null;
+  teamsLiveSessionId?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -423,6 +424,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
+            teamsLiveSessionId: c.teamsLiveSessionId,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the
