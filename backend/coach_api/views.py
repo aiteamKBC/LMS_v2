@@ -34,14 +34,18 @@ from learner_api.reflection_submission_tables import ensure_learning_reflection_
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
+    AUTHORING_COMPONENTS_TABLE,
     AUTHORING_WEEKS_TABLE,
     authoring_fetch_all,
+    authoring_modules_as_training_rows,
     build_module_session_plan,
     COHORT_AUTHORING_DETAILS_TABLE,
     get_coach_rows,
     get_program_config_rows,
     get_training_rows,
     is_operational_training_row,
+    LIVE_SESSION_OCCURRENCES_TABLE,
+    LIVE_SESSIONS_TABLE,
     parse_date,
     parse_int,
     parse_json_value,
@@ -3320,8 +3324,15 @@ def build_live_session_calendar_event(
     owner_email: str,
     owner_name: str,
     week_title: str | None = None,
+    tracked_occurrence: dict | None = None,
+    tracked_series: dict | None = None,
+    component_meeting_link: str = "",
 ) -> dict:
-    session_date = date.fromisoformat(session["date"])
+    tracked_occurrence = tracked_occurrence or {}
+    tracked_series = tracked_series or {}
+    tracked_start = tracked_occurrence.get("scheduled_start")
+    event_date = tracked_start.date().isoformat() if isinstance(tracked_start, datetime) else session["date"]
+    session_date = date.fromisoformat(event_date)
     module_name = clean_text(row.get("module_name")) or "Live Session"
     session_title = f"{module_name} — {week_title}" if week_title else f"{module_name} — Week {session['sessionNumber']}"
 
@@ -3339,6 +3350,13 @@ def build_live_session_calendar_event(
         else:
             end_hour = start_hour + duration_minutes / 60
         time_label = f'{start_time.strftime("%H:%M")} - {end_time.strftime("%H:%M")}' if end_time else start_time.strftime("%H:%M")
+
+    meeting_link = (
+        clean_text(tracked_occurrence.get("join_url"))
+        or clean_text(tracked_series.get("join_url"))
+        or clean_text(tracked_series.get("web_link"))
+        or clean_text(component_meeting_link)
+    )
 
     return {
         "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
@@ -3358,8 +3376,8 @@ def build_live_session_calendar_event(
         "sequence": session["sessionNumber"],
         "title": session_title,
         "type": "live-session",
-        "targetDate": session["date"],
-        "date": session["date"],
+        "targetDate": event_date,
+        "date": event_date,
         "year": session_date.year,
         "month": session_date.month - 1,
         "dayOfMonth": session_date.day,
@@ -3370,16 +3388,16 @@ def build_live_session_calendar_event(
         "timeLabel": time_label,
         "isTimeEstimated": is_time_estimated,
         "priority": "normal",
-        "status": "scheduled",
-        "sourceStatus": "Scheduled",
-        "meetingProvider": "",
-        "meetingLink": "",
-        "graphWebLink": "",
-        "platform": "LMS",
-        "location": "--",
+        "status": clean_text(tracked_occurrence.get("status")).lower() or "scheduled",
+        "sourceStatus": clean_text(tracked_occurrence.get("status")).title() or "Scheduled",
+        "meetingProvider": clean_text(tracked_series.get("provider")) or ("Microsoft Teams" if meeting_link else ""),
+        "meetingLink": meeting_link,
+        "graphWebLink": clean_text(tracked_series.get("web_link")),
+        "platform": "Microsoft Teams" if meeting_link else "LMS",
+        "location": "Microsoft Teams" if meeting_link else "--",
         "notes": f'{session_title}.',
-        "rawPlanned": session["date"],
-        "rawStatus": "Scheduled",
+        "rawPlanned": event_date,
+        "rawStatus": clean_text(tracked_occurrence.get("status")).title() or "Scheduled",
     }
 
 
@@ -3416,16 +3434,65 @@ def collect_live_session_events(
         module_catalogue_id = clean_text(week.get("module_catalogue_id"))
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
+    component_links_by_week: dict[str, str] = {}
+    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE):
+        if clean_text(component.get("type")).lower() != "live_session":
+            continue
+        week_id = clean_text(component.get("week_id"))
+        meeting_link = clean_text(component.get("live_sessions_link"))
+        if week_id and meeting_link:
+            component_links_by_week[week_id] = meeting_link
     holidays_by_cohort_id: dict[str, list[dict]] = {}
+    active_series_by_module: dict[str, dict] = {}
+    occurrences_by_series_and_number: dict[tuple[str, int], dict] = {}
+    try:
+        active_series = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE,
+            "status = %s",
+            ["active"],
+            "updated_at desc, created_at desc",
+        )
+        for series in active_series:
+            module_id = clean_text(series.get("module_catalogue_id"))
+            if module_id and module_id not in active_series_by_module:
+                active_series_by_module[module_id] = series
+        active_series_ids = {clean_text(series.get("id")) for series in active_series}
+        for occurrence in authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE):
+            series_id = clean_text(occurrence.get("live_session_id"))
+            if series_id in active_series_ids:
+                occurrences_by_series_and_number[
+                    (series_id, parse_int(occurrence.get("session_number"), 0))
+                ] = occurrence
+    except Exception:
+        # Calendar dates still work when legacy databases do not have the
+        # Teams tracking tables yet.
+        active_series_by_module = {}
+        occurrences_by_series_and_number = {}
     today = date.today()
 
     events: list[dict] = []
-    for row in get_training_rows():
+    training_rows = get_training_rows()
+    existing_delivery_keys = {
+        (
+            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
+            clean_text(row.get("_meta", {}).get("group_id")),
+        )
+        for row in training_rows
+    }
+    training_rows.extend(
+        row
+        for row in authoring_modules_as_training_rows()
+        if (
+            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
+            clean_text(row.get("_meta", {}).get("group_id")),
+        ) not in existing_delivery_keys
+    )
+    for row in training_rows:
         if not is_operational_training_row(row):
             continue
         if not clean_text(row.get("module_name")):
             continue
-        if clean_text(row.get("status")).lower() in {"draft", "archived"}:
+        if clean_text(row.get("status")).lower() == "archived":
             continue
 
         group_id = clean_text(row.get("_meta", {}).get("group_id"))
@@ -3462,8 +3529,15 @@ def collect_live_session_events(
             continue
 
         ordered_weeks = sorted(module_weeks, key=lambda week: parse_int(week.get("week_number"), 0))
+        tracked_series = active_series_by_module.get(module_catalogue_id) or {}
+        tracked_series_id = clean_text(tracked_series.get("id"))
         for session in plan["sessions"]:
-            if date.fromisoformat(session["date"]) < today:
+            tracked_occurrence = occurrences_by_series_and_number.get(
+                (tracked_series_id, session["sessionNumber"])
+            )
+            tracked_start = (tracked_occurrence or {}).get("scheduled_start")
+            effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
+            if effective_date < today:
                 continue
             week = ordered_weeks[session["sessionNumber"] - 1] if session["sessionNumber"] - 1 < len(ordered_weeks) else None
             events.append(
@@ -3476,6 +3550,11 @@ def collect_live_session_events(
                     owner_email=owner_email,
                     owner_name=owner_name,
                     week_title=clean_text(week.get("title")) if week else None,
+                    tracked_series=tracked_series,
+                    tracked_occurrence=tracked_occurrence,
+                    component_meeting_link=clean_text(week.get("id")) and component_links_by_week.get(
+                        clean_text(week.get("id")), ""
+                    ),
                 )
             )
 

@@ -662,6 +662,66 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     );
   }
 
+  if ((component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session') {
+    const parsedStart = component.sessionDateTimeUtc ? new Date(component.sessionDateTimeUtc) : null;
+    const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+    const dateLabel = component.sessionDate
+      ? new Date(`${component.sessionDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      : validStart?.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) || 'Date to be confirmed';
+    const timeLabel = component.sessionTime
+      || (validStart ? `${validStart.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })} UTC` : 'Time to be confirmed');
+
+    return (
+      <div className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
+        <div className="bg-[linear-gradient(135deg,#5b21b6_0%,#6d28d9_55%,#2563eb_100%)] p-6 text-white">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">
+                <i className="ri-microsoft-teams-line text-2xl" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Microsoft Teams live session</p>
+                <p className="mt-1 truncate text-base font-heading font-black">{title}</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-white/80">
+                  <span><i className="ri-calendar-line mr-1" />{dateLabel}</span>
+                  <span><i className="ri-time-line mr-1" />{timeLabel}</span>
+                  {component.durationMinutes ? <span><i className="ri-timer-line mr-1" />{component.durationMinutes} min</span> : null}
+                </div>
+              </div>
+            </div>
+
+            {component.liveSessionUrl ? (
+              <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 text-[12px] font-black text-primary-700 shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-primary-50">
+                <i className="ri-microsoft-teams-line text-base" />
+                Join live session
+                <i className="ri-external-link-line text-xs" />
+              </a>
+            ) : (
+              <span className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
+                <i className="ri-calendar-todo-line text-base" />
+                Meeting link not scheduled
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-wider text-foreground-400">Before the session</p>
+            <p className="mt-1 text-[12px] leading-5 text-foreground-600">
+              {component.reflectionPrompt || 'Join on time and complete your reflection after the live session.'}
+            </p>
+          </div>
+          {!component.liveSessionUrl && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-800">
+              Contact your tutor if you expect a meeting link here.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (contentKind === 'reflection') {
     return (
       <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-purple-50 to-background-50 p-6">

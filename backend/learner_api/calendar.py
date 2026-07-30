@@ -78,6 +78,43 @@ def _serialize_event(record):
     }
 
 
+def _serialize_live_session_event(event):
+    """Convert the coach curriculum event shape to the learner calendar shape."""
+    scheduled_time = None
+    start_hour = event.get("startHour")
+    if isinstance(start_hour, (int, float)):
+        hour = int(start_hour)
+        minute = round((start_hour - hour) * 60)
+        scheduled_time = f"{hour:02d}:{minute:02d}"
+    return {
+        "id": event.get("id"),
+        "eventKey": event.get("eventKey") or event.get("id"),
+        "title": event.get("title") or "Live Session",
+        "source": "live-session",
+        "type": "live-session",
+        "sequence": event.get("sequence"),
+        "status": event.get("status") or "scheduled",
+        "date": event.get("date"),
+        "targetDate": event.get("targetDate") or event.get("date"),
+        "scheduledDate": event.get("date"),
+        "scheduledTime": scheduled_time,
+        "durationMinutes": event.get("durationMinutes") or 60,
+        "coachName": event.get("tutor") or event.get("ownerName") or "",
+        "coachEmail": event.get("ownerEmail") or "",
+        "meetingProvider": event.get("meetingProvider") or "",
+        "meetingLink": event.get("meetingLink") or event.get("graphWebLink") or "",
+        "notes": event.get("notes") or "",
+        "programme": event.get("programme") or "",
+        "cohort": event.get("cohort") or "",
+        "group": event.get("group") or "",
+        "module": event.get("module") or "",
+    }
+
+
+def _same_calendar_identity(left, right):
+    return _s(left).strip().casefold() == _s(right).strip().casefold()
+
+
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -120,6 +157,33 @@ def learner_calendar(request, kind, pk):
             "target_date", "event_type", "sequence"
         )
         events = [_serialize_event(record) for record in records]
+
+        # Live curriculum sessions are generated from the same module/week
+        # schedule used by the coach calendar. Restrict them to this learner's
+        # assigned programme/cohort/group.
+        if mirror is not None and _s(mirror.coach_email):
+            from coach_api.views import collect_live_session_events
+
+            live_events = collect_live_session_events(
+                _s(mirror.coach_email),
+                _s(mirror.coach_name) or "Coach",
+            )
+            for event in live_events:
+                if not _same_calendar_identity(event.get("group"), mirror.group_name):
+                    continue
+                if _s(mirror.cohort) and not _same_calendar_identity(event.get("cohort"), mirror.cohort):
+                    continue
+                if _s(mirror.programme) and not _same_calendar_identity(event.get("programme"), mirror.programme):
+                    continue
+                events.append(_serialize_live_session_event(event))
+
+        # A curriculum event can be reachable through more than one legacy
+        # source. Keep one stable calendar item per event key.
+        events = list({
+            event.get("eventKey") or event.get("id"): event
+            for event in events
+            if event.get("eventKey") or event.get("id")
+        }.values())
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
         return _error(f"Database error: {exc}", 502)

@@ -18,6 +18,10 @@ export interface JourneyComponent {
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   resourceUrl?: string | null;
+  liveSessionUrl?: string | null;
+  sessionDate?: string | null;
+  sessionTime?: string | null;
+  sessionDateTimeUtc?: string | null;
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
@@ -418,6 +422,8 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
+            liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
+            sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the
               // curriculum API exposes quiz ids as numbers. Compare their
