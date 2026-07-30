@@ -39,7 +39,13 @@ import {
   type ModuleComponentType,
   type ModuleWeek,
 } from './moduleAuthoringData';
-import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel, type GroupOption, type WeekComponentUploader, type WeekScope } from '@/pages/curriculum/week-builder/page';
+// The shared week-authoring UI arrives through curriculum/shared/components rather
+// than from week-builder/page directly: these three components only render once a
+// week is expanded, so the lazy wrappers keep Week Builder's ~159 kB chunk (dnd-kit
+// and the RichTextEditor included) off the initial Module Builder load. Types come
+// from the non-lazy barrel — type imports are erased and pull in no runtime code.
+import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
+import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
 import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 import {
   CONTENT_STATUSES,
@@ -441,10 +447,11 @@ export default function ModuleBuilder() {
       } as ModuleBuilderListItem;
       scopedBase.deliveryUsages = (module as ModuleBuilderListItem).deliveryUsages;
       const next = recalculateModule(scopedBase);
+      const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      setSelection(next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null);
-      setSettingsOpen(openSettings);
+      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
@@ -1453,16 +1460,21 @@ export default function ModuleBuilder() {
             )}
           </div>
         </div>
-        <AddCurriculumStructureWizard
-          isOpen={createOpen}
-          onClose={() => setCreateOpen(false)}
-          onSaved={() => {
-            setCreateOpen(false);
-            reload({ silent: true });
-          }}
-          startStep="programme"
-          modulePlacementMode
-        />
+        {/* Mounted only while open, matching the programmes and programme-detail
+            pages. The wizard's ~1,700 lines of hooks and memos otherwise re-run on
+            every render of this page just to hit its own `if (!isOpen) return null`. */}
+        {createOpen && (
+          <AddCurriculumStructureWizard
+            isOpen={createOpen}
+            onClose={() => setCreateOpen(false)}
+            onSaved={() => {
+              setCreateOpen(false);
+              reload({ silent: true });
+            }}
+            startStep="programme"
+            modulePlacementMode
+          />
+        )}
         {ksbMapDisplayModule && (
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
@@ -1565,6 +1577,8 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   ksbProfileOptions: Array<{ id: string; label: string }>;
   ksbProfileValue: string;
   scopeLock: ModuleScopeLock | null;
+  saving?: boolean;
+  saved?: boolean;
   standardsLoading: boolean;
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
@@ -3342,7 +3356,7 @@ function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
       </div>
       <div className="space-y-2">
         {mappings.map(mapping => (
-          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} sourceLabels={sourceLabels} />
+          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} />
         ))}
         {!mappings.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
       </div>
@@ -3350,20 +3364,18 @@ function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
   );
 }
 
-function SessionKsbReadableCard({ mapping, module, sourceLabels }: { mapping: KsbMapping; module: ModuleCatalogueItem; sourceLabels: Record<string, string> }) {
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
+function SessionKsbReadableCard({ mapping, module }: { mapping: KsbMapping; module: ModuleCatalogueItem }) {
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
   const placements = ksbMappingPlacements(module, mapping);
   return (
     <article
-      title={`${mapping.description || mapping.code}${sourceLabel ? ` - ${sourceLabel}` : ''}`}
+      title={mapping.description || mapping.code}
       className={`rounded-xl border p-3 ${ksbCodeChipClass(mapping.code)}`}
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[12px] font-extrabold text-foreground-950">{mapping.code}</span>
         <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbClassificationLabel(classification)}</span>
         <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
-        {sourceLabel && <span className="max-w-full truncate rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{sourceLabel}</span>}
       </div>
       {mapping.description && <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
       <div className="mt-2 flex flex-wrap gap-1">
@@ -4842,7 +4854,7 @@ function ModuleCatalogueCard({
             className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
           >
             <i className={ksbMapLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></i>
-            {ksbMapLoading ? 'Loading weights...' : 'Review weights'}
+            {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
           <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700">
             <i className="ri-hammer-line"></i>
@@ -5468,6 +5480,21 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   if (canonicalId) return canonicalId;
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
+}
+
+function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {
+  const focus = String(params.get('focus') || '').trim();
+  const weekId = String(params.get('week') || params.get('weekId') || '').trim();
+  const componentId = String(params.get('component') || params.get('componentId') || '').trim();
+  const openSettings = focus === 'ksb-mapping' || Boolean(params.get('mapping') || params.get('mappingId') || params.get('ksb'));
+  if (componentId) {
+    const week = module.weekStructure.find(item => item.components.some(component => component.id === componentId));
+    if (week) return { selection: { kind: 'component', weekId: week.id, componentId }, openSettings: true };
+  }
+  if (weekId && module.weekStructure.some(week => week.id === weekId)) {
+    return { selection: { kind: 'week', weekId }, openSettings };
+  }
+  return { selection: null, openSettings };
 }
 
 function sortCatalogueOptionsForPicker(a: ModuleCatalogueItem, b: ModuleCatalogueItem) {

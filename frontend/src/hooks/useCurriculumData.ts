@@ -2,15 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumComponents, fetchCurriculumHolidays, fetchCurriculumModules, fetchCurriculumOverview, type CurriculumOverview } from '@/lib/curriculumApi';
 
 interface UseCurriculumDataOptions {
+  autoLoad?: boolean;
   compact?: boolean;
   includeComponents?: boolean;
   includeHolidays?: boolean;
   refreshModules?: boolean;
+  // Drops weekStructure from the refreshed module list. Opt-in per caller, because
+  // consumers that read weekStructure (or rank duplicate modules by component
+  // count) need the full payload — see fetchCurriculumModules.
+  compactModules?: boolean;
 }
 
-export function useCurriculumData({ compact = false, includeComponents = false, includeHolidays = false, refreshModules = false }: UseCurriculumDataOptions = {}) {
+export function useCurriculumData({ autoLoad = true, compact = false, includeComponents = false, includeHolidays = false, refreshModules = false, compactModules = false }: UseCurriculumDataOptions = {}) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
@@ -21,7 +26,7 @@ export function useCurriculumData({ compact = false, includeComponents = false, 
     try {
       const [overview, modules, components, holidays] = await Promise.all([
         fetchCurriculumOverview(signal, { compact }),
-        refreshModules ? fetchCurriculumModules(signal).catch(() => []) : Promise.resolve([]),
+        refreshModules ? fetchCurriculumModules(signal, { compact: compactModules }).catch(() => []) : Promise.resolve([]),
         includeComponents ? fetchCurriculumComponents(signal).catch(() => []) : Promise.resolve([]),
         includeHolidays ? fetchCurriculumHolidays(signal).catch(() => []) : Promise.resolve([]),
       ]);
@@ -42,13 +47,14 @@ export function useCurriculumData({ compact = false, includeComponents = false, 
     } finally {
       if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
-  }, [compact, includeComponents, includeHolidays, refreshModules]);
+  }, [compact, compactModules, includeComponents, includeHolidays, refreshModules]);
 
   useEffect(() => {
+    if (!autoLoad) return undefined;
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [autoLoad, load]);
 
   return { data, loading, error, reload: () => load() };
 }

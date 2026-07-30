@@ -16,7 +16,6 @@ class ModuleAuthoringModule(models.Model):
     quality_score = models.IntegerField(default=0)
     source_type = models.CharField(max_length=64, blank=True, default='')
     source_id = models.CharField(max_length=128, blank=True, default='')
-    imported_from_training_plan_id = models.CharField(max_length=128, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

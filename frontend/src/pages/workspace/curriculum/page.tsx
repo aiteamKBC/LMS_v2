@@ -99,11 +99,17 @@ export default function CurriculumStudio() {
   const activeCohorts = cohorts.filter(cohort => cohort.status === 'active').length;
   const attentionProgrammeCount = programmeRows.filter(row => row.priority > 0).length;
   const totalSessions = programmeRows.reduce((sum, row) => sum + row.sessions, 0);
+  const mappedModules = modules.filter(module => Number(module.ksbCount || 0) > 0).length;
+  const mappingRate = percentage(mappedModules, modules.length);
+  const readyProgrammeCount = programmeRows.filter(row => row.status === 'Ready').length;
+  const readyRate = percentage(readyProgrammeCount, programmeRows.length);
+  const staffingGaps = groups.filter(group => isMissingAssignment(group.coach)).length + modules.filter(module => isMissingAssignment(module.tutor)).length;
 
   const attentionIssues = useMemo(
     () => buildAttentionIssues(programmeRows, modules, groups, cohorts),
     [cohorts, groups, modules, programmeRows],
   );
+  const criticalIssues = attentionIssues.slice(0, 3);
 
   const visibleProgrammes = useMemo(() => {
     const query = normalise(programmeSearch);
@@ -143,43 +149,65 @@ export default function CurriculumStudio() {
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
-      <div className="space-y-4 p-4 md:p-6">
-        <section className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="min-w-0">
-              <h1 className="font-heading text-2xl font-bold text-foreground-950">Curriculum Studio</h1>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-foreground-500">
-                Review curriculum readiness, find KSB and staffing gaps, and jump straight into the right builder.
-              </p>
+      <div className="space-y-5 bg-background-100 p-4 md:p-6">
+        <section className="overflow-hidden rounded-lg border border-primary-900/20 bg-foreground-950 shadow-sm">
+          <div className="grid xl:grid-cols-[minmax(0,1fr)_420px]">
+            <div className="p-5 text-white md:p-6">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase text-white/75">
+                  <i className="ri-dashboard-3-line" />
+                  LMS command centre
+                </span>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-[11px] font-bold text-amber-100">
+                  {loading ? 'Syncing data' : `${attentionProgrammeCount} programmes need action`}
+                </span>
+              </div>
+              <div className="mt-5 max-w-4xl">
+                <h1 className="font-heading text-3xl font-bold text-white md:text-4xl">Curriculum Studio</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70">
+                  Monitor programme health, KSB coverage, cohort structure and authoring work from one operational LMS dashboard.
+                </p>
+              </div>
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                <HeroMetric label="Readiness" value={`${readyRate}%`} detail={`${readyProgrammeCount}/${programmeRows.length || 0} programmes ready`} loading={loading} />
+                <HeroMetric label="KSB mapped" value={`${mappingRate}%`} detail={`${mappedModules}/${modules.length || 0} modules mapped`} loading={loading} />
+                <HeroMetric label="Staffing gaps" value={staffingGaps} detail="Coach and tutor assignments" loading={loading} />
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {primaryActions.map(action => (
-                <button
-                  key={action.label}
-                  onClick={() => window.REACT_APP_NAVIGATE(action.href)}
-                  className={`inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-bold transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-400 focus:ring-offset-2 ${
-                    action.primary
-                      ? 'bg-primary-600 text-white hover:bg-primary-700'
-                      : 'border border-foreground-200 bg-background-50 text-foreground-700 hover:bg-background-100'
-                  }`}
-                >
-                  <i className={action.icon} />
-                  {action.label}
-                </button>
-              ))}
+            <div className="border-t border-white/10 bg-white/[0.06] p-4 xl:border-l xl:border-t-0">
+              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+                <p className="text-xs font-bold uppercase text-white/50">Quick launch</p>
+                <div className="mt-3 grid gap-2">
+                  {primaryActions.map(action => (
+                    <button
+                      key={action.label}
+                      onClick={() => window.REACT_APP_NAVIGATE(action.href)}
+                      className={`inline-flex h-11 items-center justify-between rounded-lg px-3 text-xs font-bold transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-300 ${
+                        action.primary
+                          ? 'bg-white text-foreground-950 hover:bg-primary-50'
+                          : 'border border-white/15 bg-white/10 text-white hover:bg-white/15'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-2"><i className={action.icon} />{action.label}</span>
+                      <i className="ri-arrow-right-line" />
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  {quickActions.map(action => (
+                    <button
+                      key={action.href}
+                      onClick={() => window.REACT_APP_NAVIGATE(action.href)}
+                      className="flex min-h-20 flex-col items-start justify-between rounded-lg border border-white/10 bg-white/[0.07] p-3 text-left text-[11px] font-bold text-white/80 transition-smooth hover:bg-white/[0.12] focus:outline-none focus:ring-2 focus:ring-primary-300"
+                      title={action.label}
+                    >
+                      <i className={`${action.icon} text-lg text-amber-100`} />
+                      <span className="leading-4">{action.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-          <div className="mt-4 flex gap-2 overflow-x-auto">
-            {quickActions.map(action => (
-              <button
-                key={action.href}
-                onClick={() => window.REACT_APP_NAVIGATE(action.href)}
-                className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-foreground-200 bg-background-100 px-3 text-xs font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300"
-              >
-                <i className={action.icon} />
-                {action.label}
-              </button>
-            ))}
           </div>
         </section>
 
@@ -190,24 +218,57 @@ export default function CurriculumStudio() {
         )}
 
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <KpiCard icon="ri-stack-line" label="Total Programmes" value={programmes.length} detail={`${attentionProgrammeCount} need attention`} loading={loading} />
-          <KpiCard icon="ri-group-line" label="Active Cohorts" value={activeCohorts} detail={`${cohorts.length} cohorts total`} loading={loading} />
-          <KpiCard icon="ri-book-open-line" label="Total Modules" value={modules.length} detail={`${totalSessions} sessions planned`} loading={loading} />
-          <KpiCard icon="ri-alert-line" label="Programmes Needing Attention" value={attentionProgrammeCount} detail="Based on visible curriculum data" loading={loading} tone="warning" />
-          <KpiCard icon="ri-draft-line" label="Draft Modules" value={draftModules.length} detail={`${modulesWithoutKsb.length} without KSB mappings`} loading={loading} tone="info" />
+          <KpiCard icon="ri-stack-line" label="Programmes" value={programmes.length} detail={`${attentionProgrammeCount} need attention`} loading={loading} progress={readyRate} />
+          <KpiCard icon="ri-group-line" label="Active Cohorts" value={activeCohorts} detail={`${cohorts.length} cohorts total`} loading={loading} progress={percentage(activeCohorts, cohorts.length)} />
+          <KpiCard icon="ri-book-open-line" label="Modules" value={modules.length} detail={`${totalSessions} sessions planned`} loading={loading} progress={mappingRate} />
+          <KpiCard icon="ri-alert-line" label="Attention Queue" value={attentionProgrammeCount} detail="Programmes with blocking signals" loading={loading} tone="warning" progress={percentage(attentionProgrammeCount, programmes.length)} />
+          <KpiCard icon="ri-draft-line" label="Draft Modules" value={draftModules.length} detail={`${modulesWithoutKsb.length} without KSB mappings`} loading={loading} tone="info" progress={percentage(modules.length - draftModules.length, modules.length)} />
         </section>
 
-        <section className="rounded-lg border border-foreground-200 bg-background-50 shadow-sm">
-          <SectionHeader title="Needs Attention" detail="Actionable issues derived from existing programme, module, cohort and group data." />
-          <div className="grid gap-3 p-3 lg:grid-cols-3">
-            {loading ? (
-              <ListSkeleton count={3} />
-            ) : attentionIssues.length ? (
-              attentionIssues.map(issue => <AttentionCard key={issue.key} issue={issue} />)
-            ) : (
-              <EmptyState icon="ri-checkbox-circle-line" title="No curriculum issues require attention." detail="The current dashboard data does not show missing KSB mappings, draft modules, unassigned staff or incomplete structures." />
-            )}
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-lg border border-foreground-200 bg-background-50 shadow-sm">
+            <SectionHeader title="Action Queue" detail="Prioritised blockers from programme, module, cohort and staffing data." />
+            <div className="grid gap-3 p-3 lg:grid-cols-3">
+              {loading ? (
+                <ListSkeleton count={3} />
+              ) : attentionIssues.length ? (
+                attentionIssues.map(issue => <AttentionCard key={issue.key} issue={issue} />)
+              ) : (
+                <EmptyState icon="ri-checkbox-circle-line" title="No curriculum issues require attention." detail="The current dashboard data does not show missing KSB mappings, draft modules, unassigned staff or incomplete structures." />
+              )}
+            </div>
           </div>
+          <aside className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-bold text-foreground-950">Readiness Snapshot</h2>
+                <p className="mt-1 text-xs leading-5 text-foreground-500">A quick view of what blocks clean delivery.</p>
+              </div>
+              <span className="rounded-lg bg-primary-50 px-2.5 py-1 text-xs font-bold text-primary-700">{loading ? '-' : `${readyRate}%`}</span>
+            </div>
+            <div className="mt-4 space-y-4">
+              <ReadinessBar label="Programme readiness" value={readyRate} detail={`${readyProgrammeCount} ready`} />
+              <ReadinessBar label="Module KSB coverage" value={mappingRate} detail={`${modulesWithoutKsb.length} gaps`} tone="emerald" />
+              <ReadinessBar label="Published modules" value={percentage(modules.length - draftModules.length, modules.length)} detail={`${draftModules.length} in draft/review`} tone="amber" />
+            </div>
+            <div className="mt-5 rounded-lg border border-foreground-200 bg-background-100/70 p-3">
+              <p className="text-xs font-bold text-foreground-900">Next best actions</p>
+              <div className="mt-3 space-y-2">
+                {loading ? (
+                  <p className="text-xs text-foreground-500">Loading actions...</p>
+                ) : criticalIssues.length ? (
+                  criticalIssues.map(issue => (
+                    <button key={issue.key} onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="flex w-full items-center justify-between gap-3 rounded-md bg-background-50 px-3 py-2 text-left text-xs font-semibold text-foreground-700 hover:text-primary-700">
+                      <span className="truncate">{issue.action}</span>
+                      <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{issue.count}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-xs text-foreground-500">No priority actions right now.</p>
+                )}
+              </div>
+            </div>
+          </aside>
         </section>
 
         <section className="rounded-lg border border-foreground-200 bg-background-50 shadow-sm">
@@ -427,31 +488,50 @@ function buildAttentionIssues(rows: ProgrammeRow[], modules: CurriculumModule[],
   ].filter(Boolean) as AttentionIssue[];
 }
 
-function KpiCard({ icon, label, value, detail, loading, tone = 'default' }: { icon: string; label: string; value: number; detail: string; loading: boolean; tone?: 'default' | 'warning' | 'info' }) {
-  const toneClass = tone === 'warning' ? 'bg-amber-50 text-amber-700' : tone === 'info' ? 'bg-blue-50 text-blue-700' : 'bg-primary-50 text-primary-700';
+function HeroMetric({ label, value, detail, loading }: { label: string; value: string | number; detail: string; loading: boolean }) {
   return (
-    <div className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm">
+    <div className="rounded-lg border border-white/10 bg-white/[0.08] p-3">
+      <p className="text-[11px] font-bold uppercase text-white/45">{label}</p>
+      <p className="mt-2 text-2xl font-bold text-white">{loading ? '-' : value}</p>
+      <p className="mt-1 truncate text-[11px] font-semibold text-white/55">{loading ? 'Loading curriculum data' : detail}</p>
+    </div>
+  );
+}
+
+function KpiCard({ icon, label, value, detail, loading, progress, tone = 'default' }: { icon: string; label: string; value: number; detail: string; loading: boolean; progress?: number; tone?: 'default' | 'warning' | 'info' }) {
+  const toneClass = tone === 'warning' ? 'bg-amber-50 text-amber-700' : tone === 'info' ? 'bg-blue-50 text-blue-700' : 'bg-primary-50 text-primary-700';
+  const barClass = tone === 'warning' ? 'bg-amber-500' : tone === 'info' ? 'bg-blue-500' : 'bg-primary-600';
+  return (
+    <div className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200">
       <div className="flex items-start justify-between gap-3">
         <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><i className={icon} /></span>
         <span className="text-2xl font-bold text-foreground-950">{loading ? '-' : value}</span>
       </div>
       <p className="mt-3 text-xs font-bold text-foreground-800">{label}</p>
       <p className="mt-1 text-[11px] text-foreground-500">{loading ? 'Loading curriculum data' : detail}</p>
+      {typeof progress === 'number' && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
+          <div className={`h-full rounded-full ${barClass}`} style={{ width: `${clamp(progress)}%` }} />
+        </div>
+      )}
     </div>
   );
 }
 
 function AttentionCard({ issue }: { issue: AttentionIssue }) {
   return (
-    <article className="flex min-h-[136px] flex-col justify-between rounded-lg border border-foreground-200 bg-background-100/50 p-3">
+    <article className="flex min-h-[148px] flex-col justify-between rounded-lg border border-foreground-200 bg-background-100/50 p-3 transition-smooth hover:border-primary-200 hover:bg-background-50">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-2xl font-bold text-foreground-950">{issue.count}</p>
           <h3 className="mt-1 text-sm font-bold text-foreground-900">{issue.label}</h3>
         </div>
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
+          <i className="ri-error-warning-line" />
+        </span>
       </div>
       <p className="mt-2 text-xs leading-5 text-foreground-500">{issue.detail}</p>
-      <button onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="mt-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-lg bg-foreground-900 px-3 text-xs font-bold text-white transition-smooth hover:bg-foreground-800 focus:outline-none focus:ring-2 focus:ring-primary-300">
+      <button onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="mt-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-lg bg-foreground-950 px-3 text-xs font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
         {issue.action}
         <i className="ri-arrow-right-line" />
       </button>
@@ -459,11 +539,26 @@ function AttentionCard({ issue }: { issue: AttentionIssue }) {
   );
 }
 
+function ReadinessBar({ label, value, detail, tone = 'primary' }: { label: string; value: number; detail: string; tone?: 'primary' | 'emerald' | 'amber' }) {
+  const barClass = tone === 'emerald' ? 'bg-emerald-500' : tone === 'amber' ? 'bg-amber-500' : 'bg-primary-600';
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-bold text-foreground-800">{label}</p>
+        <p className="text-[11px] font-semibold text-foreground-500">{detail}</p>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-background-200">
+        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${clamp(value)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function ProgrammeHealthTable({ loading, rows, hasFilters }: { loading: boolean; rows: ProgrammeRow[]; hasFilters: boolean }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[640px] overflow-auto">
       <table className="min-w-[1120px] w-full border-collapse text-left">
-        <thead className="bg-background-100/70 text-[10px] font-bold uppercase text-foreground-500">
+        <thead className="sticky top-0 z-10 bg-background-100 text-[10px] font-bold uppercase text-foreground-500 shadow-[0_1px_0_0_rgba(0,0,0,0.08)]">
           <tr>
             {['Programme', 'Standard / Framework', 'Cohorts', 'Groups', 'Modules', 'Sessions', 'KSB Coverage', 'Status', 'Action'].map(column => (
               <th key={column} className="border-b border-foreground-200 px-3 py-3 first:pl-4 last:pr-4">{column}</th>
@@ -475,9 +570,9 @@ function ProgrammeHealthTable({ loading, rows, hasFilters }: { loading: boolean;
             <tr><td colSpan={9}><TableRowsSkeleton rows={6} columns={9} gridClass="grid grid-cols-9" /></td></tr>
           ) : rows.length ? (
             rows.map(row => (
-              <tr key={row.programme.id} className="h-16 hover:bg-background-100/60">
+              <tr key={row.programme.id} className="h-16 transition-smooth hover:bg-primary-50/35">
                 <td className="max-w-[240px] px-3 py-3 pl-4">
-                  <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/programmes/${row.programme.id}`)} className="block max-w-full truncate text-left text-xs font-bold text-foreground-950 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
+                  <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/programmes/${row.programme.id}`)} className="block max-w-full truncate text-left text-sm font-bold text-foreground-950 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
                     {row.programme.name}
                   </button>
                   <span className="mt-0.5 block truncate text-[10px] font-semibold text-foreground-400">ID: {row.programme.id}</span>
@@ -492,7 +587,7 @@ function ProgrammeHealthTable({ loading, rows, hasFilters }: { loading: boolean;
                 </td>
                 <td className="px-3 py-3"><StatusBadge status={row.status} /></td>
                 <td className="px-3 py-3 pr-4">
-                  <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/programmes/${row.programme.id}`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
+                  <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/programmes/${row.programme.id}`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
                     Open
                     <i className="ri-arrow-right-line" />
                   </button>
@@ -518,7 +613,7 @@ function ModulePipelineRow({ module }: { module: CurriculumModule }) {
   const needsKsb = Number(module.ksbCount || 0) === 0;
   const status = needsKsb ? 'Missing KSB' : module.status === 'published' ? 'Ready to publish' : titleCase(module.status || 'draft');
   return (
-    <div className="grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 hover:bg-background-100/50">
+    <div className="grid min-h-16 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-3 transition-smooth hover:bg-primary-50/30">
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <p className="max-w-full truncate text-sm font-bold text-foreground-950">{module.name}</p>
@@ -586,9 +681,9 @@ function KsbFrameworksPanel({ loading, frameworks }: { loading: boolean; framewo
 
 function CompactTable({ loading, headers, rows, empty }: { loading: boolean; headers: string[]; rows: string[][]; empty: string }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[520px] overflow-auto">
       <table className="min-w-[620px] w-full border-collapse text-left">
-        <thead className="bg-background-100/70 text-[10px] font-bold uppercase text-foreground-500">
+        <thead className="sticky top-0 z-10 bg-background-100 text-[10px] font-bold uppercase text-foreground-500">
           <tr>{headers.map(header => <th key={header} className="border-b border-foreground-200 px-3 py-3">{header}</th>)}</tr>
         </thead>
         <tbody className="divide-y divide-foreground-100 text-xs text-foreground-600">
@@ -596,7 +691,7 @@ function CompactTable({ loading, headers, rows, empty }: { loading: boolean; hea
             <tr><td colSpan={headers.length}><TableRowsSkeleton rows={5} columns={headers.length} gridClass={`grid grid-cols-${headers.length}`} /></td></tr>
           ) : rows.length ? (
             rows.map((row, index) => (
-              <tr key={`${row[0]}-${index}`} className="h-14 hover:bg-background-100/50">
+              <tr key={`${row[0]}-${index}`} className="h-14 transition-smooth hover:bg-primary-50/30">
                 {row.map((cell, cellIndex) => <td key={`${cell}-${cellIndex}`} className="max-w-[180px] truncate px-3 py-3 first:font-bold first:text-foreground-900">{cell || 'Not set'}</td>)}
               </tr>
             ))
@@ -703,6 +798,15 @@ function normalise(value: unknown) {
 function dateValue(value: string) {
   const time = Date.parse(value);
   return Number.isNaN(time) ? 0 : time;
+}
+
+function percentage(value: number, total: number) {
+  if (!total) return 0;
+  return Math.round((value / total) * 100);
+}
+
+function clamp(value: number) {
+  return Math.max(0, Math.min(100, value));
 }
 
 function titleCase(value: string) {

@@ -8,7 +8,7 @@ const base = process.env.BASE_PATH || "/";
 const isPreview = process.env.IS_PREVIEW ? true : false;
 //const proxyPlugins = isPreview ? [readdyJsxRuntimeProxyPlugin()] : [];
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   define: {
     __BASE_PATH__: JSON.stringify(base),
     __IS_PREVIEW__: JSON.stringify(isPreview),
@@ -71,7 +71,16 @@ export default defineConfig({
   ],
   base,
   build: {
-    sourcemap: true,
+    // Production ships no source maps. The bundle previously emitted 297 .map files
+    // (~22 MB, 71% of the build output) reachable from the deployed site, which hands
+    // any visitor the original TypeScript — component logic, code comments, internal
+    // file paths and API route names included. No error-monitoring service is wired
+    // up (there is no Sentry/Bugsnag/Rollbar/Datadog dependency), so nothing consumes
+    // them; if one is added later, switch this to 'hidden' so the maps are emitted for
+    // upload but no sourceMappingURL comment points browsers at them.
+    //
+    // `vite dev` is unaffected: the dev server always serves inline source maps.
+    sourcemap: mode === 'production' ? false : true,
     outDir: 'out',
   },
   resolve: {
@@ -115,4 +124,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

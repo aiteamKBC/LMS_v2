@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
@@ -40,8 +40,11 @@ import {
 } from './weekTemplateData';
 import { CONTENT_STATUSES, MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
-import { QuizEditorPanel } from '@/pages/curriculum/quiz-xml/edit/QuizEditorPanel';
-import { GuidedQuizUpload } from './GuidedQuizUpload';
+// Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
+// alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
+// load of this page and of module-builder, which imports from this module.
+const QuizEditorPanel = lazy(() => import('@/pages/curriculum/quiz-xml/edit/QuizEditorPanel').then(m => ({ default: m.QuizEditorPanel })));
+const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ default: m.GuidedQuizUpload })));
 
 export type { WeekScope };
 export interface GroupOption { key: string; name: string; cohort?: string }
@@ -1307,9 +1310,6 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1363,9 +1363,6 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints }: Compon
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1442,9 +1439,6 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1531,9 +1525,6 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1634,9 +1625,6 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1733,9 +1721,6 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -1842,22 +1827,28 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
       {editorOpen && linkedQuizId && (
         <div className="fixed inset-0 z-[60] overflow-y-auto bg-foreground-950/50 backdrop-blur-sm" onClick={closeEditor}>
           <div className="mx-auto my-6 w-full max-w-[1140px] overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <QuizEditorPanel quizId={linkedQuizId} onClose={closeEditor} onSaved={() => void loadQuizzes()} />
+            {/* Local boundary: the route-level one would blank the whole page while
+                this chunk downloads. */}
+            <Suspense fallback={<div className="p-10 text-center text-[13px] text-foreground-400">Loading quiz editor…</div>}>
+              <QuizEditorPanel quizId={linkedQuizId} onClose={closeEditor} onSaved={() => void loadQuizzes()} />
+            </Suspense>
           </div>
         </div>
       )}
 
       {wizardOpen && (
-        <GuidedQuizUpload
-          open={wizardOpen}
-          onClose={() => setWizardOpen(false)}
-          scope={{ programmeId: weekScope.programmeId, programmeName: weekScope.programmeName, moduleName: weekScope.moduleName }}
-          onUploaded={quiz => {
-            setQuizzes(prev => [quiz as WorkspaceQuizSummary, ...prev.filter(item => String(item.id) !== String(quiz.id))]);
-            link(quiz as WorkspaceQuizSummary);
-            void loadQuizzes();
-          }}
-        />
+        <Suspense fallback={null}>
+          <GuidedQuizUpload
+            open={wizardOpen}
+            onClose={() => setWizardOpen(false)}
+            scope={{ programmeId: weekScope.programmeId, programmeName: weekScope.programmeName, moduleName: weekScope.moduleName }}
+            onUploaded={quiz => {
+              setQuizzes(prev => [quiz as WorkspaceQuizSummary, ...prev.filter(item => String(item.id) !== String(quiz.id))]);
+              link(quiz as WorkspaceQuizSummary);
+              void loadQuizzes();
+            }}
+          />
+        </Suspense>
       )}
 
       <Section title="Quiz source">
@@ -1950,9 +1941,6 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
         )}
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }
@@ -2037,9 +2025,6 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
         </div>
       </Section>
 
-      <Section title="KSB mappings" hint="Knowledge · Skills · Behaviours">
-        <KsbMappingEditor mappings={component.ksbMappings} onChange={mappings => onChange({ ksbMappings: mappings })} />
-      </Section>
     </>
   );
 }

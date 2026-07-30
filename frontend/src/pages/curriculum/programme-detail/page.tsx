@@ -758,19 +758,23 @@ function useProgrammeDetailData(programmeId: string) {
     }
     setLoading(true);
     try {
-      const [detail, coaches, tutors, programmes, ksbSets, ksbFrameworks, holidays] = await Promise.all([
-        fetchCurriculumProgrammeDetail(programmeId, signal),
+      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal);
+      if (signal?.aborted) return null;
+      const overview = programmeDetailToOverview(detail);
+      setData(overview);
+      setError(null);
+      setLoading(false);
+
+      void Promise.all([
         fetchCurriculumCoaches(signal).catch(() => []),
         fetchCurriculumTutors(signal).catch(() => []),
         fetchCurriculumProgrammes(signal).catch(() => []),
-        fetchCurriculumKsbSets(signal).catch(() => []),
         fetchCurriculumKsbFrameworks(signal).catch(() => []),
         fetchCurriculumHolidays(signal).catch(() => []),
-      ]);
-      if (signal?.aborted) return null;
-      const overview = programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbSets, ksbFrameworks, holidays });
-      setData(overview);
-      setError(null);
+      ]).then(([coaches, tutors, programmes, ksbFrameworks, holidays]) => {
+        if (signal?.aborted) return;
+        setData(programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbFrameworks, holidays }));
+      });
       return overview;
     } catch (err) {
       if (signal?.aborted) return null;
@@ -889,6 +893,14 @@ function isComponentForModule(component: CurriculumComponent, liveModule: { id: 
   return moduleKeys.some(key => key && componentModuleKeys.includes(key));
 }
 
+function isGeneratedWeekPlaceholderComponent(component: CurriculumComponent, weekNumber: number, weekTitle = '') {
+  const titleKey = normalise(component.title);
+  const expectedTitleKeys = [weekTitle, `Week ${weekNumber}`, `Week ${weekNumber}.`].map(normalise).filter(Boolean);
+  const typeKey = normalise(component.type);
+  const hasKsbMappings = Boolean((component.ksbRefs || []).length || (component.ksbMappings || []).length);
+  return !hasKsbMappings && expectedTitleKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
+}
+
 function buildModuleWeeks(
   moduleId: string,
   moduleName: string,
@@ -916,12 +928,15 @@ function buildModuleWeeks(
   });
 
   const weekNumbers = [...new Set([...authoredWeekByNumber.keys(), ...byWeek.keys(), ...componentsByWeek.keys()])].sort((a, b) => a - b);
-  const hasAuthoredComponents = components.length > 0;
 
   return weekNumbers.map((weekNumber) => {
     const authoredWeek = authoredWeekByNumber.get(weekNumber);
     const weekSessions = byWeek.get(weekNumber) ?? [];
-    const weekComponents = [...(componentsByWeek.get(weekNumber) ?? [])].sort((a, b) => {
+    const rawWeekComponents = componentsByWeek.get(weekNumber) ?? [];
+    const authoredWeekTitle = clean(authoredWeek?.title);
+    const weekComponents = rawWeekComponents.filter(component => (
+      !isGeneratedWeekPlaceholderComponent(component, weekNumber, authoredWeekTitle)
+    )).sort((a, b) => {
       const orderDelta = Number(a.displayOrder ?? 9999) - Number(b.displayOrder ?? 9999);
       if (orderDelta !== 0) return orderDelta;
       return clean(a.title).localeCompare(clean(b.title));
@@ -941,7 +956,7 @@ function buildModuleWeeks(
       title: clean(authoredWeek?.title) || weekTitle || first?.title || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
-      otjh: Math.round((hasAuthoredComponents ? componentOtjh : sessionOtjh) * 10) / 10,
+      otjh: Math.round((weekComponents.length ? componentOtjh : sessionOtjh) * 10) / 10,
       components: weekComponents,
       sessions: sorted.map(session => ({
         id: session.id,
@@ -1356,6 +1371,7 @@ export default function ProgrammeDetailPage() {
   const [ksbTraceInitialTab, setKsbTraceInitialTab] = useState<'map' | 'coverage' | 'trace'>('coverage');
   const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [expandedModuleWeek, setExpandedModuleWeek] = useState<string | null>(null);
   const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
@@ -1466,6 +1482,8 @@ export default function ProgrammeDetailPage() {
   }, [data]);
 
   useEffect(() => {
+    if (tab !== 'ksb' && !ksbTraceOpen) return undefined;
+    if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();
     fetchCurriculumKsbSets(controller.signal)
       .then(setProgrammeKsbSets)
@@ -1473,9 +1491,11 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) console.warn('Unable to load KSB profiles for programme descriptions.', error);
       });
     return () => controller.abort();
-  }, []);
+  }, [ksbTraceOpen, programmeKsbSets.length, tab]);
 
   useEffect(() => {
+    if (tab !== 'ksb' && !ksbTraceOpen) return undefined;
+    if (skillsStandards.length) return undefined;
     const controller = new AbortController();
     setSkillsStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
@@ -1487,7 +1507,7 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) setSkillsStandardsLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [ksbTraceOpen, skillsStandards.length, tab]);
 
   useEffect(() => {
     if (PROGRAMME.cohorts.length > 0 && !PROGRAMME.cohorts.some(c => c.id === selectedCohort)) {
@@ -2128,18 +2148,26 @@ export default function ProgrammeDetailPage() {
               return (
               <div key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
                 <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_54%,#effdf7_100%)] px-5 py-4">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
                     <span className="w-11 h-11 rounded-xl bg-primary-600 text-white flex items-center justify-center shrink-0 shadow-sm">
                       <i className="ri-stack-line text-sm"></i>
                     </span>
-                    <div>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-base font-heading font-black text-foreground-950">{mod.name}</p>
                       </div>
                       <p className="text-[11px] font-semibold text-foreground-500 mt-0.5">{[mod.cohort || 'No cohort', mod.group || 'No group'].join(' - ')}</p>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(mod.id)}`)}
+                    className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
+                  >
+                    <i className="ri-tools-line text-sm"></i>
+                    Builder
+                  </button>
                 </div>
                 {mod.description && <p className="mt-3 text-[12px] leading-5 text-foreground-500">{mod.description}</p>}
                 </div>
@@ -2187,17 +2215,53 @@ export default function ProgrammeDetailPage() {
                     {mod.weeksData.map(week => {
                       const weekComponents = week.components || [];
                       const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
+                      const weekKey = `${mod.id}:${week.id}`;
+                      const isWeekOpen = expandedModuleWeek === weekKey;
                       return (
-                        <div key={week.id} className="flex items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2">
-                          <div className="min-w-0">
-                            <p className="truncate text-[11px] font-bold text-foreground-800">{week.title || `Week ${week.number}`}</p>
-                            <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-1.5">
-                            <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
-                            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{weekComponents.length} comp</span>
-                            <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[9px] font-bold text-secondary-700">{weekKsbCount} KSB</span>
-                          </div>
+                        <div key={week.id} className={`overflow-hidden rounded-lg border bg-background-50 transition-smooth ${isWeekOpen ? 'border-primary-300 shadow-sm sm:col-span-2' : 'border-background-200 hover:border-primary-200'}`}>
+                          <button type="button" onClick={() => setExpandedModuleWeek(isWeekOpen ? null : weekKey)} className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left">
+                            <div className="min-w-0">
+                              <p className="truncate text-[11px] font-bold text-foreground-800">{week.title || `Week ${week.number}`}</p>
+                              <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
+                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{weekComponents.length} comp</span>
+                              <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[9px] font-bold text-secondary-700">{weekKsbCount} KSB</span>
+                              <i className={`ri-arrow-down-s-line text-sm text-foreground-400 transition-smooth ${isWeekOpen ? 'rotate-180 text-primary-600' : ''}`}></i>
+                            </div>
+                          </button>
+                          {isWeekOpen && (
+                            <div className="border-t border-background-200 bg-background-100/60 p-3">
+                              <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                <MiniDarkMetric label="Start" value={clean(week.startDate) || 'TBD'} />
+                                <MiniDarkMetric label="End" value={clean(week.endDate) || 'TBD'} />
+                                <MiniDarkMetric label="Components" value={weekComponents.length} />
+                                <MiniDarkMetric label="KSBs" value={weekKsbCount} />
+                              </div>
+                              <div className="space-y-2">
+                                {weekComponents.length ? weekComponents.map((component, index) => (
+                                  <div key={component.id} className="flex items-center gap-3 rounded-lg border border-background-200 bg-background-50 p-2.5">
+                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{index + 1}</span>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
+                                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
+                                        {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
+                                        {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )) : (
+                                  <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-5 text-center">
+                                    <i className="ri-inbox-line text-lg text-foreground-300"></i>
+                                    <p className="mt-1 text-[11px] font-bold text-foreground-500">No components attached to this week yet.</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -2365,7 +2429,6 @@ export default function ProgrammeDetailPage() {
                                       {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
                                     </div>
                                   </div>
-                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${moduleStatusColors[component.status] || moduleStatusColors.draft}`}>{component.status}</span>
                                 </div>
                               )) : (
                                 <div className="lg:col-span-2 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
@@ -2828,7 +2891,7 @@ export default function ProgrammeDetailPage() {
               {PROGRAMME.modules.map(mod => {
                 const componentCount = mod.weeksData.reduce((sum, wk) => sum + (wk.components?.length || 0), 0);
                 const mappedKsbCodes = [...new Set([
-                  ...mod.ksbTags.map(clean).filter(Boolean),
+                  ...mod.ksbTags.map(value => clean(value)).filter(Boolean),
                   ...mod.ksbMapping.map(item => item.ksb),
                 ])];
                 return (
@@ -2921,7 +2984,7 @@ export default function ProgrammeDetailPage() {
           <AddCurriculumStructureWizard
             isOpen={wizardOpen}
             onClose={() => setWizardOpen(false)}
-            onSaved={reload}
+            onSaved={() => void reload()}
             initialProgrammeId={id || PROGRAMME.id}
             initialCohortId={wizardContext.cohortId}
             initialGroupId={wizardContext.groupId}
@@ -3282,7 +3345,7 @@ function ksbCoverageSourceLabel(
     return clean(standard?.name || standard?.standardRef || standard?.code || sourceId);
   }
 
-  const framework = (data?.ksbFrameworks || []).find(item => [item.id, item.profileId, item.ksbProfileId].some(value => normaliseKsbSourceId(value) === sourceKey));
+  const framework = (data?.ksbFrameworks || []).find(item => [item.id, item.profileId, item.ksbProfileId].some(value => normaliseKsbSourceId(String(value || '')) === sourceKey));
   if (framework) return frameworkDisplayLabel(framework) || sourceId;
 
   const set = ksbSets.find(item => normaliseKsbSourceId(ksbSetSourceIdForProgrammeDetail(item)) === sourceKey);
