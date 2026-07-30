@@ -367,41 +367,41 @@ export default function CoachMessagesPage() {
       pageSubtitle="Communicate directly with learners in your caseload."
       userName={ownerName}
       userRole="Progress Coach"
+      showBackButton={false}
     >
-      <div className="min-h-[calc(100vh-140px)]">
-        <section className="h-full rounded-[24px] border border-foreground-200/60 bg-background-50 shadow-sm overflow-hidden min-h-0">
-          <div className="px-5 md:px-6 py-4 md:py-5 border-b border-foreground-200/60 flex flex-col gap-4">
-            <div className="flex flex-col xl:flex-row xl:items-start gap-5 xl:gap-6">
-              <div className="xl:flex-1 min-w-0">
+      <div className={`w-full min-w-0 ${activeThread ? 'min-h-[calc(100vh-100px)] lg:min-h-[calc(100vh-140px)]' : 'min-h-[calc(100vh-100px)] lg:min-h-[calc(100vh-140px)]'}`}>
+        <section className="h-full min-w-0 rounded-2xl md:rounded-[24px] border border-foreground-200/60 bg-background-50 shadow-sm overflow-hidden">
+          <div className={`${activeThread ? 'hidden lg:flex' : 'flex'} px-3 sm:px-5 md:px-6 py-3 md:py-4 border-b border-foreground-200/60 flex-col gap-3`}>
+            <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-5">
+              <div className="lg:flex-1 min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary-500">Learner Inbox</p>
-                <h1 className="text-xl md:text-2xl font-heading font-semibold text-foreground-900 mt-2">Conversations with your learners</h1>
-                <p className="text-sm text-foreground-500 mt-1">Only learners assigned to <span className="font-medium text-foreground-700">{ownerEmail || ownerName}</span> appear here.</p>
+                <h1 className="text-lg sm:text-xl md:text-2xl font-heading font-semibold text-foreground-900 mt-1 md:mt-1.5">Conversations with your learners</h1>
+                <p className="text-xs sm:text-sm text-foreground-500 mt-1 break-words">Only learners assigned to <span className="font-medium text-foreground-700">{ownerEmail || ownerName}</span> appear here.</p>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-3 xl:ml-auto">
-                <div className="relative w-full sm:w-[300px] shrink-0">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
-                  <input
-                    type="text"
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="Search learners or messages..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-foreground-200/60 bg-background-100 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth"
-                  />
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <SummaryCard label="Learners" icon="ri-group-line" />
-                  <SummaryCard label="Unread" icon="ri-mail-unread-line" tone="primary" />
-                  <SummaryCard label="Need Reply" icon="ri-reply-line" tone="amber" />
-                  <SummaryCard label="At Risk" icon="ri-alarm-warning-line" tone="red" />
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 sm:gap-2 lg:shrink-0">
+                <SummaryCard label="Learners" icon="ri-group-line" />
+                <SummaryCard label="Unread" icon="ri-mail-unread-line" tone="primary" />
+                <SummaryCard label="Need Reply" icon="ri-reply-line" tone="amber" />
+                <SummaryCard label="At Risk" icon="ri-alarm-warning-line" tone="red" />
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+              <div className="relative w-full sm:w-[320px] shrink-0">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search learners or messages..."
+                  className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-foreground-200/60 bg-background-100 text-sm text-foreground-700 outline-none focus:border-primary-300 transition-smooth"
+                />
+              </div>
+              <div className="flex flex-wrap items-center justify-start sm:justify-end gap-1.5 sm:gap-2 sm:ml-auto">
                 {FILTERS.map((item) => (
                   <button
                     key={item.id}
                     onClick={() => setFilter(item.id)}
-                    className={`px-3 py-2 rounded-full text-xs font-semibold transition-smooth cursor-pointer border ${
+                    className={`px-2.5 md:px-3 py-1.5 md:py-2 rounded-full text-[11px] md:text-xs font-semibold transition-smooth cursor-pointer border ${
                       filter === item.id
                         ? 'bg-primary-500 text-white border-primary-500 shadow-sm'
                         : 'bg-background-50 text-foreground-500 border-foreground-200/60 hover:border-primary-200 hover:text-primary-600'
@@ -410,11 +410,12 @@ export default function CoachMessagesPage() {
                     {item.label} <span className={`ml-1 ${filter === item.id ? 'text-white/80' : 'text-foreground-300'}`}>({counts[item.id]})</span>
                   </button>
                 ))}
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] lg:h-[calc(100vh-250px)] lg:min-h-[520px]">
-            <aside className="border-r border-foreground-200/60 bg-background-50 flex flex-col lg:min-h-0">
+          <div className={`${activeThread ? 'h-[calc(100vh-120px)] lg:h-[calc(100vh-350px)] lg:min-h-[460px]' : 'lg:h-[calc(100vh-350px)] lg:min-h-[460px]'} grid min-w-0 grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)]`}>
+            <aside className={`${activeThread ? 'hidden lg:flex' : 'flex'} border-r border-foreground-200/60 bg-background-50 flex-col lg:min-h-0`}>
               <div className="px-4 py-3 border-b border-foreground-200/60 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground-700">Learners</p>
@@ -427,7 +428,7 @@ export default function CoachMessagesPage() {
                 )}
               </div>
 
-              <div className="max-h-[520px] overflow-y-auto overscroll-contain lg:flex-1 lg:min-h-0 lg:max-h-none">
+              <div className="max-h-[420px] md:max-h-[520px] overflow-y-auto overscroll-contain lg:flex-1 lg:min-h-0 lg:max-h-none">
                 {loading ? (
                   <div className="p-6 space-y-3">
                     {Array.from({ length: 6 }).map((_, index) => (
@@ -461,12 +462,12 @@ export default function CoachMessagesPage() {
                       <button
                         key={thread.learnerId}
                         onClick={() => handleSelectThread(thread.learnerId)}
-                        className={`w-full text-left px-4 py-4 border-b border-foreground-200/50 transition-smooth cursor-pointer ${
+                        className={`w-full text-left px-3.5 py-3 border-b border-foreground-200/50 transition-smooth cursor-pointer ${
                           selectedLearnerId === thread.learnerId ? 'bg-primary-50/60' : 'hover:bg-background-100/60'
                         }`}
                       >
                         <div className="flex items-start gap-3">
-                          <div className="w-11 h-11 rounded-2xl shrink-0 bg-primary-100 text-primary-700 font-semibold flex items-center justify-center">
+                          <div className="w-10 h-10 rounded-xl shrink-0 bg-primary-100 text-primary-700 font-semibold flex items-center justify-center">
                             {thread.learnerInitials}
                           </div>
                           <div className="flex-1 min-w-0">
@@ -489,7 +490,7 @@ export default function CoachMessagesPage() {
                               </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-2 mt-3">
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2">
                               <span className={`text-[10px] font-semibold px-2 py-1 rounded-full border ${meta.pill}`}>
                                 {meta.label}
                               </span>
@@ -505,7 +506,7 @@ export default function CoachMessagesPage() {
                               )}
                             </div>
 
-                            <p className={`text-xs mt-3 line-clamp-2 ${thread.unreadCount > 0 ? 'text-foreground-700 font-medium' : 'text-foreground-500'}`}>
+                            <p className={`text-xs mt-2 line-clamp-2 ${thread.unreadCount > 0 ? 'text-foreground-700 font-medium' : 'text-foreground-500'}`}>
                               {thread.lastMessage || 'No messages yet. Start the conversation.'}
                             </p>
                           </div>
@@ -517,10 +518,10 @@ export default function CoachMessagesPage() {
               </div>
             </aside>
 
-            <section className="flex flex-col min-w-0 min-h-[520px] bg-background-50 lg:min-h-0">
+            <section className={`flex w-full min-w-0 flex-col bg-background-50 ${activeThread ? 'h-full min-h-0 lg:justify-self-stretch' : 'min-h-[360px] md:min-h-[420px] lg:min-h-0'}`}>
               {activeThread ? (
                 <>
-                  <div className="px-5 md:px-6 py-4 border-b border-foreground-200/60 bg-background-50 shrink-0">
+                  <div className="px-3 sm:px-5 md:px-6 py-3 md:py-4 border-b border-foreground-200/60 bg-background-50 shrink-0">
                     <div className="flex items-center gap-3 min-w-0">
                       <button
                         onClick={leaveThread}
@@ -542,11 +543,11 @@ export default function CoachMessagesPage() {
                         <h2 className="text-base font-semibold text-foreground-900 truncate">{activeThread.learnerName}</h2>
                         <p className="text-xs text-foreground-500 truncate mt-0.5">{activeThread.learnerEmail}</p>
                       </div>
-                      <button
+                        <button
                         onClick={openLearnerProfile}
-                        className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+                        className="ml-auto inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-xl bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                       >
-                        <i className="ri-user-3-line"></i> Open Profile
+                        <i className="ri-user-3-line"></i><span className="hidden sm:inline">Open Profile</span>
                       </button>
                     </div>
                   </div>
@@ -610,7 +611,7 @@ export default function CoachMessagesPage() {
                   <div
                     ref={messagesContainerRef}
                     onScroll={handleMessagesScroll}
-                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 md:px-6 py-5 bg-background-100/40"
+                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 md:px-6 py-3 md:py-4 bg-background-100/40"
                   >
                     {detailLoading ? (
                       <div className="space-y-4">
@@ -642,36 +643,36 @@ export default function CoachMessagesPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-1.5">
                         {messages.map((message, index) => {
                           const showDate = bubbleDateLabel(index > 0 ? messages[index - 1] : null, message);
                           const isCoachMessage = message.from === 'me';
                           return (
                             <div key={message.id}>
                               {showDate && (
-                                <div className="flex justify-center my-5">
-                                  <span className="px-3 py-1 rounded-full bg-background-50 border border-foreground-200/60 text-[11px] font-medium text-foreground-400">
+                                <div className="flex justify-center my-2.5">
+                                  <span className="px-2.5 py-0.5 rounded-full bg-background-50 border border-foreground-200/60 text-[10px] font-medium text-foreground-400">
                                     {message.dateLabel}
                                   </span>
                                 </div>
                               )}
-                              <div className={`flex items-end gap-2 ${isCoachMessage ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
+                              <div className={`flex items-end gap-1.5 ${isCoachMessage ? 'justify-end pl-2 sm:pl-12' : 'justify-start pr-2 sm:pr-12'}`}>
                                 {!isCoachMessage && (
                                   <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 text-[11px] font-semibold flex items-center justify-center shrink-0">
                                     {activeThread.learnerInitials}
                                   </div>
                                 )}
-                              <div className={`flex max-w-[min(68%,620px)] flex-col ${isCoachMessage ? 'items-end' : 'items-start'}`}>
+                              <div className={`flex max-w-[88%] sm:max-w-[min(68%,620px)] flex-col ${isCoachMessage ? 'items-end' : 'items-start'}`}>
                                   <span className="mb-1 text-[10px] font-semibold text-foreground-400">
                                     {isCoachMessage ? 'You' : activeThread.learnerName}
                                   </span>
-                                  <div className={`rounded-xl px-3.5 py-2.5 shadow-sm ${
+                                  <div className={`rounded-xl px-3 py-2 shadow-sm ${
                                     isCoachMessage
                                       ? 'bg-primary-500 text-white rounded-br-md'
                                       : 'bg-white text-foreground-800 rounded-bl-md border border-foreground-200/70'
                                   }`}>
                                     <p className={`text-[13px] leading-relaxed ${message.isDeleted ? 'italic' : ''}`}>{message.body}</p>
-                                    <div className={`mt-1.5 flex items-center gap-2 text-[10px] ${
+                                    <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${
                                       isCoachMessage ? 'justify-end text-white/80' : 'text-foreground-400'
                                     }`}>
                                       <span>{message.timeLabel}</span>
@@ -693,7 +694,7 @@ export default function CoachMessagesPage() {
                     )}
                   </div>
 
-                  <div className="px-4 md:px-5 py-3 border-t border-foreground-200/60 bg-background-50 shrink-0">
+                  <div className="px-3 sm:px-4 md:px-5 py-2.5 md:py-3 border-t border-foreground-200/60 bg-background-50 shrink-0">
                     <div className="rounded-2xl border border-foreground-200/60 bg-background-100 p-2.5">
                       <textarea
                         value={newMessage}
@@ -708,8 +709,7 @@ export default function CoachMessagesPage() {
                         rows={2}
                         className="w-full resize-none border-0 bg-transparent text-sm text-foreground-700 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 placeholder:text-foreground-300"
                       />
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <p className="text-[10px] text-foreground-400">Press Enter to send, Shift + Enter for a new line.</p>
+                      <div className="mt-2 flex items-center justify-end gap-3">
                         <button
                           onClick={handleSend}
                           disabled={!newMessage.trim() || sending}

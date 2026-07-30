@@ -15,6 +15,7 @@ interface WorkspaceShellProps {
   userName?: string;
   userRole?: string;
   workspaceLabel?: string;
+  showBackButton?: boolean;
 }
 
 interface BreadcrumbItem {
@@ -119,6 +120,7 @@ export function WorkspaceShell({
   userName,
   userRole,
   workspaceLabel,
+  showBackButton = true,
 }: WorkspaceShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -242,15 +244,17 @@ export function WorkspaceShell({
         </main>
       </div>
 
-      <button
-        type="button"
-        onClick={handleReturnToPreviousWindow}
-        className="fixed right-4 top-20 z-50 inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
-        title={previousRoute ? 'Back to the previous screen' : 'Back'}
-      >
-        <i className="ri-arrow-go-back-line text-base"></i>
-        <span className="hidden sm:inline">Back</span>
-      </button>
+      {showBackButton && (
+        <button
+          type="button"
+          onClick={handleReturnToPreviousWindow}
+          className="fixed right-4 top-20 z-50 inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
+          title={previousRoute ? 'Back to the previous screen' : 'Back'}
+        >
+          <i className="ri-arrow-go-back-line text-base"></i>
+          <span className="hidden sm:inline">Back</span>
+        </button>
+      )}
 
       {/* Global Search Modal */}
       <GlobalSearch isOpen={searchOpen} onClose={() => setSearchOpen(false)} />

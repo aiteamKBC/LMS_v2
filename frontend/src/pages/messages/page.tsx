@@ -495,6 +495,7 @@ export default function MessagesPage() {
       pageSubtitle={isCoach ? 'Private conversations with your coaching participants' : 'Private conversations with your coach'}
       userName={metaName}
       userRole={metaRole}
+      showBackButton={false}
     >
       <div className="min-h-[calc(100vh-140px)] bg-background-100 px-4 pb-6 md:px-6">
         <div className="flex items-center gap-2 py-3 text-xs text-foreground-400">
@@ -759,8 +760,7 @@ export default function MessagesPage() {
                         placeholder={`Message ${participant.name.split(' ')[0]}...`}
                         className="w-full resize-none border-0 bg-transparent outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 text-sm text-foreground-700 placeholder:text-foreground-400"
                       />
-                      <div className="flex items-center justify-between gap-3 mt-1.5">
-                        <p className="text-[10px] text-foreground-400">Press Enter to send, Shift + Enter for a new line.</p>
+                      <div className="flex items-center justify-end gap-3 mt-1.5">
                         <button
                           onClick={() => void handleSend()}
                           disabled={!newMessage.trim() || sending}
