@@ -47,6 +47,7 @@ import {
 } from '@/lib/curriculumApi';
 import {
   componentTypes,
+  createTeamsMeeting,
   createEmptyComponent,
   curriculumModuleToCatalogue,
   getDefaultStructure,
@@ -55,9 +56,12 @@ import {
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
   saveModuleStructure,
+  syncTeamsMeetingArtifacts,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
+  type TeamsMeetingInput,
+  type TeamsMeetingResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
@@ -116,6 +120,31 @@ interface ModuleDraft {
   skippedHolidaySessions: SkippedHolidaySession[];
   originalEndDate: string;
   extensionDays: number;
+  teamsMeeting?: TeamsMeetingDraft;
+}
+
+interface TeamsMeetingDraft {
+  liveSessionId: string;
+  eventId: string;
+  onlineMeetingId?: string;
+  joinUrl: string;
+  webLink: string;
+  meetingOptionsUrl: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters: string[];
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  repeat: string;
+  repeatOccurrences: number;
+  trackedOccurrences?: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  meetingType: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  hideAttendees: boolean;
 }
 
 interface TutorSessionSummary {
@@ -1246,6 +1275,62 @@ function moduleStaffValues(module: CurriculumModule, group?: CurriculumGroup) {
   };
 }
 
+function metadataBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return fallback;
+}
+
+function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | undefined {
+  const metadata = (module as CurriculumModule & { deliveryMetadata?: Record<string, unknown> }).deliveryMetadata || {};
+  const liveComponent = (module.weekStructure || [])
+    .flatMap(week => week.components || [])
+    .find(component => ['live-session', 'live_session'].includes(String(component.type || '').toLowerCase()));
+  const componentSettings = (liveComponent?.settings || {}) as Record<string, unknown>;
+  const setting = (metadataKey: string, componentKey = metadataKey) => metadata[metadataKey] ?? componentSettings[componentKey];
+  const joinUrl = String(setting('teamsMeetingUrl', 'liveSessionUrl') || '').trim();
+  const eventId = String(setting('teamsEventId') || '').trim();
+  if (!joinUrl && !eventId) return undefined;
+  let attendees: string[] = [];
+  let presenters: string[] = [];
+  try {
+    const raw = setting('teamsAttendees');
+    attendees = Array.isArray(raw) ? raw.map(String) : JSON.parse(String(raw || '[]'));
+  } catch {
+    attendees = [];
+  }
+  try {
+    const raw = setting('teamsPresenters');
+    presenters = Array.isArray(raw) ? raw.map(String) : JSON.parse(String(raw || '[]'));
+  } catch {
+    presenters = [];
+  }
+  return {
+    liveSessionId: String(setting('teamsLiveSessionId') || ''),
+    eventId,
+    onlineMeetingId: String(setting('teamsOnlineMeetingId') || ''),
+    joinUrl,
+    webLink: String(setting('teamsWebLink') || ''),
+    meetingOptionsUrl: String(setting('teamsMeetingOptionsUrl') || ''),
+    organizerEmail: String(setting('teamsOrganizerEmail') || ''),
+    attendees,
+    presenters,
+    startDateTimeUtc: String(setting('teamsStartDateTimeUtc', 'sessionDateTimeUtc') || ''),
+    durationMinutes: Number(setting('teamsDurationMinutes', 'durationMinutes') || 60),
+    repeat: String(setting('teamsRepeat') || 'none'),
+    repeatOccurrences: Number(setting('teamsRepeatOccurrences') || 1),
+    lobbyBypass: String(setting('teamsLobbyBypass') || 'invited'),
+    recording: String(setting('teamsRecording') || 'record-transcribe'),
+    spokenLanguage: String(setting('teamsSpokenLanguage') || 'en-GB'),
+    meetingType: String(setting('teamsMeetingType') || 'live-session'),
+    requestResponses: metadataBoolean(setting('teamsRequestResponses'), true),
+    allowNewTimeProposals: metadataBoolean(setting('teamsAllowTimeProposals'), true),
+    hideAttendees: metadataBoolean(setting('teamsHideAttendees'), false),
+  };
+}
+
 function existingModuleDraft(module: CurriculumModule, group: GroupDraft, activeHolidays: CurriculumHoliday[], sourceGroup?: CurriculumGroup): ModuleDraft {
   const localId = `module-existing-${module.id || moduleOptionId(module)}`;
   const startDate = module.startDate || todayIso();
@@ -1275,6 +1360,7 @@ function existingModuleDraft(module: CurriculumModule, group: GroupDraft, active
     skippedHolidaySessions: plan.skippedHolidaySessions,
     originalEndDate: plan.originalEndDate,
     extensionDays: plan.extensionDays,
+    teamsMeeting: teamsMeetingFromModule(module),
   };
   const structure = actualModuleCatalogueStructure(module);
   return applyModuleBuilderContent(baseDraft, structure, group.deliveryDays.join(', '), group.startTime, activeHolidays);
@@ -1383,6 +1469,7 @@ function cloneModuleDraft(draft: ModuleDraft): ModuleDraft {
     existingSessionsNumber: undefined,
     newName: `${baseName} copy`,
     newSessionsNumber: draft.sessionsNumber,
+    teamsMeeting: undefined,
     weeks: draft.weeks.map((week, index) => ({
       ...week,
       id: `${localId}-week-${week.sessionNumber || index + 1}-${Math.random().toString(36).slice(2)}`,
@@ -2173,6 +2260,31 @@ function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleNa
   };
 }
 
+function teamsComponentSettings(meeting: TeamsMeetingDraft) {
+  return {
+    teamsLiveSessionId: meeting.liveSessionId,
+    teamsOnlineMeetingId: meeting.onlineMeetingId,
+    liveSessionUrl: meeting.joinUrl || meeting.webLink,
+    teamsEventId: meeting.eventId,
+    teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
+    teamsOrganizerEmail: meeting.organizerEmail,
+    teamsAttendees: meeting.attendees,
+    teamsPresenters: meeting.presenters,
+    sessionDateTimeUtc: meeting.startDateTimeUtc,
+    durationMinutes: meeting.durationMinutes,
+    teamsProvider: 'Microsoft Teams',
+    teamsRepeat: meeting.repeat,
+    teamsRepeatOccurrences: meeting.repeatOccurrences,
+    teamsLobbyBypass: meeting.lobbyBypass,
+    teamsRecording: meeting.recording,
+    teamsSpokenLanguage: meeting.spokenLanguage,
+    teamsMeetingType: meeting.meetingType,
+    teamsRequestResponses: meeting.requestResponses,
+    teamsAllowTimeProposals: meeting.allowNewTimeProposals,
+    teamsHideAttendees: meeting.hideAttendees,
+  };
+}
+
 function moduleDraftAuthoringPayload(
   draft: ModuleDraft,
   catalogueId: string,
@@ -2210,7 +2322,9 @@ function moduleDraftAuthoringPayload(
       expectedOtjh: Number(component.expectedOtjh) || 0,
       points: Number(component.points) || 0,
       ksbMappings: component.ksbMappings || [],
-      settings: component.settings || {},
+      settings: component.type === 'live-session' && draft.teamsMeeting
+        ? { ...(component.settings || {}), ...teamsComponentSettings(draft.teamsMeeting) }
+        : component.settings || {},
     })),
   }));
 
@@ -2259,6 +2373,27 @@ function moduleDraftAuthoringPayload(
       startTime: context.startTime || '',
       endTime: context.endTime || '',
       color: draft.color,
+      ...(draft.teamsMeeting ? {
+        teamsMeetingUrl: draft.teamsMeeting.joinUrl || draft.teamsMeeting.webLink,
+        teamsLiveSessionId: draft.teamsMeeting.liveSessionId,
+        teamsOnlineMeetingId: draft.teamsMeeting.onlineMeetingId || '',
+        teamsEventId: draft.teamsMeeting.eventId,
+        teamsWebLink: draft.teamsMeeting.webLink,
+        teamsMeetingOptionsUrl: draft.teamsMeeting.meetingOptionsUrl,
+        teamsOrganizerEmail: draft.teamsMeeting.organizerEmail,
+        teamsAttendees: JSON.stringify(draft.teamsMeeting.attendees),
+        teamsStartDateTimeUtc: draft.teamsMeeting.startDateTimeUtc,
+        teamsDurationMinutes: String(draft.teamsMeeting.durationMinutes),
+        teamsRepeat: draft.teamsMeeting.repeat,
+        teamsRepeatOccurrences: String(draft.teamsMeeting.repeatOccurrences),
+        teamsLobbyBypass: draft.teamsMeeting.lobbyBypass,
+        teamsRecording: draft.teamsMeeting.recording,
+        teamsSpokenLanguage: draft.teamsMeeting.spokenLanguage,
+        teamsMeetingType: draft.teamsMeeting.meetingType,
+        teamsRequestResponses: String(draft.teamsMeeting.requestResponses),
+        teamsAllowTimeProposals: String(draft.teamsMeeting.allowNewTimeProposals),
+        teamsHideAttendees: String(draft.teamsMeeting.hideAttendees),
+      } : {}),
     },
   });
 }
@@ -3885,10 +4020,10 @@ export function AddCurriculumStructureWizard({
     setSaving(intent);
     setMessage(null);
     try {
-      const matchingProgramme = selectedProgramme || programmes.find(programme => (
-        normalise(programme.name) === normalise(programmeForm.name)
-        || normalise(programme.sourceId) === normalise(slugify(programmeForm.name))
-      ));
+      // Only update a programme that the user explicitly opened or selected.
+      // Name matching can point at stale catalogue data and incorrectly turn a
+      // "create" action into a PATCH against a programme that no longer exists.
+      const matchingProgramme = selectedProgramme;
       const programmeResult = matchingProgramme
         ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, {
             ...programmeForm,
@@ -4555,6 +4690,7 @@ export function AddCurriculumStructureWizard({
                     moduleDrafts={moduleDrafts}
                     moduleOptions={moduleOptions}
                     tutors={tutors}
+                    tutorProfiles={staffTutors}
                     groupForm={groupForm}
                     removingDraftId={removingDraftId}
                     validationModules={validation.modules}
@@ -6083,6 +6219,7 @@ function ModulesStepWorkspace({
   moduleDrafts,
   moduleOptions,
   tutors,
+  tutorProfiles,
   groupForm,
   removingDraftId,
   validationModules,
@@ -6107,6 +6244,7 @@ function ModulesStepWorkspace({
   moduleDrafts: ModuleDraft[];
   moduleOptions: CurriculumModule[];
   tutors: string[];
+  tutorProfiles: CurriculumStaffProfile[];
   groupForm: GroupDraft & { deliveryDay: string };
   removingDraftId: string;
   validationModules: string[];
@@ -6270,8 +6408,10 @@ function ModulesStepWorkspace({
               index={activeModuleIndex}
               moduleOptions={moduleOptions}
               tutors={tutors}
+              tutorProfiles={tutorProfiles}
               groupDay={groupForm.deliveryDay}
               groupTime={groupForm.startTime}
+              groupEndTime={groupForm.endTime}
               cohortStartDate={activeCohort.startDate}
               cohortEndDate={activeCohort.endDate}
               tutorConflict={firstTutorConflictForModule(tutorConflicts, activeModule.localId)}
@@ -6465,14 +6605,42 @@ function EntityPickerPanel({
   );
 }
 
+function attachTeamsMeetingToWeeks(draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string) {
+  const settings = teamsComponentSettings(meeting);
+  return draft.weeks.map((week, weekIndex) => {
+    const existingLiveSessions = week.components.filter(component => component.type === 'live-session');
+    if (existingLiveSessions.length) {
+      return {
+        ...week,
+        components: week.components.map(component => component.type === 'live-session'
+          ? { ...component, settings: { ...(component.settings || {}), ...settings } }
+          : component),
+      };
+    }
+    const component = createEmptyComponent(week.id, 'live-session', week.components.length + 1);
+    return {
+      ...week,
+      components: [...week.components, {
+        ...component,
+        title: `${draft.name || 'Live session'} - Session ${week.sessionNumber || weekIndex + 1}`,
+        description: details || draft.notes || 'Microsoft Teams live session',
+        expectedOtjh: Math.max(0.25, meeting.durationMinutes / 60),
+        settings: { ...(component.settings || {}), ...settings },
+      }],
+    };
+  });
+}
+
 function ModulePlanningPanel({
   freeMode = false,
   draft,
   index,
   moduleOptions,
   tutors,
+  tutorProfiles,
   groupDay,
   groupTime,
+  groupEndTime,
   cohortStartDate,
   cohortEndDate,
   tutorConflict,
@@ -6487,8 +6655,10 @@ function ModulePlanningPanel({
   index: number;
   moduleOptions: CurriculumModule[];
   tutors: string[];
+  tutorProfiles: CurriculumStaffProfile[];
   groupDay: string;
   groupTime: string;
+  groupEndTime: string;
   cohortStartDate?: string;
   cohortEndDate?: string;
   tutorConflict?: TutorScheduleConflict;
@@ -6499,6 +6669,9 @@ function ModulePlanningPanel({
   onSelectExisting: (catalogueId: string) => void;
 }) {
   const [startDateTouched, setStartDateTouched] = useState(false);
+  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
+  const [teamsSyncing, setTeamsSyncing] = useState(false);
+  const [teamsSyncMessage, setTeamsSyncMessage] = useState('');
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   const selectedModuleId = selectedModule ? moduleOptionId(selectedModule) : draft.catalogueId;
   const moduleTitle = draft.name || selectedModule?.name || `Module ${index + 1}`;
@@ -6645,6 +6818,62 @@ function ModulePlanningPanel({
               <Field label="End date" type="date" value={draft.endDate} onChange={value => onChange({ endDate: value })} />
               <StaffSelect label="Tutor" value={draft.tutor} onChange={value => onChange({ tutor: value })} options={tutors} onOpen={onRefreshStaffProfiles} />
             </div>
+            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
+                  <i className="ri-microsoft-teams-line text-base"></i>
+                </span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-bold text-foreground-900">Microsoft Teams live sessions</p>
+                  {draft.teamsMeeting ? (
+                    <>
+                      <a href={draft.teamsMeeting.joinUrl || draft.teamsMeeting.webLink} target="_blank" rel="noreferrer" className="mt-0.5 block truncate text-[11px] font-bold text-primary-700 hover:text-primary-800">
+                        Meeting created - open join link
+                      </a>
+                      <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">
+                        {draft.teamsMeeting.organizerEmail} · {draft.teamsMeeting.repeat === 'none' ? 'One meeting' : `${draft.teamsMeeting.repeatOccurrences} recurring sessions`}
+                      </p>
+                      <p className="mt-0.5 text-[10px] font-semibold text-emerald-700">
+                        {draft.teamsMeeting.trackedOccurrences || draft.teamsMeeting.repeatOccurrences} lecture records ready for attendance, transcript and recording sync
+                      </p>
+                    </>
+                  ) : (
+                    <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Create the Teams link and invitations for this module’s generated sessions.</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                {draft.teamsMeeting ? (
+                  <button
+                    type="button"
+                    disabled={teamsSyncing}
+                    onClick={async () => {
+                      setTeamsSyncing(true);
+                      setTeamsSyncMessage('');
+                      try {
+                        const result = await syncTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
+                        setTeamsSyncMessage(
+                          `Synced ${result.synced.attendanceRecords} attendance rows, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`
+                        );
+                      } catch (err) {
+                        setTeamsSyncMessage(err instanceof Error ? err.message : 'Unable to sync Teams results.');
+                      } finally {
+                        setTeamsSyncing(false);
+                      }
+                    }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
+                  >
+                    <i className={`${teamsSyncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></i>
+                    {teamsSyncing ? 'Syncing...' : 'Sync results'}
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => setTeamsMeetingOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+                  <i className="ri-calendar-event-line"></i>
+                  {draft.teamsMeeting ? 'Edit / create another' : 'Teams meeting options'}
+                </button>
+              </div>
+            </div>
+            {teamsSyncMessage ? <p className="mt-2 text-[10px] font-semibold text-foreground-600">{teamsSyncMessage}</p> : null}
             {tutorConflict ? (
               <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
                 <div className="flex items-start gap-2">
@@ -6662,8 +6891,253 @@ function ModulePlanningPanel({
         )}
         <TextArea label="Notes" value={userFacingNotes(draft.notes)} onChange={value => onChange({ notes: userFacingNotes(value) })} rows={2} />
         {!freeMode && <SessionPreview draft={draft} />}
+        {teamsMeetingOpen && (
+          <WizardTeamsMeetingModal
+            draft={draft}
+            moduleTitle={moduleTitle}
+            groupTime={groupTime}
+            groupEndTime={groupEndTime}
+            tutorEmail={String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '')}
+            onClose={() => setTeamsMeetingOpen(false)}
+            onCreated={(meeting, details) => {
+              onChange({
+                teamsMeeting: meeting,
+                weeks: attachTeamsMeetingToWeeks(draft, meeting, details),
+              });
+            }}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+function WizardTeamsMeetingModal({
+  draft,
+  moduleTitle,
+  groupTime,
+  groupEndTime,
+  tutorEmail,
+  onClose,
+  onCreated,
+}: {
+  draft: ModuleDraft;
+  moduleTitle: string;
+  groupTime: string;
+  groupEndTime: string;
+  tutorEmail: string;
+  onClose: () => void;
+  onCreated: (meeting: TeamsMeetingDraft, details: string) => void;
+}) {
+  const existing = draft.teamsMeeting;
+  const sessionCount = Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1);
+  const firstSessionDate = draft.startDate || draft.weeks[0]?.date || todayIso();
+  const defaultDuration = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || 60);
+  const [title, setTitle] = useState(moduleTitle || 'Live session');
+  const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || tutorEmail);
+  const [presenters, setPresenters] = useState((existing?.presenters || []).join('\n'));
+  const [attendees, setAttendees] = useState((existing?.attendees || []).join('\n'));
+  const startDateTime = `${firstSessionDate}T${groupTime || '09:30'}`;
+  const durationMinutes = defaultDuration;
+  const repeat: TeamsMeetingInput['repeat'] = sessionCount > 1 ? 'weekly' : 'none';
+  const repeatOccurrences = sessionCount;
+  const [lobbyBypass, setLobbyBypass] = useState(existing?.lobbyBypass || 'invited');
+  const [recording, setRecording] = useState(existing?.recording || 'record-transcribe');
+  const [spokenLanguage, setSpokenLanguage] = useState(existing?.spokenLanguage || 'en-GB');
+  const [meetingType, setMeetingType] = useState(existing?.meetingType || 'live-session');
+  const [details, setDetails] = useState(draft.notes || '');
+  const [requestResponses, setRequestResponses] = useState(existing?.requestResponses ?? true);
+  const [allowNewTimeProposals, setAllowNewTimeProposals] = useState(existing?.allowNewTimeProposals ?? true);
+  const [hideAttendees, setHideAttendees] = useState(existing?.hideAttendees ?? false);
+  const [configurationLoading, setConfigurationLoading] = useState(true);
+  const [graphConfigured, setGraphConfigured] = useState(true);
+  const [timeZone, setTimeZone] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<TeamsMeetingResult | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadTeamsMeetingConfiguration()
+      .then(configuration => {
+        if (!active) return;
+        setGraphConfigured(configuration.configured);
+        setTimeZone(configuration.timeZone);
+        setOrganizerEmail(current => current || configuration.defaultOrganizer || '');
+      })
+      .catch(err => {
+        if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
+      })
+      .finally(() => {
+        if (active) setConfigurationLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const submit = async () => {
+    setError('');
+    if (!title.trim()) return setError('Meeting title is required.');
+    if (!organizerEmail.trim()) return setError('Enter the Microsoft 365 organizer email.');
+    const start = new Date(startDateTime);
+    if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
+    const scheduleStart = dateFromInput(draft.startDate || firstSessionDate) || new Date();
+    const scheduledWeeks = Array.from({ length: sessionCount }, (_, index) => {
+      const sessionDate = new Date(scheduleStart);
+      sessionDate.setDate(scheduleStart.getDate() + index * 7);
+      return {
+        sessionNumber: index + 1,
+        date: toDateInput(sessionDate),
+      };
+    });
+    const scheduledOccurrences = scheduledWeeks.map((week, index) => {
+      const scheduledStart = new Date(`${week.date || firstSessionDate}T${groupTime || '09:30'}`);
+      return {
+        sessionNumber: week.sessionNumber || index + 1,
+        startDateTimeUtc: scheduledStart.toISOString(),
+        durationMinutes: defaultDuration,
+      };
+    });
+    const authoritativeStart = scheduledOccurrences[0]?.startDateTimeUtc || start.toISOString();
+    const input: TeamsMeetingInput = {
+      title: title.trim(),
+      organizerEmail: organizerEmail.trim(),
+      attendees: attendees.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+      presenters: presenters.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+      localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${groupTime || '09:30'}`,
+      startDateTimeUtc: authoritativeStart,
+      durationMinutes: defaultDuration,
+      repeat: scheduledOccurrences.length > 1 ? 'weekly' : 'none',
+      repeatOccurrences: scheduledOccurrences.length,
+      lobbyBypass,
+      recording,
+      spokenLanguage,
+      meetingType,
+      details,
+      requestResponses,
+      allowNewTimeProposals,
+      hideAttendees,
+      transactionId: `TEAMS-${draft.localId}-${Date.now()}`,
+      moduleDraftId: draft.localId,
+      moduleCatalogueId: draft.catalogueId,
+      moduleTitle,
+      scheduledOccurrences,
+    };
+    setSubmitting(true);
+    try {
+      const result = await createTeamsMeeting(input);
+      const meeting: TeamsMeetingDraft = {
+        ...result.meeting,
+        liveSessionId: result.meeting.liveSessionId,
+        joinUrl: result.meeting.joinUrl,
+        lobbyBypass,
+        recording,
+        spokenLanguage,
+        meetingType,
+        requestResponses,
+        allowNewTimeProposals,
+        hideAttendees,
+      };
+      setCreated(result);
+      onCreated(meeting, details);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10150] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5" onClick={submitting ? undefined : onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="wizard-teams-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300"><i className="ri-microsoft-teams-line text-xl"></i></span>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Module scheduling</p>
+              <h3 id="wizard-teams-title" className="mt-0.5 text-base font-heading font-bold text-white">Microsoft Teams meeting options</h3>
+              <p className="mt-1 text-[11px] font-medium text-white/65">{moduleTitle} · {sessionCount} planned session{sessionCount === 1 ? '' : 's'}</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50" aria-label="Close"><i className="ri-close-line"></i></button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
+          {created ? (
+            <div className="mx-auto max-w-2xl space-y-4 py-5 text-center">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><i className="ri-check-line text-3xl"></i></span>
+                <h4 className="mt-3 text-base font-heading font-bold text-emerald-900">Teams meeting created for this module</h4>
+                <p className="mt-1 text-[12px] font-semibold text-emerald-700">The link and live-session components are now included in the module draft.</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {(created.meeting.joinUrl || created.meeting.webLink) && <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700"><i className="ri-external-link-line"></i>Open meeting</a>}
+                  {created.meeting.meetingOptionsUrl && <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800"><i className="ri-settings-3-line"></i>Meeting options</a>}
+                </div>
+              </div>
+              {!!created.warnings.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">{created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}</div>}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.85fr)]">
+              <section className="space-y-4 rounded-2xl border border-background-200 bg-background-50 p-4">
+                <div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Meeting details</p><p className="mt-1 text-[11px] font-semibold text-foreground-500">Create the link and calendar invitations for this module.</p></div>
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Linked to module scheduling</p>
+                  <p className="mt-1 text-[11px] font-semibold text-emerald-900">
+                    Module range {draft.startDate || 'N/A'} to {draft.endDate || 'N/A'} · meeting starts {firstSessionDate} at {groupTime} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <Field label="Title" value={title} onChange={setTitle} required />
+                <Field label="Organizer Microsoft 365 email" value={organizerEmail} onChange={setOrganizerEmail} required placeholder="tutor@organisation.com" />
+                <div>
+                  <TextArea label="Presenters" value={presenters} onChange={setPresenters} rows={2} />
+                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">Microsoft 365 email or UPN, one per line. Presenters are also invited automatically.</p>
+                </div>
+                <div>
+                  <TextArea label="Attendees" value={attendees} onChange={setAttendees} rows={4} />
+                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">One email per line, comma, or semicolon.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Start · scheduling *</span><input type="datetime-local" value={startDateTime} readOnly className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900" /></label>
+                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Duration · group schedule</span><select value={durationMinutes} disabled className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900">{[30, 45, 60, 90, 120, 180].map(value => <option key={value} value={value}>{value < 60 ? `${value} minutes` : `${value / 60} hour${value === 60 ? '' : 's'}`}</option>)}</select></label>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Repeat · module plan</span><select value={repeat} disabled className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900"><option value="none">Does not repeat</option><option value="weekly">Weekly</option></select></label>
+                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Number of sessions · scheduling</span><input value={String(repeatOccurrences)} readOnly className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900" /></label>
+                </div>
+                <TextArea label="Details" value={details} onChange={setDetails} rows={4} />
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-primary-100 bg-primary-50/40 p-4">
+                <div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Advanced options</p><p className="mt-1 text-[11px] font-semibold text-foreground-500">Microsoft 365 policy can override some options.</p></div>
+                <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Who can bypass the lobby?</span><select value={lobbyBypass} onChange={event => setLobbyBypass(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-900"><option value="invited">People invited to this meeting</option><option value="organization">People in my organization</option><option value="organization-excluding-guests">Organization, excluding guests</option><option value="everyone">Everyone</option><option value="organizer">Only organizers</option></select></label>
+                <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Recording</span><select value={recording} onChange={event => setRecording(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-900"><option value="none">Do not start automatically</option><option value="record">Record automatically</option><option value="record-transcribe">Record and transcribe</option></select></label>
+                <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Spoken language</span><select value={spokenLanguage} onChange={event => setSpokenLanguage(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-900"><option value="en-GB">English (UK)</option><option value="en-US">English (US)</option><option value="ar-EG">Arabic (Egypt)</option><option value="fr-FR">French</option></select></label>
+                <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Type</span><select value={meetingType} onChange={event => setMeetingType(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-900"><option value="live-session">Teams meeting / live session</option><option value="teams-meeting">Teams meeting</option></select></label>
+                <div className="space-y-2 rounded-xl border border-dashed border-primary-200 bg-background-50/80 p-3">
+                  <FreeCheckbox label="Request responses" checked={requestResponses} onChange={setRequestResponses} />
+                  <FreeCheckbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
+                  <FreeCheckbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
+                </div>
+                {timeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Calendar time zone: {timeZone}</p>}
+              </section>
+            </div>
+          )}
+
+          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</p>}
+          {!configurationLoading && !graphConfigured && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">Microsoft Graph credentials are missing from the backend environment.</p>}
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-5 py-4">
+          <p className="text-[10px] font-semibold text-foreground-400">The meeting is attached to this module draft after creation.</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
+            {!created && <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[180px] items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>{submitting ? 'Creating meeting...' : 'Create with these options'}</button>}
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

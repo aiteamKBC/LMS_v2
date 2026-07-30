@@ -150,6 +150,126 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
               0 4px 12px -2px oklch(var(--foreground-950) / 0.04);
 }
 
+/* Strong, unmistakable hover treatment for the home portal cards. */
+.portal-card:hover {
+  z-index: 30;
+  transform: translateY(-12px) scale(1.06) !important;
+  border-color: oklch(var(--primary-400) / 0.82) !important;
+  background: linear-gradient(145deg, oklch(var(--primary-50)) 0%, oklch(var(--background-50)) 72%) !important;
+  box-shadow: 0 22px 48px -14px oklch(var(--primary-800) / 0.22),
+              0 0 0 2px oklch(var(--primary-300) / 0.22) !important;
+}
+
+.portal-card:hover .portal-card-icon {
+  transform: scale(1.14) rotate(4deg);
+  background: oklch(var(--primary-100));
+  border-color: oklch(var(--primary-400) / 0.7);
+  box-shadow: 0 8px 18px -8px oklch(var(--primary-600) / 0.4);
+}
+
+/* Reveal the four portal cards as the section enters the viewport. */
+.portal-cards-grid > .portal-card {
+  opacity: 0;
+  transform: translateY(42px) scale(0.94);
+  will-change: opacity, transform;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.portal-cards-grid:not(.is-visible) > .portal-card {
+  pointer-events: none;
+}
+
+.portal-cards-grid.is-visible > .portal-card {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  animation: portal-card-enter 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.portal-cards-grid.is-visible > .portal-card:nth-child(1) { animation-delay: 0ms; }
+.portal-cards-grid.is-visible > .portal-card:nth-child(2) { animation-delay: 140ms; }
+.portal-cards-grid.is-visible > .portal-card:nth-child(3) { animation-delay: 280ms; }
+.portal-cards-grid.is-visible > .portal-card:nth-child(4) { animation-delay: 420ms; }
+
+/* The hero CTA replays a stronger left-to-right wave every time it is clicked. */
+.portal-cards-grid.portal-wave > .portal-card {
+  animation-name: portal-card-wave;
+  animation-duration: 0.9s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: both;
+}
+
+.portal-cards-grid.portal-wave > .portal-card:nth-child(1) { animation-delay: 0ms; }
+.portal-cards-grid.portal-wave > .portal-card:nth-child(2) { animation-delay: 140ms; }
+.portal-cards-grid.portal-wave > .portal-card:nth-child(3) { animation-delay: 280ms; }
+.portal-cards-grid.portal-wave > .portal-card:nth-child(4) { animation-delay: 420ms; }
+
+@keyframes portal-card-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(42px) scale(0.94);
+  }
+  65% {
+    opacity: 1;
+    transform: translateY(-5px) scale(1.015);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes portal-card-wave {
+  0% {
+    opacity: 0;
+    transform: translateY(52px) scale(0.9) rotate(-1.5deg);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(-8px) scale(1.025) rotate(0.5deg);
+  }
+  78% {
+    transform: translateY(3px) scale(0.99) rotate(0deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-cards-grid > .portal-card {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .portal-cards-grid:not(.is-visible) > .portal-card {
+    pointer-events: auto;
+  }
+}
+
+/* Interactive feature cards beneath the homepage heading. */
+.feature-cards-grid > div {
+  position: relative;
+  cursor: pointer;
+  transition: transform 0.3s ease, background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.feature-cards-grid > div:hover {
+  z-index: 10;
+  transform: translateY(-10px) scale(1.02) !important;
+  border-color: oklch(var(--primary-300) / 0.75) !important;
+  background: linear-gradient(145deg, oklch(var(--primary-50)) 0%, oklch(var(--background-50)) 75%) !important;
+  box-shadow: 0 20px 42px -16px oklch(var(--primary-800) / 0.24),
+              0 0 0 2px oklch(var(--primary-200) / 0.22) !important;
+}
+
+.feature-cards-grid > div:hover > div:first-child {
+  transform: scale(1.12) rotate(3deg);
+  box-shadow: 0 8px 18px -8px oklch(var(--primary-600) / 0.35);
+}
+
 /* ===== Premium Animations ===== */
 
 /* Fade in */

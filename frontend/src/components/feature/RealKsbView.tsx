@@ -116,23 +116,40 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
         {/* Hero */}
-        <section className="relative rounded-2xl overflow-hidden p-6 md:p-8 text-white" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-900)) 0%, oklch(var(--primary-700)) 100%)' }}>
-          <div className="flex items-center justify-between gap-6 flex-wrap">
-            <div className="flex items-center gap-4 min-w-0">
-              <span className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center shrink-0"><i className="ri-bar-chart-2-line text-2xl" /></span>
+        <section
+          className="relative min-h-[150px] overflow-hidden rounded-3xl border border-primary-700/40 p-6 text-white shadow-[0_18px_45px_rgba(35,8,76,0.20)] md:p-7"
+          style={{ background: 'linear-gradient(115deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-700)) 100%)' }}
+        >
+          <div className="pointer-events-none absolute -left-20 -top-28 h-64 w-64 rounded-full bg-primary-400/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-32 right-28 h-64 w-64 rounded-full bg-secondary-400/15 blur-3xl" />
+
+          <div className="relative flex min-h-[94px] flex-col justify-between gap-6 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 items-center gap-4">
+              <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white shadow-inner backdrop-blur">
+                <i className="ri-bar-chart-2-line text-2xl" />
+              </span>
               <div className="min-w-0">
-                <h1 className="text-2xl md:text-3xl font-heading font-bold tracking-tight">KSB Progress</h1>
-                <p className="text-sm text-white/70">Weight earned from the activities in your training plan</p>
+                <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white/75">
+                  <i className="ri-scales-3-line" />Weighted progress
+                </span>
+                <h1 className="text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">KSB Progress</h1>
+                <p className="mt-1 text-sm !text-white/65">Track the weight earned from every activity in your training plan</p>
               </div>
             </div>
-            <div className="shrink-0 flex items-center gap-3">
+
+            <div className="flex w-full shrink-0 items-center justify-center gap-4 rounded-2xl border border-white/15 bg-white/10 px-4 py-3 shadow-lg shadow-black/10 backdrop-blur-md sm:w-auto">
               <div className="relative flex items-center justify-center">
-                <Ring percent={overallPct} colorClass="text-white" size={72} stroke={7} />
-                <span className="absolute text-sm font-heading font-bold tabular-nums">{overallPct}%</span>
+                <Ring percent={overallPct} colorClass="text-emerald-300" size={68} stroke={6} />
+                <span className="absolute text-sm font-heading font-bold tabular-nums !text-white">{overallPct}%</span>
               </div>
-              <div className="text-right">
-                <p className="text-lg font-heading font-bold leading-none tabular-nums">{w(earnedWeight)}<span className="text-white/60">/{w(availableWeight)}</span></p>
-                <p className="text-[11px] text-white/70 mt-1">weight earned</p>
+              <div className="min-w-[96px]">
+                <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Weight earned</p>
+                <p className="mt-1 text-xl font-heading font-bold leading-none tabular-nums !text-white">
+                  {w(earnedWeight)}<span className="text-sm font-medium !text-white/50"> / {w(availableWeight)}</span>
+                </p>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
+                  <div className="h-full rounded-full bg-emerald-300 transition-all duration-700" style={{ width: `${overallPct}%` }} />
+                </div>
               </div>
             </div>
           </div>
@@ -232,13 +249,16 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
         <div className="flex items-start gap-2">
           <span className={`shrink-0 w-2 h-2 rounded-full mt-1.5 ${st.dot}`} />
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[12px] font-semibold text-primary-600">{ksb.code}</span>
-              {scheduled && (
-                <span className="text-[10px] font-semibold text-foreground-500 tabular-nums">
-                  {w(ksb.earnedWeight)}/{w(ksb.availableWeight)} weight
-                </span>
-              )}
+              <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+                ksb.availableWeight > 0
+                  ? 'bg-primary-50 text-primary-700'
+                  : 'bg-background-100 text-foreground-400'
+              }`}>
+                <i className="ri-scales-3-line text-[9px]" />
+                {w(ksb.earnedWeight)} / {w(ksb.availableWeight)} weight
+              </span>
             </div>
             <p className="text-[12px] text-foreground-600 leading-snug line-clamp-2">{ksb.description}</p>
           </div>
@@ -256,7 +276,9 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
             <span className="text-[10px] font-semibold text-foreground-500 tabular-nums w-8 text-right">{ksb.pct}%</span>
           </div>
         ) : (
-          <p className="mt-1 ml-4 text-[10px] text-foreground-400">No activity in your plan covers this yet.</p>
+          <p className="mt-1 ml-4 text-[10px] text-foreground-400">
+            No activity in your plan covers this KSB, so its available weight is currently 0.
+          </p>
         )}
       </button>
 

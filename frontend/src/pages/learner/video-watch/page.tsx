@@ -16,6 +16,12 @@ import { fetchEvidence } from '@/api/evidence';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
+import {
+  loadTeamsMeetingArtifacts,
+  syncTeamsMeetingArtifacts,
+  teamsMeetingArtifactContentUrl,
+  type TeamsMeetingArtifactsResult,
+} from '@/pages/curriculum/module-builder/moduleAuthoringData';
 
 const learnerNav = roleNavMap.learner;
 
@@ -230,7 +236,7 @@ export default function ComponentViewPage() {
         ) : isVideo && !parsed ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
-          <div className="max-w-3xl mx-auto">
+          <div className="w-full max-w-5xl mx-auto">
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
@@ -242,10 +248,19 @@ export default function ComponentViewPage() {
               submitting={submitting}
               submitError={submitError}
               onSubmit={finalizeSubmit}
+              activityTitle={pageTitle}
+              weekLabel={weekTitle}
+              moduleLabel={moduleTitle}
+              learnerName={detail?.name || 'Learner'}
+              programmeName={detail?.programme || 'Programme not set'}
+              learnerKind={kind as LearnerKind}
+              learnerId={id}
+              evidenceSectionRef={componentId}
+              onClose={() => navigate(backHref)}
             />
           </div>
         ) : phase === 'results' && record ? (
-          <div className="max-w-3xl mx-auto">
+          <div className="w-full max-w-5xl mx-auto">
             <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(backHref)} />
           </div>
         ) : (
@@ -273,6 +288,13 @@ export default function ComponentViewPage() {
                     : null
                 }
               />
+              {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
+                <LiveSessionResultsCard
+                  liveSessionId={component.teamsLiveSessionId}
+                  sessionNumber={(ctx?.weeks.findIndex((week) => week.active) ?? -1) + 1 || 1}
+                  learnerEmail={detail?.email || ''}
+                />
+              )}
 
               {/* Title + timer + finish */}
               <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
@@ -541,6 +563,156 @@ function ComponentContent({ evidenceContext, ...props }: Parameters<typeof Compo
   );
 }
 
+function LiveSessionResultsCard({
+  liveSessionId,
+  sessionNumber,
+  learnerEmail,
+}: {
+  liveSessionId: string;
+  sessionNumber: number;
+  learnerEmail: string;
+}) {
+  const [data, setData] = useState<TeamsMeetingArtifactsResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const loadResults = useCallback(async () => {
+    const result = await loadTeamsMeetingArtifacts(liveSessionId);
+    setData(result);
+    return result;
+  }, [liveSessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    loadTeamsMeetingArtifacts(liveSessionId)
+      .then((result) => { if (!cancelled) setData(result); })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Unable to load Teams results.');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [liveSessionId]);
+
+  const handleSync = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await syncTeamsMeetingArtifacts(liveSessionId);
+      await loadResults();
+      setNotice(
+        `Synced ${result.synced.attendanceRecords} attendance record${result.synced.attendanceRecords === 1 ? '' : 's'}`
+        + ` and ${result.synced.recordings} recording${result.synced.recordings === 1 ? '' : 's'}.`,
+      );
+      if (result.errors.length) setError(result.errors.join(' · '));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to sync Teams results.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const occurrence = data?.occurrences.find((item) => Number(item.session_number) === sessionNumber)
+    || data?.occurrences[sessionNumber - 1]
+    || null;
+  const normalizedEmail = learnerEmail.trim().toLowerCase();
+  const learnerAttendance = occurrence?.attendance.find(
+    (person) => person.email?.trim().toLowerCase() === normalizedEmail,
+  );
+  const reportReady = Boolean(occurrence?.attendance_report_id);
+  const recordings = occurrence?.artifacts.filter((artifact) => artifact.artifact_type === 'recording') || [];
+  const attendanceMinutes = Math.max(0, Math.round(Number(learnerAttendance?.total_attendance_seconds || 0) / 60));
+  const attendanceState = learnerAttendance ? 'attended' : reportReady ? 'absent' : 'awaiting';
+  const attendanceMeta = {
+    attended: {
+      label: 'Attended',
+      detail: attendanceMinutes ? `${attendanceMinutes} min verified by Teams` : 'Joined the Teams meeting',
+      icon: 'ri-user-follow-line',
+      tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    },
+    absent: {
+      label: 'Absent',
+      detail: 'Not found in the verified attendance report',
+      icon: 'ri-user-unfollow-line',
+      tone: 'border-red-200 bg-red-50 text-red-800',
+    },
+    awaiting: {
+      label: 'Awaiting report',
+      detail: 'Sync after the Teams meeting has ended',
+      icon: 'ri-time-line',
+      tone: 'border-amber-200 bg-amber-50 text-amber-800',
+    },
+  }[attendanceState];
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/70 px-5 py-4">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Microsoft Teams results</p>
+          <h2 className="mt-1 text-sm font-heading font-black text-foreground-900">Attendance, absence and recording</h2>
+        </div>
+        <button
+          type="button"
+          onClick={handleSync}
+          disabled={syncing}
+          className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <i className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
+          {syncing ? 'Syncing…' : 'Sync Teams results'}
+        </button>
+      </div>
+
+      <div className="p-5">
+        {loading ? (
+          <p className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500">
+            <i className="ri-loader-4-line animate-spin" /> Loading Teams results…
+          </p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className={`rounded-xl border p-4 ${attendanceMeta.tone}`}>
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><i className={`${attendanceMeta.icon} text-lg`} /></span>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Attendance status</p>
+                  <p className="mt-0.5 text-sm font-black">{attendanceMeta.label}</p>
+                  <p className="mt-0.5 text-[10px] font-semibold opacity-80">{attendanceMeta.detail}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className={`rounded-xl border p-4 ${recordings.length ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-background-200 bg-background-100 text-foreground-600'}`}>
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><i className="ri-record-circle-line text-lg" /></span>
+                <div className="min-w-0">
+                  <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Session recording</p>
+                  <p className="mt-0.5 text-sm font-black">{recordings.length ? 'Recording ready' : 'Not available yet'}</p>
+                  {recordings.map((recording, index) => (
+                    <a
+                      key={recording.id}
+                      href={teamsMeetingArtifactContentUrl(liveSessionId, recording.id)}
+                      className="mt-1 inline-flex items-center gap-1 text-[10px] font-black underline"
+                    >
+                      <i className="ri-download-cloud-2-line" /> Download recording{recordings.length > 1 ? ` ${index + 1}` : ''}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {notice && <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-[10px] font-bold text-emerald-700">{notice}</p>}
+        {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-[10px] font-bold text-red-700">{error}</p>}
+      </div>
+    </section>
+  );
+}
+
 function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
@@ -649,6 +821,66 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
             )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  if ((component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session') {
+    const parsedStart = component.sessionDateTimeUtc ? new Date(component.sessionDateTimeUtc) : null;
+    const validStart = parsedStart && !Number.isNaN(parsedStart.getTime()) ? parsedStart : null;
+    const dateLabel = component.sessionDate
+      ? new Date(`${component.sessionDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+      : validStart?.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) || 'Date to be confirmed';
+    const timeLabel = component.sessionTime
+      || (validStart ? `${validStart.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })} UTC` : 'Time to be confirmed');
+
+    return (
+      <div className="overflow-hidden rounded-2xl border border-primary-200 bg-white shadow-sm">
+        <div className="bg-[linear-gradient(135deg,#5b21b6_0%,#6d28d9_55%,#2563eb_100%)] p-6 text-white">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">
+                <i className="ri-microsoft-teams-line text-2xl" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Microsoft Teams live session</p>
+                <p className="mt-1 truncate text-base font-heading font-black">{title}</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-white/80">
+                  <span><i className="ri-calendar-line mr-1" />{dateLabel}</span>
+                  <span><i className="ri-time-line mr-1" />{timeLabel}</span>
+                  {component.durationMinutes ? <span><i className="ri-timer-line mr-1" />{component.durationMinutes} min</span> : null}
+                </div>
+              </div>
+            </div>
+
+            {component.liveSessionUrl ? (
+              <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 text-[12px] font-black text-primary-700 shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-primary-50">
+                <i className="ri-microsoft-teams-line text-base" />
+                Join live session
+                <i className="ri-external-link-line text-xs" />
+              </a>
+            ) : (
+              <span className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
+                <i className="ri-calendar-todo-line text-base" />
+                Meeting link not scheduled
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="grid gap-4 p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-wider text-foreground-400">Before the session</p>
+            <p className="mt-1 text-[12px] leading-5 text-foreground-600">
+              {component.reflectionPrompt || 'Join on time and complete your reflection after the live session.'}
+            </p>
+          </div>
+          {!component.liveSessionUrl && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-800">
+              Contact your tutor if you expect a meeting link here.
+            </p>
+          )}
+        </div>
       </div>
     );
   }

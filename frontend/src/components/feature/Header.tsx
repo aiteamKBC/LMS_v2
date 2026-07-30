@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { BrandLockup } from '@/components/BrandLockup';
 
 interface HeaderProps {
   pageTitle: string;
@@ -163,11 +164,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
       {/* Provider Logo */}
       <a href="/" className="flex items-center shrink-0">
-        <img
-          src="https://storage.readdy-site.link/project_files/618bc44b-5728-4a0b-8f4f-ee80cff7baf6/06258dfd-ca9f-4f6c-ad16-bb35d9a5dbe6_Kent-Business-College-e1768393206822.webp"
-          alt="Kent Business College"
-          className="h-9 w-auto rounded-sm object-contain"
-        />
+        <BrandLockup size="compact" />
       </a>
 
       {/* Spacer */}

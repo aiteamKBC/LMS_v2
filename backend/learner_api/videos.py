@@ -16,9 +16,9 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import completed_hours_from_progress, append_activity_entry
+from .active_users import save_progress_record
 from .components import component_ksb_codes
-from .models import ActiveUser, CommercialUser, EnrolmentUser
+from .models import CommercialUser, EnrolmentUser, LearnerProfile
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,

@@ -8,6 +8,193 @@ from . import views
 from .ksb_coverage import build_coverage
 
 
+class CurriculumTeamsMeetingTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        views._AUTHORING_TABLES_READY = False
+        views._LIVE_SESSIONS_TABLE_READY = False
+        views._LIVE_SESSION_TRACKING_TABLES_READY = False
+        views.ensure_module_authoring_tables()
+        views.ensure_live_sessions_table()
+        views.authoring_delete(views.LIVE_SESSIONS_TABLE)
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_creates_calendar_backed_teams_meeting(self, _settings, _credentials, graph_request):
+        graph_request.side_effect = [
+            {
+                'id': 'event-1',
+                'webLink': 'https://outlook.office.com/calendar/item',
+                'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
+            },
+            {
+                'value': [{
+                    'id': 'meeting-1',
+                    'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/example',
+                }],
+            },
+            {},
+        ]
+        response = self.client.post(
+            '/curriculum_api/curriculum/teams-meetings/',
+            data=json.dumps({
+                'title': 'Risk workshop',
+                'organizerEmail': 'tutor@example.com',
+                'attendees': ['student1@example.com', 'student2@example.com'],
+                'presenters': ['presenter@example.com'],
+                'localStartDateTime': '2026-07-30T15:30',
+                'startDateTimeUtc': '2026-07-30T12:30:00.000Z',
+                'durationMinutes': 60,
+                'repeat': 'weekly',
+                'repeatOccurrences': 6,
+                'lobbyBypass': 'invited',
+                'recording': 'record-transcribe',
+                'spokenLanguage': 'en-GB',
+                'requestResponses': True,
+                'allowNewTimeProposals': True,
+                'hideAttendees': False,
+                'transactionId': 'TEAMS-TEST',
+                'moduleDraftId': 'module-draft-1',
+                'moduleTitle': 'Risk module',
+                'scheduledOccurrences': [
+                    {
+                        'sessionNumber': index + 1,
+                        'startDateTimeUtc': value,
+                        'durationMinutes': 60,
+                    }
+                    for index, value in enumerate([
+                        '2026-07-30T12:30:00Z',
+                        '2026-08-06T12:30:00Z',
+                        '2026-08-13T12:30:00Z',
+                        '2026-08-20T12:30:00Z',
+                        '2026-08-27T12:30:00Z',
+                        '2026-09-03T12:30:00Z',
+                    ])
+                ],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        result = response.json()
+        self.assertEqual(result['meeting']['eventId'], 'event-1')
+        self.assertTrue(result['meeting']['liveSessionId'].startswith('LIVE-'))
+        self.assertIn('teams.microsoft.com', result['meeting']['joinUrl'])
+        self.assertEqual(result['meeting']['repeatOccurrences'], 6)
+        self.assertEqual(result['meeting']['trackedOccurrences'], 6)
+        self.assertEqual(result['meeting']['onlineMeetingId'], 'meeting-1')
+        self.assertTrue(result['meeting']['trackingReady'])
+        self.assertTrue(result['meeting']['settingsApplied'])
+
+        create_call = graph_request.call_args_list[0]
+        self.assertEqual(create_call.args[:2], ('POST', 'users/tutor%40example.com/events'))
+        event_payload = create_call.kwargs['payload']
+        self.assertTrue(event_payload['isOnlineMeeting'])
+        self.assertEqual(len(event_payload['attendees']), 3)
+        self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
+        meeting_patch = graph_request.call_args_list[2].kwargs['payload']
+        self.assertEqual(meeting_patch['allowedPresenters'], 'roleIsPresenter')
+        self.assertEqual(meeting_patch['lobbyBypassSettings'], {
+            'scope': 'invited',
+            'isDialInBypassEnabled': False,
+        })
+        self.assertTrue(meeting_patch['allowRecording'])
+        self.assertTrue(meeting_patch['recordAutomatically'])
+        self.assertTrue(meeting_patch['allowTranscription'])
+        self.assertEqual(meeting_patch['meetingSpokenLanguageTag'], 'en-GB')
+        presenter = next(item for item in meeting_patch['participants']['attendees'] if item['upn'] == 'presenter@example.com')
+        self.assertEqual(presenter['role'], 'presenter')
+        live_session = views.authoring_fetch_all(
+            views.LIVE_SESSIONS_TABLE,
+            'id = %s',
+            [result['meeting']['liveSessionId']],
+        )[0]
+        self.assertEqual(live_session['module_draft_id'], 'module-draft-1')
+        self.assertEqual(live_session['repeat_pattern'], 'weekly')
+        self.assertEqual(live_session['repeat_occurrences'], 6)
+        self.assertEqual(live_session['status'], 'active')
+        self.assertEqual(live_session['online_meeting_id'], 'meeting-1')
+        self.assertEqual(live_session['presenters'], ['presenter@example.com'])
+        occurrences = views.authoring_fetch_all(
+            views.LIVE_SESSION_OCCURRENCES_TABLE,
+            'live_session_id = %s',
+            [result['meeting']['liveSessionId']],
+        )
+        self.assertEqual(len(occurrences), 6)
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    def test_artifact_sync_backfills_online_meeting_id_from_join_url(self, _credentials, graph_request):
+        live_session_id = 'LIVE-MISSING-MEETING-ID'
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': live_session_id,
+            'organizer_email': 'tutor@example.com',
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
+            'online_meeting_id': '',
+            'status': 'active',
+        })
+        graph_request.side_effect = [
+            {
+                'value': [{
+                    'id': 'meeting-recovered',
+                    'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/recovered',
+                }],
+            },
+            {'value': []},
+            {'value': []},
+            {'value': []},
+        ]
+
+        response = self.client.post(
+            f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/artifacts/',
+            data='{}',
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        saved = views.authoring_fetch_all(
+            views.LIVE_SESSIONS_TABLE,
+            'id = %s',
+            [live_session_id],
+        )[0]
+        self.assertEqual(saved['online_meeting_id'], 'meeting-recovered')
+        self.assertEqual(
+            saved['meeting_options_url'],
+            'https://teams.microsoft.com/meetingOptions/recovered',
+        )
+        self.assertIn('users/tutor%40example.com/onlineMeetings?', graph_request.call_args_list[0].args[1])
+        self.assertEqual(
+            graph_request.call_args_list[1].args[1],
+            'users/tutor%40example.com/onlineMeetings/meeting-recovered/attendanceReports',
+        )
+
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_requires_organizer_when_no_default_is_configured(self, _settings, _credentials):
+        with patch.dict('os.environ', {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': ''}):
+            response = self.client.post(
+                '/curriculum_api/curriculum/teams-meetings/',
+                data=json.dumps({'title': 'Live session'}),
+                content_type='application/json',
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Organizer email is required', response.json()['error'])
+
+
 class CurriculumPersistenceTests(TestCase):
     def setUp(self):
         views._AUTHORING_TABLES_READY = False
@@ -344,6 +531,27 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(module['tutor_name'], 'Tutor One')
         self.assertEqual(component['module_catalogue_id'], 'MOD-DATA-1')
         self.assertEqual(mapping['component_id'], 'COMP-DATA-1')
+
+    def test_live_session_link_is_saved_in_dedicated_component_column(self):
+        payload = self.tree_payload()
+        component = payload['cohorts'][0]['groups'][0]['modules'][0]['weekStructure'][0]['components'][0]
+        component.update({
+            'type': 'live-session',
+            'title': 'Live data workshop',
+            'settings': {
+                'liveSessionUrl': 'https://teams.microsoft.com/l/meetup-join/test-meeting',
+                'teamsLiveSessionId': 'LIVE-TEST-1',
+            },
+        })
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        saved = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-DATA-1')
+        self.assertEqual(
+            saved['live_sessions_link'],
+            'https://teams.microsoft.com/l/meetup-join/test-meeting',
+        )
 
     def test_global_ksb_coverage_uses_framework_definitions(self):
         response = self.client.get('/curriculum_api/curriculum/ksb-coverage/')

@@ -18,6 +18,11 @@ export interface JourneyComponent {
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   resourceUrl?: string | null;
+  liveSessionUrl?: string | null;
+  teamsLiveSessionId?: string | null;
+  sessionDate?: string | null;
+  sessionTime?: string | null;
+  sessionDateTimeUtc?: string | null;
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
@@ -418,8 +423,15 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
+            liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
+            teamsLiveSessionId: c.teamsLiveSessionId,
+            sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
-              ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
+              // Normalised progress rows store quiz_ref as text, while the
+              // curriculum API exposes quiz ids as numbers. Compare their
+              // canonical string values so saved attempts still decorate the
+              // learner-facing quiz card with its Passed/Attempted status.
+              ? real.quizAttempts.filter((a) => String(a.quizId) === String(c.quizMeta!.quizId))
               : undefined,
           }));
         return {

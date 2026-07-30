@@ -306,16 +306,53 @@ export default function CoachAttendanceProfile() {
 }
 
 function ProfileMetric({ icon, label, value, tone = 'primary', onClick }: { icon: string; label: string; value: string; tone?: 'primary' | 'emerald' | 'red' | 'amber'; onClick: () => void }) {
-  const toneClass = tone === 'emerald' ? 'text-emerald-600' : tone === 'red' ? 'text-red-600' : tone === 'amber' ? 'text-amber-600' : 'text-primary-700';
-  const iconClass = tone === 'emerald' ? 'bg-emerald-50 text-emerald-600' : tone === 'red' ? 'bg-red-50 text-red-600' : tone === 'amber' ? 'bg-amber-50 text-amber-600' : 'bg-primary-50 text-primary-700';
+  const styles = {
+    primary: {
+      card: 'border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/80',
+      accent: 'bg-primary-500',
+      icon: 'bg-primary-100 text-primary-700 ring-primary-200/70',
+      value: 'text-primary-800',
+      action: 'group-hover:bg-primary-600 group-hover:text-white',
+    },
+    emerald: {
+      card: 'border-emerald-200/70 bg-gradient-to-br from-white via-white to-emerald-50/80',
+      accent: 'bg-emerald-500',
+      icon: 'bg-emerald-100 text-emerald-700 ring-emerald-200/70',
+      value: 'text-emerald-700',
+      action: 'group-hover:bg-emerald-600 group-hover:text-white',
+    },
+    red: {
+      card: 'border-red-200/70 bg-gradient-to-br from-white via-white to-red-50/80',
+      accent: 'bg-red-500',
+      icon: 'bg-red-100 text-red-700 ring-red-200/70',
+      value: 'text-red-600',
+      action: 'group-hover:bg-red-600 group-hover:text-white',
+    },
+    amber: {
+      card: 'border-amber-200/70 bg-gradient-to-br from-white via-white to-amber-50/80',
+      accent: 'bg-amber-500',
+      icon: 'bg-amber-100 text-amber-700 ring-amber-200/70',
+      value: 'text-amber-700',
+      action: 'group-hover:bg-amber-600 group-hover:text-white',
+    },
+  } as const;
+  const style = styles[tone];
+
   return (
-    <button type="button" onClick={onClick} className="group flex w-full cursor-pointer items-center gap-3 rounded-xl border border-foreground-200/60 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400">
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconClass}`}><i className={icon}></i></span>
-      <div className="min-w-0 flex-1">
-        <p className={`text-xl font-bold ${toneClass}`}>{value}</p>
-        <p className="mt-0.5 truncate text-[9px] text-foreground-500">{label}</p>
+    <button type="button" onClick={onClick} className={`group relative flex min-h-[118px] w-full cursor-pointer flex-col overflow-hidden rounded-2xl border p-4 text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 ${style.card}`}>
+      <span className={`absolute inset-x-0 top-0 h-1 ${style.accent}`} />
+      <div className="flex items-start justify-between">
+        <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${style.icon}`}>
+          <i className={`${icon} text-lg`}></i>
+        </span>
+        <span className={`flex h-7 w-7 items-center justify-center rounded-full bg-white text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition ${style.action}`}>
+          <i className="ri-arrow-right-line text-[11px] transition group-hover:translate-x-0.5"></i>
+        </span>
       </div>
-      <i className="ri-arrow-right-s-line text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600"></i>
+      <div className="mt-auto pt-3">
+        <p className={`text-3xl font-heading font-bold leading-none tracking-tight ${style.value}`}>{value}</p>
+        <p className="mt-2 truncate text-[10px] font-semibold text-foreground-600">{label}</p>
+      </div>
     </button>
   );
 }

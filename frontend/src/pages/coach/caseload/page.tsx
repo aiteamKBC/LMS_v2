@@ -1057,8 +1057,9 @@ export default function CoachCaseload() {
                     { value: 'components', label: 'Components' },
                     { value: 'ksb', label: 'KSB' },
                   ]}
-                  minWidth="min-w-[164px]"
+                  minWidth="min-w-[210px]"
                   icon="ri-sort-asc"
+                  prefixLabel="Sort by"
                 />
                 <FilterDropdown label="Cohort" value={cohortFilter} onChange={(value) => { setCohortFilter(value); setCurrentPage(1); }} options={cohortOptions} />
                 <FilterDropdown label="Group" value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupOptions} />
@@ -2087,10 +2088,6 @@ function ReferenceLearnerCard({
             </div>
             <p className="mt-0.5 truncate text-[10px] text-foreground-400">{learner.email || learner.employer}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="Expand learner card"><i className="ri-arrow-down-s-line"></i></button>
-            <button type="button" className="text-foreground-300 hover:text-foreground-700" aria-label="More options"><i className="ri-more-2-fill"></i></button>
-          </div>
         </div>
 
         <div className="mt-3 space-y-1.5 text-[10px]">
@@ -2737,12 +2734,14 @@ function CaseloadMenuSelect({
   options,
   minWidth = 'min-w-[132px]',
   icon,
+  prefixLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
   minWidth?: string;
   icon?: string;
+  prefixLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -2778,6 +2777,14 @@ function CaseloadMenuSelect({
         }`}
       >
         {icon && <i className={`${icon} text-[12px] text-foreground-400`}></i>}
+        {prefixLabel && (
+          <>
+            <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] text-foreground-400">
+              {prefixLabel}
+            </span>
+            <span className="h-4 w-px shrink-0 bg-foreground-200"></span>
+          </>
+        )}
         <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
         <i className={`ri-arrow-down-s-line text-[13px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
       </button>

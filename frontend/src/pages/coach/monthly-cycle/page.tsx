@@ -117,6 +117,8 @@ interface CoachingDeliveryItem {
   timeLabel: string;
 }
 
+type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up';
+
 interface CoachingDeliverySummary {
   byKind: Record<CoachingDeliveryKind, {
     items: CoachingDeliveryItem[];
@@ -292,6 +294,13 @@ function coachingDeliveryStatusKey(activity: MonthlyActivityItem): CoachingDeliv
   if (rawStatus.includes('cancelled') || rawStatus.includes('canceled')) return 'cancelled';
   if (rawStatus.includes('not-scheduled') || rawStatus.includes('needs schedule') || rawStatus.includes('need schedule')) return 'needs-schedule';
   return 'booked';
+}
+
+function coachingDeliveryScheduleSource(kind: CoachingDeliveryKind): CoachingDeliveryScheduleSource | null {
+  if (kind === 'mcr') return 'mcr';
+  if (kind === 'pr') return 'progress-review';
+  if (kind === 'catch-up') return 'catch-up';
+  return null;
 }
 
 function emptyCoachingDeliveryCounts(): Record<CoachingDeliveryStatus, number> {
@@ -785,6 +794,25 @@ export default function CoachMonthlyCycle() {
     setSelectedLearnerId(learnerId);
   };
 
+  const handleOpenScheduleCalendar = (item: CoachingDeliveryItem) => {
+    const source = coachingDeliveryScheduleSource(item.kind);
+    if (!source) {
+      handleOpenLearnerOverview(item.learnerId);
+      return;
+    }
+
+    navigate('/coach/timetable', {
+      state: {
+        scheduleIntent: {
+          source,
+          learnerId: item.learnerId,
+          targetDate: item.date,
+          title: item.title,
+        },
+      },
+    });
+  };
+
   const handleCloseLearnerOverview = () => {
     setSelectedLearnerId(null);
   };
@@ -827,10 +855,9 @@ export default function CoachMonthlyCycle() {
                     </p>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3 w-full lg:w-auto">
+                <div className="grid grid-cols-2 gap-3 w-full lg:w-auto">
                   <HeroStat label="Learners" value={summary.activeLearners} />
                   <HeroStat label="Activities" value={summary.timelineItems} />
-                  <HeroStat label="OTJH" value={formatHours(summary.otjhHours)} />
                 </div>
               </div>
             </div>
@@ -861,16 +888,9 @@ export default function CoachMonthlyCycle() {
               delivery={coachingDelivery}
               monthLabel={monthLabel}
               onOpenLearner={handleOpenLearnerOverview}
+              onScheduleItem={handleOpenScheduleCalendar}
             />
           )}
-
-          <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-            <SummaryCard icon="ri-checkbox-circle-line" label="Learning Actions" value={summary.learningActivities} accent="primary" detail={`${summary.quizzes} quizzes - ${summary.videos} videos - ${summary.components} components`} />
-            <SummaryCard icon="ri-folder-upload-line" label="Evidence" value={summary.evidence} accent="amber" detail="Submitted this month" />
-            <SummaryCard icon="ri-award-line" label="KSBs Touched" value={summary.ksbTouched} accent="primary" detail="Unique KSB codes" />
-            <SummaryCard icon="ri-time-line" label="OTJH Logged" value={formatHours(summary.otjhHours)} accent="emerald" detail="From reported activity time" />
-            <SummaryCard icon="ri-alarm-warning-line" label="Need Action" value={summary.needsAction} accent="red" detail="Learners with gaps" />
-          </section>
 
           {loading && (
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
@@ -1050,8 +1070,8 @@ export default function CoachMonthlyCycle() {
                       <p className="text-xs font-semibold text-emerald-800">No action gaps for this month.</p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {learnersNeedingAction.slice(0, 5).map((learner) => (
+                    <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                      {learnersNeedingAction.map((learner) => (
                         <button key={learner.id} type="button" onClick={() => handleOpenLearnerOverview(learner.id)} className="w-full text-left rounded-2xl bg-background-100 hover:bg-background-200/60 border border-foreground-200/50 p-3 transition-smooth cursor-pointer">
                           <p className="text-xs font-bold text-foreground-900">{learner.name}</p>
                           <p className="text-[11px] text-foreground-500 mt-1">{learner.needsAction[0]}</p>
@@ -1066,7 +1086,7 @@ export default function CoachMonthlyCycle() {
                   {latestActivities.length === 0 ? (
                     <p className="text-xs text-foreground-400">No captured activity yet for {monthLabel}.</p>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
                       {latestActivities.map((activity) => {
                         const tone = safeTone(activity.tone);
                         return (
@@ -1113,10 +1133,12 @@ function CoachDeliveryPanel({
   delivery,
   monthLabel,
   onOpenLearner,
+  onScheduleItem,
 }: {
   delivery: CoachingDeliverySummary;
   monthLabel: string;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const totalCaptured = COACHING_DELIVERY_ORDER.reduce(
     (sum, kind) => sum + COACHING_DELIVERY_STATUS_ORDER.reduce((kindSum, status) => kindSum + delivery.byKind[kind].counts[status], 0),
@@ -1149,6 +1171,7 @@ function CoachDeliveryPanel({
             counts={delivery.byKind[kind].counts}
             monthLabel={monthLabel}
             onOpenLearner={onOpenLearner}
+            onScheduleItem={onScheduleItem}
           />
         ))}
       </div>
@@ -1162,12 +1185,14 @@ function CoachDeliveryKindCard({
   counts,
   monthLabel,
   onOpenLearner,
+  onScheduleItem,
 }: {
   kind: CoachingDeliveryKind;
   items: CoachingDeliveryItem[];
   counts: Record<CoachingDeliveryStatus, number>;
   monthLabel: string;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const config = COACHING_DELIVERY_CONFIG[kind];
   const tone = safeTone(config.tone);
@@ -1202,9 +1227,9 @@ function CoachDeliveryKindCard({
             <p className="text-xs font-semibold text-foreground-700">No {config.label.toLowerCase()} activity in {monthLabel}.</p>
           </div>
         ) : (
-          <div className="mt-3 space-y-2">
+          <div className="mt-3 max-h-[340px] space-y-2 overflow-y-auto pr-1">
             {items.map((item) => (
-              <CoachDeliveryRecentItem key={item.id} item={item} onOpenLearner={onOpenLearner} />
+              <CoachDeliveryRecentItem key={item.id} item={item} onOpenLearner={onOpenLearner} onScheduleItem={onScheduleItem} />
             ))}
           </div>
         )}
@@ -1226,16 +1251,25 @@ function CoachDeliveryStatusStat({ status, value }: { status: CoachingDeliverySt
 function CoachDeliveryRecentItem({
   item,
   onOpenLearner,
+  onScheduleItem,
 }: {
   item: CoachingDeliveryItem;
   onOpenLearner: (learnerId: string) => void;
+  onScheduleItem: (item: CoachingDeliveryItem) => void;
 }) {
   const status = COACHING_DELIVERY_STATUS_CONFIG[item.status];
+  const handleClick = () => {
+    if (item.status === 'needs-schedule') {
+      onScheduleItem(item);
+      return;
+    }
+    onOpenLearner(item.learnerId);
+  };
 
   return (
     <button
       type="button"
-      onClick={() => onOpenLearner(item.learnerId)}
+      onClick={handleClick}
       className="w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/30 cursor-pointer"
     >
       <div className="flex items-center justify-between gap-3">

@@ -37,6 +37,10 @@ import {
 import {
   type KsbMapping,
   type ModuleCatalogueItem as AuthoringModule,
+  type TeamsMeetingArtifactsResult,
+  loadTeamsMeetingArtifacts,
+  syncTeamsMeetingArtifacts,
+  teamsMeetingArtifactContentUrl,
 } from '../module-builder/moduleAuthoringData';
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -221,6 +225,7 @@ function deliveryKindForComponent(component: { type?: string; settings?: Record<
 
 const componentStatusColors: Record<string, string> = {
   published: 'bg-emerald-50 text-emerald-700 border-emerald-200/60',
+  scheduled: 'bg-sky-50 text-sky-700 border-sky-200/60',
   review: 'bg-amber-50 text-amber-700 border-amber-200/60',
   draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/60',
 };
@@ -1207,7 +1212,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   const deliveryWindow = [
     deliveryStart ? formatDateLabel(deliveryStart) : '',
     deliveryEnd ? formatDateLabel(deliveryEnd) : '',
-  ].filter(Boolean).join(' â€“ ');
+  ].filter(Boolean).join(' – ');
 
   const programmeSourceIds = [source.id, source.sourceId, source.name].map(normalise).filter(Boolean);
   const ksbSet = data.ksbSets.find(set => {
@@ -1377,6 +1382,10 @@ export default function ProgrammeDetailPage() {
   const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
   const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', owner: '', color: '#6941c6', description: '' });
   const [savingAction, setSavingAction] = useState<string | null>(null);
+  const [teamsSyncingId, setTeamsSyncingId] = useState('');
+  const [teamsSyncMessages, setTeamsSyncMessages] = useState<Record<string, string>>({});
+  const [teamsResults, setTeamsResults] = useState<Record<string, TeamsMeetingArtifactsResult>>({});
+  const [teamsResultsOpen, setTeamsResultsOpen] = useState<Record<string, boolean>>({});
   const coverageProgrammeIds = useMemo(() => {
     const withoutRoutePrefix = clean(id || '').replace(/^program-/i, '');
     const candidates = [
@@ -1571,6 +1580,12 @@ export default function ProgrammeDetailPage() {
           const kind = deliveryKindForComponent(component);
           if (!kind) return;
           const settings = (component.settings || {}) as Record<string, unknown>;
+          const sessionDateTimeUtc = clean(settings.sessionDateTimeUtc);
+          const parsedSessionDate = sessionDateTimeUtc ? new Date(sessionDateTimeUtc) : null;
+          const sessionTimeUtc = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
+            ? `${parsedSessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false })} UTC`
+            : '';
+          const sessionUrl = clean(settings.liveSessionUrl || settings.videoUrl || settings.embedCode);
           const groupNames = Array.isArray(settings.selectedGroupNames)
             ? (settings.selectedGroupNames as unknown[]).map(value => clean(value)).filter(Boolean)
             : [];
@@ -1581,16 +1596,16 @@ export default function ProgrammeDetailPage() {
             module: mod.name,
             week: wk.number,
             weekTitle: clean(wk.title, `Week ${wk.number}`),
-            date: clean(settings.sessionDate),
-            time: clean(settings.sessionTime),
+            date: clean(settings.sessionDate) || clean(wk.startDate),
+            time: clean(settings.sessionTime) || sessionTimeUtc,
             groups: groupNames,
-            url: clean(settings.liveSessionUrl || settings.videoUrl || settings.embedCode),
+            url: sessionUrl,
             provider: clean(settings.provider || settings.sourceType),
             durationMinutes: Number(settings.durationMinutes) || Number(component.duration) || 0,
             attendanceRequired: kind === 'live' && settings.attendanceRequired !== false,
             recordingExpected: Boolean(settings.recordingExpected),
             ksbRefs: component.ksbRefs || [],
-            status: component.status || 'draft',
+            status: kind === 'live' && sessionUrl ? 'scheduled' : component.status || 'draft',
           });
         });
       });
@@ -1759,7 +1774,7 @@ export default function ProgrammeDetailPage() {
             </span>
             <h1 className="mt-4 text-lg font-heading font-black text-foreground-950">{error ? 'Unable to load programme data' : 'Programme not found'}</h1>
             <p className="mt-2 text-[13px] leading-6 text-foreground-500">
-              {error || `There is no live curriculum programme matching â€œ${id || 'this route'}â€. It may have been renamed or removed.`}
+              {error || `There is no live curriculum programme matching "${id || 'this route'}". It may have been renamed or removed.`}
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/programmes')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
@@ -1778,7 +1793,7 @@ export default function ProgrammeDetailPage() {
   }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} Â· ${PROGRAMME.cohorts.length} cohorts Â· ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} · ${PROGRAMME.cohorts.length} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
         <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
           {/* Signature: an accent bar tinted with this programme's own colour identity */}
@@ -1802,7 +1817,7 @@ export default function ProgrammeDetailPage() {
                   <HealthRing value={programmeHealth} color={PROGRAMME.color} />
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
-                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% Â· Content {contentReadiness}%</p>
+                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Content {contentReadiness}%</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2 xl:justify-end">
@@ -1901,7 +1916,7 @@ export default function ProgrammeDetailPage() {
                       <p className="text-sm font-semibold text-foreground-900">{c.name}</p>
                       <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${c.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/50' : c.status === 'planned' ? 'bg-accent-50 text-accent-700 border-accent-200/50' : 'bg-foreground-100 text-foreground-500 border-foreground-200/50'}`}>{c.status}</span>
                     </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} â€” {c.endDate} Â· {c.learners} learners Â· {c.groups.length} groups</p>
+                    <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} — {c.endDate} · {c.learners} learners · {c.groups.length} groups</p>
                   </div>
                   <div className="hidden items-center gap-4 text-[12px] text-foreground-500 shrink-0 sm:flex">
                     {c.groups.length > 0 && (() => {
@@ -1938,7 +1953,7 @@ export default function ProgrammeDetailPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-foreground-400 bg-background-200/50 px-2 py-0.5 rounded">{g.mode}</span>
-                            <span className="text-[10px] text-foreground-400">{g.startDate} â€” {g.endDate}</span>
+                            <span className="text-[10px] text-foreground-400">{g.startDate} — {g.endDate}</span>
                           </div>
                           <div className="flex items-center gap-2 mt-3">
                             <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
@@ -1951,7 +1966,7 @@ export default function ProgrammeDetailPage() {
                               <div className="flex items-start justify-between gap-3 mb-3">
                                 <div>
                                   <p className="text-[12px] font-semibold text-foreground-900">{g.name} full details</p>
-                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} Â· {g.startDate} â€” {g.endDate}</p>
+                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} · {g.startDate} — {g.endDate}</p>
                                 </div>
                                 <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
                               </div>
@@ -1981,7 +1996,7 @@ export default function ProgrammeDetailPage() {
                                     <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                                       <div className="min-w-0">
                                         <p className="text-[11px] font-semibold text-foreground-900 truncate">{moduleItem.name}</p>
-                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks Â· {moduleItem.otjh}h OTJH Â· {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
+                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks · {moduleItem.otjh}h OTJH · {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
                                       </div>
                                       <button onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }} className="px-2.5 py-1 rounded-md border border-background-200 bg-background-100 text-[10px] font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
                                         Open Weeks
@@ -2049,7 +2064,7 @@ export default function ProgrammeDetailPage() {
               <div key={c.id} className="space-y-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[12px] font-semibold text-foreground-700">{c.name}</span>
-                  <span className="text-[10px] text-foreground-400">{c.groups.length} groups Â· {c.learners} learners</span>
+                  <span className="text-[10px] text-foreground-400">{c.groups.length} groups · {c.learners} learners</span>
                 </div>
                 {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
                   <div key={g.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -2145,6 +2160,15 @@ export default function ProgrammeDetailPage() {
               const mappingOccurrenceCount = mod.ksbMapping.reduce((total, item) => total + Number(item.count || 0), 0);
               const deliveryStart = clean(mod.weeksData[0]?.startDate);
               const deliveryEnd = clean(mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate);
+              const teamsComponent = mod.weeksData
+                .flatMap(week => week.components || [])
+                .find(component => {
+                  const settings = (component.settings || {}) as Record<string, unknown>;
+                  return Boolean(clean(settings.teamsLiveSessionId));
+                });
+              const teamsSettings = (teamsComponent?.settings || {}) as Record<string, unknown>;
+              const teamsLiveSessionId = clean(teamsSettings.teamsLiveSessionId);
+              const teamsJoinUrl = clean(teamsSettings.liveSessionUrl);
               return (
               <div key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
                 <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_54%,#effdf7_100%)] px-5 py-4">
@@ -2190,6 +2214,85 @@ export default function ProgrammeDetailPage() {
                 </div>
                 </div>
 
+                {teamsLiveSessionId && (
+                  <div className="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
+                          <i className="ri-microsoft-teams-line text-base"></i>
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-black text-foreground-900">Microsoft Teams results</p>
+                          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Attendance, transcript and recording for this module's sessions.</p>
+                          {teamsJoinUrl && <a href={teamsJoinUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] font-bold text-primary-700 hover:text-primary-800">Open meeting link</a>}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={teamsSyncingId === teamsLiveSessionId}
+                          onClick={async () => {
+                            setTeamsSyncingId(teamsLiveSessionId);
+                            setTeamsSyncMessages(previous => ({ ...previous, [teamsLiveSessionId]: '' }));
+                            try {
+                              const result = await syncTeamsMeetingArtifacts(teamsLiveSessionId);
+                              const details = await loadTeamsMeetingArtifacts(teamsLiveSessionId);
+                              setTeamsResults(previous => ({ ...previous, [teamsLiveSessionId]: details }));
+                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: true }));
+                              setTeamsSyncMessages(previous => ({
+                                ...previous,
+                                [teamsLiveSessionId]: `Synced ${result.synced.attendanceRecords} attendance rows, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`,
+                              }));
+                            } catch (error) {
+                              setTeamsSyncMessages(previous => ({
+                                ...previous,
+                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to sync Teams results.',
+                              }));
+                            } finally {
+                              setTeamsSyncingId('');
+                            }
+                          }}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-50"
+                        >
+                          <i className={`${teamsSyncingId === teamsLiveSessionId ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></i>
+                          {teamsSyncingId === teamsLiveSessionId ? 'Syncing...' : 'Sync results'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={teamsSyncingId === teamsLiveSessionId}
+                          onClick={async () => {
+                            if (teamsResults[teamsLiveSessionId]) {
+                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: !previous[teamsLiveSessionId] }));
+                              return;
+                            }
+                            setTeamsSyncingId(teamsLiveSessionId);
+                            try {
+                              const details = await loadTeamsMeetingArtifacts(teamsLiveSessionId);
+                              setTeamsResults(previous => ({ ...previous, [teamsLiveSessionId]: details }));
+                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: true }));
+                            } catch (error) {
+                              setTeamsSyncMessages(previous => ({
+                                ...previous,
+                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to load Teams results.',
+                              }));
+                            } finally {
+                              setTeamsSyncingId('');
+                            }
+                          }}
+                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-50 disabled:cursor-wait disabled:opacity-50"
+                        >
+                          <i className={teamsResultsOpen[teamsLiveSessionId] ? 'ri-arrow-up-s-line' : 'ri-eye-line'}></i>
+                          {teamsResultsOpen[teamsLiveSessionId] ? 'Hide details' : 'View details'}
+                        </button>
+                      </div>
+                    </div>
+                    {teamsSyncMessages[teamsLiveSessionId] && <p className="mt-2 rounded-lg bg-white/80 px-2.5 py-2 text-[10px] font-semibold text-foreground-600">{teamsSyncMessages[teamsLiveSessionId]}</p>}
+                    {teamsResultsOpen[teamsLiveSessionId] && teamsResults[teamsLiveSessionId] && (
+                      <TeamsResultsDetails liveSessionId={teamsLiveSessionId} data={teamsResults[teamsLiveSessionId]} />
+                    )}
+                  </div>
+                )}
+
                 <div className="mb-4 rounded-xl border border-primary-100 bg-primary-50/50 px-3 py-2">
                   <div className="grid grid-cols-3 gap-2 text-center">
                     <MiniDarkMetric label="Weighted KSBs" value={weightedKsbCount} />
@@ -2215,6 +2318,12 @@ export default function ProgrammeDetailPage() {
                     {mod.weeksData.map(week => {
                       const weekComponents = week.components || [];
                       const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
+                      const weekTeamsUrl = clean(
+                        ((weekComponents.find(component => {
+                          const settings = (component.settings || {}) as Record<string, unknown>;
+                          return deliveryKindForComponent(component) === 'live' && clean(settings.liveSessionUrl);
+                        })?.settings || {}) as Record<string, unknown>).liveSessionUrl,
+                      );
                       const weekKey = `${mod.id}:${week.id}`;
                       const isWeekOpen = expandedModuleWeek === weekKey;
                       return (
@@ -2223,6 +2332,12 @@ export default function ProgrammeDetailPage() {
                             <div className="min-w-0">
                               <p className="truncate text-[11px] font-bold text-foreground-800">{week.title || `Week ${week.number}`}</p>
                               <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
+                            {weekTeamsUrl && (
+                              <a href={weekTeamsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-primary-700 hover:text-primary-800 hover:underline">
+                                <i className="ri-microsoft-teams-line"></i>
+                                Join Teams session
+                              </a>
+                            )}
                             </div>
                             <div className="flex shrink-0 items-center gap-1.5">
                               <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
@@ -2417,20 +2532,32 @@ export default function ProgrammeDetailPage() {
                         {isOpen && (
                           <div className="border-t border-background-200 bg-background-100/60 px-4 pb-4 pt-3">
                             <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                              {weekComponents.length > 0 ? weekComponents.map((component, i) => (
-                                <div key={component.id} className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm">
-                                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{i + 1}</span>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
-                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                      <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
-                                      <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
-                                      {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
-                                      {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                              {weekComponents.length > 0 ? weekComponents.map((component, i) => {
+                                const componentSettings = (component.settings || {}) as Record<string, unknown>;
+                                const componentTeamsUrl = deliveryKindForComponent(component) === 'live'
+                                  ? clean(componentSettings.liveSessionUrl)
+                                  : '';
+                                return (
+                                  <div key={component.id} className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm">
+                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{i + 1}</span>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
+                                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
+                                        {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
+                                        {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                                      </div>
+                                      {componentTeamsUrl && (
+                                        <a href={componentTeamsUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
+                                          <i className="ri-microsoft-teams-line"></i>
+                                          Join Teams session
+                                        </a>
+                                      )}
                                     </div>
-                                  </div>
-                                </div>
-                              )) : (
+                                    </div>
+                                );
+                              }) : (
                                 <div className="lg:col-span-2 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
                                   <i className="ri-inbox-line text-xl text-foreground-300"></i>
                                   <p className="mt-2 text-[12px] font-bold text-foreground-500">No components attached to this week yet.</p>
@@ -2469,8 +2596,8 @@ export default function ProgrammeDetailPage() {
               </div>
               <p className="text-[12px] leading-5 text-foreground-500 sm:max-w-md sm:text-right">
                 {sessionKind === 'live'
-                  ? 'Live Teams sessions authored in the week builder â€” scheduled date, assigned groups and attendance.'
-                  : 'Recorded videos authored in the week builder â€” provider, source and watch time.'}
+                  ? 'Microsoft Teams sessions with scheduling, attendance and recording information.'
+                  : 'Recorded learning with provider, KSB coverage and watch-time information.'}
               </p>
             </div>
 
@@ -2479,7 +2606,7 @@ export default function ProgrammeDetailPage() {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
                 <div className="relative">
                   <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups, KSBâ€¦' : 'Search videos, provider, module, KSBâ€¦'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <select value={sessionModuleFilter} onChange={event => setSessionModuleFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
                   <option value="all">All modules</option>
@@ -2505,98 +2632,84 @@ export default function ProgrammeDetailPage() {
               />
             ) : (
               <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60">
-                  <p className="text-[11px] text-foreground-500">
-                    Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}â€“{Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
-                  </p>
-                </div>
-                <div className="overflow-x-auto">
-                  <div className="min-w-[760px]">
-                    {sessionKind === 'live' ? (
-                      <>
-                        <div className="grid grid-cols-[2fr_1.4fr_1fr_1.4fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-                          <span>Session</span>
-                          <span>Module Â· Week</span>
-                          <span className="text-center">Date / Time</span>
-                          <span>Groups</span>
-                          <span className="text-center">Mins</span>
-                          <span className="text-center">Status</span>
-                        </div>
-                        <div className="divide-y divide-background-200/40">
-                          {pagedSessions.map(s => (
-                            <div key={s.id} className="grid grid-cols-[2fr_1.4fr_1fr_1.4fr_0.7fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
-                              <div className="min-w-0">
-                                <p className="text-[12px] font-semibold text-foreground-900 truncate">{s.title}</p>
-                                <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[10px] text-foreground-400">
-                                  {s.attendanceRequired && <span className="inline-flex items-center gap-1 text-primary-600"><i className="ri-user-follow-line"></i>Attendance</span>}
-                                  {s.recordingExpected && <span className="inline-flex items-center gap-1"><i className="ri-record-circle-line"></i>Recording</span>}
-                                  {s.url && <a href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary-600 hover:underline"><i className="ri-links-line"></i>Join link</a>}
-                                </p>
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
-                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` Â· ${s.weekTitle}` : ''}</p>
-                              </div>
-                              <div className="text-center">
-                                <p className="text-[11px] text-foreground-700">{s.date || 'â€”'}</p>
-                                <p className="text-[10px] text-foreground-400">{s.time || 'Time TBC'}</p>
-                              </div>
-                              <div className="flex flex-wrap gap-1">
-                                {s.groups.length ? (
-                                  <>
-                                    {s.groups.slice(0, 3).map(g => <span key={g} className="rounded-full border border-primary-100 bg-primary-50 px-2 py-0.5 text-[9px] font-semibold text-primary-700">{g}</span>)}
-                                    {s.groups.length > 3 && <span className="text-[9px] text-foreground-400">+{s.groups.length - 3}</span>}
-                                  </>
-                                ) : <span className="text-[10px] text-foreground-400">All groups</span>}
-                              </div>
-                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || 'â€”'}</span>
-                              <div className="flex justify-center">
-                                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="grid grid-cols-[2fr_1.4fr_1fr_1.2fr_0.7fr_0.8fr] gap-3 px-4 py-3 bg-background-100/50 border-b border-foreground-300/50 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">
-                          <span>Video</span>
-                          <span>Module Â· Week</span>
-                          <span>Provider</span>
-                          <span>KSBs</span>
-                          <span className="text-center">Mins</span>
-                          <span className="text-center">Status</span>
-                        </div>
-                        <div className="divide-y divide-background-200/40">
-                          {pagedSessions.map(s => (
-                            <div key={s.id} className="grid grid-cols-[2fr_1.4fr_1fr_1.2fr_0.7fr_0.8fr] gap-3 px-4 py-3 items-center hover:bg-background-100/30 transition-smooth">
-                              <div className="min-w-0">
-                                <p className="text-[12px] font-semibold text-foreground-900 truncate">{s.title}</p>
-                                {s.url && <p className="mt-0.5 text-[10px] text-foreground-400 truncate">{s.url}</p>}
-                              </div>
-                              <div className="min-w-0">
-                                <p className="text-[11px] text-foreground-700 truncate">{s.module}</p>
-                                <p className="text-[10px] text-foreground-400">Week {s.week}{s.weekTitle ? ` Â· ${s.weekTitle}` : ''}</p>
-                              </div>
-                              <span className="text-[11px] text-foreground-600 truncate">{s.provider || 'â€”'}</span>
-                              <div className="flex flex-wrap gap-1">
-                                {s.ksbRefs.length ? (
-                                  <>
-                                    {s.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
-                                    {s.ksbRefs.length > 3 && <span className="text-[9px] text-foreground-400">+{s.ksbRefs.length - 3}</span>}
-                                  </>
-                                ) : <span className="text-[10px] text-foreground-400">â€”</span>}
-                              </div>
-                              <span className="text-[11px] text-foreground-500 text-center">{s.durationMinutes || 'â€”'}</span>
-                              <div className="flex justify-center">
-                                <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold capitalize ${componentStatusColors[s.status] || componentStatusColors.draft}`}>{s.status}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
+                <div className="flex flex-col gap-3 border-b border-foreground-200/60 bg-[linear-gradient(135deg,#faf8ff_0%,#ffffff_60%,#f0fdf8_100%)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">{sessionKind === 'live' ? 'Teams delivery schedule' : 'Recorded learning library'}</p>
+                    <p className="mt-1 text-[12px] font-semibold text-foreground-600">
+                      Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1} - {Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary-100 bg-white px-3 py-1.5 text-[10px] font-bold text-primary-700">
+                      <i className={sessionKind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></i>
+                      {activeSessions.length} {sessionKind === 'live' ? 'scheduled sessions' : 'recordings'}
+                    </span>
+                    {sessionKind === 'live' && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-white px-3 py-1.5 text-[10px] font-bold text-emerald-700">
+                        <i className="ri-links-line"></i>
+                        {liveSessions.filter(session => session.url).length} join links ready
+                      </span>
                     )}
                   </div>
+                </div>
+                <div className="divide-y divide-background-200/60">
+                  {pagedSessions.map(session => (
+                    <article key={session.id} className="grid gap-4 px-5 py-4 transition-smooth hover:bg-primary-50/30 lg:grid-cols-[minmax(260px,1.5fr)_minmax(180px,1fr)_170px_120px_150px] lg:items-center">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${session.kind === 'live' ? 'bg-primary-600 text-white' : 'bg-sky-100 text-sky-700'}`}>
+                          <i className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></i>
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-black text-foreground-950">{session.title}</p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {session.kind === 'live' && session.attendanceRequired && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700"><i className="ri-user-follow-line mr-1"></i>Attendance tracked</span>}
+                            {session.kind === 'live' && session.recordingExpected && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-700"><i className="ri-record-circle-line mr-1"></i>Recording enabled</span>}
+                            {session.kind === 'recorded' && session.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px] font-bold text-foreground-800">{session.module}</p>
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">Week {session.week} · {session.weekTitle || `Week ${session.week}`}</p>
+                        <p className="mt-1 truncate text-[10px] text-foreground-500">
+                          <i className="ri-group-line mr-1 text-primary-500"></i>
+                          {session.groups.length ? session.groups.join(', ') : 'All assigned groups'}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-background-200 bg-background-100/70 px-3 py-2">
+                        {session.kind === 'live' ? (
+                          <>
+                            <p className="text-[11px] font-black text-foreground-800">{formatDateLabel(session.date)}</p>
+                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{session.time || 'Time to be confirmed'}</p>
+                          </>
+                        ) : (
+                          <>
+                            <p className="truncate text-[11px] font-black text-foreground-800">{session.provider || 'Provider not set'}</p>
+                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Recorded content</p>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 lg:flex-col lg:items-start">
+                        <span className="text-[11px] font-bold text-foreground-700"><i className="ri-time-line mr-1 text-foreground-400"></i>{session.durationMinutes ? `${session.durationMinutes} min` : 'Duration TBC'}</span>
+                        <span className={`rounded-full border px-2.5 py-1 text-[9px] font-bold capitalize ${componentStatusColors[session.status] || componentStatusColors.draft}`}>{session.status}</span>
+                      </div>
+
+                      <div className="flex lg:justify-end">
+                        {session.url ? (
+                          <a href={session.url} target="_blank" rel="noreferrer" className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-smooth hover:bg-primary-700 lg:w-auto">
+                            <i className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'}></i>
+                            {session.kind === 'live' ? 'Join meeting' : 'Open recording'}
+                            <i className="ri-external-link-line text-[10px] opacity-80"></i>
+                          </a>
+                        ) : (
+                          <span className="inline-flex h-10 items-center rounded-xl border border-dashed border-background-300 px-3 text-[10px] font-semibold text-foreground-400">Link not available</span>
+                        )}
+                      </div>
+                    </article>
+                  ))}
                 </div>
                 <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60">
                   <div className="flex items-center gap-1">
@@ -2736,7 +2849,7 @@ export default function ProgrammeDetailPage() {
                                 <span className="mt-0.5 text-[9px] font-semibold leading-none">x{count || 1}</span>
                               </span>
                             ) : (
-                              <span className="text-foreground-300">â€”</span>
+                              <span className="text-foreground-300">—</span>
                             )}
                           </td>
                         );
@@ -3079,6 +3192,228 @@ function ReviewInfo({ icon, label, value }: { icon: string; label: string; value
       </span>
       <span className="text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</span>
       <span className="min-w-0 truncate text-[11px] font-black text-foreground-900">{value || 'Not set'}</span>
+    </div>
+  );
+}
+
+function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; data: TeamsMeetingArtifactsResult }) {
+  const [transcripts, setTranscripts] = useState<Record<string, Array<{ start: string; speaker: string; text: string }>>>({});
+  const [transcriptErrors, setTranscriptErrors] = useState<Record<string, string>>({});
+  const completed = data.occurrences.filter(occurrence => (
+    occurrence.attendance.length > 0
+    || occurrence.artifacts.length > 0
+    || Number(occurrence.participant_count) > 0
+  ));
+  const transcriptArtifacts = useMemo(() => data.occurrences.flatMap(occurrence => (
+    occurrence.artifacts.filter(artifact => artifact.artifact_type === 'transcript')
+  )), [data.occurrences]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const parseVtt = (value: string) => {
+      const lines = value.replace(/\r/g, '').split('\n');
+      const cues: Array<{ start: string; speaker: string; text: string }> = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const timing = lines[index].match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->/);
+        if (!timing) continue;
+        const textLines: string[] = [];
+        index += 1;
+        while (index < lines.length && lines[index].trim()) {
+          textLines.push(lines[index].trim());
+          index += 1;
+        }
+        const rawText = textLines.join(' ');
+        const speakerMatch = rawText.match(/<v\s+([^>]+)>([\s\S]*?)<\/v>/i);
+        const speaker = speakerMatch?.[1]?.trim() || 'Speaker';
+        const text = (speakerMatch?.[2] || rawText)
+          .replace(/<[^>]+>/g, '')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .trim();
+        if (text) cues.push({ start: timing[1].replace(/^00:/, ''), speaker, text });
+      }
+      return cues;
+    };
+
+    transcriptArtifacts.forEach(artifact => {
+      fetch(teamsMeetingArtifactContentUrl(liveSessionId, artifact.id))
+        .then(async response => {
+          if (!response.ok) throw new Error(`Transcript returned ${response.status}`);
+          return response.text();
+        })
+        .then(value => {
+          if (!cancelled) {
+            setTranscripts(previous => ({ ...previous, [artifact.id]: parseVtt(value) }));
+          }
+        })
+        .catch(error => {
+          if (!cancelled) {
+            setTranscriptErrors(previous => ({
+              ...previous,
+              [artifact.id]: error instanceof Error ? error.message : 'Unable to load transcript.',
+            }));
+          }
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [liveSessionId, transcriptArtifacts]);
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return 'Date unavailable';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  };
+  const formatDuration = (seconds: number) => {
+    const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return hours ? `${hours}h ${remainder}m` : `${remainder}m`;
+  };
+  const attendanceWindow = (intervals?: Array<{ joinDateTime?: string; leaveDateTime?: string }> | string) => {
+    let parsedIntervals: Array<{ joinDateTime?: string; leaveDateTime?: string }> = [];
+    if (Array.isArray(intervals)) {
+      parsedIntervals = intervals;
+    } else if (typeof intervals === 'string' && intervals.trim()) {
+      try {
+        const parsed = JSON.parse(intervals);
+        parsedIntervals = Array.isArray(parsed) ? parsed : [];
+      } catch {
+        parsedIntervals = [];
+      }
+    }
+    const valid = parsedIntervals.filter(interval => interval && (interval.joinDateTime || interval.leaveDateTime));
+    if (!valid.length) return '';
+    const firstJoin = valid[0]?.joinDateTime;
+    const lastLeave = valid.at(-1)?.leaveDateTime;
+    const time = (value?: string) => {
+      if (!value) return '';
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    return [firstJoin ? `Joined ${time(firstJoin)}` : '', lastLeave ? `Left ${time(lastLeave)}` : ''].filter(Boolean).join(' · ');
+  };
+
+  return (
+    <div className="mt-3 space-y-3 border-t border-primary-200 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-wide text-primary-700">Verified Teams attendance</p>
+          <p className="mt-0.5 text-[9px] font-semibold text-foreground-500">Only people recorded in Microsoft Teams attendance reports are shown—not the invitation list.</p>
+        </div>
+        <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-foreground-600">
+          {completed.length} session{completed.length === 1 ? '' : 's'} with results
+        </span>
+      </div>
+      {completed.length ? completed.map(occurrence => (
+        <div key={occurrence.id} className="overflow-hidden rounded-xl border border-primary-100 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/70 px-3 py-2">
+            <div>
+              <p className="text-[11px] font-black text-foreground-900">Session {occurrence.session_number}</p>
+              <p className="text-[10px] font-semibold text-foreground-500">
+                {formatDateTime(occurrence.actual_start || occurrence.scheduled_start)}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <span className="rounded-full bg-sky-100 px-2 py-1 text-[9px] font-bold text-sky-800">
+                {occurrence.attendance.length} attendance
+              </span>
+              <span className="rounded-full bg-violet-100 px-2 py-1 text-[9px] font-bold text-violet-800">
+                {occurrence.artifacts.filter(item => item.artifact_type === 'transcript').length} transcript
+              </span>
+              <span className="rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-bold text-emerald-800">
+                {occurrence.artifacts.filter(item => item.artifact_type === 'recording').length} recording
+              </span>
+            </div>
+          </div>
+
+          {occurrence.attendance.length > 0 && (
+            <div className="border-t border-background-200">
+              <div className="grid grid-cols-[minmax(0,1fr)_90px] bg-background-100/70 px-3 py-1.5 text-[9px] font-black uppercase text-foreground-400">
+                <span>Participant</span>
+                <span className="text-right">Attended</span>
+              </div>
+              {occurrence.attendance.map(person => (
+                <div key={person.id} className="grid grid-cols-[minmax(0,1fr)_90px] items-center border-t border-background-100 px-3 py-2">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"></span>
+                      <p className="truncate text-[10px] font-bold text-foreground-800">{person.display_name || person.email || 'Unknown participant'}</p>
+                    </div>
+                    {person.email && <p className="truncate text-[9px] font-medium text-foreground-400">{person.email}</p>}
+                    {attendanceWindow(person.intervals) && <p className="mt-0.5 truncate text-[9px] font-semibold text-foreground-500">{attendanceWindow(person.intervals)}</p>}
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-emerald-700">{formatDuration(person.total_attendance_seconds)}</p>
+                    <p className="text-[8px] font-bold uppercase text-emerald-600">{person.total_attendance_seconds > 0 ? 'Attended' : 'Joined'}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {occurrence.artifacts.length > 0 && (
+            <div className="flex flex-wrap gap-2 border-t border-background-200 px-3 py-2.5">
+              {occurrence.artifacts.map(artifact => (
+                <a
+                  key={artifact.id}
+                  href={teamsMeetingArtifactContentUrl(liveSessionId, artifact.id)}
+                  target={artifact.artifact_type === 'transcript' ? '_blank' : undefined}
+                  rel="noreferrer"
+                  download
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-100"
+                >
+                  <i className={artifact.artifact_type === 'recording' ? 'ri-download-cloud-2-line' : 'ri-file-text-line'}></i>
+                  {artifact.artifact_type === 'recording' ? 'Download recording' : 'Download transcript'}
+                </a>
+              ))}
+            </div>
+          )}
+
+          {occurrence.artifacts.filter(artifact => artifact.artifact_type === 'transcript').map(artifact => (
+            <div key={`${artifact.id}-inline`} className="border-t border-background-200 bg-background-50/60 px-3 py-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-[10px] font-black uppercase text-foreground-700">Meeting transcript</p>
+                  <p className="text-[9px] font-semibold text-foreground-400">Speaker-attributed text from Microsoft Teams</p>
+                </div>
+                <i className="ri-file-text-line text-base text-primary-500"></i>
+              </div>
+              {transcriptErrors[artifact.id] ? (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-[10px] font-semibold text-red-700">{transcriptErrors[artifact.id]}</p>
+              ) : transcripts[artifact.id] ? (
+                transcripts[artifact.id].length ? (
+                  <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-background-200 bg-white p-2.5">
+                    {transcripts[artifact.id].map((cue, index) => (
+                      <div key={`${artifact.id}-${cue.start}-${index}`} className="grid grid-cols-[48px_minmax(0,1fr)] gap-2 rounded-lg bg-background-100/70 px-2.5 py-2">
+                        <span className="text-[9px] font-bold text-primary-600">{cue.start}</span>
+                        <div className="min-w-0">
+                          <p className="text-[9px] font-black text-foreground-700">{cue.speaker}</p>
+                          <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-5 text-foreground-800">{cue.text}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500">The transcript is empty.</p>
+                )
+              ) : (
+                <p className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500">
+                  <i className="ri-loader-4-line animate-spin"></i>Loading transcript text...
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )) : (
+        <p className="rounded-lg bg-white px-3 py-3 text-[10px] font-semibold text-foreground-500">
+          No completed session results are stored yet. Run Sync results after the Teams meeting ends.
+        </p>
+      )}
     </div>
   );
 }
@@ -3845,11 +4180,11 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
           <div className="space-y-3">
             {byModule.map(moduleGroup => (
               <div key={moduleGroup.module} className="rounded-xl border border-background-200 bg-background-100/45 p-3">
-                <p className="text-[12px] font-bold text-foreground-950">Programme â†’ {moduleGroup.module}</p>
+                <p className="text-[12px] font-bold text-foreground-950">Programme → {moduleGroup.module}</p>
                 <div className="mt-2 space-y-2">
                   {moduleGroup.weeks.map(weekGroup => (
                     <div key={`${moduleGroup.module}-${weekGroup.week}`} className="rounded-lg border border-background-200 bg-background-50 p-3">
-                      <p className="text-[11px] font-bold text-foreground-700">â†’ {weekGroup.week || 'Module-level mapping'}</p>
+                      <p className="text-[11px] font-bold text-foreground-700">→ {weekGroup.week || 'Module-level mapping'}</p>
                       <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
                         {weekGroup.items.map((item, index) => (
                           <div key={`${item.module}-${item.week}-${item.component}-${index}`} className="rounded-lg border border-background-200 bg-background-100 px-3 py-2">
@@ -3858,7 +4193,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
                               {item.classification && <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(item.classification)}</span>}
                               <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{item.weight > 0 ? `${item.weight}%` : 'No weight'}</span>
                             </div>
-                            <p className="mt-2 text-[11px] font-semibold text-foreground-900">â†’ {item.component || item.componentType || 'Component not set'}</p>
+                            <p className="mt-2 text-[11px] font-semibold text-foreground-900">→ {item.component || item.componentType || 'Component not set'}</p>
                             {item.componentType && <p className="text-[10px] font-semibold text-foreground-400">{componentTypeLabel(item.componentType)}</p>}
                             <div className="mt-2 flex flex-wrap gap-1">
                               {item.groups.map(group => <span key={group} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Group: {group}</span>)}

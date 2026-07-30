@@ -84,4 +84,25 @@ describe('normaliseComponentSettings week-template compatibility', () => {
     expect(quiz.linkedQuizId).toBe('quiz-123');
     expect(quiz.quizAssessmentType).toBe('checkpoint');
   });
+
+  it('preserves Teams meeting details on live-session components', () => {
+    const liveSession = normaliseComponentSettings('live-session', {
+      liveSessionUrl: 'https://teams.microsoft.com/l/meetup-join/example',
+      teamsEventId: 'event-123',
+      teamsLiveSessionId: 'LIVE-123',
+      teamsOrganizerEmail: 'tutor@example.com',
+      teamsAttendees: ['learner1@example.com', 'learner2@example.com'],
+      teamsLobbyBypass: 'invited',
+      teamsRecording: 'record-transcribe',
+      teamsRepeat: 'weekly',
+      teamsRepeatOccurrences: 6,
+    });
+
+    expect(liveSession.liveSessionUrl).toContain('teams.microsoft.com');
+    expect(liveSession.teamsEventId).toBe('event-123');
+    expect(liveSession.teamsLiveSessionId).toBe('LIVE-123');
+    expect(liveSession.teamsAttendees).toEqual(['learner1@example.com', 'learner2@example.com']);
+    expect(liveSession.teamsRepeat).toBe('weekly');
+    expect(liveSession.teamsRepeatOccurrences).toBe(6);
+  });
 });

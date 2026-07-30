@@ -14,7 +14,6 @@ const learnerNav = roleNavMap.learner;
 
 const REASONS = [
   { value: 'illness', label: 'Illness or medical appointment', icon: 'ri-heart-pulse-line' },
-  { value: 'work', label: 'Work commitment', icon: 'ri-briefcase-4-line' },
   { value: 'emergency', label: 'Family or personal emergency', icon: 'ri-alarm-warning-line' },
   { value: 'travel', label: 'Travel disruption', icon: 'ri-bus-line' },
   { value: 'technical', label: 'Technical issue', icon: 'ri-wifi-off-line' },

@@ -14,7 +14,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.conf import settings
 from django.db import connections, router
-from django.db.models import Q
+from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
@@ -30,17 +30,23 @@ from learner_api.evidence_storage import (
     resolve_read_url,
 )
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
+from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
+    AUTHORING_COMPONENTS_TABLE,
     AUTHORING_WEEKS_TABLE,
     authoring_fetch_all,
+    authoring_modules_as_training_rows,
     build_module_session_plan,
     COHORT_AUTHORING_DETAILS_TABLE,
     get_coach_rows,
     get_program_config_rows,
     get_training_rows,
     is_operational_training_row,
+    LIVE_SESSION_OCCURRENCES_TABLE,
+    LIVE_SESSIONS_TABLE,
     parse_date,
     parse_int,
     parse_json_value,
@@ -972,7 +978,7 @@ def find_learner_absence_relation(connection) -> str | None:
     return find_existing_relation(connection, LEARNER_ABSENCE_RELATION_CANDIDATES)
 
 
-def fetch_active_user_caseload_rows(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
+def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
@@ -1023,7 +1029,7 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
-def fetch_owner_active_user_rows(owner_email: str) -> list[LearnerProfile]:
+def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     rows = [
         row
@@ -1052,6 +1058,7 @@ def resolve_schedule_window(
     learner_id: int,
     commercial_rows: dict[int, CommercialUser],
     enrolment_rows: dict[int, EnrolmentUser],
+    learner: LearnerProfile | None = None,
 ) -> tuple[date | None, date | None]:
     commercial_row = commercial_rows.get(learner_id)
     if commercial_row:
@@ -1066,6 +1073,8 @@ def resolve_schedule_window(
             or getattr(enrolment_row, "practical_period_end_date", None)
         ) if enrolment_row else None
 
+    start_value = start_value or getattr(learner, "start_date", None)
+    end_value = end_value or getattr(learner, "end_date", None)
     start_date = parse_date_value(start_value)
     end_date = parse_date_value(end_value)
     if isinstance(start_date, datetime):
@@ -1075,9 +1084,16 @@ def resolve_schedule_window(
     return start_date, end_date
 
 
-def serialize_active_user_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newest_first: bool = False) -> list[dict]:
+    activity_reader = getattr(row, "activity_feed_entries", None)
+    if callable(activity_reader):
+        return [entry for entry in activity_reader(newest_first=newest_first) if isinstance(entry, dict)]
+    return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
+
+
+def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     planned_components = count_planned_components(row.training_plan)
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
@@ -1457,7 +1473,7 @@ def build_monthly_activity_learner(
     end_date: date,
 ) -> dict:
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
-    activity_entries = [entry for entry in list_or_empty(row.activity_feed) if isinstance(entry, dict)]
+    activity_entries = learner_activity_feed_entries(row)
     monthly_progress = [entry for entry in progress_entries if entry_is_between(entry, start_date, end_date)]
     monthly_feed = [entry for entry in activity_entries if entry_is_between(entry, start_date, end_date)]
     learner_events = [
@@ -1635,8 +1651,8 @@ def build_monthly_activity_learner(
 
 
 def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]:
-    active_rows = fetch_active_user_caseload_rows(owner_email)
-    caseload_learners = [serialize_active_user_learner(row) for row in active_rows]
+    active_rows = fetch_caseload_learner_profiles(owner_email)
+    caseload_learners = [serialize_caseload_learner(row) for row in active_rows]
     caseload_by_id = {
         str(learner["id"]): learner
         for learner in caseload_learners
@@ -2237,61 +2253,7 @@ def fetch_attendance_detail_summary_data(learner_ids: list[int], email_keys: lis
     if not ids and not emails:
         return empty
 
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not relation:
-        return empty
-
-    columns = relation_columns(connection, relation)
-    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
-    session_date_column = first_existing_column(columns, "session_date", "date")
-    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
-    status_column = first_existing_column(columns, "attendance_status", "status", "attendance", "is_present", "present", "attended")
-    minutes_late_column = first_existing_column(columns, "minutes_late", "late", "lateness")
-    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
-    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
-
-    if not status_column or not any([learner_id_column, learner_email_column]):
-        return empty
-
-    selected_aliases: dict[str, str | None] = {
-        "learner_id": learner_id_column,
-        "learner_email": learner_email_column,
-        "session_date": session_date_column,
-        "session_start_time": start_time_column,
-        "attendance_status": status_column,
-        "minutes_late": minutes_late_column,
-        "catchup_completed": catchup_column,
-        "absence_reason": reason_column,
-    }
-    select_columns = [
-        f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}" if column else f"null as {quote_sql_identifier(alias)}"
-        for alias, column in selected_aliases.items()
-    ]
-
-    filters = []
-    params: list = []
-    if learner_id_column and ids:
-        placeholders = ", ".join(["%s"] * len(ids))
-        filters.append(f"{quote_sql_identifier(learner_id_column)} in ({placeholders})")
-        params.extend(ids)
-    if learner_email_column and emails:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = any(%s)")
-        params.append(emails)
-    if not filters:
-        return empty
-
-    query = f"""
-        select {", ".join(select_columns)}
-        from {relation}
-        where {" or ".join(filters)}
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        result_columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
-
+    rows = fetch_verified_teams_attendance_rows(ids, emails)
     return build_attendance_detail_summary_payload(rows)
 
 
@@ -2703,20 +2665,20 @@ def generated_event_priority(status: str, target_date: date, display_date: date)
     return "normal"
 
 
-def build_active_user_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
-    active_user_map: dict[int, LearnerProfile] = {}
+def build_learner_profile_map(rows: list[LearnerProfile]) -> dict[int, LearnerProfile]:
+    learner_profile_map: dict[int, LearnerProfile] = {}
     for row in rows:
         try:
             learner_id = int(getattr(row, "id", 0) or 0)
         except (TypeError, ValueError):
             continue
         if learner_id > 0:
-            active_user_map[learner_id] = row
-    return active_user_map
+            learner_profile_map[learner_id] = row
+    return learner_profile_map
 
 
 def fetch_owner_name(owner_email: str, fallback: str = "Med Maher") -> str:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     return next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         fallback,
@@ -2880,7 +2842,10 @@ def build_catchup_calendar_event(
     note_text = (
         " ".join(build_catchup_note_lines(record, target_date))
         if event_type == CATCH_UP_EVENT_TYPE
-        else clean_text(record.notes) or (f"{event_title} booked by the learner." if event_type in BOOKED_EVENT_TITLES else "")
+        else (
+            clean_text(record.notes)
+            or ("Support session managed by the coach." if event_type == "student-support" else (f"{event_title} booked by the learner." if event_type in BOOKED_EVENT_TITLES else ""))
+        )
     )
 
     return {
@@ -2955,14 +2920,14 @@ def build_catchup_scheduler_events(
     owner_email: str,
     owner_name: str,
     active_rows: list[LearnerProfile],
-    active_user_map: dict[int, LearnerProfile],
+    learner_profile_map: dict[int, LearnerProfile],
     persisted_records: list[CoachCalendarEvent],
 ) -> list[dict]:
     scheduler_events = [
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_records
     ]
@@ -3309,8 +3274,15 @@ def build_live_session_calendar_event(
     owner_email: str,
     owner_name: str,
     week_title: str | None = None,
+    tracked_occurrence: dict | None = None,
+    tracked_series: dict | None = None,
+    component_meeting_link: str = "",
 ) -> dict:
-    session_date = date.fromisoformat(session["date"])
+    tracked_occurrence = tracked_occurrence or {}
+    tracked_series = tracked_series or {}
+    tracked_start = tracked_occurrence.get("scheduled_start")
+    event_date = tracked_start.date().isoformat() if isinstance(tracked_start, datetime) else session["date"]
+    session_date = date.fromisoformat(event_date)
     module_name = clean_text(row.get("module_name")) or "Live Session"
     session_title = f"{module_name} — {week_title}" if week_title else f"{module_name} — Week {session['sessionNumber']}"
 
@@ -3328,6 +3300,13 @@ def build_live_session_calendar_event(
         else:
             end_hour = start_hour + duration_minutes / 60
         time_label = f'{start_time.strftime("%H:%M")} - {end_time.strftime("%H:%M")}' if end_time else start_time.strftime("%H:%M")
+
+    meeting_link = (
+        clean_text(tracked_occurrence.get("join_url"))
+        or clean_text(tracked_series.get("join_url"))
+        or clean_text(tracked_series.get("web_link"))
+        or clean_text(component_meeting_link)
+    )
 
     return {
         "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
@@ -3347,8 +3326,8 @@ def build_live_session_calendar_event(
         "sequence": session["sessionNumber"],
         "title": session_title,
         "type": "live-session",
-        "targetDate": session["date"],
-        "date": session["date"],
+        "targetDate": event_date,
+        "date": event_date,
         "year": session_date.year,
         "month": session_date.month - 1,
         "dayOfMonth": session_date.day,
@@ -3359,16 +3338,16 @@ def build_live_session_calendar_event(
         "timeLabel": time_label,
         "isTimeEstimated": is_time_estimated,
         "priority": "normal",
-        "status": "scheduled",
-        "sourceStatus": "Scheduled",
-        "meetingProvider": "",
-        "meetingLink": "",
-        "graphWebLink": "",
-        "platform": "LMS",
-        "location": "--",
+        "status": clean_text(tracked_occurrence.get("status")).lower() or "scheduled",
+        "sourceStatus": clean_text(tracked_occurrence.get("status")).title() or "Scheduled",
+        "meetingProvider": clean_text(tracked_series.get("provider")) or ("Microsoft Teams" if meeting_link else ""),
+        "meetingLink": meeting_link,
+        "graphWebLink": clean_text(tracked_series.get("web_link")),
+        "platform": "Microsoft Teams" if meeting_link else "LMS",
+        "location": "Microsoft Teams" if meeting_link else "--",
         "notes": f'{session_title}.',
-        "rawPlanned": session["date"],
-        "rawStatus": "Scheduled",
+        "rawPlanned": event_date,
+        "rawStatus": clean_text(tracked_occurrence.get("status")).title() or "Scheduled",
     }
 
 
@@ -3405,18 +3384,64 @@ def collect_live_session_events(
         module_catalogue_id = clean_text(week.get("module_catalogue_id"))
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
+    component_links_by_week: dict[str, str] = {}
+    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE):
+        if clean_text(component.get("type")).lower() != "live_session":
+            continue
+        week_id = clean_text(component.get("week_id"))
+        meeting_link = clean_text(component.get("live_sessions_link"))
+        if week_id and meeting_link:
+            component_links_by_week[week_id] = meeting_link
     holidays_by_cohort_id: dict[str, list[dict]] = {}
+    active_series_by_module: dict[str, dict] = {}
+    occurrences_by_series_and_number: dict[tuple[str, int], dict] = {}
+    try:
+        active_series = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE,
+            "status = %s",
+            ["active"],
+            "updated_at desc, created_at desc",
+        )
+        for series in active_series:
+            module_id = clean_text(series.get("module_catalogue_id"))
+            if module_id and module_id not in active_series_by_module:
+                active_series_by_module[module_id] = series
+        active_series_ids = {clean_text(series.get("id")) for series in active_series}
+        for occurrence in authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE):
+            series_id = clean_text(occurrence.get("live_session_id"))
+            if series_id in active_series_ids:
+                occurrences_by_series_and_number[
+                    (series_id, parse_int(occurrence.get("session_number"), 0))
+                ] = occurrence
+    except Exception:
+        # Calendar dates still work when legacy databases do not have the
+        # Teams tracking tables yet.
+        active_series_by_module = {}
+        occurrences_by_series_and_number = {}
     today = date.today()
 
     events: list[dict] = []
-    for row in get_training_rows():
+    training_rows = get_training_rows()
+    existing_delivery_keys = {
+        (
+            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
+            clean_text(row.get("_meta", {}).get("group_id")),
+        )
+        for row in training_rows
+    }
+    training_rows.extend(
+        row
+        for row in authoring_modules_as_training_rows()
+        if (
+            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
+            clean_text(row.get("_meta", {}).get("group_id")),
+        ) not in existing_delivery_keys
+    )
+    for row in training_rows:
         if not is_operational_training_row(row):
             continue
         if not clean_text(row.get("module_name")):
             continue
-        if clean_text(row.get("status")).lower() in {"draft", "archived"}:
-            continue
-
         group_id = clean_text(row.get("_meta", {}).get("group_id"))
         if not group_id or group_id not in assigned_group_ids:
             continue
@@ -3451,8 +3476,15 @@ def collect_live_session_events(
             continue
 
         ordered_weeks = sorted(module_weeks, key=lambda week: parse_int(week.get("week_number"), 0))
+        tracked_series = active_series_by_module.get(module_catalogue_id) or {}
+        tracked_series_id = clean_text(tracked_series.get("id"))
         for session in plan["sessions"]:
-            if date.fromisoformat(session["date"]) < today:
+            tracked_occurrence = occurrences_by_series_and_number.get(
+                (tracked_series_id, session["sessionNumber"])
+            )
+            tracked_start = (tracked_occurrence or {}).get("scheduled_start")
+            effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
+            if effective_date < today:
                 continue
             week = ordered_weeks[session["sessionNumber"] - 1] if session["sessionNumber"] - 1 < len(ordered_weeks) else None
             events.append(
@@ -3465,6 +3497,11 @@ def collect_live_session_events(
                     owner_email=owner_email,
                     owner_name=owner_name,
                     week_title=clean_text(week.get("title")) if week else None,
+                    tracked_series=tracked_series,
+                    tracked_occurrence=tracked_occurrence,
+                    component_meeting_link=clean_text(week.get("id")) and component_links_by_week.get(
+                        clean_text(week.get("id")), ""
+                    ),
                 )
             )
 
@@ -3480,8 +3517,8 @@ def collect_live_session_events(
 
 
 def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
-    active_rows = fetch_owner_active_user_rows(owner_email)
-    active_user_map = build_active_user_map(active_rows)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
+    learner_profile_map = build_learner_profile_map(active_rows)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3501,7 +3538,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         "learnersWithDates": 0,
     }
     for learner in active_rows:
-        learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows)
+        learner_start_date, learner_end_date = resolve_schedule_window(learner.id, commercial_rows, enrolment_rows, learner)
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
             continue
 
@@ -3545,7 +3582,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         build_catchup_calendar_event(
             record,
             owner_name=owner_name,
-            learner=active_user_map.get(record.learner_id),
+            learner=learner_profile_map.get(record.learner_id),
         )
         for record in persisted_standalone_records
     ]
@@ -3558,7 +3595,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         owner_email,
         owner_name,
         active_rows,
-        active_user_map,
+        learner_profile_map,
         persisted_catchup_records,
     )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
@@ -3594,7 +3631,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
     events = assign_timetable_slots(events)
     events = sorted(events, key=lambda event: (event["date"], event["startHour"], event["learner"]))
     summary = build_timetable_summary(events, needs_scheduling, source_counts, source_needs_scheduling)
-    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up sessions can be created by the coach for any learner in their caseload."
+    summary["timeAvailability"] = "MCR events are generated every 30 days after the learner start date; progress reviews are generated every 12 weeks; catch-up and support sessions can be created by the coach for any learner in their caseload."
     return {
         "owner_name": owner_name,
         "events": events,
@@ -3637,7 +3674,7 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
 
 
 def find_catchup_template_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     owner_name = next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
@@ -3690,8 +3727,8 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -3714,8 +3751,8 @@ def coach_timetable_schedule_event(request):
 
     catchup_template_event, owner_name = find_catchup_template_event(owner_email, event_key)
     if catchup_template_event:
-        learner_rows = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner_rows)
+        learner_rows = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner_rows)
         learner_id = int(catchup_template_event["learnerId"])
         target_date = scheduled_date
 
@@ -3822,6 +3859,77 @@ def coach_timetable_schedule_event(request):
 
 
 @csrf_exempt
+def coach_timetable_book_event(request):
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    try:
+        payload = parse_json_body(request)
+        owner_email = clean_text(payload.get("ownerEmail") or request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+        learner_id = int(payload.get("learnerId") or 0)
+        session_type = clean_text(payload.get("sessionType")).lower()
+        scheduled_date = parse_date_value(payload.get("scheduledDate"))
+        scheduled_time = parse_time_value(payload.get("scheduledTime"))
+        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+    except (TypeError, ValueError) as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    if session_type not in BOOKED_EVENT_TITLES:
+        return JsonResponse({"detail": "sessionType must be 'catch-up' or 'student-support'."}, status=400)
+    if learner_id <= 0:
+        return JsonResponse({"detail": "learnerId is required."}, status=400)
+    if isinstance(scheduled_date, datetime):
+        scheduled_date = scheduled_date.date()
+    if not isinstance(scheduled_date, date):
+        return JsonResponse({"detail": "scheduledDate is required."}, status=400)
+    if scheduled_date < date.today():
+        return JsonResponse({"detail": "Choose today or a future date for this session."}, status=400)
+    if not isinstance(scheduled_time, time):
+        return JsonResponse({"detail": "scheduledTime is required."}, status=400)
+
+    notes = clean_text(payload.get("notes"))[:500]
+    caseload_rows = fetch_caseload_learner_profiles(owner_email)
+    learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if not learner:
+        return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
+    learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
+    learner_email = clean_text(getattr(learner, "email", None))
+
+    try:
+        next_sequence = (
+            CoachCalendarEvent.objects.filter(learner_id=learner_id, event_type__iexact=session_type)
+            .aggregate(max_seq=Max("sequence"))["max_seq"]
+            or 0
+        ) + 1
+        record = CoachCalendarEvent(
+            event_key=build_timetable_event_key(learner_id, session_type, next_sequence, scheduled_date),
+            owner_email=owner_email,
+            owner_name=owner_name,
+            learner_id=learner_id,
+            learner_name=learner_name,
+            learner_email=learner_email,
+            event_type=session_type,
+            sequence=next_sequence,
+            target_date=scheduled_date,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            duration_minutes=duration_minutes,
+            status=CoachCalendarEvent.STATUS_SCHEDULED,
+            notes=notes,
+        )
+        warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
+        record.last_graph_sync_error = warning
+        record.save()
+    except Exception as exc:  # noqa: BLE001
+        return JsonResponse({"detail": "Unable to create coach session.", "error": str(exc)}, status=500)
+
+    event = build_catchup_calendar_event(record, owner_name=owner_name, learner=learner)
+    return JsonResponse({"event": event, "warning": warning}, status=201)
+
+
+@csrf_exempt
 def coach_timetable_event_action(request):
     if request.method not in ("POST", "PATCH"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -3870,8 +3978,8 @@ def coach_timetable_event_action(request):
         catchup_record.last_graph_sync_error = warning
         catchup_record.save()
 
-        learner = fetch_owner_active_user_rows(owner_email)
-        learner_map = build_active_user_map(learner)
+        learner = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner)
         updated_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -4112,87 +4220,10 @@ def normalize_attendance_detail_status(value) -> str:
 
 
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
-    connection = connections[router.db_for_read(CoachAbsenceReport) or "default"]
-    relation = find_existing_relation(connection, COACH_ATTENDANCE_DETAILS_RELATION_CANDIDATES)
-    if not relation:
-        return []
-
-    columns = relation_columns(connection, relation)
-    learner_id_column = first_existing_column(columns, "learner_id", "learnerid", "Learner ID")
-    learner_email_column = first_existing_column(columns, "learner_email", "email", "Email")
-    learner_name_column = first_existing_column(columns, "learner_name", "learner", "name")
-    session_id_column = first_existing_column(columns, "session_id", "sessionid")
-    session_title_column = first_existing_column(columns, "session_title", "title", "session")
-    session_type_column = first_existing_column(columns, "session_type", "type")
-    session_date_column = first_existing_column(columns, "session_date", "date")
-    start_time_column = first_existing_column(columns, "session_start_time", "start_time", "start")
-    end_time_column = first_existing_column(columns, "session_end_time", "end_time", "end")
-    catchup_column = first_existing_column(columns, "catchup_completed", "catchup", "catch_up_completed")
-    status_column = first_existing_column(
-        columns,
-        "attendance_status",
-        "status",
-        "attendance",
-        "is_present",
-        "present",
-        "attended",
+    rows = fetch_verified_teams_attendance_rows(
+        [to_int(learner.get("id"))],
+        [normalize_email(learner.get("email"))],
     )
-    reason_column = first_existing_column(columns, "reason", "absence_reason", "notes", "note")
-
-    if not any([learner_id_column, learner_email_column, learner_name_column]):
-        return []
-
-    select_columns = []
-    selected_aliases: dict[str, str | None] = {
-        "learner_id": learner_id_column,
-        "learner_name": learner_name_column,
-        "learner_email": learner_email_column,
-        "session_id": session_id_column,
-        "session_title": session_title_column,
-        "session_type": session_type_column,
-        "session_date": session_date_column,
-        "session_start_time": start_time_column,
-        "session_end_time": end_time_column,
-        "attendance_status": status_column,
-        "reason": reason_column,
-        "catchup_completed": catchup_column,
-    }
-    for alias, column in selected_aliases.items():
-        if column:
-            select_columns.append(f"{quote_sql_identifier(column)} as {quote_sql_identifier(alias)}")
-        else:
-            select_columns.append(f"null as {quote_sql_identifier(alias)}")
-
-    filters = []
-    params = []
-    if learner_id_column:
-        filters.append(f"{quote_sql_identifier(learner_id_column)}::text = %s")
-        params.append(str(learner["id"]))
-    if learner_email_column and normalize_email(learner.get("email")):
-        filters.append(f"lower(trim({quote_sql_identifier(learner_email_column)}::text)) = %s")
-        params.append(normalize_email(learner.get("email")))
-    if learner_name_column:
-        filters.append(f"lower(trim({quote_sql_identifier(learner_name_column)}::text)) = %s")
-        params.append(normalize_person_name(learner.get("name")))
-
-    order_parts = []
-    if session_date_column:
-        order_parts.append(f"{quote_sql_identifier(session_date_column)} desc")
-    if start_time_column:
-        order_parts.append(f"{quote_sql_identifier(start_time_column)} desc")
-    order_clause = ", ".join(order_parts) or "1"
-
-    query = f"""
-        select {", ".join(select_columns)}
-        from {relation}
-        where {" or ".join(filters)}
-        order by {order_clause}
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, params)
-        result_columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(result_columns, row)) for row in cursor.fetchall()]
 
     return [
         {
@@ -4207,8 +4238,9 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
             "startTime": format_time_value(row.get("session_start_time")) or "--",
             "endTime": format_time_value(row.get("session_end_time")) or "--",
             "status": normalize_attendance_detail_status(row.get("attendance_status")),
-            "reason": clean_text(row.get("reason")) or "--",
+            "reason": clean_text(row.get("absence_reason")) or "--",
             "catchupCompleted": is_truthy_value(row.get("catchup_completed")),
+            "attendedSeconds": to_int(row.get("attended_seconds")),
         }
         for row in rows
     ]
@@ -4297,13 +4329,13 @@ def coach_monthly_activity(request):
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
+        rows = fetch_caseload_learner_profiles(owner_email)
         timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
         events = timetable_payload.get("events", [])
         active_pairs = [
             (row, learner)
             for row in rows
-            for learner in [serialize_active_user_learner(row)]
+            for learner in [serialize_caseload_learner(row)]
             if learner.get("enrollmentStatus") == "active"
         ]
         learners = [
@@ -4363,8 +4395,8 @@ def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
 
     try:
-        rows = fetch_active_user_caseload_rows(owner_email)
-        learners = [serialize_active_user_learner(row) for row in rows]
+        rows = fetch_caseload_learner_profiles(owner_email)
+        learners = [serialize_caseload_learner(row) for row in rows]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},
@@ -4649,7 +4681,7 @@ def serialize_absence_report(
     attendance_rate_override=None,
     previous_absences_override=None,
 ) -> dict:
-    learner_snapshot = serialize_active_user_learner(learner) if learner else {}
+    learner_snapshot = serialize_caseload_learner(learner) if learner else {}
     reported_by = clean_text(report.reported_by)
     if reported_by not in {"Learner", "Employer", "Coach"}:
         reported_by = "Learner"
@@ -4700,10 +4732,10 @@ def serialize_absence_report(
 @csrf_exempt
 def coach_absence_reports(request):
     owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
-    active_rows = fetch_owner_active_user_rows(owner_email)
+    active_rows = fetch_owner_active_learner_profiles(owner_email)
     active_ids = {int(row.id) for row in active_rows}
     active_emails = {normalize_email(row.email) for row in active_rows if normalize_email(row.email)}
-    active_map = build_active_user_map(active_rows)
+    active_map = build_learner_profile_map(active_rows)
 
     if request.method == "PATCH":
         try:
@@ -4793,93 +4825,141 @@ def coach_absence_reports(request):
     })
 
 
-@require_GET
-def coach_marking_queue(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
-    requested_owner_id = request.GET.get("case_owner_id")
-    case_owner_id = None
-    if requested_owner_id:
+@csrf_exempt
+def coach_marking_queue(request, submission_id=None):
+    """List and review the complete reflections submitted by learners."""
+    ensure_learning_reflection_submissions_table()
+
+    if submission_id is not None:
+        if request.method not in {"PATCH", "POST"}:
+            return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
-            case_owner_id = int(requested_owner_id)
-        except ValueError:
-            case_owner_id = None
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Request body must be valid JSON."}, status=400)
 
-    try:
-        caseload_rows = [
-            row
-            for row in fetch_caseload_rows(owner_email)
-            if (row["full_name"] or "").strip()
-        ]
-        caseload_learners = [serialize_learner(row) for row in caseload_rows]
-        owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
-
-        if case_owner_id is None and owner_email.lower() == DEFAULT_COACH_EMAIL.lower():
-            case_owner_id = DEFAULT_MARKING_OWNER_ID
-
-        caseload_by_email = {
-            normalize_email(learner.get("email")): learner
-            for learner in caseload_learners
-            if normalize_email(learner.get("email"))
-        }
-
-        marking_rows = fetch_marking_rows(owner_name, case_owner_id)
-        items = [
-            serialize_marking_row(
-                row,
-                caseload_by_email.get(normalize_email(row.get("learner_email"))),
+        decision = clean_text(payload.get("decision")).lower()
+        feedback = clean_text(payload.get("feedback"))
+        reviewed_by = clean_text(payload.get("reviewedBy")) or "Progress Coach"
+        valid_decisions = {"accepted", "partial", "referred", "escalated", "rejected"}
+        if decision not in valid_decisions:
+            return JsonResponse(
+                {"detail": "decision must be accepted, partial, referred, escalated or rejected."},
+                status=400,
             )
-            for row in marking_rows
-        ]
-        items = [
-            item
-            for item in items
-            if item["pendingEvidence"] > 0
-            and item["enrollmentStatus"] in ATTENDANCE_INCLUDED_STATUSES
-        ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach marking queue data.", "error": str(exc)},
-            status=500,
+        if decision != "accepted" and not feedback:
+            return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
+
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                update "Learner"."learning_reflection_submissions"
+                set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
+                where id = %s
+                returning id, status, reviewed_at
+                """,
+                [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
+            )
+            updated = cur.fetchone()
+        if not updated:
+            return JsonResponse({"detail": "Submission not found."}, status=404)
+        return JsonResponse({
+            "id": str(updated[0]),
+            "status": updated[1],
+            "reviewedAt": updated[2].isoformat() if updated[2] else None,
+        })
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(
+            """
+            select
+                id, learner_kind, learner_id, learner_name, programme_name,
+                activity_type, activity_id, activity_title, module_title,
+                week_title, planned_otjh, status, learning_reflection,
+                ksb_codes, ksb_weights, ksb_explanations, confidence_before, confidence_after,
+                application_type, application_text, evidence_files,
+                evidence_consent_confirmed, selected_benefits,
+                benefit_explanation, actual_time_hours,
+                completed_during_paid_hours, date_completed, otjh_confirmed,
+                signed_declaration, quality_score, coach_feedback, reviewed_by,
+                reviewed_at, submitted_at
+            from "Learner"."learning_reflection_submissions"
+            order by
+                case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                submitted_at asc
+            """
         )
+        columns = [column[0] for column in cur.description]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-    dated_items = [item for item in items if item["lastSubmissionIso"]]
-    oldest_iso = min((item["lastSubmissionIso"] for item in dated_items), default=None)
-    oldest_submission = "--"
-    if oldest_iso:
-        oldest_submission = next(
-            item["lastSubmission"]
-            for item in dated_items
-            if item["lastSubmissionIso"] == oldest_iso
-        )
+    now = timezone.now()
+    items = []
+    for row in rows:
+        submitted_at = row["submitted_at"]
+        elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
+        status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+        learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
+        initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
+        items.append({
+            "id": str(row["id"]),
+            "learnerKind": row["learner_kind"],
+            "learnerId": row["learner_id"],
+            "learner": learner_name,
+            "initials": initials,
+            "programme": row["programme_name"],
+            "activityType": row["activity_type"],
+            "activityId": row["activity_id"],
+            "activityTitle": row["activity_title"],
+            "module": row["module_title"],
+            "week": row["week_title"],
+            "plannedOtjh": row["planned_otjh"],
+            "status": status,
+            "learningReflection": row["learning_reflection"],
+            "ksbCodes": parse_json_value(row["ksb_codes"], []),
+            "ksbWeights": parse_json_value(row["ksb_weights"], {}),
+            "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
+            "confidenceBefore": parse_json_value(row["confidence_before"], {}),
+            "confidenceAfter": parse_json_value(row["confidence_after"], {}),
+            "applicationType": row["application_type"],
+            "applicationText": row["application_text"],
+            "evidenceFiles": parse_json_value(row["evidence_files"], []),
+            "evidenceConsentConfirmed": bool(row["evidence_consent_confirmed"]),
+            "selectedBenefits": parse_json_value(row["selected_benefits"], []),
+            "benefitExplanation": row["benefit_explanation"],
+            "actualTimeHours": row["actual_time_hours"],
+            "completedDuringPaidHours": row["completed_during_paid_hours"],
+            "dateCompleted": row["date_completed"].isoformat() if row["date_completed"] else None,
+            "otjhConfirmed": bool(row["otjh_confirmed"]),
+            "signedDeclaration": bool(row["signed_declaration"]),
+            "qualityScore": row["quality_score"],
+            "coachFeedback": row["coach_feedback"],
+            "reviewedBy": row["reviewed_by"],
+            "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
+            "submittedAt": submitted_at.isoformat() if submitted_at else None,
+            "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
+            "elapsedDays": elapsed_days,
+            "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+        })
 
-    overdue_items = [item for item in items if item["isOverdue"]]
-    summary = {
-        "caseloadLearners": len(caseload_learners),
-        "queueLearners": len(items),
-        "activeLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "active"),
-        "queueActiveLearners": sum(1 for item in items if item["enrollmentStatus"] == "active"),
-        "onBreakLearners": sum(1 for learner in caseload_learners if learner["enrollmentStatus"] == "break"),
-        "queueOnBreakLearners": sum(1 for item in items if item["isOnBreak"]),
-        "pendingItems": sum(item["pendingEvidence"] for item in items),
-        "overdueLearners": len(overdue_items),
-        "overdueItems": sum(item["pendingEvidence"] for item in overdue_items),
-        "inProgressItems": None,
-        "acceptedEvidence": sum(item["acceptedEvidence"] for item in items),
-        "referredEvidence": sum(item["referredEvidence"] for item in items),
-        "totalEvidence": sum(item["totalEvidence"] for item in items),
-        "oldestSubmission": oldest_submission,
-        "oldestSubmissionIso": oldest_iso,
-        "overdueThresholdDays": MARKING_OVERDUE_DAYS,
-        "unavailableFields": ["module", "title", "type", "due", "words"],
-    }
-
-    return JsonResponse(
-        {
-            "owner": {"name": owner_name, "email": owner_email},
-            "summary": summary,
-            "items": items,
-        }
-    )
+    pending = [item for item in items if item["status"] in {"pending", "escalated"}]
+    overdue = [item for item in pending if item["isOverdue"]]
+    return JsonResponse({
+        "owner": {"name": "Med Maher", "email": DEFAULT_COACH_EMAIL},
+        "summary": {
+            "totalItems": len(items),
+            "activeLearners": len({(item["learnerKind"], item["learnerId"]) for item in items}),
+            "pendingItems": len(pending),
+            "acceptedItems": sum(1 for item in items if item["status"] in {"accepted", "partial"}),
+            "referredItems": sum(1 for item in items if item["status"] in {"referred", "rejected"}),
+            "overdueItems": len(overdue),
+            "oldestSubmission": pending[0]["submittedDisplay"] if pending else "--",
+            "overdueThresholdDays": MARKING_OVERDUE_DAYS,
+        },
+        "items": items,
+    })
 
 
 @require_GET

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RealLearningJourneyView } from '@/components/feature/RealLearningJourneyView';
@@ -387,7 +387,7 @@ export default function ModulesPage() {
   const heroColor = overallProgress >= 70 ? 'emerald' : overallProgress >= 45 ? 'amber' : 'red';
 
   if (isRealMode) {
-    return <RealLearningJourneyView real={real} loading={loading} loadError={loadError} />;
+    return <RealLearningJourneyView real={real} loading={loading} loadError={loadError} learnerKind={kind} learnerId={id} />;
   }
 
   return (
