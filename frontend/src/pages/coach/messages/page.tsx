@@ -611,13 +611,13 @@ export default function CoachMessagesPage() {
                   <div
                     ref={messagesContainerRef}
                     onScroll={handleMessagesScroll}
-                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 md:px-6 py-3 md:py-4 bg-background-100/40"
+                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 md:px-8 py-4 md:py-5 bg-background-100/40"
                   >
                     {detailLoading ? (
-                      <div className="space-y-4">
+                      <div className="mx-auto w-full max-w-3xl space-y-3">
                         {Array.from({ length: 6 }).map((_, index) => (
                           <div key={index} className={`flex ${index % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
-                            <div className={`max-w-[70%] rounded-2xl px-4 py-3 animate-pulse ${index % 2 === 0 ? 'bg-background-50' : 'bg-primary-100'}`}>
+                            <div className={`max-w-[min(72%,520px)] rounded-2xl px-3.5 py-2.5 animate-pulse ${index % 2 === 0 ? 'bg-background-50' : 'bg-primary-100'}`}>
                               <div className="h-3 w-48 rounded bg-background-200 mb-2"></div>
                               <div className="h-3 w-28 rounded bg-background-200"></div>
                             </div>
@@ -643,7 +643,7 @@ export default function CoachMessagesPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-1.5">
+                      <div className="mx-auto w-full max-w-3xl space-y-1.5">
                         {messages.map((message, index) => {
                           const showDate = bubbleDateLabel(index > 0 ? messages[index - 1] : null, message);
                           const isCoachMessage = message.from === 'me';
@@ -656,22 +656,22 @@ export default function CoachMessagesPage() {
                                   </span>
                                 </div>
                               )}
-                              <div className={`flex items-end gap-1.5 ${isCoachMessage ? 'justify-end pl-2 sm:pl-12' : 'justify-start pr-2 sm:pr-12'}`}>
+                              <div className={`flex items-end gap-2 ${isCoachMessage ? 'justify-end pl-2 sm:pl-10' : 'justify-start pr-2 sm:pr-10'}`}>
                                 {!isCoachMessage && (
-                                  <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 text-[11px] font-semibold flex items-center justify-center shrink-0">
+                                  <div className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 text-[10px] font-semibold flex items-center justify-center shrink-0">
                                     {activeThread.learnerInitials}
                                   </div>
                                 )}
-                              <div className={`flex max-w-[88%] sm:max-w-[min(68%,620px)] flex-col ${isCoachMessage ? 'items-end' : 'items-start'}`}>
-                                  <span className="mb-1 text-[10px] font-semibold text-foreground-400">
+                              <div className={`flex max-w-[min(78%,560px)] flex-col ${isCoachMessage ? 'items-end' : 'items-start'}`}>
+                                  <span className="mb-0.5 text-[10px] font-semibold text-foreground-400">
                                     {isCoachMessage ? 'You' : activeThread.learnerName}
                                   </span>
-                                  <div className={`rounded-xl px-3 py-2 shadow-sm ${
+                                  <div className={`rounded-2xl px-3 py-2 shadow-sm ${
                                     isCoachMessage
                                       ? 'bg-primary-500 text-white rounded-br-md'
                                       : 'bg-white text-foreground-800 rounded-bl-md border border-foreground-200/70'
                                   }`}>
-                                    <p className={`text-[13px] leading-relaxed ${message.isDeleted ? 'italic' : ''}`}>{message.body}</p>
+                                    <p className={`text-[13px] leading-snug break-words ${message.isDeleted ? 'italic' : ''}`}>{message.body}</p>
                                     <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${
                                       isCoachMessage ? 'justify-end text-white/80' : 'text-foreground-400'
                                     }`}>
@@ -695,7 +695,7 @@ export default function CoachMessagesPage() {
                   </div>
 
                   <div className="px-3 sm:px-4 md:px-5 py-2.5 md:py-3 border-t border-foreground-200/60 bg-background-50 shrink-0">
-                    <div className="rounded-2xl border border-foreground-200/60 bg-background-100 p-2.5">
+                    <div className="mx-auto w-full max-w-3xl rounded-2xl border border-foreground-200/60 bg-background-100 p-2.5 shadow-sm">
                       <textarea
                         value={newMessage}
                         onChange={(event) => setNewMessage(event.target.value)}

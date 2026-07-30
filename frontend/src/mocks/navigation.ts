@@ -6,6 +6,8 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 export const learnerNavItems: SidebarNavItem[] = [
   // Overview — standalone (not grouped)
   { id: 'learner-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/learner' },
+  // Keep the learner's database-backed coach conversation directly available.
+  { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
 
   // Learning group
   {
