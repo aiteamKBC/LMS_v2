@@ -614,7 +614,7 @@ export default function CoachMessagesPage() {
                     className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 md:px-8 py-4 md:py-5 bg-background-100/40"
                   >
                     {detailLoading ? (
-                      <div className="ml-0 mr-auto w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl space-y-3">
+                      <div className="w-full space-y-3">
                         {Array.from({ length: 6 }).map((_, index) => (
                           <div key={index} className={`flex ${index % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
                             <div className={`max-w-[min(72%,520px)] rounded-2xl px-3.5 py-2.5 animate-pulse ${index % 2 === 0 ? 'bg-background-50' : 'bg-primary-100'}`}>
@@ -643,7 +643,7 @@ export default function CoachMessagesPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="ml-0 mr-auto w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl space-y-1.5">
+                      <div className="w-full space-y-1.5">
                         {messages.map((message, index) => {
                           const showDate = bubbleDateLabel(index > 0 ? messages[index - 1] : null, message);
                           const isCoachMessage = message.from === 'me';
@@ -695,7 +695,7 @@ export default function CoachMessagesPage() {
                   </div>
 
                   <div className="px-3 sm:px-5 md:px-8 py-2.5 md:py-3 border-t border-foreground-200/60 bg-background-50 shrink-0">
-                    <div className="ml-0 mr-auto w-full max-w-4xl xl:max-w-5xl 2xl:max-w-6xl rounded-2xl border border-foreground-200/60 bg-background-100 p-2.5 shadow-sm">
+                    <div className="w-full rounded-2xl border border-foreground-200/60 bg-background-100 p-2.5 shadow-sm">
                       <textarea
                         value={newMessage}
                         onChange={(event) => setNewMessage(event.target.value)}
