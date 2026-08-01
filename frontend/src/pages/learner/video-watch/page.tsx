@@ -9,7 +9,7 @@ import { submitComponentProgress } from '@/api/components';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, isOpenableComponent, gradePercent, formatHoursMinutes,
-  componentCriteria, componentRequiresEvidence, COMPONENT_KSB_WEIGHT_TARGET,
+  componentCriteria, componentRequiresEvidence,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence } from '@/api/evidence';
@@ -360,12 +360,6 @@ export default function ComponentViewPage() {
                     {criteria.met ? 'Ready to complete' : 'Before you can complete this'}
                   </h2>
                   <ul className="space-y-1.5">
-                    <CriterionRow
-                      met={criteria.weightMet}
-                      label={`KSB weight ${criteria.weightTotal % 1 === 0 ? criteria.weightTotal : criteria.weightTotal.toFixed(1)} of ${COMPONENT_KSB_WEIGHT_TARGET}`}
-                      hint="Set by your coach when the activity was built — contact them if this looks wrong."
-                      showHint={!criteria.weightMet}
-                    />
                     {criteria.evidenceRequired && (
                       <CriterionRow
                         met={criteria.evidenceMet}

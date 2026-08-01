@@ -75,11 +75,6 @@ def _component_meta(component_id):
     return (ctype or None), (title or None)
 
 
-# A component whose KSBs are mapped is only complete once those mappings carry
-# at least this much total weight AND the learner has uploaded evidence for it.
-# Components with NO KSBs mapped are unaffected (nothing to satisfy).
-COMPONENT_KSB_WEIGHT_TARGET = 100.0
-
 # Only assignments collect uploaded evidence, so only they can require it.
 EVIDENCE_COMPONENT_TYPES = {"assignment"}
 
@@ -119,17 +114,15 @@ def component_ksb_codes(component_id):
 def _completion_criteria(component_id, kind, learner_id, component_type=None):
     """Evaluate the completion gate for a component.
 
-    Two criteria, both only applied to components that have KSBs mapped:
-      * KSB weight must total COMPONENT_KSB_WEIGHT_TARGET or more.
-      * Assignments additionally require an uploaded evidence file. Only
-        assignments collect evidence, so requiring it elsewhere would make
-        those components impossible to finish.
+    KSB weights measure curriculum contribution and never block completion.
+    Only assignments require an approved evidence file.
 
-    Returns (ok, detail). `detail` reports both criteria so the client can show
-    exactly what is outstanding rather than a bare refusal.
+    Returns (ok, detail), with the outstanding evidence requirement when gated.
     """
     ksb_weight, ksb_count, evidence_count = 0.0, 0, 0
     needs_evidence = component_requires_evidence(component_type)
+    if not needs_evidence:
+        return True, None
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
@@ -158,15 +151,12 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
         logger.warning("Could not evaluate completion criteria for %s: %s", component_id, exc)
         return True, None
 
-    # No KSBs mapped -> this component is not gated.
-    if ksb_count == 0:
-        return True, None
-
-    weight_ok = ksb_weight >= COMPONENT_KSB_WEIGHT_TARGET
+    # KSB weight is progress metadata, not a learner completion gate.
+    weight_ok = True
     evidence_ok = (evidence_count > 0) if needs_evidence else True
     detail = {
         "ksbWeightTotal": ksb_weight,
-        "ksbWeightTarget": COMPONENT_KSB_WEIGHT_TARGET,
+        "ksbWeightTarget": 100.0,
         "ksbWeightMet": weight_ok,
         "ksbMappingCount": ksb_count,
         "evidenceRequired": needs_evidence,
@@ -229,11 +219,6 @@ def submit_component_progress(request, component_id):
     )
     if not criteria_ok:
         missing = []
-        if not criteria["ksbWeightMet"]:
-            missing.append(
-                f"KSB weight is {criteria['ksbWeightTotal']:g} of "
-                f"{criteria['ksbWeightTarget']:g}"
-            )
         if not criteria["evidenceMet"]:
             missing.append("at least one evidence file must be uploaded")
         return JsonResponse(

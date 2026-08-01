@@ -297,6 +297,28 @@ function QuestTrail({ stations, done, learnerName, travelled, real }: { stations
 
 function HorizontalRoadmap({ stations, done, travelled, real }: { stations: ModuleStation[]; done: boolean; travelled: number; real: LearnerDetail }) {
   const [selectedStation, setSelectedStation] = useState<ModuleStation | null>(null);
+
+  useEffect(() => {
+    const requestedModule = Number(new URLSearchParams(window.location.search).get('module'));
+    if (!Number.isInteger(requestedModule) || requestedModule < 1) return;
+    const requestedStation = stations.find((station) => station.index === requestedModule - 1);
+    if (requestedStation) setSelectedStation(requestedStation);
+  }, [stations]);
+
+  const openStation = (station: ModuleStation) => {
+    setSelectedStation(station);
+    const url = new URL(window.location.href);
+    url.searchParams.set('module', String(station.index + 1));
+    window.history.replaceState(window.history.state, '', url);
+  };
+
+  const closeStation = () => {
+    setSelectedStation(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('module');
+    window.history.replaceState(window.history.state, '', url);
+  };
+
   const items = [
     { key: 'enrolment', label: 'Enrolment', status: 'completed' as StationStatus, icon: 'ri-check-line', station: undefined },
     ...stations.map((station) => ({
@@ -306,8 +328,8 @@ function HorizontalRoadmap({ stations, done, travelled, real }: { stations: Modu
       icon: station.status === 'completed' ? 'ri-check-line' : station.status === 'current' ? 'ri-play-fill' : 'ri-more-line',
       station,
     })),
-    { key: 'gateway', label: 'Gateway Review', status: done ? 'completed' as StationStatus : 'upcoming' as StationStatus, icon: done ? 'ri-check-line' : 'ri-lock-2-line', station: undefined },
     { key: 'epa', label: 'EPA Preparation', status: 'upcoming' as StationStatus, icon: 'ri-lock-2-line', station: undefined },
+    { key: 'gateway', label: 'Gateway Review', status: done ? 'completed' as StationStatus : 'upcoming' as StationStatus, icon: done ? 'ri-check-line' : 'ri-lock-2-line', station: undefined },
     { key: 'graduation', label: 'Graduation', status: 'upcoming' as StationStatus, icon: 'ri-graduation-cap-line', station: undefined },
   ];
 
@@ -326,7 +348,7 @@ function HorizontalRoadmap({ stations, done, travelled, real }: { stations: Modu
               key={item.key}
               type="button"
               disabled={!item.station}
-              onClick={() => item.station && setSelectedStation(item.station)}
+              onClick={() => item.station && openStation(item.station)}
               className={`relative z-10 flex min-w-[130px] flex-1 flex-col items-center ${item.station ? 'group cursor-pointer' : 'cursor-default'}`}
             >
               {item.status === 'current' && (
@@ -362,7 +384,7 @@ function HorizontalRoadmap({ stations, done, travelled, real }: { stations: Modu
       </div>
 
       {selectedStation && (
-        <ModuleActivityModal station={selectedStation} real={real} onClose={() => setSelectedStation(null)} />
+        <ModuleActivityModal station={selectedStation} real={real} onClose={closeStation} />
       )}
     </>
   );

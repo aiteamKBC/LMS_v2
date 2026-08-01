@@ -294,9 +294,14 @@ export function LearnerCalendarContent() {
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>();
 
   const today = new Date();
+  const todayDay = today.getDate();
+  const todayMonth = today.getMonth();
+  const todayYear = today.getFullYear();
+  const todayMonthLabel = MONTH_NAMES[todayMonth].slice(0, 3).toUpperCase();
+  const todayWeekdayLabel = DAYS_OF_WEEK[today.getDay() === 0 ? 6 : today.getDay() - 1].toUpperCase();
   const isToday = useCallback((day: number, month: number, year: number) => {
-    return day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-  }, [today]);
+    return day === todayDay && month === todayMonth && year === todayYear;
+  }, [todayDay, todayMonth, todayYear]);
 
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
     return myEvents.filter((ev) => {
@@ -652,8 +657,29 @@ export function LearnerCalendarContent() {
               <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">My Calendar</h1>
               <p className="text-sm text-white/40 max-w-lg">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
             </div>
-            <div className="lg:w-[380px] shrink-0 px-5 md:px-7 py-5 md:py-6 flex items-center justify-center">
-              <img src="https://storage.readdy-site.link/project_files/618bc44b-5728-4a0b-8f4f-ee80cff7baf6/5be5bb60-ac2e-453e-af59-a7b4a8eebe41_compressed_10603003_42502.webp" alt="Calendar" className="w-40 h-40 md:w-48 md:h-48 object-contain rounded-xl opacity-90 drop-shadow-lg" />
+            <div className="flex shrink-0 items-center justify-center px-5 py-5 md:px-7 md:py-6 lg:w-[380px]">
+              <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
+                <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
+                  <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
+                    <div className="flex items-center justify-between">
+                      {[0, 1, 2, 3, 4, 5].map((index) => (
+                        <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
+                          <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700" />
+                          <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm" />
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="px-4 pb-4 pt-3 text-center">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
+                    <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
+                      {String(todayDay).padStart(2, '0')}
+                    </p>
+                    <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
+                  </div>
+                  <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95" />
+                </div>
+              </div>
             </div>
           </div>
         </section>
