@@ -102,7 +102,7 @@ function isWithinMessageActionWindow(message: ChatMessage): boolean {
 export default function MessagesPage() {
   const { auth } = useAuth();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [, setSearchParams] = useSearchParams();
   const role = auth.roles[0]?.slug || 'learner';
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
@@ -156,24 +156,10 @@ export default function MessagesPage() {
       const data = await fetchChatConversations();
       setConversations(data);
 
-      const requestedConversation = Number(searchParams.get('conversation'));
-      const requestedContact = searchParams.get('contact')?.trim().toLowerCase();
-      const contactConversation = requestedContact
-        ? data.find((conversation) => {
-          const participant = conversation.participant;
-          if (requestedContact === 'med-maher' || requestedContact === 'coach') {
-            return participant.type === 'coach';
-          }
-          return participant.email.toLowerCase() === requestedContact
-            || participant.id.toLowerCase() === requestedContact;
-        })
-        : null;
+      // Keep the inbox closed on first load. A learner or coach must select
+      // a conversation from the list before its messages are fetched.
       setActiveConversationId(current => (
-        current ?? (
-          Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
-            ? requestedConversation
-            : contactConversation?.id ?? null
-        )
+        current !== null && data.some(item => item.id === current) ? current : null
       ));
       setError(null);
     } catch (cause) {
@@ -181,7 +167,7 @@ export default function MessagesPage() {
     } finally {
       setLoadingConversations(false);
     }
-  }, [auth.user?.email, role, searchParams]);
+  }, [auth.user?.email, role]);
 
   useEffect(() => {
     if (auth.isAuthenticated) void loadConversations();
@@ -511,7 +497,7 @@ export default function MessagesPage() {
       userRole={metaRole}
       showBackButton={false}
     >
-      <div className="min-h-[calc(100vh-140px)] bg-background-100 px-4 pb-6 md:px-6">
+      <div className="w-full min-w-0 min-h-[calc(100vh-140px)] bg-background-100 px-4 pb-6 md:px-6">
         <div className="flex items-center gap-2 py-3 text-xs text-foreground-400">
           <i className="ri-home-4-line" />
           <i className="ri-arrow-right-s-line text-foreground-300" />
@@ -520,10 +506,10 @@ export default function MessagesPage() {
           <span className="font-medium text-foreground-700">{isCoach ? 'Learner Messages' : 'Messages'}</span>
         </div>
 
-        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm overflow-hidden min-h-0">
-          <div className="px-5 py-5 md:px-7 md:py-6 border-b border-foreground-200/70">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div>
+        <section className="h-full min-w-0 rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm overflow-hidden">
+          <div className={`${activeConversationId !== null ? 'hidden lg:flex' : 'flex'} px-3 sm:px-5 md:px-6 py-3 md:py-4 border-b border-foreground-200/70 flex-col gap-3`}>
+            <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-5">
+              <div className="lg:flex-1 min-w-0">
                 <p className="text-[10px] font-semibold tracking-[0.2em] text-primary-600 uppercase mb-2">{inboxCopy.eyebrow}</p>
                 <h1 className="text-2xl md:text-[28px] font-heading font-semibold tracking-tight text-foreground-950">
                   {inboxCopy.title}
@@ -531,23 +517,39 @@ export default function MessagesPage() {
                 <p className="text-sm text-foreground-500 mt-1">{inboxCopy.description}</p>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 xl:min-w-[520px]">
+              <div className="xl:min-w-[520px] lg:shrink-0">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {[
-                  { label: isCoach ? 'Learners' : 'Conversations', value: conversations.length, icon: 'ri-group-line', tone: 'text-foreground-900', iconTone: 'text-primary-600 bg-primary-50' },
-                  { label: 'Unread', value: unreadCount, icon: 'ri-mail-unread-line', tone: 'text-foreground-900', iconTone: 'text-secondary-600 bg-secondary-50' },
-                  { label: 'Need Reply', value: needReplyCount, icon: 'ri-reply-line', tone: 'text-foreground-900', iconTone: 'text-accent-600 bg-accent-50' },
-                  { label: isCoach ? 'At Risk' : 'Active', value: isCoach ? atRiskCount : conversations.length, icon: isCoach ? 'ri-alarm-warning-line' : 'ri-chat-check-line', tone: isCoach ? 'text-red-600' : 'text-emerald-600', iconTone: isCoach ? 'text-red-600 bg-red-50' : 'text-emerald-600 bg-emerald-50' },
+                  { label: isCoach ? 'Learners' : 'Conversations', icon: 'ri-group-line', iconTone: 'text-primary-600 bg-primary-50' },
+                  { label: 'Unread', icon: 'ri-mail-unread-line', iconTone: 'text-secondary-600 bg-secondary-50' },
+                  { label: 'Need Reply', icon: 'ri-reply-line', iconTone: 'text-accent-600 bg-accent-50' },
+                  { label: isCoach ? 'At Risk' : 'Active', icon: isCoach ? 'ri-alarm-warning-line' : 'ri-chat-check-line', iconTone: isCoach ? 'text-red-600 bg-red-50' : 'text-emerald-600 bg-emerald-50' },
                 ].map(stat => (
-                  <div key={stat.label} className="rounded-xl border border-foreground-200 bg-background-100/60 px-3 py-2.5 flex items-center gap-2.5">
+                  <div key={stat.label} className="min-h-[58px] rounded-xl border border-foreground-200 bg-background-100/60 px-3 py-2.5 flex items-center gap-2.5">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${stat.iconTone}`}>
                       <i className={`${stat.icon} text-sm`} />
                     </span>
-                    <div>
-                      <p className="text-[10px] text-foreground-400 leading-tight">{stat.label}</p>
-                      <p className={`text-xl font-heading font-semibold leading-tight ${stat.tone}`}>{stat.value}</p>
-                    </div>
+                    <p className="text-[11px] font-medium text-foreground-600 leading-tight">{stat.label}</p>
                   </div>
                 ))}
+                </div>
+                <div className="flex items-center justify-start xl:justify-end gap-2 mt-3 overflow-x-auto pb-1">
+                  {[
+                    { id: 'all' as const, label: `All (${conversations.length})` },
+                    { id: 'unread' as const, label: `Unread (${unreadCount})` },
+                    { id: 'at-risk' as const, label: isCoach ? `At Risk (${atRiskCount})` : `Active (${conversations.length})` },
+                    { id: 'needs-reply' as const, label: `Needs Reply (${needReplyCount})` },
+                    { id: 'recent' as const, label: 'Recent' },
+                  ].map(filter => (
+                    <button
+                      key={filter.id}
+                      onClick={() => setActiveFilter(filter.id)}
+                      className={`shrink-0 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-smooth cursor-pointer ${activeFilter === filter.id ? 'border-primary-500 bg-primary-600 text-white shadow-sm shadow-primary-500/20' : 'border-foreground-200 bg-background-50 text-foreground-500 hover:border-primary-300 hover:text-primary-700'}`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -561,27 +563,10 @@ export default function MessagesPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2 mt-3 overflow-x-auto pb-1">
-              {[
-                { id: 'all' as const, label: `All (${conversations.length})` },
-                { id: 'unread' as const, label: `Unread (${unreadCount})` },
-                { id: 'at-risk' as const, label: isCoach ? `At Risk (${atRiskCount})` : `Active (${conversations.length})` },
-                { id: 'needs-reply' as const, label: `Needs Reply (${needReplyCount})` },
-                { id: 'recent' as const, label: 'Recent' },
-              ].map(filter => (
-                <button
-                  key={filter.id}
-                  onClick={() => setActiveFilter(filter.id)}
-                  className={`shrink-0 px-3 py-1.5 rounded-full border text-[11px] font-medium transition-smooth cursor-pointer ${activeFilter === filter.id ? 'border-primary-500 bg-primary-600 text-white shadow-sm shadow-primary-500/20' : 'border-foreground-200 bg-background-50 text-foreground-500 hover:border-primary-300 hover:text-primary-700'}`}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
           </div>
 
-          <div className="flex h-[min(700px,calc(100vh-330px))] min-h-[500px] min-h-0">
-            <aside className="w-full md:w-[300px] lg:w-[330px] shrink-0 min-h-0 border-r border-foreground-200 bg-background-50 flex flex-col">
+          <div className={`${activeConversationId !== null ? 'h-[calc(100vh-120px)] lg:h-[calc(100vh-350px)] lg:min-h-[460px]' : 'min-h-[360px] md:min-h-[420px] lg:h-[calc(100vh-350px)] lg:min-h-[460px]'} grid min-w-0 grid-cols-1 md:grid-cols-[300px_minmax(0,1fr)]`}>
+            <aside className={`${activeConversationId !== null ? 'hidden md:flex' : 'flex'} border-r border-foreground-200 bg-background-50 flex-col md:min-h-0`}>
               <div className="px-4 py-3 border-b border-foreground-200 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-foreground-800">{inboxCopy.listTitle}</p>
@@ -589,7 +574,7 @@ export default function MessagesPage() {
                 </div>
                 <span className="text-[10px] font-medium text-primary-600 bg-primary-50 px-2 py-1 rounded-full">{activeFilter === 'all' ? 'All' : activeFilter.replace('-', ' ')}</span>
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div className="max-h-[420px] md:max-h-[520px] overflow-y-auto overscroll-contain md:flex-1 md:min-h-0 md:max-h-none">
                 {loadingConversations && <p className="p-5 text-sm text-foreground-400">Loading conversations...</p>}
                 {!loadingConversations && filteredConversations.length === 0 && (
                   <p className="p-5 text-sm text-foreground-400">{error || 'No conversations available.'}</p>
@@ -615,7 +600,7 @@ export default function MessagesPage() {
                           <span className="text-[10px] text-foreground-400 shrink-0">{formatListTime(conversation.updated_at)}</span>
                         </div>
                         <p className="text-[11px] text-foreground-400 truncate mt-0.5">{item.type === 'learner' ? 'Learner' : 'Progress Coach'}</p>
-                        <span className="inline-flex mt-2 text-[10px] font-medium text-red-600 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded-full">At Risk</span>
+                        {isCoach && <span className="inline-flex mt-2 text-[10px] font-medium text-red-600 bg-red-50 border border-red-100 px-1.5 py-0.5 rounded-full">At Risk</span>}
                         <p className="text-xs text-foreground-500 truncate mt-2">{conversation.latest_message ? (conversation.latest_message.is_deleted ? 'Message deleted' : conversation.latest_message.body) : 'No messages yet'}</p>
                       </div>
                       {conversation.unread_count > 0 && <span className="bg-primary-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">{conversation.unread_count}</span>}
@@ -625,10 +610,11 @@ export default function MessagesPage() {
               </div>
             </aside>
 
-            <main className="hidden md:flex flex-1 min-w-0 min-h-0 bg-background-50 flex-col">
+            <main className={`${activeConversationId !== null ? 'flex' : 'hidden md:flex'} w-full min-w-0 min-h-0 bg-background-50 flex-col`}>
               {activeConversation && participant ? (
                 <>
-                  <div className="px-5 lg:px-6 py-4 border-b border-foreground-200 bg-background-50 flex items-start justify-start gap-3 shrink-0">
+                  <div className="px-3 sm:px-5 md:px-6 py-3 md:py-4 border-b border-foreground-200/70 bg-background-50 shrink-0">
+                    <div className="flex items-center gap-3 min-w-0">
                     <button
                       onClick={leaveConversation}
                       title="Back"
@@ -637,11 +623,176 @@ export default function MessagesPage() {
                     >
                       <i className="ri-arrow-left-line text-base" />
                     </button>
-                    <div className="flex items-start gap-3 min-w-0">
-                      <div className="relative shrink-0">
-                        <div className="w-12 h-12 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center font-bold">{initials(participant.name)}</div>
-                        <span className="absolute -right-0.5 -bottom-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-background-50" />
+                    <button
+                      onClick={() => navigate(isCoach ? `/coach/learner-case-file?id=${encodeURIComponent(participant.id)}` : `/learner/profile?learner=${encodeURIComponent(participant.id)}`)}
+                      title="Open profile"
+                      aria-label={`Open ${participant.name}'s profile`}
+                      className="w-11 h-11 rounded-2xl shrink-0 bg-primary-100 text-primary-700 font-semibold flex items-center justify-center hover:bg-primary-200 transition-smooth cursor-pointer"
+                    >
+                      {initials(participant.name)}
+                    </button>
+                    <div className="min-w-0">
+                      <h2 className="text-base font-semibold text-foreground-900 truncate">{participant.name}</h2>
+                      <p className="text-xs text-foreground-500 truncate mt-0.5">{participant.email}</p>
+                    </div>
+                    <div className="ml-auto shrink-0">
+                      <button onClick={() => navigate(isCoach ? `/coach/learner-case-file?id=${encodeURIComponent(participant.id)}` : `/learner/profile?learner=${encodeURIComponent(participant.id)}`)} className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-xl bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-smooth cursor-pointer whitespace-nowrap">
+                        <i className="ri-user-line" /><span className="hidden sm:inline">Open Profile</span>
+                      </button>
+                    </div>
+                    </div>
+                  </div>
+                  {error && <div className="px-5 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700">{error}</div>}
+
+                  <div
+                    ref={messagesContainerRef}
+                    onScroll={handleMessagesScroll}
+                    className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 md:px-8 py-4 md:py-5 bg-background-100/40"
+                  >
+                    {loadingMessages && (
+                      <div className="w-full space-y-3">
+                        {Array.from({ length: 6 }).map((_, index) => (
+                          <div key={index} className={`flex ${index % 2 === 0 ? 'justify-start' : 'justify-end'}`}>
+                            <div className={`max-w-[min(72%,520px)] rounded-2xl px-3.5 py-2.5 animate-pulse ${index % 2 === 0 ? 'bg-background-50' : 'bg-primary-100'}`}>
+                              <div className="h-3 w-48 rounded bg-background-200 mb-2" />
+                              <div className="h-3 w-28 rounded bg-background-200" />
+                            </div>
+                          </div>
+                        ))}
                       </div>
+                    )}
+                    {!loadingMessages && messages.length === 0 && (
+                      <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center">
+                        <div className="w-16 h-16 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center mb-4">
+                          <i className="ri-message-3-line text-2xl" />
+                        </div>
+                        <p className="text-sm font-semibold text-foreground-800">Start the first conversation</p>
+                        <p className="text-xs text-foreground-400 mt-2 max-w-sm">Send a message to start the conversation with your coach.</p>
+                      </div>
+                    )}
+                    {!loadingMessages && messages.length > 0 && (
+                      <div className="w-full space-y-1.5">
+                        {messages.map((message, index) => {
+                          const previous = messages[index - 1];
+                          const next = messages[index + 1];
+                          const showDate = !previous || formatDateLabel(previous.created_at) !== formatDateLabel(message.created_at);
+                          const isFirstInGroup = !canGroupMessages(previous, message);
+                          const isLastInGroup = !canGroupMessages(message, next);
+                          return (
+                            <div key={message.id} className={isLastInGroup ? 'pb-4' : 'pb-0.5'}>
+                              {showDate && <div className="flex justify-center my-2.5"><span className="px-2.5 py-0.5 rounded-full bg-background-50 border border-foreground-200/60 text-[10px] font-medium text-foreground-400">{formatDateLabel(message.created_at)}</span></div>}
+                              <div className={`flex items-end gap-2 ${message.is_mine ? 'justify-end pl-2 sm:pl-10' : 'justify-start pr-2 sm:pr-10'} group`}>
+                                {!message.is_mine && (
+                                  <div className="w-7 h-7 rounded-full bg-primary-100 text-primary-700 text-[10px] font-semibold flex items-center justify-center shrink-0">
+                                    {initials(participant.name)}
+                                  </div>
+                                )}
+                                <div className={`flex max-w-[min(78%,560px)] xl:max-w-[min(72%,700px)] flex-col ${message.is_mine ? 'items-end' : 'items-start'}`}>
+                                  {isFirstInGroup && <span className="mb-0.5 text-[10px] font-semibold text-foreground-400">{message.is_mine ? 'You' : participant.name}</span>}
+                                  {editingMessageId === message.id ? (
+                                    <div className="rounded-2xl border border-primary-300 bg-background-50 p-3 shadow-sm">
+                                      <textarea
+                                        value={editingBody}
+                                        onChange={event => setEditingBody(event.target.value)}
+                                        onKeyDown={event => {
+                                          if (event.key === 'Escape') cancelEdit();
+                                          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void handleEdit(); }
+                                        }}
+                                        maxLength={5000}
+                                        rows={3}
+                                        autoFocus
+                                        className="w-full min-w-[220px] resize-none border-0 bg-transparent outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 text-sm text-foreground-700"
+                                      />
+                                      <div className="flex justify-end gap-2 mt-2">
+                                        <button onClick={cancelEdit} disabled={savingEdit} className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-foreground-500 hover:bg-background-100 cursor-pointer disabled:opacity-50">Cancel</button>
+                                        <button onClick={() => void handleEdit()} disabled={!editingBody.trim() || savingEdit} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                                          <i className={savingEdit ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> Save
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className={`flex items-end gap-2 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
+                                      <div className={`rounded-2xl px-3 py-2 shadow-sm ${message.is_mine ? 'bg-primary-600 text-white rounded-br-md' : 'bg-background-50 text-foreground-800 rounded-bl-md border border-foreground-200/70'}`}>
+                                        <p className={`text-[13px] leading-snug break-words whitespace-pre-wrap ${message.is_deleted ? 'italic' : ''}`}>{message.is_deleted ? 'Message deleted' : message.body}</p>
+                                        <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${message.is_mine ? 'justify-end text-white/80' : 'text-foreground-400'}`}>
+                                          <span>{formatTime(message.created_at)}{message.edited_at && <span> · Edited</span>}</span>
+                                          {message.is_mine && <i className={`${message.read_at ? 'ri-check-double-line text-primary-100' : 'ri-check-line'} text-xs`} />}
+                                        </div>
+                                      </div>
+                                      <div className={`relative mb-1 ${messageMenuId === message.id ? 'z-20' : ''}`}>
+                                        <button
+                                          onClick={() => setMessageMenuId(current => current === message.id ? null : message.id)}
+                                          title="Message actions"
+                                          aria-label="Message actions"
+                                          className="w-7 h-7 rounded-lg border border-foreground-200 bg-background-50 text-foreground-400 hover:text-primary-600 hover:border-primary-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-smooth cursor-pointer flex items-center justify-center"
+                                        >
+                                          <i className={deletingMessageId === message.id ? 'ri-loader-4-line animate-spin text-xs' : 'ri-more-2-fill text-xs'} />
+                                        </button>
+                                        {messageMenuId === message.id && deletingMessageId !== message.id && (
+                                          <div className={`absolute bottom-9 w-44 rounded-xl border border-foreground-200 bg-background-50 p-1.5 shadow-lg ${message.is_mine ? 'right-0' : 'left-0'}`}>
+                                            {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
+                                              <button onClick={() => beginEdit(message)} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-primary-50 hover:text-primary-700 cursor-pointer"><i className="ri-edit-line" /> Edit message</button>
+                                            )}
+                                            <button onClick={() => void handleDelete(message, 'me')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-background-100 cursor-pointer"><i className="ri-delete-bin-line" /> Delete for me</button>
+                                            {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
+                                              <button onClick={() => void handleDelete(message, 'everyone')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-600 hover:bg-red-50 cursor-pointer"><i className="ri-delete-bin-6-line" /> Delete for everyone</button>
+                                            )}
+                                            {message.is_mine && !message.is_deleted && !isWithinMessageActionWindow(message) && <p className="px-2.5 py-1.5 text-[10px] leading-snug text-foreground-400">Edit and delete for everyone expire after 15 minutes.</p>}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div ref={messagesEndRef} />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="px-3 sm:px-5 md:px-8 py-2.5 md:py-3 border-t border-foreground-200/70 bg-background-50 shrink-0">
+                    <div className="w-full rounded-2xl border border-foreground-200/70 bg-background-100 p-2.5 shadow-sm focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100 transition-smooth">
+                      <textarea
+                        value={newMessage}
+                        onChange={event => setNewMessage(event.target.value)}
+                        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void handleSend(); } }}
+                        maxLength={5000}
+                        rows={2}
+                        placeholder={`Message ${participant.name.split(' ')[0]}...`}
+                        className="w-full resize-none border-0 bg-transparent text-sm text-foreground-700 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 placeholder:text-foreground-300"
+                      />
+                      <div className="mt-2 flex items-center justify-end gap-3">
+                        <button
+                          onClick={() => void handleSend()}
+                          disabled={!newMessage.trim() || sending}
+                          className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth ${newMessage.trim() && !sending ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer' : 'bg-background-200 text-foreground-300 cursor-not-allowed'}`}
+                        >
+                          <i className={sending ? 'ri-loader-4-line animate-spin mr-1.5' : 'ri-send-plane-fill mr-1.5'} />{sending ? 'Sending...' : 'Send'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 min-h-[360px] flex flex-col items-center justify-center text-center px-6">
+                  <div className="w-20 h-20 rounded-3xl bg-background-100 text-foreground-300 flex items-center justify-center mb-4">
+                    <i className="ri-mail-open-line text-3xl" />
+                  </div>
+                  <h2 className="text-lg font-heading font-semibold text-foreground-800">Select a conversation</h2>
+                  <p className="text-sm text-foreground-400 mt-2 max-w-md">Choose a conversation from the left to read the thread and send a message.</p>
+                </div>
+              )}
+            </main>
+          </div>
+        </section>
+      </div>
+    </WorkspaceShell>
+  );
+}
+/*
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <h2 className="text-base font-semibold text-foreground-900 truncate">{participant.name}</h2>
@@ -801,4 +952,4 @@ export default function MessagesPage() {
       </div>
     </WorkspaceShell>
   );
-}
+}*/
