@@ -46,6 +46,7 @@ export default function AuditWorkspace() {
   const [audit, setAudit] = useState<LearnerAuditResponse | null>(null);
   const [learnerSearch, setLearnerSearch] = useState('');
   const [learnerTestFilter, setLearnerTestFilter] = useState<'all' | 'test'>('all');
+  const [programmeFilter, setProgrammeFilter] = useState('all');
   const [activitySearch, setActivitySearch] = useState('');
   const [selectedMonthKey, setSelectedMonthKey] = useState('');
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
@@ -71,7 +72,7 @@ export default function AuditWorkspace() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setLoadingLearners(true);
-      fetchAuditLearners({ search: learnerSearch, includeTest: true })
+fetchAuditLearners({ search: learnerSearch, includeTest: true })
         .then((rows) => {
           const visibleLearners = rows.filter((row) => learnerTestFilter === 'all' || isTestLearner(row));
           setLearners(visibleLearners);
@@ -87,6 +88,26 @@ export default function AuditWorkspace() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [learnerSearch, learnerTestFilter]);
+
+  const programmeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    learners.forEach((learner) => {
+      const programme = learner.programName || 'No programme';
+      counts.set(programme, (counts.get(programme) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [learners]);
+  const visibleLearners = useMemo(() => (
+    programmeFilter === 'all'
+      ? learners
+      : learners.filter((learner) => (learner.programName || 'No programme') === programmeFilter)
+  ), [learners, programmeFilter]);
+
+  useEffect(() => {
+    if (programmeFilter !== 'all' && !programmeOptions.some(([programme]) => programme === programmeFilter)) {
+      setProgrammeFilter('all');
+    }
+  }, [programmeFilter, programmeOptions]);
 
   useEffect(() => {
     if (!selectedLearnerId) {
@@ -130,7 +151,7 @@ export default function AuditWorkspace() {
   const canPreviewPdf = Boolean(audit && selectedMonth && selectedSignoffMonths.length > 0 && learnerSignature && coachSignature);
 
   useEffect(() => {
-    if (!selectedMonth) return;
+if (!selectedMonth) return;
     const learner = selectedMonth.signoffs.learner;
     const coach = selectedMonth.signoffs.coach;
     setLearnerSignerName(learner?.signer_name || '');
@@ -235,7 +256,7 @@ export default function AuditWorkspace() {
       userRole="External Auditor"
       workspaceLabel={auditorConfig.workspaceLabel}
     >
-      <div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
+<div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
         <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50 shadow-sm">
             <div className="shrink-0 border-b border-background-200 bg-white p-4">
@@ -243,9 +264,25 @@ export default function AuditWorkspace() {
                 <div>
                   <h2 className="text-sm font-heading font-semibold text-foreground-900">Learners</h2>
                 </div>
-                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{learners.length}</span>}
+                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{visibleLearners.length}</span>}
               </div>
               <SearchBox value={learnerSearch} onChange={setLearnerSearch} placeholder="Search learner, ID, programme" />
+              <label className="mt-3 block">
+                <span className="sr-only">Programme filter</span>
+                <select
+                  value={programmeFilter}
+                  onChange={(event) => {
+                    setProgrammeFilter(event.target.value);
+                    setSelectedLearnerId('');
+                  }}
+                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                >
+                  <option value="all">All programmes</option>
+                  {programmeOptions.map(([programme, count]) => (
+                    <option key={programme} value={programme}>{display(programme)} ({count})</option>
+                  ))}
+                </select>
+              </label>
               <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-background-100 p-1">
                 <button
                   type="button"
@@ -267,10 +304,10 @@ export default function AuditWorkspace() {
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {loadingLearners ? (
                 <LearnerListSkeleton />
-              ) : learners.length === 0 ? (
-                <EmptyPanel icon="ri-user-search-line" text={learnerSearch ? 'Learner not found.' : 'No learners are available.'} />
+              ) : visibleLearners.length === 0 ? (
+                <EmptyPanel icon="ri-user-search-line" text={learnerSearch || programmeFilter !== 'all' ? 'Learner not found.' : 'No learners are available.'} />
               ) : (
-                learners.map((learner) => {
+                visibleLearners.map((learner) => {
                   const learnerIsTest = isTestLearner(learner);
                   return (
                   <button
@@ -705,7 +742,7 @@ function AuditItemDetails({ item, loading, audit, month }: { item: AuditActivity
     );
   }
   return (
-    <section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
+<section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-600">Learning Item Details</p>

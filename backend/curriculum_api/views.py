@@ -629,6 +629,51 @@ def persist_live_session_occurrences(live_session_id, payload, event, utc_start,
     return rows
 
 
+def replace_live_session_occurrences(live_session_id, payload, utc_start, duration, repeat, occurrences, event_id='', join_url=''):
+    ensure_live_session_tracking_tables()
+    now = datetime.utcnow()
+    rows = scheduled_live_session_occurrences(payload, utc_start, duration, repeat, occurrences)
+    existing_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
+    def occurrence_number(row):
+        try:
+            return int((row or {}).get('session_number') or 0)
+        except (TypeError, ValueError):
+            return 0
+    existing_by_number = {
+        occurrence_number(row): row
+        for row in existing_rows
+        if occurrence_number(row) > 0
+    }
+    active_numbers = set()
+    for item in rows:
+        session_number = item['session_number']
+        active_numbers.add(session_number)
+        existing = existing_by_number.get(session_number) or {}
+        authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+            'id': clean_str(existing.get('id')) or f'OCC-{uuid.uuid4().hex.upper()}',
+            'live_session_id': live_session_id,
+            'session_number': session_number,
+            'graph_event_id': clean_str(event_id),
+            'scheduled_start': item['start'],
+            'scheduled_end': item['end'],
+            'join_url': clean_str(join_url),
+            'status': 'scheduled',
+            'created_at': existing.get('created_at') or now,
+            'updated_at': now,
+        })
+    if active_numbers:
+        stale_ids = [clean_str(row.get('id')) for row in existing_rows if occurrence_number(row) not in active_numbers]
+        if stale_ids:
+            placeholders = ', '.join(['%s'] * len(stale_ids))
+            update_authoring_rows(
+                LIVE_SESSION_OCCURRENCES_TABLE,
+                f"id in ({placeholders})",
+                stale_ids,
+                {'status': 'cancelled', 'updated_at': now},
+            )
+    return rows
+
+
 def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id=''):
     ensure_module_authoring_tables()
     ensure_live_session_tracking_tables()
@@ -1079,6 +1124,155 @@ def attendance_interval_seconds(intervals):
         if start and end and end >= start:
             total += int((end - start).total_seconds())
     return total
+
+
+@csrf_exempt
+def curriculum_teams_meeting_schedule(request, live_session_id):
+    """Update the calendar-backed Teams event when the module schedule shifts."""
+    from coach_api.views import get_graph_settings, has_graph_credentials, microsoft_graph_request
+
+    ensure_live_session_tracking_tables()
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    if request.method != 'PATCH':
+        return json_error('Method not allowed.', status=405)
+    if not has_graph_credentials():
+        return json_error('Microsoft Graph credentials are not configured.', status=503)
+
+    payload = json_body(request)
+    if not isinstance(payload, dict):
+        return json_error('A valid JSON body is required.')
+    series = series_rows[0]
+    organizer = clean_str(payload.get('organizerEmail') or series.get('organizer_email'))
+    event_id = clean_str(payload.get('eventId') or series.get('graph_event_id'))
+    if not organizer or not event_id:
+        return json_error('This Teams meeting is missing organizer or calendar event identifiers.', status=409)
+
+    graph_settings = get_graph_settings()
+    title = clean_str(payload.get('title') or series.get('module_title') or 'Live session')
+    local_start_raw = clean_str(payload.get('localStartDateTime'))
+    utc_start_raw = clean_str(payload.get('startDateTimeUtc'))
+    try:
+        local_start = datetime.fromisoformat(local_start_raw)
+        utc_start = datetime.fromisoformat(utc_start_raw.replace('Z', '+00:00'))
+    except ValueError as exc:
+        return json_error('A valid meeting start date and time is required.', status=400, detail=str(exc))
+
+    duration = max(15, min(1440, int(payload.get('durationMinutes') or series.get('duration_minutes') or 60)))
+    repeat = clean_str(payload.get('repeat') or series.get('repeat_pattern')).lower() or 'none'
+    if repeat not in TEAMS_REPEAT_VALUES:
+        return json_error('Unsupported repeat option.', status=400)
+    occurrences = max(1, min(52, int(payload.get('repeatOccurrences') or series.get('repeat_occurrences') or 1)))
+    event_patch = {
+        'subject': title,
+        'start': {
+            'dateTime': local_start.replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
+        },
+        'end': {
+            'dateTime': (local_start + timedelta(minutes=duration)).replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time',
+        },
+    }
+    recurrence = teams_event_recurrence(repeat, local_start, max(2, occurrences))
+    event_patch['recurrence'] = recurrence if repeat != 'none' else None
+
+    owner_key = urllib_parse.quote(organizer, safe='')
+    event_key = urllib_parse.quote(event_id, safe='')
+    try:
+        event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
+        if not isinstance(event, dict):
+            event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
+    except RuntimeError as exc:
+        logger.warning('Unable to update Module Builder Teams event schedule: %s', exc)
+        return json_error('Microsoft Teams could not update the meeting schedule.', status=502, detail=str(exc))
+
+    supplied_occurrences = payload.get('scheduledOccurrences') if isinstance(payload.get('scheduledOccurrences'), list) else []
+    if len(supplied_occurrences) > 1:
+        target_occurrences = []
+        for index, item in enumerate(supplied_occurrences):
+            if not isinstance(item, dict):
+                continue
+            start = parse_graph_datetime(item.get('startDateTimeUtc'))
+            if not start:
+                continue
+            try:
+                item_duration = max(15, min(1440, int(item.get('durationMinutes') or duration)))
+            except (TypeError, ValueError):
+                item_duration = duration
+            try:
+                session_number = max(1, int(item.get('sessionNumber') or index + 1))
+            except (TypeError, ValueError):
+                session_number = index + 1
+            target_occurrences.append({
+                'session_number': session_number,
+                'start': start,
+                'end': start + timedelta(minutes=item_duration),
+            })
+        if target_occurrences:
+            instance_start = (min(item['start'] for item in target_occurrences) - timedelta(days=7)).isoformat()
+            instance_end = (max(item['end'] for item in target_occurrences) + timedelta(days=7)).isoformat()
+            instance_query = urllib_parse.urlencode({
+                'startDateTime': instance_start,
+                'endDateTime': instance_end,
+            })
+            try:
+                instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+                instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+                instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
+                for index, target in enumerate(sorted(target_occurrences, key=lambda item: item['session_number'])):
+                    if index >= len(instances):
+                        break
+                    instance_id = clean_str(instances[index].get('id'))
+                    if not instance_id:
+                        continue
+                    current_start = parse_graph_datetime((instances[index].get('start') or {}).get('dateTime'))
+                    if current_start and abs((current_start.replace(tzinfo=None) - target['start'].replace(tzinfo=None)).total_seconds()) < 60:
+                        continue
+                    microsoft_graph_request('PATCH', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}', payload={
+                        'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                        'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                    })
+            except RuntimeError as exc:
+                logger.warning('Unable to update individual Teams event instances: %s', exc)
+                return json_error('Microsoft Teams updated the meeting series, but could not update shifted individual sessions.', status=502, detail=str(exc))
+
+    join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
+    occurrence_rows = replace_live_session_occurrences(
+        live_session_id,
+        payload,
+        utc_start,
+        duration,
+        repeat,
+        occurrences,
+        event_id=event_id,
+        join_url=join_url,
+    )
+    update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
+        'module_title': title,
+        'start_datetime': utc_start,
+        'duration_minutes': duration,
+        'repeat_pattern': repeat,
+        'repeat_occurrences': occurrences if repeat != 'none' else 1,
+        'join_url': join_url,
+        'web_link': clean_str(event.get('webLink')) or clean_str(series.get('web_link')),
+        'updated_at': datetime.utcnow(),
+    })
+    return JsonResponse({
+        'updated': True,
+        'meeting': {
+            'liveSessionId': live_session_id,
+            'eventId': event_id,
+            'joinUrl': join_url,
+            'webLink': clean_str(event.get('webLink')) or clean_str(series.get('web_link')),
+            'startDateTimeUtc': utc_start.isoformat(),
+            'durationMinutes': duration,
+            'repeat': repeat,
+            'repeatOccurrences': occurrences if repeat != 'none' else 1,
+            'trackedOccurrences': len(occurrence_rows),
+        },
+    })
 
 
 def upsert_live_session_artifact(occurrence, artifact_type, artifact):

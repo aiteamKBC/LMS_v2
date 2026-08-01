@@ -1,0 +1,7 @@
+﻿aptem_id,learner_name,learner_email,lms_id,programme,reason,api_courses,matched_months,matched_weeks,unmatched_weeks,ambiguous_weeks
+67,Aya Mohamed,dr_ayaadly@hotmail.com,71,Level 4 Market Research Executive,matched by exact lms_id and confident month/module text overlap,48948:Strategic Human Resource Management - Level 7 | 49004:Strategic Financial Management - Level 7,4,7,10,0
+72,Ibrahim Lawal,ibrahimlawal@hotmail.co.uk,34,Level 4 Market Research Executive,matched by exact lms_id and confident month/module text overlap,48948:Strategic Human Resource Management - Level 7 | 48974:Strategic Management - Level 7 | 49004:Strategic Financial Management - Level 7,4,9,19,0
+443,Charlotte Pegg,charlotte@zen8swimtrainer.com,84,Level 4 Marketing Executive,matched by exact lms_id and confident month/module text overlap,49004:Strategic Financial Management - Level 7,4,9,3,0
+461,Maram Mansour,maram_pharma@hotmail.com,88,Level 4 Marketing Executive,matched by exact lms_id and confident month/module text overlap,49004:Strategic Financial Management - Level 7,4,11,1,0
+481,Adrian Johnson,adrian@55plus.co.uk,191,Level 4 Market Research Executive,matched by exact lms_id and confident month/module text overlap,49004:Strategic Financial Management - Level 7,4,10,2,0
+597,Elizabeth Trumper,liz@circus360.uk,198,Level 4 Marketing Executive,matched by exact lms_id and confident month/module text overlap,49004:Strategic Financial Management - Level 7,4,10,2,0
