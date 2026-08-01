@@ -40,10 +40,11 @@ describe('buildKsbProgress against the real learner payload', () => {
     expect(new Set(progress.map((k) => k.code)).size).toBe(62);
   });
 
-  it('marks the 49 KSBs with no mapped component as not-scheduled, never 0%-of-nothing', () => {
-    const unscheduled = progress.filter((k) => k.status === 'not-scheduled');
-    expect(unscheduled).toHaveLength(49);
-    for (const k of unscheduled) {
+  it('marks the 49 KSBs with no mapped component as not-started, never 0%-of-nothing', () => {
+    const unmapped = progress.filter((k) => k.contributors.length === 0);
+    expect(unmapped).toHaveLength(49);
+    for (const k of unmapped) {
+      expect(k.status).toBe('not-started');
       expect(k.availableWeight).toBe(0);
       expect(k.contributors).toHaveLength(0);
       expect(Number.isFinite(k.pct)).toBe(true);   // no NaN from /0
@@ -51,15 +52,15 @@ describe('buildKsbProgress against the real learner payload', () => {
     }
   });
 
-  it('derives the expected weights for the 13 scheduled KSBs', () => {
+  it('derives the expected weights for the 13 mapped KSBs', () => {
     // Verified independently against curriculum.ksb_mappings.
     const expected: Record<string, [earned: number, available: number]> = {
       K1: [0, 220], K2: [0, 120], K3: [95, 145], K4: [0, 50], K8: [0, 50],
       S1: [30, 80], S2: [50, 50], S5: [0, 50], S11: [0, 30],
       B2: [50, 70], B3: [50, 70], B4: [0, 40], B5: [0, 40],
     };
-    const scheduled = progress.filter((k) => k.status !== 'not-scheduled');
-    expect(scheduled.map((k) => k.code).sort()).toEqual(Object.keys(expected).sort());
+    const mapped = progress.filter((k) => k.contributors.length > 0);
+    expect(mapped.map((k) => k.code).sort()).toEqual(Object.keys(expected).sort());
     for (const [code, [earned, available]] of Object.entries(expected)) {
       expect(`${code}:${by(code).earnedWeight}/${by(code).availableWeight}`).toBe(`${code}:${earned}/${available}`);
     }
@@ -89,7 +90,7 @@ describe('buildKsbProgress against the real learner payload', () => {
     expect(by('S2').status).toBe('complete');       // all contributing activities done
     expect(by('K3').status).toBe('in-progress');    // some done
     expect(by('K1').status).toBe('not-started');    // mapped but nothing done
-    expect(by('S3').status).toBe('not-scheduled');  // no component maps it
+    expect(by('S3').status).toBe('not-started');    // no component maps it yet
   });
 
   it('keeps remainingWeight consistent and never negative', () => {
