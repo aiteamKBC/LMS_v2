@@ -1547,6 +1547,9 @@ def build_monthly_activity_learner(
 
     for index, entry in enumerate(monthly_feed):
         activity_key = f"feed:{monthly_activity_identity(entry, index)}"
+        if activity_key in seen_activity_keys:
+            continue
+        seen_activity_keys.add(activity_key)
         seen_activity_keys.add(f"learning:{monthly_activity_dedupe_identity(entry, index)}")
         entry_date = entry_activity_date(entry)
         if not entry_date:
