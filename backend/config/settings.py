@@ -82,6 +82,10 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
+    "CHAT_DEMO_BOOTSTRAP_ENABLED",
+    "true" if DEBUG else "false",
+).lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")

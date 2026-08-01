@@ -71,7 +71,7 @@ class ChatSessionView(APIView):
         })
 
     def post(self, request):
-        if not settings.DEBUG:
+        if not settings.CHAT_DEMO_BOOTSTRAP_ENABLED:
             return Response({"detail": "Demo chat session bootstrap is disabled."}, status=status.HTTP_404_NOT_FOUND)
 
         demo_email = str(request.data.get("email", "")).strip().lower()

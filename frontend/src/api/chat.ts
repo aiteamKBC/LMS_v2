@@ -63,9 +63,7 @@ export class ChatApiError extends Error {
   }
 }
 
-const productionChatBase = window.location.hostname === 'lms.kentbusinesscollege.net'
-  ? 'https://api.kentbusinesscollege.net/api/chat'
-  : '/api/chat';
+const productionChatBase = '/api/chat';
 const CHAT_BASE = (import.meta.env.VITE_CHAT_API_BASE_URL || productionChatBase).replace(/\/$/, '');
 
 function readCookie(name: string): string | null {
@@ -112,7 +110,9 @@ export async function clearChatSession(): Promise<void> {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+type ChatRequestInit = NonNullable<Parameters<typeof fetch>[1]>;
+
+async function request<T>(path: string, init: ChatRequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (init.method && init.method !== 'GET') {
