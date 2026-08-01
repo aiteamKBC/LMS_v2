@@ -4,7 +4,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import {
-  buildKsbProgress, completedComponentIds, componentTypeMeta,
+  buildKsbProgress, completedComponentIds, componentTypeMeta, ksbParentCode,
   type KsbProgress, type KsbStatus,
 } from '@/utils/learnerJourney';
 
@@ -35,7 +35,6 @@ const STATUS_META: Record<KsbStatus, { label: string; badge: string; dot: string
   complete: { label: 'Fully evidenced', badge: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   'in-progress': { label: 'In progress', badge: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
   'not-started': { label: 'Not started', badge: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
-  'not-scheduled': { label: 'Not scheduled', badge: 'bg-background-100 text-foreground-400', dot: 'bg-background-300', bar: 'bg-background-300' },
 };
 
 /** Weights are authored as whole numbers but stored as floats. */
@@ -56,23 +55,67 @@ function Ring({ percent, colorClass, size = 64, stroke = 6 }: { percent: number;
   );
 }
 
-type Filter = 'all' | 'scheduled' | KsbStatus;
+type Filter = 'all' | KsbStatus;
 
 export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loading: boolean }) {
   const [filter, setFilter] = useState<Filter>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  // Active learners created before the normalized KSB-profile sync can have an
+  // empty real.ksbs array even though their live component mappings and saved
+  // completion records contain genuine KSB codes. Merge all three live sources
+  // so this detail page agrees with the learner overview instead of showing 0/0.
+  const programmeKsbs = useMemo(() => {
+    const byCode = new Map<string, { code: string; type: string; description: string }>();
+    const add = (rawCode: string | null | undefined, description = '', rawType = '') => {
+      const code = ksbParentCode(String(rawCode || ''));
+      if (!code) return;
+      const current = byCode.get(code);
+      byCode.set(code, {
+        code,
+        type: rawType || current?.type || code.charAt(0),
+        description: description || current?.description || '',
+      });
+    };
+
+    for (const ksb of real?.ksbs || []) add(ksb.code, ksb.description, ksb.type);
+    for (const component of real?.components || []) {
+      for (const mapping of component.ksbMappings || []) add(mapping.code, mapping.description || '');
+    }
+    for (const activity of [
+      ...(real?.quizAttempts || []),
+      ...(real?.videoProgress || []),
+      ...(real?.componentProgress || []),
+    ]) {
+      for (const code of activity.ksbs || []) add(code);
+    }
+
+    return Array.from(byCode.values()).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+  }, [real]);
+
+  const completedIds = useMemo(() => {
+    const ids = completedComponentIds(real);
+    const passedQuizIds = new Set(
+      (real?.quizAttempts || []).filter((attempt) => attempt.passed).map((attempt) => attempt.quizId),
+    );
+    for (const component of real?.components || []) {
+      if (component.componentId && component.quizMeta?.quizId && passedQuizIds.has(component.quizMeta.quizId)) {
+        ids.add(component.componentId);
+      }
+    }
+    return ids;
+  }, [real]);
+
   const progress = useMemo(() => buildKsbProgress({
-    ksbs: real?.ksbs ?? [],
+    ksbs: programmeKsbs,
     components: real?.components ?? [],
-    completedComponentIds: completedComponentIds(real),
-  }), [real]);
+    completedComponentIds: completedIds,
+  }), [real, programmeKsbs, completedIds]);
 
   const total = progress.length;
-  const scheduled = progress.filter((k) => k.status !== 'not-scheduled');
   const complete = progress.filter((k) => k.status === 'complete').length;
   const inProgress = progress.filter((k) => k.status === 'in-progress').length;
-  const unscheduled = total - scheduled.length;
+  const notStarted = progress.filter((k) => k.status === 'not-started').length;
 
   // Headline is weight-based across everything the plan actually offers, so a
   // single bulk record can no longer push it to a misleading number.
@@ -82,8 +125,7 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
 
   const visible = useMemo(() => progress.filter((k) => (
     filter === 'all' ? true
-      : filter === 'scheduled' ? k.status !== 'not-scheduled'
-        : k.status === filter
+      : k.status === filter
   )), [progress, filter]);
 
   const groups = useMemo(() => {
@@ -156,12 +198,10 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
         </section>
 
         {/* Stat strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
           <StatCard icon="ri-checkbox-circle-line" tint="bg-emerald-100 text-emerald-600" label="Fully evidenced" value={complete} total={total} barClass="bg-emerald-500" />
           <StatCard icon="ri-progress-4-line" tint="bg-amber-100 text-amber-600" label="In progress" value={inProgress} total={total} barClass="bg-amber-500" />
-          <StatCard icon="ri-circle-line" tint="bg-background-200 text-foreground-500" label="Not started" value={scheduled.length - complete - inProgress} total={total} barClass="bg-foreground-300" />
-          <StatCard icon="ri-calendar-close-line" tint="bg-background-200 text-foreground-400" label="Not scheduled" value={unscheduled} total={total} barClass="bg-background-300"
-            hint="No activity in your plan covers these yet" />
+          <StatCard icon="ri-circle-line" tint="bg-background-200 text-foreground-500" label="Not started" value={notStarted} total={total} barClass="bg-foreground-300" />
         </div>
 
         {/* Filters */}
@@ -169,11 +209,9 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
           <div className="flex flex-wrap items-center gap-1.5">
             {([
               ['all', `All ${total}`],
-              ['scheduled', `In your plan ${scheduled.length}`],
               ['complete', `Fully evidenced ${complete}`],
               ['in-progress', `In progress ${inProgress}`],
-              ['not-started', `Not started ${scheduled.length - complete - inProgress}`],
-              ['not-scheduled', `Not scheduled ${unscheduled}`],
+              ['not-started', `Not started ${notStarted}`],
             ] as [Filter, string][]).map(([key, label]) => (
               <button
                 key={key}
@@ -237,14 +275,14 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
 /* One KSB: collapsed shows weight + progress; expanded names the activities. */
 function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onToggle: () => void }) {
   const st = STATUS_META[ksb.status];
-  const scheduled = ksb.status !== 'not-scheduled';
+  const hasContributors = ksb.contributors.length > 0;
 
   return (
     <div className={`rounded-lg border transition-colors ${open ? 'border-primary-200 bg-white' : 'border-transparent hover:bg-background-100/60'}`}>
       <button
         onClick={onToggle}
-        disabled={!scheduled}
-        className={`w-full text-left px-2.5 py-2 ${scheduled ? 'cursor-pointer' : 'cursor-default'}`}
+        disabled={!hasContributors}
+        className={`w-full text-left px-2.5 py-2 ${hasContributors ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex items-start gap-2">
           <span className={`shrink-0 w-2 h-2 rounded-full mt-1.5 ${st.dot}`} />
@@ -264,25 +302,19 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
           </div>
           <div className="shrink-0 flex items-center gap-1.5">
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${st.badge}`}>{st.label}</span>
-            {scheduled && <i className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`} />}
+            {hasContributors && <i className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`} />}
           </div>
         </div>
 
-        {scheduled ? (
-          <div className="mt-1.5 ml-4 flex items-center gap-2">
-            <div className="flex-1 h-1.5 rounded-full bg-background-200 overflow-hidden">
-              <div className={`h-full rounded-full ${st.bar}`} style={{ width: `${ksb.pct}%`, transition: 'width 700ms ease-out' }} />
-            </div>
-            <span className="text-[10px] font-semibold text-foreground-500 tabular-nums w-8 text-right">{ksb.pct}%</span>
+        <div className="mt-1.5 ml-4 flex items-center gap-2">
+          <div className="flex-1 h-1.5 rounded-full bg-background-200 overflow-hidden">
+            <div className={`h-full rounded-full ${st.bar}`} style={{ width: `${ksb.pct}%`, transition: 'width 700ms ease-out' }} />
           </div>
-        ) : (
-          <p className="mt-1 ml-4 text-[10px] text-foreground-400">
-            No activity in your plan covers this KSB, so its available weight is currently 0.
-          </p>
-        )}
+          <span className="text-[10px] font-semibold text-foreground-500 tabular-nums w-8 text-right">{ksb.pct}%</span>
+        </div>
       </button>
 
-      {open && scheduled && (
+      {open && hasContributors && (
         <div className="px-2.5 pb-2.5 pt-0.5 ml-4 space-y-2">
           {/* Criteria — what it takes to finish this KSB */}
           <div className={`rounded-lg border p-2.5 ${ksb.status === 'complete' ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'}`}>

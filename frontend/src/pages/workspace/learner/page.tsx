@@ -587,7 +587,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
 type StationTone = 'done' | 'current' | 'upcoming';
 
 /** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number }) {
+function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
   const t = tone === 'done'
     ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
     : tone === 'current'
@@ -595,8 +595,8 @@ function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: str
       : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
   const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
   const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
-  return (
-    <div className="flex flex-col items-center gap-1.5 w-[76px] shrink-0 text-center">
+  const content = (
+    <>
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90 absolute inset-0">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
@@ -609,6 +609,20 @@ function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: str
       </div>
       <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
       {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
+    </>
+  );
+
+  return href ? (
+    <a
+      href={href}
+      aria-label={`Open ${label}`}
+      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+    >
+      {content}
+    </a>
+  ) : (
+    <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
+      {content}
     </div>
   );
 }
@@ -623,7 +637,7 @@ function stationTone(s: ModuleStation): StationTone {
   return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
 }
 
-function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null; loading: boolean; loadError: string | null }) {
+function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
 
@@ -665,6 +679,7 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
                 sub={s.pct == null ? '—' : `${s.pct}%`}
                 tone={stationTone(s)}
                 pct={s.pct ?? 0}
+                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
               />
             </Fragment>
           ))}
@@ -675,7 +690,11 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
 
       {/* Current-module card */}
       {current ? (
-        <div className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5">
+        <a
+          href={`${journeyHref}?module=${current.index + 1}`}
+          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
+          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+        >
           <div className="flex items-center gap-2 mb-2.5">
             <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><i className="ri-flag-2-fill text-sm" /></span>
             <div className="min-w-0">
@@ -683,13 +702,14 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
               <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
             </div>
             <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
+            <i className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
             <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
             <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
           </div>
-        </div>
+        </a>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><i className="ri-trophy-fill" /></span>
@@ -1232,11 +1252,16 @@ export default function LearnerOverview() {
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
-                  <a href={`/learner/modules/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <a href={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     Open <i className="ri-arrow-right-line ml-0.5"></i>
                   </a>
                 </div>
-                <MiniJourney real={real} loading={loading} loadError={loadError} />
+                <MiniJourney
+                  real={real}
+                  loading={loading}
+                  loadError={loadError}
+                  journeyHref={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'}
+                />
               </div>
 
             </div>

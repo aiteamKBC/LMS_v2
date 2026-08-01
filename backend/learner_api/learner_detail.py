@@ -450,10 +450,8 @@ def _resolve_from_master(modules, weeks, components):
                     for row in cur.fetchall()
                 }
 
-            # Authored KSB weight per component. Drives the completion criteria
-            # (see COMPONENT_KSB_WEIGHT_TARGET in components.py): a component
-            # with KSBs mapped can only be completed once its weights total the
-            # target AND the learner has uploaded evidence for it.
+            # Authored KSB weight per component. Used to calculate and display
+            # weighted KSB progress; it does not block activity completion.
             cur.execute(
                 "SELECT component_id, COALESCE(SUM(weight), 0), COUNT(*) "
                 "FROM curriculum.ksb_mappings "
