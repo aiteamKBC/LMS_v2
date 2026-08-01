@@ -918,6 +918,27 @@ def _learner_list_summary(row):
     }
 
 
+def _quote_column(column):
+    return '"' + column.replace('"', '""') + '"'
+
+
+def _learner_summary_columns(columns):
+    wanted = [
+        "id",
+        _first_column(columns, LEARNER_ID_COLUMNS),
+        _first_column(columns, NAME_COLUMNS),
+        _first_column(columns, ("program_name", "Programme", "programme", "ProgramName")),
+        _first_column(columns, ("evidence_count", "EvidenceCount")),
+        _first_column(columns, ("fetched_at", "FetchedAt")),
+        _first_column(columns, ("latest_evidence_date", "LatestEvidenceDate", "latestEvidenceDate")),
+    ]
+    selected = []
+    for column in wanted:
+        if column and column in columns and column not in selected:
+            selected.append(column)
+    return selected or columns[:1]
+
+
 def learner_audit_list(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -1090,6 +1111,20 @@ def _ensure_signoff_table(cur):
             updated_at timestamp with time zone default now(),
             unique (learner_id, programme_key, report_month, signer_role)
         )
+        """
+    )
+    cur.execute(
+        f"""
+        delete from "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" existing
+        using "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" duplicate
+        where existing.learner_id = duplicate.learner_id
+          and existing.ctid < duplicate.ctid
+        """
+    )
+    cur.execute(
+        f"""
+        create unique index if not exists "{SIGNOFF_TABLE}_learner_id_uidx"
+        on "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" (learner_id)
         """
     )
 
