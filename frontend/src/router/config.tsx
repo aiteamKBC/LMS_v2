@@ -371,6 +371,14 @@ const routes: RouteObject[] = [
     element: <CommercialLearnersPage />,
   },
   {
+    path: "/activity-categories",
+    element: <Navigate to="/workspace/auditor" replace />,
+  },
+  {
+    path: "/activity-categories/:kind/:id",
+    element: <Navigate to="/workspace/auditor" replace />,
+  },
+  {
     path: "/training-plan/:kind/:userId",
     element: <TrainingPlanBuilderPage />,
   },
@@ -769,6 +777,18 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/auditor",
     element: <AuditorWorkspace />,
+  },
+  {
+    path: "/workspace/auditor/learner/:auditLearnerId",
+    element: <AuditorWorkspace />,
+  },
+  {
+    path: "/audit/activity-categories",
+    element: <Navigate to="/workspace/auditor" replace />,
+  },
+  {
+    path: "/audit/activity-categories/:kind/:id",
+    element: <Navigate to="/workspace/auditor" replace />,
   },
   {
     path: "/employer/apprentice-risk",
