@@ -19,6 +19,37 @@ export interface AuditLearnerSummary {
   hasAptemData: boolean;
   hasLmsData: boolean;
   warnings: AuditWarning[];
+  audit?: LearnerAuditResponse | null;
+  activities?: AuditActivitySummary[];
+}
+
+export interface AuditActivitySummary {
+  id: string;
+  source: 'Aptem' | 'LMS';
+  sourceId: string;
+  title: string;
+  subtitle: string;
+  category: string;
+  relevantDate: string | null;
+  plannedHours: number;
+  actualHours: number;
+  done: boolean;
+}
+
+export interface AuditActivityStatsBucket {
+  activities: number;
+  actualHours: number;
+  plannedHours: number;
+  done: number;
+}
+
+export interface AuditActivityStats {
+  learners: number;
+  activities: number;
+  actualHours: number;
+  plannedHours: number;
+  done: number;
+  categories: Record<string, AuditActivityStatsBucket>;
 }
 
 export interface AuditSignoff {
@@ -189,14 +220,33 @@ export async function fetchLearnerAudit(learnerId: string): Promise<LearnerAudit
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
+  if (res.ok) return parse<LearnerAuditResponse>(res);
+  if (res.status === 502) {
+    const fallback = await fetchAuditLearnersPage({ search: learnerId, includeTest: true, includeAudit: true, limit: 1 });
+    const learner = fallback.results.find((row) => String(row.learnerId) === String(learnerId)) || fallback.results[0];
+    if (learner?.audit) return learner.audit;
+  }
   return parse<LearnerAuditResponse>(res);
 }
 
-export async function fetchAuditLearners(options: { search?: string; limit?: number; includeTest?: boolean } = {}): Promise<AuditLearnerSummary[]> {
+export interface AuditLearnersResponse {
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  results: AuditLearnerSummary[];
+}
+
+export async function fetchAuditLearnersPage(options: { search?: string; limit?: number; page?: number; pageSize?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnersResponse> {
   const params = new URLSearchParams();
   if (options.search) params.set('search', options.search);
   if (options.limit) params.set('limit', String(options.limit));
+  if (options.page) params.set('page', String(options.page));
+  if (options.pageSize) params.set('pageSize', String(options.pageSize));
   if (options.includeTest) params.set('includeTest', 'true');
+  if (options.includeAudit) params.set('includeAudit', 'true');
+  if (options.includeActivities) params.set('includeActivities', 'true');
+  if (options.activityCategory) params.set('activityCategory', options.activityCategory);
   const qs = params.toString() ? `?${params.toString()}` : '';
   let res: Response;
   try {
@@ -204,8 +254,26 @@ export async function fetchAuditLearners(options: { search?: string; limit?: num
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
-  const data = await parse<{ results: AuditLearnerSummary[] }>(res);
+  return parse<AuditLearnersResponse>(res);
+}
+
+export async function fetchAuditLearners(options: { search?: string; limit?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnerSummary[]> {
+  const data = await fetchAuditLearnersPage(options);
   return data.results;
+}
+
+export async function fetchAuditActivityStats(options: { search?: string; includeTest?: boolean } = {}): Promise<AuditActivityStats> {
+  const params = new URLSearchParams();
+  if (options.search) params.set('search', options.search);
+  if (options.includeTest) params.set('includeTest', 'true');
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/stats/${qs}`);
+  } catch {
+    throw new Error('Could not reach the server. Is the backend running on port 8000?');
+  }
+  return parse<AuditActivityStats>(res);
 }
 
 export async function fetchAuditSignoff(learnerId: string, monthKey: string): Promise<AuditSignoffResponse> {
