@@ -87,7 +87,6 @@ export interface ModuleCatalogueItem {
   authoringStatus?: ModuleStatus;
   sourceType?: string;
   sourceId?: string;
-  importedFromTrainingPlanId?: string;
   deliveryStatus?: string;
   deliveryMetadata?: Record<string, string>;
   ksbProfileSourceId?: string;
@@ -207,6 +206,18 @@ export function createEmptyWeek(moduleId: string, weekNumber: number): ModuleWee
     components: [],
     ksbMappings: [],
   };
+}
+
+function normalisePlaceholderText(value: unknown) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: Pick<ModuleWeek, 'weekNumber' | 'title'>) {
+  const titleKey = normalisePlaceholderText(component.title);
+  const weekKeys = [week.title, `Week ${week.weekNumber}`].map(normalisePlaceholderText).filter(Boolean);
+  const typeKey = normalisePlaceholderText(component.type);
+  const hasKsbMappings = Boolean((component.ksbMappings || []).length);
+  return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
 }
 
 export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
@@ -358,6 +369,35 @@ export async function loadModuleStructure(catalogueId: string): Promise<ModuleCa
   }
 }
 
+export interface ModuleStructureResolveRequest {
+  requestId: string;
+  identifier: string;
+  identifiers?: string[];
+}
+
+export interface ModuleStructureResolveResult {
+  requestId: string;
+  identifier: string;
+  catalogueId: string;
+  found: boolean;
+  missing?: boolean;
+  componentCount?: number;
+  hasComponents?: boolean;
+  message?: string;
+  module?: ModuleCatalogueItem;
+}
+
+export async function loadModuleStructuresBatch(modules: ModuleStructureResolveRequest[]): Promise<ModuleStructureResolveResult[]> {
+  const response = await apiJson<{ results: ModuleStructureResolveResult[] }>('/curriculum/modules/resolve-structures/', {
+    method: 'POST',
+    body: JSON.stringify({ modules }),
+  });
+  return response.results.map(result => ({
+    ...result,
+    module: result.module ? recalculateModule(result.module) : undefined,
+  }));
+}
+
 export async function updateModuleSettings(moduleCatalogueId: string, payload: Partial<ModuleCatalogueItem>) {
   try {
     const response = await apiJson<{ updated: boolean; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/settings/`, {
@@ -449,7 +489,6 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     authoringStatus: module.authoringStatus || module.status || 'draft',
     sourceType: undefined,
     sourceId: undefined,
-    importedFromTrainingPlanId: undefined,
     deliveryStatus: module.deliveryStatus,
     ksbProfileSourceId: '',
     tutor,
@@ -493,21 +532,9 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
   if (module.weekStructure.length) return recalculateModule(module);
 
   const source = module.sourceModule;
-  const sessionNames = source?.sessionNames || [];
-  const weekCount = Math.max(1, source?.weeks || sessionNames.length || module.weeks || 1);
+  const weekCount = Math.max(1, source?.weeks || source?.sessionNames?.length || module.weeks || 1);
   const weekStructure = Array.from({ length: weekCount }, (_, index) => {
     const week = createEmptyWeek(module.id, index + 1);
-    const sessionTitle = sessionNames[index] || (sessionNames.length === 1 ? sessionNames[0] : '');
-    if (sessionTitle) {
-      week.components = [
-        {
-          ...createEmptyComponent(week.id, 'live-session', 1),
-          title: sessionTitle,
-          description: 'Placeholder lesson derived from the existing module catalogue.',
-          ksbMappings: module.moduleKsbMappings.slice(0, 2),
-        },
-      ];
-    }
     return week;
   });
 
@@ -530,14 +557,16 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
       moduleId,
       ksbMappings: normaliseKsbMappings(week.ksbMappings || [], fallbackKsbSource),
       weekNumber: index + 1,
-      components: (week.components || []).map(component => ({
-        ...component,
-        moduleId,
-        weekId,
-        workplaceEvidenceRequired: false,
-        ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
-        settings: normaliseComponentSettings(component.type, component.settings || {}),
-      })),
+      components: (week.components || [])
+        .filter(component => !isGeneratedWeekPlaceholderComponent(component, { ...week, weekNumber: index + 1 }))
+        .map(component => ({
+          ...component,
+          moduleId,
+          weekId,
+          workplaceEvidenceRequired: false,
+          ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
+          settings: normaliseComponentSettings(component.type, component.settings || {}),
+        })),
     };
   });
   const allComponents = normalisedWeeks.flatMap(week => week.components);

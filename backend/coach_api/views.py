@@ -13,7 +13,7 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.conf import settings
-from django.db import connections, router
+from django.db import DatabaseError, connections, router
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
@@ -1043,14 +1043,23 @@ def fetch_source_schedule_rows(learner_ids: list[int]) -> tuple[dict[int, Commer
     if not learner_ids:
         return {}, {}
 
-    commercial_rows = {
-        row.id: row
-        for row in CommercialUser.objects.filter(id__in=learner_ids)
-    }
-    enrolment_rows = {
-        row.id: row
-        for row in EnrolmentUser.objects.filter(id__in=learner_ids)
-    }
+    # These are legacy source schemas and are not present in every deployment.
+    # LearnerProfile carries the canonical start/end dates, so a missing source
+    # table must not take down the entire coach calendar.
+    try:
+        commercial_rows = {
+            row.id: row
+            for row in CommercialUser.objects.filter(id__in=learner_ids)
+        }
+    except DatabaseError:
+        commercial_rows = {}
+    try:
+        enrolment_rows = {
+            row.id: row
+            for row in EnrolmentUser.objects.filter(id__in=learner_ids)
+        }
+    except DatabaseError:
+        enrolment_rows = {}
     return commercial_rows, enrolment_rows
 
 

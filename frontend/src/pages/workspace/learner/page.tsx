@@ -968,15 +968,6 @@ export default function LearnerOverview() {
               <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
               <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
             </div>
-            {/* avatar */}
-            <div className="absolute right-8 bottom-0 top-0 w-1/2 hidden md:flex items-end justify-end pointer-events-none">
-              <img
-                src="https://public.readdy.ai/ai/img_res/63cca6b6-155e-4d44-9b95-588ef15c4704.png"
-                alt="Learner"
-                className="h-full w-auto object-contain object-bottom"
-                style={{ maxHeight: '115%', transform: 'translateY(8%)' }}
-              />
-            </div>
             <div className="relative h-full flex flex-col justify-center p-6 md:p-8">
               <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
                 <div className="flex-1 min-w-0 max-w-xl">
@@ -1000,58 +991,6 @@ export default function LearnerOverview() {
             >
               <i className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></i>
             </a>
-            )}
-          </section>
-        </SectionReveal>
-
-        {/* ================================================================
-            SECTION 2 — TODAY'S FOCUS
-            ================================================================ */}
-        <SectionReveal delay={80}>
-          <section className="relative rounded-2xl overflow-hidden bg-background-50 border border-foreground-200/50 card-premium">
-            <div className="absolute inset-0 bg-gradient-to-r from-background-100/60 via-transparent to-transparent pointer-events-none" />
-            {isRealMode ? (
-              <div className="relative p-5 md:p-6 flex items-center gap-5">
-                <div className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center shrink-0">
-                  <i className="ri-presentation-line text-foreground-400 text-2xl"></i>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground-400 uppercase tracking-widest mb-1 font-label">Today&apos;s Focus</p>
-                  <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-500 tracking-tight mb-1">Not tracked yet</h2>
-                  <p className="text-sm text-foreground-400">Live session scheduling isn&apos;t wired up for this learner yet.</p>
-                </div>
-              </div>
-            ) : (
-            <div className="relative p-5 md:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-              <div className="w-14 h-14 rounded-2xl bg-accent-500 flex items-center justify-center shrink-0 shadow-sm shadow-accent-500/20">
-                <i className="ri-presentation-line text-foreground-950 text-2xl"></i>
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-accent-600 uppercase tracking-widest mb-1 font-label">Today&apos;s Focus</p>
-                <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-900 tracking-tight mb-1">Live Session: Campaign Targeting</h2>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-foreground-500">
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-calendar-line text-accent-500"></i> {p.nextLiveSession.day}
-                  </span>
-                  <span className="text-foreground-300">&middot;</span>
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-time-line text-accent-500"></i> {p.nextLiveSession.time}
-                  </span>
-                  <span className="text-foreground-300">&middot;</span>
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-hourglass-line text-accent-500"></i> 2.0 OTJ Hours
-                  </span>
-                </div>
-              </div>
-
-              <a
-                href="/learner/training-plan"
-                className="shrink-0 px-6 py-3 rounded-xl bg-accent-500 text-foreground-950 text-sm font-semibold font-label hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm shadow-accent-500/15"
-              >
-                Join Session <i className="ri-arrow-right-line"></i>
-              </a>
-            </div>
             )}
           </section>
         </SectionReveal>
@@ -1382,41 +1321,6 @@ export default function LearnerOverview() {
           </SectionReveal>
           </>
         )}
-
-        {/* ================================================================
-            SECTION 6 — SUPPORT PANEL
-            ================================================================ */}
-        <SectionReveal delay={240}>
-          <section className="bg-background-50 rounded-xl border border-foreground-200/50 p-5 md:p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                  <i className="ri-customer-service-2-line text-primary-600 text-lg"></i>
-                </div>
-                <div>
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Need Help?</h2>
-                  <p className="text-sm text-foreground-500">
-                    {isRealMode
-                      ? 'The support team is here to help this learner succeed.'
-                      : <>Your coach {p.coach.name} and the support team are here to help you succeed.</>}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <a href="/learner/messages?contact=med-maher" className="px-4 py-2 rounded-lg border border-foreground-200 text-sm font-medium text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-chat-smile-2-line mr-1.5"></i> Contact Coach
-                </a>
-                <a href="/learner/support?action=new-ticket&category=wellbeing" className="px-4 py-2 rounded-lg border border-foreground-200 text-sm font-medium text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-heart-pulse-line mr-1.5"></i> Wellbeing Support
-                </a>
-                <a href="/learner/messages?contact=learner-support" className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold font-label hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shadow-sm shadow-primary-500/15">
-                  <i className="ri-customer-service-2-line mr-1.5"></i> Talk With Us
-                </a>
-              </div>
-            </div>
-          </section>
-        </SectionReveal>
 
       </div>
     </WorkspaceShell>

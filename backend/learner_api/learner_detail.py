@@ -21,13 +21,15 @@ from django.http import JsonResponse
 
 from .active_users import completed_hours_from_progress, fmt_hours
 from .mappers import _s, to_learner_detail
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .models import LearnerProfile
 
 logger = logging.getLogger(__name__)
 
 SOURCE_MODELS = {
-    "commercial": CommercialUser,
-    "apprenticeship": EnrolmentUser,
+    # `kind` remains in the URL for backwards-compatible frontend routes, but
+    # both routes resolve the same canonical learner identity table.
+    "commercial": LearnerProfile,
+    "apprenticeship": LearnerProfile,
 }
 
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
