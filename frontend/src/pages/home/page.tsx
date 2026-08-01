@@ -232,13 +232,13 @@ function RecentActivityCard() {
 
 function HeroProgressDesktop() {
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 hidden lg:block">
-      <div className="pointer-events-auto absolute left-[50%] top-[14%] w-[12%] min-w-[180px] max-w-[215px] animate-hero-fade-in-up delay-500"><MyProgressCard /></div>
-      <div className="pointer-events-auto absolute right-0 top-[14%] w-[15%] min-w-[210px] max-w-[270px] animate-hero-fade-in-up delay-700"><KsbProgressCard /></div>
-      <div className="pointer-events-auto absolute left-[46%] top-[52%] w-[14%] min-w-[200px] max-w-[250px] animate-hero-fade-in-up delay-700"><CurrentModuleCard /></div>
-      <div className="pointer-events-auto absolute right-0 top-[51%] w-[15%] min-w-[210px] max-w-[270px] animate-hero-fade-in-up delay-900"><NextMilestoneCard /></div>
-      <div className="pointer-events-auto absolute right-[1%] top-[72%] w-[13%] min-w-[190px] max-w-[240px] animate-hero-fade-in-up delay-900"><RecentActivityCard /></div>
-      <div className="pointer-events-auto absolute left-1/2 top-[69%] w-[20%] min-w-[280px] max-w-[340px] -translate-x-1/2 animate-hero-fade-in-up delay-900"><LearnerJourneyCard /></div>
+    <div className="pointer-events-none absolute inset-0 z-20 mx-auto hidden w-full max-w-[1920px] xl:block">
+      <div className="pointer-events-auto absolute left-[49%] top-[11%] w-[190px] animate-hero-fade-in-up delay-500 2xl:left-[50%] 2xl:w-[200px]"><MyProgressCard /></div>
+      <div className="pointer-events-auto absolute right-[2.5%] top-[11%] w-[240px] animate-hero-fade-in-up delay-700 2xl:w-[252px]"><KsbProgressCard /></div>
+      <div className="pointer-events-auto absolute left-[44%] top-[52%] w-[238px] animate-hero-fade-in-up delay-700 2xl:left-[45%] 2xl:w-[250px]"><CurrentModuleCard /></div>
+      <div className="pointer-events-auto absolute right-[2.5%] top-[52%] w-[238px] animate-hero-fade-in-up delay-900 2xl:w-[250px]"><NextMilestoneCard /></div>
+      <div className="pointer-events-auto absolute bottom-[11%] right-[3.5%] w-[220px] animate-hero-fade-in-up delay-900 2xl:w-[232px]"><RecentActivityCard /></div>
+      <div className="pointer-events-auto absolute bottom-[12%] left-[52%] w-[310px] -translate-x-1/2 animate-hero-fade-in-up delay-900 2xl:w-[330px]"><LearnerJourneyCard /></div>
     </div>
   );
 }
@@ -297,20 +297,20 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background-200">
       {/* ============ HERO SECTION ============ */}
-      <section className="relative overflow-hidden h-[650px] md:h-[800px]">
+      <section className="relative min-h-[680px] overflow-hidden sm:min-h-[700px] xl:h-[clamp(700px,100svh,840px)]">
         {/* Background image — London skyline with learner dashboard overlays */}
         <div className="absolute inset-0">
           <img
             src="/hero-clean.png"
             alt=""
-            className="w-full h-full object-cover object-center"
+            className="h-full w-full object-cover object-[62%_center] sm:object-[58%_center] xl:object-center"
             style={{ filter: 'brightness(1.08) contrast(1.04) saturate(1.06)' }}
           />
         </div>
 
         {/* Dark gradient overlays — left-heavy for text readability, right-transparent to show image */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/20 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/25 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-black/90 via-black/55 to-black/5 xl:from-black/85 xl:via-black/30 xl:to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/10" />
         <div
           className="pointer-events-none absolute right-[7%] top-[5%] h-[90%] w-[56%]"
           style={{
@@ -354,54 +354,53 @@ export default function Home() {
           }}
         />
 
-        <div className="relative z-10 h-full flex flex-col justify-center max-w-6xl mx-auto px-6 lg:pr-[46%]">
-          {/* Logo */}
-          <BrandLockup size="hero" theme="dark" className="mb-8 animate-hero-scale-in" />
+        <div className="relative z-10 mx-auto flex h-full w-full max-w-[1920px] items-center px-6 sm:px-10 lg:px-[6vw]">
+          <div className="w-full max-w-[620px] xl:w-[40%] xl:max-w-[650px]">
+            {/* Logo */}
+            <BrandLockup size="hero" theme="dark" className="mb-6 animate-hero-scale-in sm:mb-8" />
 
-          {/* Main Heading */}
-          <h1 className="text-[40px] md:text-[56px] font-heading font-semibold text-white mb-5 tracking-tight leading-[1.1] max-w-2xl animate-hero-fade-in-up delay-200">
-            The Complete Learning
-            <br />
-            <span className="text-gradient-shimmer">Operating System</span>
-          </h1>
+            {/* Main Heading */}
+            <h1 className="mb-5 max-w-[650px] font-heading text-[clamp(42px,4vw,64px)] font-semibold leading-[1.04] tracking-[-0.04em] text-white animate-hero-fade-in-up delay-200">
+              The Complete Learning
+              <br />
+              <span className="text-gradient-shimmer">Operating System</span>
+            </h1>
 
-          {/* Subtitle */}
-          <p className="text-[15px] md:text-[16px] text-white/40 max-w-xl leading-relaxed mb-12 animate-hero-fade-in-up-small delay-500">
-            One unified platform for learning, evidence, monitoring, coaching, compliance, QA and end-to-end apprenticeship management.
-          </p>
+            {/* Subtitle */}
+            <p className="mb-9 max-w-[560px] text-[15px] leading-7 text-white/65 animate-hero-fade-in-up-small delay-500 sm:text-[16px] xl:mb-10">
+              One unified platform for learning, evidence, monitoring, coaching, compliance, QA and end-to-end apprenticeship management.
+            </p>
 
-          {/* CTA Buttons */}
-          <div className="flex flex-col sm:flex-row items-start gap-4 animate-hero-fade-in-up delay-700">
-            <button
-              onClick={scrollToWorkspaces}
-              className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 transition-all duration-300 whitespace-nowrap shadow-lg shadow-primary-500/20 hover:shadow-primary-500/30 hover:-translate-y-0.5 cursor-pointer"
-            >
-              <i className="ri-grid-line text-[15px]" />
-              Explore your portal
-            </button>
-          </div>
+            {/* CTA Buttons */}
+            <div className="flex flex-col items-start gap-4 animate-hero-fade-in-up delay-700 sm:flex-row">
+              <button
+                onClick={scrollToWorkspaces}
+                className="group inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl bg-primary-500 px-8 py-3.5 text-[14px] font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-600 hover:shadow-primary-500/30"
+              >
+                <i className="ri-grid-line text-[15px]" />
+                Explore your portal
+              </button>
+            </div>
 
-          {/* Quick trust badges */}
-          <div className="flex items-center gap-6 mt-14 text-[11px] text-white/25 flex-wrap animate-hero-fade-in-up-small delay-900">
-            <span className="flex items-center gap-1.5">
-              <i className="ri-shield-check-line text-primary-300/80" />
-              ISO 27001
-            </span>
-            <span className="w-1 h-1 rounded-full bg-white/10" />
-            <span className="flex items-center gap-1.5">
-              <i className="ri-lock-2-line text-primary-300/80" />
-              UK GDPR Compliant
-            </span>
-            <span className="w-1 h-1 rounded-full bg-white/10" />
-            <span className="flex items-center gap-1.5">
-              <i className="ri-award-line text-primary-300/80" />
-              ESFA Aligned
-            </span>
-            <span className="w-1 h-1 rounded-full bg-white/10" />
-            <span className="flex items-center gap-1.5">
-              <i className="ri-graduation-cap-line text-primary-300/80" />
-              Ofsted Ready
-            </span>
+            {/* Quick trust badges */}
+            <div className="mt-10 flex max-w-[590px] flex-wrap items-center gap-x-5 gap-y-3 text-[11px] text-white/45 animate-hero-fade-in-up-small delay-900 xl:mt-12">
+              <span className="flex items-center gap-1.5">
+                <i className="ri-shield-check-line text-primary-300/80" />
+                ISO 27001
+              </span>
+              <span className="flex items-center gap-1.5">
+                <i className="ri-lock-2-line text-primary-300/80" />
+                UK GDPR Compliant
+              </span>
+              <span className="flex items-center gap-1.5">
+                <i className="ri-award-line text-primary-300/80" />
+                ESFA Aligned
+              </span>
+              <span className="flex items-center gap-1.5">
+                <i className="ri-graduation-cap-line text-primary-300/80" />
+                Ofsted Ready
+              </span>
+            </div>
           </div>
         </div>
 
@@ -410,7 +409,7 @@ export default function Home() {
 
       </section>
 
-      <section className="bg-[#0b0814] px-4 py-8 lg:hidden">
+      <section className="bg-[#0b0814] px-4 py-8 xl:hidden">
         <HeroProgressMobile />
       </section>
 
