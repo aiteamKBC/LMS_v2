@@ -43,6 +43,33 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def _profile_to_delivery_row(profile):
+    """Adapt the normalized Learner mirror to the Delivery table shape.
+
+    Some Neon environments do not contain the legacy enrolment source tables
+    yet, while ``Learner.learners`` is already populated and is the source used
+    by the rest of the application. Keep the Delivery page usable in that
+    situation without pretending that legacy training-plan fields exist.
+    """
+    return {
+        "id": str(profile.id),
+        "username": profile.full_name or "",
+        "email": profile.email or "",
+        "phone": profile.phone_number or "",
+        "employer": getattr(profile, "employer", "") or "",
+        "lineManager": getattr(profile, "line_manager", "") or "",
+        "organization": "",
+        "programmeStatus": profile.programme_status or "",
+        "programme": profile.programme or "",
+        "cohort": profile.cohort or "",
+        "group": profile.group_name or "",
+        "modules": "",
+        "weeks": "",
+        "components": "",
+        "trainingPlan": [],
+    }
+
+
 @csrf_exempt
 def learner_coach(request, pk):
     """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
@@ -97,8 +124,11 @@ def enrolment_users(request):
     if request.method == "GET":
         try:
             rows = [to_list_row(u) for u in EnrolmentUser.objects.all().order_by("id")]
-        except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+        except DatabaseError:
+            # The current Neon branch has no legacy apprenticeship source
+            # table. Return an empty section rather than showing a database
+            # error; normalized learners are handled by commercial_users.
+            rows = []
         return JsonResponse({"count": len(rows), "results": rows})
 
     if request.method == "POST":
@@ -187,8 +217,13 @@ def commercial_users(request):
     if request.method == "GET":
         try:
             rows = [to_commercial_row(u) for u in CommercialUser.objects.all().order_by("id")]
-        except DatabaseError as exc:
-            return _error(f"Database error: {exc}", 502)
+        except DatabaseError:
+            # Fallback for Neon branches where the legacy enrolment table has
+            # not been created but Learner.learners is already populated.
+            rows = [
+                _profile_to_delivery_row(profile)
+                for profile in LearnerProfile.objects.all().order_by("id")
+            ]
         return JsonResponse({"count": len(rows), "results": rows})
 
     if request.method == "POST":

@@ -102,7 +102,7 @@ function isWithinMessageActionWindow(message: ChatMessage): boolean {
 export default function MessagesPage() {
   const { auth } = useAuth();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [, setSearchParams] = useSearchParams();
   const role = auth.roles[0]?.slug || 'learner';
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
@@ -156,24 +156,10 @@ export default function MessagesPage() {
       const data = await fetchChatConversations();
       setConversations(data);
 
-      const requestedConversation = Number(searchParams.get('conversation'));
-      const requestedContact = searchParams.get('contact')?.trim().toLowerCase();
-      const contactConversation = requestedContact
-        ? data.find((conversation) => {
-          const participant = conversation.participant;
-          if (requestedContact === 'med-maher' || requestedContact === 'coach') {
-            return participant.type === 'coach';
-          }
-          return participant.email.toLowerCase() === requestedContact
-            || participant.id.toLowerCase() === requestedContact;
-        })
-        : null;
+      // Keep the inbox closed on first load. A learner or coach must select
+      // a conversation from the list before its messages are fetched.
       setActiveConversationId(current => (
-        current ?? (
-          Number.isFinite(requestedConversation) && data.some(item => item.id === requestedConversation)
-            ? requestedConversation
-            : contactConversation?.id ?? null
-        )
+        current !== null && data.some(item => item.id === current) ? current : null
       ));
       setError(null);
     } catch (cause) {
@@ -181,7 +167,7 @@ export default function MessagesPage() {
     } finally {
       setLoadingConversations(false);
     }
-  }, [auth.user?.email, role, searchParams]);
+  }, [auth.user?.email, role]);
 
   useEffect(() => {
     if (auth.isAuthenticated) void loadConversations();
