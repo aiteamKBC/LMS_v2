@@ -11,6 +11,14 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
+from .models import _serialise_quiz_ref
+
+
+class LearnerQuizReferenceTests(SimpleTestCase):
+    def test_serialises_numeric_quiz_reference_without_breaking_text_ids(self):
+        self.assertEqual(_serialise_quiz_ref("42"), 42)
+        self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
+        self.assertIsNone(_serialise_quiz_ref(None))
 
 
 class AttendanceSummaryTests(SimpleTestCase):
