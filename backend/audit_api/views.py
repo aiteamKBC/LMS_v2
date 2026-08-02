@@ -8,9 +8,13 @@ import uuid
 from collections import defaultdict
 from urllib.parse import unquote
 
+from django.core.cache import cache
 from django.db import DatabaseError, connections
 from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+import psycopg
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.rows import dict_row
 
 try:
     from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
@@ -26,6 +30,7 @@ SIGNOFF_TABLE = "monthly_audit_signoffs"
 STUDENT_SOURCE_DATA_COLUMN = "Learner_source_data"
 AUDIT_VERSION = "aptem-lms-reconciliation-v1"
 SOURCE_DATA_SUMMARY_LIMIT = 120
+DEFAULT_KBC_ATTENDANCE_DATABASE = "AiTeamKBC"
 TEST_RECORD_FILTER_SQL = """
 not (
     coalesce("Learner_name", '') ilike '%%(test)%%'
@@ -33,6 +38,16 @@ not (
     or coalesce("Learner_name", '') ~* '(^|[^a-z])test([^a-z]|$)'
 )
 """
+
+
+def _kbc_attendance_connection_string():
+    connection_string = os.environ.get("KBCDATABASE", "")
+    if not connection_string:
+        return ""
+    database_name = os.environ.get("KBC_ATTENDANCE_DATABASE", DEFAULT_KBC_ATTENDANCE_DATABASE)
+    conninfo = conninfo_to_dict(connection_string)
+    conninfo["dbname"] = database_name
+    return make_conninfo(**conninfo)
 
 
 def _error(message, status):
@@ -176,7 +191,7 @@ def _last_day_of_month(value):
 
 def _status_bucket(status):
     normalized = _text(status).lower().replace(" ", "")
-    if "complete" in normalized or normalized in {"passed", "done"}:
+    if "complete" in normalized or normalized in {"passed", "done", "present", "attended", "attend"}:
         return "completed"
     if "progress" in normalized or "started" in normalized or "visited" in normalized:
         return "in_progress"
@@ -315,6 +330,158 @@ def _normalize_lms_item(item, index):
     }, warnings
 
 
+def _attendance_status(value):
+    number = _integer(value)
+    if number == 1:
+        return "Present"
+    if number == 0:
+        return "Absent"
+    return _text(value) or "Not available"
+
+
+def _normalize_attendance_item(row, index):
+    session_date = _date_iso(row.get("date") or row.get("Date") or row.get("session_date"))
+    attendance_value = row.get("Attendance") if "Attendance" in row else row.get("attendance")
+    activity_hours = _number(row.get("activity") or row.get("Activity"))
+    status = _attendance_status(attendance_value)
+    actual_hours = activity_hours if status == "Present" and activity_hours is not None else 0
+    source_id = _text(row.get("key") or row.get("Key") or row.get("id") or row.get("ID")) or f"attendance-{index}"
+    module = _text(row.get("module") or row.get("Module"))
+    warnings = []
+    if not session_date:
+        warnings.append(_warning("missing_attendance_date", "Attendance row has no reliable date.", "KBCDATABASE.public.kbc_attendance.date"))
+    return {
+        "id": f"attendance:{source_id}:{index}",
+        "source": "Aptem",
+        "source_id": source_id,
+        "activity_name": module or "Attendance session",
+        "type": "Attendance",
+        "status": status,
+        "actual_hours": actual_hours,
+        "planned_hours": 0,
+        "hours_variance": None,
+        "start_date": session_date,
+        "end_date": session_date,
+        "relevant_date": session_date,
+        "date_source": "KBCDATABASE.public.kbc_attendance.date",
+        "match_status": "Matched",
+        "match_reason": "Matched from KBCDATABASE attendance by Aptem ID.",
+        "matched_source_ids": [],
+        "warning_codes": [warning["code"] for warning in warnings],
+        "warnings": warnings,
+        "raw": row,
+    }
+
+
+def _kbc_attendance_table(cur):
+    for table_name in ("kbs_attendance", "kbc_attendance"):
+        cur.execute(
+            """
+            select 1
+            from information_schema.tables
+            where table_schema = 'public' and table_name = %s
+            limit 1
+            """,
+            (table_name,),
+        )
+        if cur.fetchone():
+            return table_name
+    return ""
+
+
+def _kbc_attendance_columns(cur, table_name):
+    cur.execute(
+        """
+        select column_name
+        from information_schema.columns
+        where table_schema = 'public' and table_name = %s
+        """,
+        (table_name,),
+    )
+    return {row["column_name"] for row in cur.fetchall()}
+
+
+def _fetch_kbc_attendance_items(aptem_id):
+    if aptem_id in (None, ""):
+        return []
+    connection_string = _kbc_attendance_connection_string()
+    if not connection_string:
+        return []
+    try:
+        with psycopg.connect(connection_string, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                table_name = _kbc_attendance_table(cur)
+                if not table_name:
+                    return []
+                columns = _kbc_attendance_columns(cur, table_name)
+                id_filters = []
+                params = []
+                if "ID" in columns:
+                    id_filters.append('"ID"::text = %s')
+                    params.append(str(aptem_id))
+                if "aptem_id" in columns:
+                    id_filters.append('aptem_id::text = %s')
+                    params.append(str(aptem_id))
+                if not id_filters:
+                    return []
+                cur.execute(
+                    f"""
+                    select *
+                    from public.{table_name}
+                    where {" or ".join(id_filters)}
+                    order by {"date" if "date" in columns else '"ID"'} nulls last
+                    """,
+                    tuple(params),
+                )
+                return [
+                    _normalize_attendance_item(_json_safe(dict(row)), index)
+                    for index, row in enumerate(cur.fetchall())
+                ]
+    except Exception:
+        return []
+
+
+def _fetch_kbc_attendance_items_for_ids(aptem_ids):
+    ids = sorted({str(aptem_id) for aptem_id in aptem_ids if aptem_id not in (None, "")})
+    if not ids:
+        return {}
+    connection_string = _kbc_attendance_connection_string()
+    if not connection_string:
+        return {}
+    try:
+        with psycopg.connect(connection_string, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                table_name = _kbc_attendance_table(cur)
+                if not table_name:
+                    return {}
+                columns = _kbc_attendance_columns(cur, table_name)
+                id_expr = None
+                if "ID" in columns:
+                    id_expr = '"ID"::text'
+                elif "aptem_id" in columns:
+                    id_expr = "aptem_id::text"
+                if not id_expr:
+                    return {}
+                cur.execute(
+                    f"""
+                    select *
+                    from public.{table_name}
+                    where {id_expr} = any(%s)
+                    order by {id_expr}, {"date" if "date" in columns else id_expr} nulls last
+                    """,
+                    (ids,),
+                )
+                grouped = defaultdict(list)
+                for index, row in enumerate(cur.fetchall()):
+                    safe_row = _json_safe(dict(row))
+                    learner_key = _text(safe_row.get("ID") or safe_row.get("aptem_id"))
+                    if learner_key:
+                        grouped[learner_key].append(_normalize_attendance_item(safe_row, index))
+                return grouped
+    except Exception:
+        return {}
+
+
 def _parse_lms_summary(text):
     progress = None
     tracked_seconds = None
@@ -341,13 +508,15 @@ def _build_audit_payload(row):
     warnings = []
     aptem_components = _aptem_components(row, warnings)
     lms_source_items = _lms_items(row, warnings)
-    aptem_items = []
+    aptem_items = _fetch_kbc_attendance_items(row.get("Learner_ID"))
+    programme_aptem_items = []
     lms_items = []
 
     for index, component in enumerate(aptem_components):
         item, item_warnings = _normalize_aptem_item(component, index)
         warnings.extend(item_warnings)
         if item:
+            programme_aptem_items.append(item)
             aptem_items.append(item)
 
     for index, source_item in enumerate(lms_source_items):
@@ -360,8 +529,8 @@ def _build_audit_payload(row):
     signoffs = _empty_signoffs_by_month(months)
     lms_summary = _summary_from_lms_items(lms_items) or {}
     quiz_summary = _summary_from_quiz_items(lms_items) or {}
-    components_completed = sum(1 for item in aptem_items if _status_bucket(item["status"]) == "completed")
-    total_planned_hours = _sum_unique_planned_hours(aptem_items)
+    components_completed = sum(1 for item in programme_aptem_items if _status_bucket(item["status"]) == "completed")
+    total_planned_hours = _sum_unique_planned_hours(programme_aptem_items)
 
     payload = {
         "learnerId": str(row.get("Learner_ID") or ""),
@@ -386,7 +555,7 @@ def _build_audit_payload(row):
             "lms_progress": lms_summary.get("lms_progress"),
             "tracked_seconds": lms_summary.get("tracked_seconds"),
             "components_completed": components_completed,
-            "components_total": len(aptem_items) if aptem_components else None,
+            "components_total": len(programme_aptem_items) if aptem_components else None,
             "quiz_attempts": quiz_summary.get("quiz_attempts"),
         },
         "months": months,
@@ -394,7 +563,8 @@ def _build_audit_payload(row):
         "warnings": _dedupe_warnings(warnings),
         "field_sources": _field_sources(),
         "source_status": {
-            "has_aptem_data": bool(aptem_items),
+            "has_aptem_data": bool(programme_aptem_items),
+            "has_attendance_data": len(aptem_items) > len(programme_aptem_items),
             "has_lms_data": bool(lms_items),
             "lms_summary_fallback": False,
             "quiz_summary_fallback": False,
@@ -404,6 +574,254 @@ def _build_audit_payload(row):
     _apply_monthly_planned_totals(payload)
     payload["snapshot_hash"] = _snapshot_hash(payload)
     return payload
+
+
+def _activity_category(item):
+    text = (
+        f"{item.get('type')} {item.get('activity_name')}"
+        if item.get("source") == "Aptem"
+        else f"{item.get('component_type')} {item.get('component_name')} {item.get('course_module')}"
+    )
+    normalized = text.lower().replace("-", "_").replace(" ", "_")
+    if "attendance" in normalized or "attendence" in normalized or "live" in normalized or "session" in normalized:
+        return "live_session"
+    if "quiz" in normalized or "reading" in normalized or "material" in normalized:
+        return "quiz_reading"
+    if "video" in normalized or "recording" in normalized:
+        return "video"
+    if "assignment" in normalized or "evidence" in normalized or "portfolio" in normalized:
+        return "assignment"
+    if "self_study" in normalized or "podcast" in normalized or "powerpoint" in normalized:
+        return "self_study"
+    if "assessment" in normalized or "reflection" in normalized:
+        return "assessment"
+    return "other"
+
+
+def _compact_activity(item):
+    source = item.get("source")
+    if source == "Aptem":
+        planned_hours = _number(item.get("planned_hours")) or 0
+        actual_hours = _number(item.get("actual_hours")) or 0
+        status = _text(item.get("status"))
+        title = _text(item.get("activity_name") or item.get("type")) or "Programme activity"
+        subtitle = _text(item.get("type") or item.get("match_status"))
+    else:
+        planned_hours = 0
+        actual_hours = (_integer(item.get("tracked_seconds")) or 0) / 3600
+        status = _text(item.get("completion_status"))
+        title = _text(item.get("component_name") or item.get("course_module")) or "Online learning"
+        subtitle = _text(item.get("course_module") or item.get("component_type") or item.get("match_status"))
+    return {
+        "id": item.get("id"),
+        "source": source,
+        "sourceId": item.get("source_id"),
+        "title": title,
+        "subtitle": subtitle,
+        "category": _activity_category(item),
+        "relevantDate": item.get("relevant_date"),
+        "plannedHours": _round_hours(planned_hours),
+        "actualHours": _round_hours(actual_hours),
+        "done": _status_bucket(status) == "completed",
+    }
+
+
+def _activity_sources_for_category(category):
+    if category in {"quiz_reading", "quiz", "reading", "video", "self_study"}:
+        return {"LMS"}
+    if category == "live_session":
+        return {"Aptem"}
+    return {"Aptem", "LMS"}
+
+
+def _activity_matches_category(activity, category_filter):
+    return (
+        not category_filter
+        or activity["category"] == category_filter
+        or (category_filter == "quiz_reading" and activity["category"] in {"quiz", "reading"})
+    )
+
+
+def _learner_activity_summaries(row, category_filter="", attendance_items=None):
+    warnings = []
+    activities = []
+    sources = _activity_sources_for_category(category_filter)
+    if "Aptem" in sources:
+        for item in attendance_items or []:
+            if item and not _is_future_date(item.get("relevant_date")):
+                compact = _compact_activity(item)
+                if _activity_matches_category(compact, category_filter):
+                    activities.append(compact)
+        for index, component in enumerate(_aptem_components(row, warnings)):
+            item, item_warnings = _normalize_aptem_item(component, index)
+            warnings.extend(item_warnings)
+            if item and not _is_future_date(item.get("relevant_date")):
+                compact = _compact_activity(item)
+                if _activity_matches_category(compact, category_filter):
+                    activities.append(compact)
+    if "LMS" in sources:
+        for index, source_item in enumerate(_lms_items(row, warnings)):
+            item, item_warnings = _normalize_lms_item(source_item, index)
+            warnings.extend(item_warnings)
+            if item and not _is_future_date(item.get("relevant_date")):
+                compact = _compact_activity(item)
+                if _activity_matches_category(compact, category_filter):
+                    activities.append(compact)
+    return activities
+
+
+def _empty_activity_stats():
+    return {
+        "live_session": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "quiz_reading": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "video": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "assignment": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "self_study": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "assessment": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "other": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+    }
+
+
+def _add_activity_stat(stats, activity):
+    category = activity.get("category") or "other"
+    if category in {"quiz", "reading"}:
+        category = "quiz_reading"
+    if category not in stats:
+        category = "other"
+    bucket = stats[category]
+    bucket["activities"] += 1
+    bucket["actualHours"] = _round_hours(bucket["actualHours"] + (activity.get("actualHours") or 0))
+    bucket["plannedHours"] = _round_hours(bucket["plannedHours"] + (activity.get("plannedHours") or 0))
+    if activity.get("done"):
+        bucket["done"] += 1
+
+
+def _raw_activity_stats(row):
+    warnings = []
+    activities = []
+    aptem_components = _parse_json_value(row.get("Aptem_components"), "Aptem_components", warnings)
+    aptem_items = aptem_components.get("components") if isinstance(aptem_components, dict) else aptem_components
+    if isinstance(aptem_items, list):
+        for index, component in enumerate(aptem_items):
+            if not isinstance(component, dict):
+                continue
+            item = {
+                "id": f"aptem:{_text(component.get('id') or component.get('component_id') or index)}",
+                "source": "Aptem",
+                "source_id": _text(component.get("id") or component.get("component_id") or index),
+                "activity_name": _text(component.get("name")) or "Programme activity",
+                "type": _text(component.get("type")),
+                "status": _text(component.get("status")),
+                "actual_hours": _number(component.get("hours")) or 0,
+                "planned_hours": _number(component.get("planned_hours")) or 0,
+                "relevant_date": _date_iso(component.get("end_date") or component.get("start_date")),
+            }
+            if not _is_future_date(item["relevant_date"]):
+                activities.append(_compact_activity(item))
+
+    lms_modules = _parse_json_value(row.get("LMS_modules_details"), "LMS_modules_details", warnings)
+    lms_items = lms_modules.get("items") if isinstance(lms_modules, dict) else lms_modules
+    if isinstance(lms_items, list):
+        for index, source_item in enumerate(lms_items):
+            if not isinstance(source_item, dict):
+                continue
+            item = {
+                "id": f"lms:{_text(source_item.get('Course ID') or source_item.get('row_number') or index)}:{index}",
+                "source": "LMS",
+                "source_id": _text(source_item.get("Course ID") or source_item.get("row_number") or index),
+                "course_module": _text(source_item.get("Module/Course") or source_item.get("Course")),
+                "component_name": _text(source_item.get("Latest Quiz Title") or source_item.get("Completed Material Titles") or source_item.get("Module/Course") or source_item.get("Course")),
+                "component_type": _text(source_item.get("from") or "LMS module"),
+                "completion_status": _text(source_item.get("Course Status") or source_item.get("Latest Quiz Status")),
+                "tracked_seconds": _integer(source_item.get("Total Tracked Time Seconds") or source_item.get("Course Elapsed Seconds") or source_item.get("Material Time Seconds")) or 0,
+                "relevant_date": _date_iso(
+                    source_item.get("Course Completed At")
+                    or source_item.get("Latest Quiz Submitted At")
+                    or source_item.get("Course Started At")
+                    or source_item.get("Registered At")
+                ),
+            }
+            if not _is_future_date(item["relevant_date"]):
+                activities.append(_compact_activity(item))
+    return activities
+
+
+def learner_activity_stats(request):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if not _has_audit_permission(request):
+        return _error("Authentication or audit permission is required.", 403)
+
+    search = (request.GET.get("search") or "").strip()
+    include_test = (request.GET.get("includeTest") or request.GET.get("include_test") or "").strip().lower() in {"1", "true", "yes"}
+    cache_key = f"audit_activity_stats:{include_test}:{search.lower()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return JsonResponse(cached)
+    stats = _empty_activity_stats()
+
+    try:
+        with connections["enrolment"].cursor() as cur:
+            where_parts = []
+            query_params = []
+            if search:
+                pattern = f"%{search}%"
+                where_parts.append(
+                    """
+                    "Learner_ID"::text ilike %s
+                    or coalesce("Learner_name", '') ilike %s
+                    or coalesce("Programme_name", '') ilike %s
+                    """
+                )
+                query_params.extend([pattern, pattern, pattern])
+            if not include_test:
+                where_parts.append(TEST_RECORD_FILTER_SQL)
+            where_sql = f"where {' and '.join(f'({part})' for part in where_parts)}" if where_parts else ""
+            cur.execute(
+                f"""
+                select count(*)
+                from "{AUDIT_SCHEMA}"."{MAIN_TABLE}"
+                {where_sql}
+                """,
+                query_params,
+            )
+            learner_count = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                select "Learner_ID", "Aptem_components", "LMS_modules_details", "LMS_Summary"
+                from "{AUDIT_SCHEMA}"."{MAIN_TABLE}"
+                {where_sql}
+                """,
+                query_params,
+            )
+            rows = _rows_from_cursor(cur)
+    except KeyError:
+        return _error("The enrolment database connection is not configured.", 500)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    attendance_by_learner = _fetch_kbc_attendance_items_for_ids([row.get("Learner_ID") for row in rows])
+    for row in rows:
+        for attendance_item in attendance_by_learner.get(str(row.get("Learner_ID") or ""), []):
+            if not _is_future_date(attendance_item.get("relevant_date")):
+                _add_activity_stat(stats, _compact_activity(attendance_item))
+        for activity in _raw_activity_stats(row):
+            _add_activity_stat(stats, activity)
+
+    total_activities = sum(bucket["activities"] for bucket in stats.values())
+    total_actual_hours = _round_hours(sum(bucket["actualHours"] for bucket in stats.values()))
+    total_planned_hours = _round_hours(sum(bucket["plannedHours"] for bucket in stats.values()))
+    total_done = sum(bucket["done"] for bucket in stats.values())
+    payload = {
+        "learners": learner_count,
+        "activities": total_activities,
+        "actualHours": total_actual_hours,
+        "plannedHours": total_planned_hours,
+        "done": total_done,
+        "categories": stats,
+    }
+    cache.set(cache_key, payload, 60 * 15)
+    return JsonResponse(payload)
 
 
 def _build_student_source_data(row):
@@ -858,6 +1276,7 @@ def _field_sources():
         "summary.planned_hours": {"table": "Audit.Aptem_LMS_matching", "column": "Aptem_components.components[].planned_hours", "join_key": "Learner_ID", "fallback": None},
         "summary.lms": {"table": "Audit.Aptem_LMS_matching", "column": "LMS_modules_details", "join_key": "Learner_ID", "fallback": None},
         "summary.quiz": {"table": "Audit.Aptem_LMS_matching", "column": "LMS_modules_details", "join_key": "Learner_ID", "fallback": None},
+        "attendance.sessions": {"table": "KBCDATABASE.public.kbc_attendance", "column": "ID/date/Attendance/module/activity", "join_key": "Learner_ID -> ID/aptem_id", "fallback": "public.kbs_attendance when present"},
         "source_data.combined": {"table": "Audit.Aptem_LMS_matching", "column": STUDENT_SOURCE_DATA_COLUMN, "join_key": "Learner_ID", "fallback": None},
         "company.logo": {"table": "environment", "column": "AUDIT_COMPANY_LOGO_URL", "join_key": None, "fallback": None},
     }
@@ -879,7 +1298,10 @@ def learner_audit(request, learner_id):
             if not rows:
                 return _error("Learner audit record was not found.", 404)
             payload = _build_audit_payload(rows[0])
-            _attach_signoffs(cur, payload)
+            try:
+                _attach_signoffs(cur, payload)
+            except DatabaseError:
+                pass
     except KeyError:
         return _error("The enrolment database connection is not configured.", 500)
     except DatabaseError as exc:
@@ -918,6 +1340,36 @@ def _learner_list_summary(row):
     }
 
 
+def _learner_list_detail(row, include_audit=False, include_activities=False, activity_category="", attendance_items=None):
+    summary = _learner_summary(row) if include_audit else _learner_list_summary(row)
+    if include_audit:
+        summary["audit"] = _build_audit_payload(row)
+    if include_activities:
+        summary["activities"] = _learner_activity_summaries(row, activity_category, attendance_items)
+    return summary
+
+
+def _quote_column(column):
+    return '"' + column.replace('"', '""') + '"'
+
+
+def _learner_summary_columns(columns):
+    wanted = [
+        "id",
+        _first_column(columns, LEARNER_ID_COLUMNS),
+        _first_column(columns, NAME_COLUMNS),
+        _first_column(columns, ("program_name", "Programme", "programme", "ProgramName")),
+        _first_column(columns, ("evidence_count", "EvidenceCount")),
+        _first_column(columns, ("fetched_at", "FetchedAt")),
+        _first_column(columns, ("latest_evidence_date", "LatestEvidenceDate", "latestEvidenceDate")),
+    ]
+    selected = []
+    for column in wanted:
+        if column and column in columns and column not in selected:
+            selected.append(column)
+    return selected or columns[:1]
+
+
 def learner_audit_list(request):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -926,72 +1378,130 @@ def learner_audit_list(request):
 
     search = (request.GET.get("search") or "").strip()
     include_test = (request.GET.get("includeTest") or request.GET.get("include_test") or "").strip().lower() in {"1", "true", "yes"}
+    include_audit = (request.GET.get("includeAudit") or request.GET.get("include_audit") or "").strip().lower() in {"1", "true", "yes"}
+    include_activities = (request.GET.get("includeActivities") or request.GET.get("include_activities") or "").strip().lower() in {"1", "true", "yes"}
+    activity_category = (request.GET.get("activityCategory") or request.GET.get("activity_category") or "").strip()
     limit_raw = (request.GET.get("limit") or "").strip()
+    page_raw = (request.GET.get("page") or "").strip()
+    page_size_raw = (request.GET.get("pageSize") or request.GET.get("page_size") or "").strip()
     limit = None
     if limit_raw:
         try:
             limit = max(1, int(limit_raw))
         except ValueError:
             limit = None
+    page = 1
+    page_size = None
+    if page_raw or page_size_raw:
+        try:
+            page = max(1, int(page_raw or "1"))
+        except ValueError:
+            page = 1
+        try:
+            page_size = min(100, max(1, int(page_size_raw or "25")))
+        except ValueError:
+            page_size = 25
+        limit = page_size
+    offset = (page - 1) * page_size if page_size else 0
+    total_count = None
 
     try:
         with connections["enrolment"].cursor() as cur:
-            list_columns_sql = f"""
+            if include_audit:
+                list_columns_sql = "*"
+            elif include_activities:
+                activity_sources = _activity_sources_for_category(activity_category)
+                activity_columns = [
+                    '"Learner_ID"',
+                    '"Learner_name"',
+                    '"Programme_name"',
+                    '"Completed_OTJH"',
+                ]
+                if "Aptem" in activity_sources:
+                    activity_columns.append('"Aptem_components"')
+                if "LMS" in activity_sources:
+                    activity_columns.extend(['"LMS_modules_details"', '"LMS_Summary"'])
+                list_columns_sql = ", ".join(activity_columns)
+            else:
+                list_columns_sql = f"""
                 "Learner_ID",
                 "Learner_name",
                 "Programme_name",
                 "Completed_OTJH",
-                case
-                    when "Aptem_components" is null then null
-                    when jsonb_typeof("Aptem_components"::jsonb) = 'object'
-                        and jsonb_typeof(("Aptem_components"::jsonb)->'components') = 'array'
-                        then jsonb_array_length(("Aptem_components"::jsonb)->'components')
-                    when jsonb_typeof("Aptem_components"::jsonb) = 'array'
-                        then jsonb_array_length("Aptem_components"::jsonb)
-                    else null
-                end as aptem_component_count,
+                null::integer as aptem_component_count,
                 "Aptem_components" is not null as has_aptem_data,
                 (
                     nullif("LMS_modules_details", '') is not null
                     or nullif("LMS_Summary", '') is not null
                 ) as has_lms_data
             """
+            where_parts = []
+            query_params = []
             if search:
                 pattern = f"%{search}%"
-                test_filter_sql = "" if include_test else f"and {TEST_RECORD_FILTER_SQL}"
+                where_parts.append(
+                    """
+                    "Learner_ID"::text ilike %s
+                    or coalesce("Learner_name", '') ilike %s
+                    or coalesce("Programme_name", '') ilike %s
+                    """
+                )
+                query_params.extend([pattern, pattern, pattern])
+            if not include_test:
+                where_parts.append(TEST_RECORD_FILTER_SQL)
+            where_sql = f"where {' and '.join(f'({part})' for part in where_parts)}" if where_parts else ""
+            if page_size:
                 cur.execute(
                     f"""
-                    select {list_columns_sql}
+                    select count(*)
                     from "{AUDIT_SCHEMA}"."{MAIN_TABLE}"
-                    where (
-                        "Learner_ID"::text ilike %s
-                        or coalesce("Learner_name", '') ilike %s
-                        or coalesce("Programme_name", '') ilike %s
-                    )
-                    {test_filter_sql}
-                    order by coalesce("Learner_name", ''), "Learner_ID"
-                    {f"limit {limit}" if limit else ""}
+                    {where_sql}
                     """,
-                    [pattern, pattern, pattern],
+                    query_params,
                 )
-            else:
-                test_filter_sql = "" if include_test else f"where {TEST_RECORD_FILTER_SQL}"
-                cur.execute(
-                    f"""
-                    select {list_columns_sql}
-                    from "{AUDIT_SCHEMA}"."{MAIN_TABLE}"
-                    {test_filter_sql}
-                    order by coalesce("Learner_name", ''), "Learner_ID"
-                    {f"limit {limit}" if limit else ""}
-                    """,
-                )
+                total_count = cur.fetchone()[0]
+            limit_sql = ""
+            if limit:
+                limit_sql = f"limit {limit}"
+                if page_size:
+                    limit_sql += f" offset {offset}"
+            cur.execute(
+                f"""
+                select {list_columns_sql}
+                from "{AUDIT_SCHEMA}"."{MAIN_TABLE}"
+                {where_sql}
+                order by coalesce("Learner_name", ''), "Learner_ID"
+                {limit_sql}
+                """,
+                query_params,
+            )
             rows = _rows_from_cursor(cur)
     except KeyError:
         return _error("The enrolment database connection is not configured.", 500)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    return JsonResponse({"count": len(rows), "results": [_learner_list_summary(row) for row in rows]})
+    attendance_by_learner = {}
+    if include_activities and "Aptem" in _activity_sources_for_category(activity_category):
+        attendance_by_learner = _fetch_kbc_attendance_items_for_ids([row.get("Learner_ID") for row in rows])
+    count = total_count if total_count is not None else len(rows)
+    response_page_size = page_size or len(rows)
+    return JsonResponse({
+        "count": count,
+        "page": page,
+        "pageSize": response_page_size,
+        "totalPages": ((count + response_page_size - 1) // response_page_size) if response_page_size else 1,
+        "results": [
+            _learner_list_detail(
+                row,
+                include_audit,
+                include_activities,
+                activity_category,
+                attendance_by_learner.get(str(row.get("Learner_ID") or ""), []),
+            )
+            for row in rows
+        ],
+    })
 
 
 def _azure_service_client():
@@ -1090,6 +1600,20 @@ def _ensure_signoff_table(cur):
             updated_at timestamp with time zone default now(),
             unique (learner_id, programme_key, report_month, signer_role)
         )
+        """
+    )
+    cur.execute(
+        f"""
+        delete from "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" existing
+        using "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" duplicate
+        where existing.learner_id = duplicate.learner_id
+          and existing.ctid < duplicate.ctid
+        """
+    )
+    cur.execute(
+        f"""
+        create unique index if not exists "{SIGNOFF_TABLE}_learner_id_uidx"
+        on "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" (learner_id)
         """
     )
 

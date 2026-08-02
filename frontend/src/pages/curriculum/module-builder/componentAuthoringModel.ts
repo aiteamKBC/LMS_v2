@@ -11,7 +11,9 @@ export type ModuleComponentType =
   | 'reflection'
   | 'assignment'
   | 'checkpoint'
-  | 'coaching-preparation';
+  | 'coaching-preparation'
+  | 'recording-placeholder'
+  | 'workplace-evidence';
 
 export type ComponentSettingValue = string | number | boolean | string[];
 export type ComponentSettings = Record<string, ComponentSettingValue>;

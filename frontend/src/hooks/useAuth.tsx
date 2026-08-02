@@ -49,6 +49,7 @@ const AuthContext = createContext<RbacContextValue | null>(null);
 // ============================================================
 
 const AUTH_STORAGE_KEY = 'kbc_auth_email';
+const CHAT_DEMO_EMAILS = new Set(['coach@kbc.test', 'learner@kbc.test']);
 
 function getLevelRank(level: PermissionLevel): number {
   const found = PERMISSION_LEVELS.find(l => l.value === level);
@@ -152,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // API uses the participant email to scope conversations in PostgreSQL.
   useEffect(() => {
     if (!auth.isAuthenticated || !auth.user?.email) return;
+    if (!CHAT_DEMO_EMAILS.has(auth.user.email.toLowerCase())) return;
     void bootstrapChatSession(auth.user.email).catch(() => {
       // Non-chat demo roles do not have a chat identity; their normal app
       // session should continue to work without showing a global error.

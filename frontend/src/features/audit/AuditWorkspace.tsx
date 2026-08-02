@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { jsPDF } from 'jspdf';
 import SignaturePad from 'signature_pad';
+import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
 import { roleNavMap } from '@/mocks/navigation';
 import {
+  fetchAuditActivityStats,
   fetchAuditLearners,
+  fetchAuditLearnersPage,
   fetchLearnerAudit,
   saveAuditSignoff,
+  type AuditActivitySummary,
+  type AuditActivityStats,
   type AptemAuditItem,
   type AuditActivityItem,
   type AuditLearnerSummary,
@@ -41,11 +46,741 @@ const metricHelp = {
 };
 
 export default function AuditWorkspace() {
+  const { auditLearnerId } = useParams<{ auditLearnerId?: string }>();
+
+  return (
+    <WorkspaceShell
+      role="auditor"
+      roleLabel={auditorConfig.label}
+      navItems={auditorConfig.items}
+      pageTitle="Audit"
+      pageSubtitle="Activity categories and learner activity timeline"
+      userName="Patricia Stone"
+      userRole="External Auditor"
+      workspaceLabel={auditorConfig.workspaceLabel}
+    >
+      {auditLearnerId ? <AuditLearnerActivityPage learnerId={auditLearnerId} /> : <AuditActivitiesLanding />}
+    </WorkspaceShell>
+  );
+}
+
+type AuditCategoryKey = 'live_session' | 'quiz_reading' | 'video' | 'assignment' | 'self_study' | 'assessment' | 'other';
+type AuditSortKey = 'learner' | 'programme' | 'planned' | 'actual' | 'done';
+type AuditSortDirection = 'asc' | 'desc';
+
+interface AuditMatrixRecord {
+  learner: AuditLearnerSummary;
+  audit: LearnerAuditResponse | null;
+  activities: AuditMatrixItem[];
+  error?: string;
+}
+
+type AuditMatrixItem = AuditActivityItem | AuditActivitySummary;
+
+interface AuditMatrixCell {
+  item: AuditMatrixItem;
+  planned: number;
+  actual: number;
+  done: boolean;
+}
+
+interface AuditMatrixColumn {
+  key: string;
+  title: string;
+  subtitle: string;
+}
+
+const AUDIT_CATEGORY_META: Record<AuditCategoryKey, { label: string; icon: string; className: string }> = {
+  live_session: { label: 'Live Session', icon: 'ri-vidicon-line', className: 'bg-rose-600 text-white border-rose-600' },
+  quiz_reading: { label: 'Quiz / Reading Material', icon: 'ri-book-open-line', className: 'bg-blue-50 text-blue-800 border-blue-200' },
+  video: { label: 'Video', icon: 'ri-play-circle-line', className: 'bg-red-50 text-red-800 border-red-200' },
+  assignment: { label: 'Assignment', icon: 'ri-file-edit-line', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  self_study: { label: 'Self Study', icon: 'ri-book-read-line', className: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+  assessment: { label: 'Assessment', icon: 'ri-checkbox-line', className: 'bg-violet-50 text-violet-800 border-violet-200' },
+  other: { label: 'Other Activity', icon: 'ri-stack-line', className: 'bg-background-100 text-foreground-700 border-background-300' },
+};
+
+function AuditActivitiesLanding() {
+  const navigate = useNavigate();
+  const [records, setRecords] = useState<AuditMatrixRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<AuditCategoryKey>('live_session');
+  const [programme, setProgramme] = useState('all');
+  const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [sortKey, setSortKey] = useState<AuditSortKey>('learner');
+  const [sortDirection, setSortDirection] = useState<AuditSortDirection>('asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalLearners, setTotalLearners] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [activityStats, setActivityStats] = useState<AuditActivityStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setActivityLoading(false);
+    setError('');
+    sessionStorage.removeItem('audit-activity-learners');
+    fetchAuditLearnersPage({ page, pageSize, search })
+      .then((response) => {
+        const details = response.results.map((learner) => ({
+          learner,
+          audit: null,
+          activities: [],
+        }));
+        if (!cancelled) {
+          setRecords(details);
+          setTotalLearners(response.count);
+          setTotalPages(response.totalPages || 1);
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setRecords([]);
+          setError(requestError instanceof Error ? requestError.message : 'Unable to load audit learners.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [page, pageSize, search]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStatsLoading(true);
+    fetchAuditActivityStats()
+      .then((response) => {
+        if (!cancelled) {
+          setActivityStats(response);
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Unable to load audit activity totals.');
+      })
+      .finally(() => {
+        if (!cancelled) setStatsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (loading || records.length === 0) return undefined;
+    let cancelled = false;
+    setActivityLoading(true);
+    fetchAuditLearnersPage({ includeActivities: true, activityCategory: selectedCategory, page, pageSize, search })
+      .then((activityLearners) => {
+        if (cancelled) return;
+        const byId = new Map(activityLearners.results.map((learner) => [learner.learnerId, learner.activities || []]));
+        setRecords((current) => current.map((record) => ({
+          ...record,
+          activities: byId.get(record.learner.learnerId) || [],
+        })));
+      })
+      .catch((requestError) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Unable to load audit activities.');
+      })
+      .finally(() => {
+        if (!cancelled) setActivityLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [loading, page, pageSize, records.length, search, selectedCategory]);
+
+  const programmeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    records.forEach(({ learner, audit }) => {
+      const name = audit?.learner.programme_name || learner.programName || 'No programme';
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [records]);
+
+  const categoryCounts = useMemo(() => (
+    (Object.keys(AUDIT_CATEGORY_META) as AuditCategoryKey[]).reduce((acc, key) => ({
+      ...acc,
+      [key]: activityStats?.categories[key]?.activities || 0,
+    }), {} as Record<AuditCategoryKey, number>)
+  ), [activityStats]);
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const rows = records
+      .filter((record) => {
+        const programmeName = record.audit?.learner.programme_name || record.learner.programName || 'No programme';
+        return programme === 'all' || programmeName === programme;
+      })
+      .filter((record) => {
+        if (!query) return true;
+        return [
+          record.learner.fullName,
+          record.learner.learnerId,
+          record.audit?.learner.name,
+          record.audit?.learner.programme_name,
+          record.learner.programName,
+        ].join(' ').toLowerCase().includes(query);
+      })
+      .map((record) => {
+        const cells = record.activities
+          .filter((item) => auditCategory(item) === selectedCategory)
+          .filter((item) => inAuditDateWindow(auditItemDate(item), fromDate, toDate))
+          .map((item) => auditCell(item));
+        const planned = roundHours(cells.reduce((sum, cell) => sum + cell.planned, 0));
+        const actual = roundHours(cells.reduce((sum, cell) => sum + cell.actual, 0));
+        const done = cells.filter((cell) => cell.done).length;
+        return { record, cells, planned, actual, done };
+      })
+      .filter((row) => row.cells.length > 0 || (!fromDate && !toDate));
+
+    return rows.sort((left, right) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      const leftProgramme = left.record.audit?.learner.programme_name || left.record.learner.programName || '';
+      const rightProgramme = right.record.audit?.learner.programme_name || right.record.learner.programName || '';
+      if (sortKey === 'learner') return (left.record.learner.fullName || '').localeCompare(right.record.learner.fullName || '') * direction;
+      if (sortKey === 'programme') return leftProgramme.localeCompare(rightProgramme) * direction;
+      if (sortKey === 'planned') return (left.planned - right.planned) * direction;
+      if (sortKey === 'actual') return (left.actual - right.actual) * direction;
+      return (left.done - right.done) * direction;
+    });
+  }, [fromDate, programme, records, search, selectedCategory, sortDirection, sortKey, toDate]);
+
+  const columns = useMemo<AuditMatrixColumn[]>(() => {
+    const preferredProgramme = programme === 'all' ? filteredRows.find((row) => row.record.audit?.learner.programme_name || row.record.learner.programName)?.record.audit?.learner.programme_name || filteredRows[0]?.record.learner.programName || '' : programme;
+    const byKey = new Map<string, AuditMatrixColumn>();
+    filteredRows
+      .filter((row) => programme !== 'all' || !preferredProgramme || (row.record.audit?.learner.programme_name || row.record.learner.programName || 'No programme') === preferredProgramme)
+      .forEach((row) => {
+        row.cells.forEach((cell) => {
+          const key = auditItemKey(cell.item);
+          if (!byKey.has(key)) {
+            byKey.set(key, { key, title: auditItemTitle(cell.item), subtitle: auditItemSubtitle(cell.item) });
+          }
+        });
+      });
+    return Array.from(byKey.values());
+  }, [filteredRows, programme]);
+
+  const totals = useMemo(() => {
+    const planned = roundHours(filteredRows.reduce((sum, row) => sum + row.planned, 0));
+    const actual = roundHours(filteredRows.reduce((sum, row) => sum + row.actual, 0));
+    const done = filteredRows.reduce((sum, row) => sum + row.done, 0);
+    const cells = filteredRows.reduce((sum, row) => sum + row.cells.length, 0);
+    return { planned, actual, done, cells, rate: cells ? Math.round((done / cells) * 100) : 0 };
+  }, [filteredRows]);
+  const selectedDbStats = activityStats?.categories[selectedCategory] || null;
+
+  const requestSort = (next: AuditSortKey) => {
+    if (next === sortKey) setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc');
+    else {
+      setSortKey(next);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortButton = ({ id, label }: { id: AuditSortKey; label: string }) => (
+    <button type="button" onClick={() => requestSort(id)} className="inline-flex items-center gap-1 font-bold text-foreground-700 hover:text-primary-700">
+      {label}
+      <i className={`${sortKey === id ? (sortDirection === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-expand-up-down-line'} text-xs`} />
+    </button>
+  );
+
+  return (
+    <div className="min-h-[calc(100vh-112px)] bg-background-100/50 p-3 md:p-5">
+      <section className="rounded-xl border border-foreground-200/60 bg-background-50 p-5">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-semibold text-foreground-500">Audit</span>
+          <h1 className="text-2xl font-heading font-semibold text-foreground-950">Activity Categories</h1>
+          <p className="text-[13px] text-foreground-500">All learners from the audit data, grouped by activity type. Cells show actual / planned hours.</p>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {(Object.keys(AUDIT_CATEGORY_META) as AuditCategoryKey[]).map((key) => {
+            const meta = AUDIT_CATEGORY_META[key];
+            const active = selectedCategory === key;
+            return (
+              <button key={key} type="button" onClick={() => setSelectedCategory(key)} className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-[12px] font-bold transition ${active ? meta.className : 'border-background-300 bg-white text-foreground-700 hover:bg-background-100'}`}>
+                <i className={meta.icon} />
+                {meta.label}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] ${active ? 'bg-white/20' : 'bg-background-100 text-foreground-500'}`}>{statsLoading ? '...' : categoryCounts[key]}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 rounded-xl border border-background-300 bg-white p-3">
+          <div className="grid gap-3 lg:grid-cols-[120px_220px_170px_1fr]">
+            <label className="flex items-center gap-2 text-xs font-bold uppercase text-foreground-500"><i className="ri-filter-3-line" />Filters</label>
+            <select value={programme} onChange={(event) => setProgramme(event.target.value)} className="h-10 rounded-lg border border-background-300 bg-background-50 px-3 text-sm outline-none focus:border-primary-300">
+              <option value="all">All programmes</option>
+              {programmeOptions.map(([option, count]) => <option key={option} value={option}>{display(option)} ({count})</option>)}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-background-300 bg-background-50 px-2 text-sm outline-none focus:border-primary-300" />
+              <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-background-300 bg-background-50 px-2 text-sm outline-none focus:border-primary-300" />
+            </div>
+            <div className="relative">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+              <input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search learner..."
+                className="h-10 w-full rounded-lg border border-background-300 bg-background-50 pl-10 pr-3 text-sm outline-none focus:border-primary-300"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-background-300 bg-background-100 px-4 py-3 text-sm text-foreground-700">
+          <div className="flex flex-wrap items-center gap-4">
+          <span><strong>{filteredRows.length}</strong> learners on page</span>
+          <span><strong>{activityStats?.learners ?? totalLearners}</strong> DB learners</span>
+          <span><strong>{totalLearners}</strong> matching learners</span>
+          <span><strong>{selectedDbStats?.activities ?? totals.cells}</strong> DB activities</span>
+          <span><strong>{columns.length}</strong> page columns</span>
+          <span>Planned: <strong>{formatHoursFromHours(totals.planned)}</strong></span>
+          <span>Actual on page: <strong>{formatHoursFromHours(totals.actual)}</strong></span>
+          <span>DB actual: <strong>{formatHoursFromHours(selectedDbStats?.actualHours ?? totals.actual)}</strong></span>
+          <span>Completed: <strong>{totals.done}/{totals.cells}</strong></span>
+          <span>Rate: <strong>{totals.rate}%</strong></span>
+          {activityLoading && <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700"><i className="ri-loader-4-line animate-spin" />Loading activity cells</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+              }}
+              className="h-8 rounded-md border border-background-300 bg-white px-2 text-xs font-semibold outline-none focus:border-primary-300"
+            >
+              {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size} / page</option>)}
+            </select>
+            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
+              <i className="ri-arrow-left-s-line" />
+            </button>
+            <span className="min-w-[86px] text-center text-xs font-semibold text-foreground-600">Page {page} of {totalPages}</span>
+            <button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((value) => Math.min(totalPages, value + 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
+              <i className="ri-arrow-right-s-line" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-xl border border-background-300 bg-white">
+          {loading ? (
+            <div className="p-6"><EmptyPanel icon="ri-loader-4-line" text="Loading audit learners and activities..." /></div>
+          ) : error ? (
+            <div className="p-6"><StateBanner tone="error" text={error} /></div>
+          ) : filteredRows.length === 0 ? (
+            <div className="p-6"><EmptyPanel icon="ri-inbox-line" text="No learners match this activity category and filter set." /></div>
+          ) : (
+            <div className="overflow-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead className="sticky top-0 z-20 bg-background-50 text-xs uppercase tracking-wide text-foreground-600">
+                  <tr>
+                    <th className="sticky left-0 z-30 w-12 border-b border-r border-background-300 bg-background-50 px-3 py-3 text-left">#</th>
+                    <th className="sticky left-12 z-30 min-w-[210px] border-b border-r border-background-300 bg-background-50 px-3 py-3 text-left"><SortButton id="learner" label="Learner" /></th>
+                    <th className="min-w-[90px] border-b border-r border-background-300 px-3 py-3 text-center"><SortButton id="programme" label="Prog." /></th>
+                    <th className="min-w-[90px] border-b border-r border-background-300 px-3 py-3 text-right"><SortButton id="planned" label="Plan." /></th>
+                    <th className="min-w-[90px] border-b border-r border-background-300 px-3 py-3 text-right"><SortButton id="actual" label="Act." /></th>
+                    <th className="min-w-[90px] border-b border-r border-background-300 px-3 py-3 text-center"><SortButton id="done" label="Done" /></th>
+                    {columns.map((column) => (
+                      <th key={column.key} className="min-w-[145px] border-b border-r border-background-300 px-3 py-3 text-left align-bottom" title={`${column.title} - ${column.subtitle}`}>
+                        <span className="block text-[11px] font-bold text-foreground-700">{compactLabel(column.title, 20)}</span>
+                        <span className="mt-1 block text-[10px] normal-case tracking-normal text-foreground-400">{compactLabel(column.subtitle, 22)}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((row, index) => {
+                    const cellsByColumn = new Map(row.cells.map((cell) => [auditItemKey(cell.item), cell]));
+                    const learnerName = row.record.audit?.learner.name || row.record.learner.fullName || `Learner ${row.record.learner.learnerId}`;
+                    const programmeName = row.record.audit?.learner.programme_name || row.record.learner.programName || '';
+                    return (
+                      <tr key={row.record.learner.learnerId} onClick={() => navigate(`/workspace/auditor/learner/${row.record.learner.learnerId}`)} className={`cursor-pointer border-b border-background-200 transition hover:bg-primary-50/40 ${isTestLearner(row.record.learner) ? 'bg-red-50/60' : ''}`}>
+                        <td className="sticky left-0 z-10 border-r border-background-200 bg-white px-3 py-3 text-foreground-600">{index + 1}</td>
+                        <td className="sticky left-12 z-10 border-r border-background-200 bg-white px-3 py-3">
+                          <p className="flex items-center gap-2 font-bold text-foreground-950">
+                            {learnerName}
+                            {isTestLearner(row.record.learner) && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">Test</span>}
+                          </p>
+                          <p className="text-[11px] text-foreground-400">ID {row.record.learner.learnerId}</p>
+                        </td>
+                        <td className="border-r border-background-200 px-3 py-3 text-center"><span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-bold text-amber-800" title={programmeName}>{programmeCode(programmeName)}</span></td>
+                        <td className="border-r border-background-200 px-3 py-3 text-right font-semibold">{formatHoursFromHours(row.planned)}</td>
+                        <td className="border-r border-background-200 px-3 py-3 text-right font-semibold">{formatHoursFromHours(row.actual)}</td>
+                        <td className="border-r border-background-200 px-3 py-3 text-center font-semibold">{row.done}/{row.cells.length}</td>
+                        {columns.map((column) => {
+                          const cell = cellsByColumn.get(column.key);
+                          return (
+                            <td key={column.key} className="border-r border-background-200 px-3 py-3 text-center text-xs text-foreground-500">
+                              {cell ? <span className={`inline-flex rounded-md px-2 py-1 font-bold ${cell.done ? 'bg-cyan-50 text-cyan-800' : 'bg-background-100 text-foreground-500'}`}>{formatHoursFromHours(cell.actual)}/{formatHoursFromHours(cell.planned)}</span> : '-'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
+  const navigate = useNavigate();
+  const [audit, setAudit] = useState<LearnerAuditResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    fetchLearnerAudit(learnerId)
+      .then((payload) => { if (!cancelled) setAudit(filterPastAudit(payload)); })
+      .catch((requestError) => { if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Unable to load learner audit.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [learnerId]);
+
+  const learnerName = audit?.learner.name || `Learner ${learnerId}`;
+
+  return (
+    <div className="min-h-[calc(100vh-112px)] bg-background-100/50 p-3 md:p-5">
+      <section className="rounded-xl border border-foreground-200/60 bg-background-50 p-5">
+        <button type="button" onClick={() => navigate('/workspace/auditor')} className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary-700 hover:text-primary-800">
+          <i className="ri-arrow-left-line" />
+          Activity Categories
+        </button>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-heading font-semibold text-foreground-950">{learnerName}</h1>
+          <p className="text-[13px] text-foreground-500">{display(audit?.learner.programme_name)} - ID {learnerId}</p>
+        </div>
+
+        {loading ? (
+          <div className="mt-6"><TimelineSkeleton /></div>
+        ) : error ? (
+          <div className="mt-6"><StateBanner tone="error" text={error} /></div>
+        ) : !audit || audit.months.length === 0 ? (
+          <div className="mt-6"><EmptyPanel icon="ri-inbox-line" text="No monthly audit activity was found for this learner." /></div>
+        ) : (
+          <div className="mt-6 space-y-4">
+            {audit.months.map((month, index) => <AuditLearnerMonthSection key={month.month_key} month={month} defaultOpen={index === 0} />)}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function AuditLearnerMonthSection({ month, defaultOpen }: { month: AuditMonth; defaultOpen: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const totalItems = month.summary.aptem_items + month.summary.lms_items + month.undated_items.length;
+  const displayWeeks = useMemo(() => displayWeeksForMonth(month), [month]);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-background-300 bg-white">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-background-50">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-100 text-primary-700"><i className="ri-calendar-line" /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-heading text-sm font-bold text-foreground-900">{month.label}</p>
+          <p className="text-xs text-foreground-500">{displayWeeks.length} weeks - {totalItems} activities - Actual {formatHoursFromHours(month.summary.actual_hours)} / Planned {formatHoursFromHours(month.summary.planned_hours)}</p>
+        </div>
+        <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-background-300 p-3">
+          <div className="space-y-3">
+            {displayWeeks.map((week, index) => <AuditLearnerWeekSection key={week.week_key} week={week} weekNumber={index + 1} />)}
+          </div>
+          {month.undated_items.length > 0 && (
+            <div className="rounded-lg border border-background-300">
+              <div className="border-b border-background-300 bg-background-50 px-4 py-3">
+                <p className="text-sm font-bold text-foreground-900">Undated activity</p>
+                <p className="text-xs text-foreground-500">Items without a reliable week date</p>
+              </div>
+              <div className="grid gap-3 p-3 xl:grid-cols-3">
+                <AuditActivityBucket title="Attendance" icon="ri-calendar-check-line" items={month.undated_items.filter(isAttendanceItem)} />
+                <AuditActivityBucket title="LMS Activity" icon="ri-computer-line" items={month.undated_items.filter(isLmsActivityItem)} />
+                <AuditActivityBucket title="Assignment" icon="ri-file-edit-line" items={month.undated_items.filter(isAssignmentItem)} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditLearnerWeekSection({ week, weekNumber }: { week: AuditWeek; weekNumber: number }) {
+  const [open, setOpen] = useState(false);
+  const allItems = [...week.aptem_items, ...week.lms_items];
+  const attendanceItems = allItems.filter(isAttendanceItem);
+  const lmsItems = allItems.filter(isLmsActivityItem);
+  const assignmentItems = allItems.filter(isAssignmentItem);
+  const actual = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).actual, 0));
+  const planned = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).planned, 0));
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-background-300 bg-white">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="w-full border-b border-background-300 bg-background-50 px-4 py-3 text-left transition hover:bg-background-100">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-0.5 inline-flex h-7 shrink-0 items-center justify-center rounded-full bg-primary-50 px-3 text-xs font-bold text-primary-700 ring-1 ring-primary-100">Week {weekNumber}</span>
+            <div className="min-w-0">
+            <p className="text-sm font-bold text-foreground-900">{week.label}</p>
+            <p className="text-xs text-foreground-500">{display(week.start_date)} - {display(week.end_date)}</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3 text-right">
+            <div className="text-[11px] font-semibold text-foreground-500">
+              <p>{allItems.length} activities</p>
+              <p>{formatHoursFromHours(actual)} / {formatHoursFromHours(planned)}</p>
+            </div>
+            <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+          </div>
+        </div>
+      </button>
+      {open && (
+        <div className="grid gap-3 p-3 xl:grid-cols-3">
+          <AuditActivityBucket title="Attendance" icon="ri-calendar-check-line" items={attendanceItems} />
+          <AuditActivityBucket title="LMS Activity" icon="ri-computer-line" items={lmsItems} />
+          <AuditActivityBucket title="Assignment" icon="ri-file-edit-line" items={assignmentItems} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function displayWeeksForMonth(month: AuditMonth): AuditWeek[] {
+  const match = /^(\d{4})-(\d{2})$/.exec(month.month_key);
+  if (!match) return month.weeks;
+
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) return month.weeks;
+
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const ranges = [
+    [1, 7],
+    [8, 14],
+    [15, 21],
+    [22, lastDay],
+  ];
+
+  const buckets = ranges.map(([startDay, endDay], index): AuditWeek => ({
+    week_key: `${month.month_key}-display-week-${index + 1}`,
+    label: `${startDay}-${endDay} ${shortMonthName(monthNumber)}`,
+    start_date: dateKey(year, monthNumber, startDay),
+    end_date: dateKey(year, monthNumber, endDay),
+    aptem_items: [],
+    lms_items: [],
+  }));
+
+  const overflowWeeks: AuditWeek[] = [];
+  month.weeks.forEach((week) => {
+    const bucketIndex = weekBucketIndex(month.month_key, week);
+    if (bucketIndex >= 0 && bucketIndex < buckets.length) {
+      buckets[bucketIndex].aptem_items.push(...week.aptem_items);
+      buckets[bucketIndex].lms_items.push(...week.lms_items);
+      return;
+    }
+    overflowWeeks.push(week);
+  });
+
+  return [...buckets, ...overflowWeeks];
+}
+
+function weekBucketIndex(monthKey: string, week: AuditWeek) {
+  const day = dayInsideMonth(monthKey, week.start_date) ?? dayInsideMonth(monthKey, week.end_date);
+  if (!day) return -1;
+  if (day <= 7) return 0;
+  if (day <= 14) return 1;
+  if (day <= 21) return 2;
+  return 3;
+}
+
+function dayInsideMonth(monthKey: string, value?: string | null) {
+  if (!value || !value.startsWith(monthKey)) return null;
+  const day = Number(value.slice(8, 10));
+  return Number.isFinite(day) && day > 0 ? day : null;
+}
+
+function dateKey(year: number, monthNumber: number, day: number) {
+  return `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function shortMonthName(monthNumber: number) {
+  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][monthNumber - 1] || '';
+}
+
+function AuditActivityBucket({ title, icon, items }: { title: string; icon: string; items: AuditActivityItem[] }) {
+  return (
+    <div className="rounded-lg border border-background-300 bg-background-50 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="inline-flex items-center gap-2 text-sm font-bold text-foreground-900"><i className={icon} />{title}</h3>
+        <span className="rounded-full bg-white px-2 py-0.5 text-xs font-bold text-foreground-500">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="rounded-lg bg-white px-3 py-4 text-center text-xs text-foreground-400">No activity</p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="rounded-lg border border-background-300 bg-white p-3">
+              <div className="flex items-start gap-2">
+                <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${auditCell(item).done ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-500'}`}>
+                  <i className={AUDIT_CATEGORY_META[auditCategory(item)].icon} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-foreground-900">{auditItemTitle(item)}</p>
+                  <p className="mt-1 text-xs text-foreground-500">{auditItemSubtitle(item)}</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-foreground-500">
+                    <span className="rounded-full bg-background-100 px-2 py-0.5">{item.source}</span>
+                    <span className="rounded-full bg-background-100 px-2 py-0.5">{formatHoursFromHours(auditCell(item).actual)} / {formatHoursFromHours(auditCell(item).planned)}</span>
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${statusPill(item.source === 'Aptem' ? item.status : item.completion_status)}`}>{item.source === 'Aptem' ? item.status : item.completion_status}</span>
+                    {item.warnings.length > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{item.warnings.length} warning(s)</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function auditItems(audit: LearnerAuditResponse | null): AuditActivityItem[] {
+  if (!audit) return [];
+  return audit.months.flatMap((month) => [
+    ...month.weeks.flatMap((week) => [...week.aptem_items, ...week.lms_items]),
+    ...month.undated_items,
+  ]);
+}
+
+function isAttendanceItem(item: AuditActivityItem) {
+  if (item.source !== 'Aptem') return false;
+  const text = `${item.type} ${item.activity_name}`.toLowerCase();
+  return ['attendance', 'attendence', 'live', 'session', 'meeting', 'review', 'workshop', 'mentoring', 'coaching'].some((term) => text.includes(term));
+}
+
+function isAssignmentItem(item: AuditActivityItem) {
+  if (item.source === 'LMS') return false;
+  if (isAttendanceItem(item)) return false;
+  const text = `${item.type} ${item.activity_name}`.toLowerCase();
+  return ['assignment', 'assessment', 'evidence', 'portfolio', 'project', 'task', 'exam', 'reflection'].some((term) => text.includes(term)) || item.source === 'Aptem';
+}
+
+function isLmsActivityItem(item: AuditActivityItem) {
+  return item.source === 'LMS';
+}
+
+function auditCell(item: AuditMatrixItem): AuditMatrixCell {
+  if (isAuditActivitySummary(item)) {
+    return {
+      item,
+      planned: roundHours(item.plannedHours || 0),
+      actual: roundHours(item.actualHours || 0),
+      done: item.done,
+    };
+  }
+  if (item.source === 'Aptem') {
+    return {
+      item,
+      planned: roundHours(item.planned_hours || 0),
+      actual: roundHours(item.actual_hours || 0),
+      done: statusBucket(item.status) === 'completed',
+    };
+  }
+  return {
+    item,
+    planned: 0,
+    actual: roundHours((item.tracked_seconds || 0) / 3600),
+    done: statusBucket(item.completion_status) === 'completed',
+  };
+}
+
+function auditCategory(item: AuditMatrixItem): AuditCategoryKey {
+  if (isAuditActivitySummary(item)) {
+    if (item.category === 'quiz' || item.category === 'reading') return 'quiz_reading';
+    if (item.category in AUDIT_CATEGORY_META) return item.category as AuditCategoryKey;
+  }
+  const text = item.source === 'Aptem'
+    ? `${item.type} ${item.activity_name}`
+    : `${item.component_type} ${item.component_name} ${item.course_module}`;
+  const normalized = text.toLowerCase().replace(/[-\s]+/g, '_');
+  if (normalized.includes('attendance') || normalized.includes('attendence') || normalized.includes('live') || normalized.includes('session')) return 'live_session';
+  if (normalized.includes('quiz') || normalized.includes('reading') || normalized.includes('material')) return 'quiz_reading';
+  if (normalized.includes('video') || normalized.includes('recording')) return 'video';
+  if (normalized.includes('assignment') || normalized.includes('evidence') || normalized.includes('portfolio')) return 'assignment';
+  if (normalized.includes('self_study') || normalized.includes('podcast') || normalized.includes('powerpoint')) return 'self_study';
+  if (normalized.includes('assessment') || normalized.includes('reflection')) return 'assessment';
+  return 'other';
+}
+
+function auditItemKey(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return `${item.source}:${item.sourceId || item.id}:${item.title}`;
+  return `${item.source}:${item.source_id || item.id}:${auditItemTitle(item)}`;
+}
+
+function auditItemTitle(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return item.title || 'Activity';
+  return item.source === 'Aptem' ? item.activity_name || item.type || 'Programme activity' : item.component_name || item.course_module || 'Online learning';
+}
+
+function auditItemSubtitle(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return item.subtitle || item.source;
+  return item.source === 'Aptem' ? item.type || item.match_status : item.course_module || item.component_type || item.match_status;
+}
+
+function auditItemDate(item: AuditMatrixItem): string | null {
+  return isAuditActivitySummary(item) ? item.relevantDate : item.relevant_date;
+}
+
+function isAuditActivitySummary(item: AuditMatrixItem): item is AuditActivitySummary {
+  return 'plannedHours' in item;
+}
+
+function inAuditDateWindow(date: string | null, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  if (!date) return true;
+  const value = date.slice(0, 10);
+  if (from && value < from) return false;
+  if (to && value > to) return false;
+  return true;
+}
+
+function compactLabel(value: string, max: number) {
+  const text = display(value);
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function programmeCode(value: string) {
+  const text = value.trim();
+  if (!text) return 'N/A';
+  return text.split(/\s+/).filter(Boolean).map((word) => word[0]).join('').slice(0, 4).toUpperCase();
+}
+
+function LegacyMonthlyAuditWorkspace() {
+  const [auditView, setAuditView] = useState<'monthly' | 'activities'>('monthly');
   const [learners, setLearners] = useState<AuditLearnerSummary[]>([]);
   const [selectedLearnerId, setSelectedLearnerId] = useState('');
   const [audit, setAudit] = useState<LearnerAuditResponse | null>(null);
   const [learnerSearch, setLearnerSearch] = useState('');
   const [learnerTestFilter, setLearnerTestFilter] = useState<'all' | 'test'>('all');
+  const [programmeFilter, setProgrammeFilter] = useState('all');
   const [activitySearch, setActivitySearch] = useState('');
   const [selectedMonthKey, setSelectedMonthKey] = useState('');
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
@@ -71,7 +806,7 @@ export default function AuditWorkspace() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setLoadingLearners(true);
-      fetchAuditLearners({ search: learnerSearch, includeTest: true })
+fetchAuditLearners({ search: learnerSearch, includeTest: true })
         .then((rows) => {
           const visibleLearners = rows.filter((row) => learnerTestFilter === 'all' || isTestLearner(row));
           setLearners(visibleLearners);
@@ -87,6 +822,26 @@ export default function AuditWorkspace() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [learnerSearch, learnerTestFilter]);
+
+  const programmeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    learners.forEach((learner) => {
+      const programme = learner.programName || 'No programme';
+      counts.set(programme, (counts.get(programme) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [learners]);
+  const visibleLearners = useMemo(() => (
+    programmeFilter === 'all'
+      ? learners
+      : learners.filter((learner) => (learner.programName || 'No programme') === programmeFilter)
+  ), [learners, programmeFilter]);
+
+  useEffect(() => {
+    if (programmeFilter !== 'all' && !programmeOptions.some(([programme]) => programme === programmeFilter)) {
+      setProgrammeFilter('all');
+    }
+  }, [programmeFilter, programmeOptions]);
 
   useEffect(() => {
     if (!selectedLearnerId) {
@@ -130,7 +885,7 @@ export default function AuditWorkspace() {
   const canPreviewPdf = Boolean(audit && selectedMonth && selectedSignoffMonths.length > 0 && learnerSignature && coachSignature);
 
   useEffect(() => {
-    if (!selectedMonth) return;
+if (!selectedMonth) return;
     const learner = selectedMonth.signoffs.learner;
     const coach = selectedMonth.signoffs.coach;
     setLearnerSignerName(learner?.signer_name || '');
@@ -235,7 +990,7 @@ export default function AuditWorkspace() {
       userRole="External Auditor"
       workspaceLabel={auditorConfig.workspaceLabel}
     >
-      <div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
+<div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
         <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50 shadow-sm">
             <div className="shrink-0 border-b border-background-200 bg-white p-4">
@@ -243,9 +998,25 @@ export default function AuditWorkspace() {
                 <div>
                   <h2 className="text-sm font-heading font-semibold text-foreground-900">Learners</h2>
                 </div>
-                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{learners.length}</span>}
+                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{visibleLearners.length}</span>}
               </div>
               <SearchBox value={learnerSearch} onChange={setLearnerSearch} placeholder="Search learner, ID, programme" />
+              <label className="mt-3 block">
+                <span className="sr-only">Programme filter</span>
+                <select
+                  value={programmeFilter}
+                  onChange={(event) => {
+                    setProgrammeFilter(event.target.value);
+                    setSelectedLearnerId('');
+                  }}
+                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                >
+                  <option value="all">All programmes</option>
+                  {programmeOptions.map(([programme, count]) => (
+                    <option key={programme} value={programme}>{display(programme)} ({count})</option>
+                  ))}
+                </select>
+              </label>
               <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-background-100 p-1">
                 <button
                   type="button"
@@ -267,10 +1038,10 @@ export default function AuditWorkspace() {
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {loadingLearners ? (
                 <LearnerListSkeleton />
-              ) : learners.length === 0 ? (
-                <EmptyPanel icon="ri-user-search-line" text={learnerSearch ? 'Learner not found.' : 'No learners are available.'} />
+              ) : visibleLearners.length === 0 ? (
+                <EmptyPanel icon="ri-user-search-line" text={learnerSearch || programmeFilter !== 'all' ? 'Learner not found.' : 'No learners are available.'} />
               ) : (
-                learners.map((learner) => {
+                visibleLearners.map((learner) => {
                   const learnerIsTest = isTestLearner(learner);
                   return (
                   <button
@@ -311,6 +1082,29 @@ export default function AuditWorkspace() {
 
           <section className="min-h-0 min-w-0 overflow-y-auto pr-1">
             <div className="space-y-4 pb-8">
+            <div className="inline-grid grid-cols-2 gap-1 rounded-xl border border-background-200 bg-background-50 p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setAuditView('monthly')}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'monthly' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
+              >
+                <i className="ri-file-search-line" />
+                Monthly Audit
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuditView('activities')}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'activities' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
+              >
+                <i className="ri-stack-line" />
+                Activity Categories
+              </button>
+            </div>
+
+            {auditView === 'activities' ? (
+              <div />
+            ) : (
+            <>
             {error && <StateBanner tone="error" text={error} />}
             {pdfError && <StateBanner tone="error" text={pdfError} />}
 
@@ -400,6 +1194,8 @@ export default function AuditWorkspace() {
               )}
             </section>
 
+            </>
+            )}
             </div>
           </section>
         </div>
@@ -705,7 +1501,7 @@ function AuditItemDetails({ item, loading, audit, month }: { item: AuditActivity
     );
   }
   return (
-    <section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
+<section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-600">Learning Item Details</p>
@@ -1123,7 +1919,7 @@ function applyManySignoffs(audit: LearnerAuditResponse, responses: Array<{ month
 
 function statusPill(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized.includes('complete') || normalized.includes('pass')) return 'bg-emerald-50 text-emerald-700';
+  if (normalized.includes('complete') || normalized.includes('pass') || normalized.includes('present') || normalized.includes('attend')) return 'bg-emerald-50 text-emerald-700';
   if (normalized.includes('progress') || normalized.includes('start')) return 'bg-blue-50 text-blue-700';
   return 'bg-amber-50 text-amber-700';
 }
@@ -1222,7 +2018,7 @@ function roundHours(value: number) {
 
 function statusBucket(status: string) {
   const normalized = status.toLowerCase().replace(/\s/g, '');
-  if (normalized.includes('complete') || normalized === 'passed' || normalized === 'done') return 'completed';
+  if (normalized.includes('complete') || normalized === 'passed' || normalized === 'done' || normalized === 'present' || normalized === 'attended' || normalized === 'attend') return 'completed';
   if (normalized.includes('progress') || normalized.includes('started') || normalized.includes('visited')) return 'in_progress';
   return 'not_started';
 }

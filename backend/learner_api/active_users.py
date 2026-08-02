@@ -319,7 +319,9 @@ def cohort_dates(programme, cohort):
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
-                'SELECT start_date, end_date FROM curriculum."cohort_authoring_details" '
+                # Table was renamed cohort_authoring_details -> cohorts by
+                # curriculum_api migration 0004; same columns.
+                'SELECT start_date, end_date FROM curriculum."cohorts" '
                 "WHERE lower(btrim(programme_name)) = lower(%s) "
                 "AND lower(btrim(cohort_name)) = lower(%s) "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",

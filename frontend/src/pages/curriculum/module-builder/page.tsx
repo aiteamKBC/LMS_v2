@@ -6317,6 +6317,8 @@ function componentTypeDescription(type: ModuleComponentType) {
     checkpoint: 'End-of-month KSB check',
     'monthly-ksb-quiz': 'Tracks KSB progression',
     'coaching-preparation': 'Monthly coaching meeting prep',
+    'recording-placeholder': 'Teams recording placeholder',
+    'workplace-evidence': 'Workplace evidence upload',
   };
   return descriptions[type] || 'Add a component';
 }

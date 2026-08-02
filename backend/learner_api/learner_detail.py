@@ -23,15 +23,20 @@ from django.utils import timezone
 
 from .active_users import completed_hours_from_progress, fmt_hours
 from .mappers import _s, to_learner_detail
-from .models import LearnerProfile
+from .models import EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
 
+# The enrolment record is the source: every learner exists in
+# enrolment."Created_users" from the moment they are created, whereas the
+# "Learner"."learners" profile only appears once enrolment is finished. Reading
+# the source here is what lets a still-onboarding learner load their page at all
+# (and carry a real programmeStatus, so the onboarding redirect can fire).
+# `kind` remains in the URL for backwards-compatible frontend routes; ids are
+# unique across the single table, so both resolve the same way.
 SOURCE_MODELS = {
-    # `kind` remains in the URL for backwards-compatible frontend routes, but
-    # both routes resolve the same canonical learner identity table.
-    "commercial": LearnerProfile,
-    "apprenticeship": LearnerProfile,
+    "commercial": EnrolmentUser,
+    "apprenticeship": EnrolmentUser,
 }
 
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
@@ -872,7 +877,9 @@ def learner_detail(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        source = model.objects.get(pk=pk)
+        # all_learners, not objects: the default manager is scoped to
+        # apprenticeship rows, so a commercial learner would 404 here.
+        source = model.all_learners.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:

@@ -8,7 +8,8 @@ export interface SidebarNavItem {
   id: string;
   label: string;
   icon: string;
-  href: string;
+  /** Leaf destination. Navigation groups intentionally omit it. */
+  href?: string;
   badge?: number;
   comingSoon?: boolean;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
@@ -76,7 +77,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
   const queryMatchedHref = useMemo(() => {
     const current = `${location.pathname}${location.search}`;
     const items = filteredNavItems.flatMap(item => [item, ...(item.children ?? [])]);
-    return items.find(item => item.href.includes('?') && item.href === current)?.href ?? '';
+    return items.find(item => item.href?.includes('?') && item.href === current)?.href ?? '';
   }, [filteredNavItems, location.pathname, location.search]);
 
   const toggleGroup = useCallback((id: string) => {
@@ -91,13 +92,12 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
     [filteredNavItems],
   );
 
-  const isActive = (href: string) => {
+  const isActive = (href?: string) => {
     if (!href) return false;
     const [hrefPath] = href.split('?');
     const current = `${location.pathname}${location.search}`;
     if (href.includes('?')) return current === href;
     if (queryMatchedHref && hrefPath === queryMatchedHref.split('?')[0]) return false;
-    return location.pathname === href || location.pathname.startsWith(href + '/');
     const matches = location.pathname === href || location.pathname.startsWith(href + '/');
     if (!matches) return false;
 
@@ -344,7 +344,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
 function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
   item: SidebarNavItem;
-  isActive: (href: string) => boolean;
+  isActive: (href?: string) => boolean;
   isDropdownOpen: boolean;
   onToggle: () => void;
 }) {
@@ -481,7 +481,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
 
 function NavLink({ item, isActive }: {
   item: SidebarNavItem;
-  isActive: (href: string) => boolean;
+  isActive: (href?: string) => boolean;
 }) {
   const active = isActive(item.href);
   const spanRef = useRef<HTMLSpanElement>(null);
@@ -523,7 +523,7 @@ function NavLink({ item, isActive }: {
 
   return (
     <Link
-      to={item.href}
+      to={item.href ?? '#'}
       className={`relative flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -537,7 +537,7 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
   href: string;
   icon: string;
   label: string;
-  isActive: (href: string) => boolean;
+  isActive: (href?: string) => boolean;
 }) {
   const active = isActive(href);
   const spanRef = useRef<HTMLSpanElement>(null);
@@ -580,7 +580,7 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
 
 function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
   item: SidebarNavItem;
-  isActive: (href: string) => boolean;
+  isActive: (href?: string) => boolean;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -650,7 +650,7 @@ function MobileNavLink({ item, isActive }: {
 
   return (
     <Link
-      to={item.href}
+      to={item.href ?? '#'}
       className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
     >
       {content}

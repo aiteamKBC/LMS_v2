@@ -22,8 +22,6 @@ import { formatHoursMinutes } from '@/utils/learnerJourney';
 // If the learner already has a saved plan, it is loaded and pre-filled.
 // ============================================================================
 
-const enrolmentNav = roleNavMap.compliance;
-
 type Kind = 'commercial' | 'apprenticeship';
 
 interface BuiltWeek extends WeekItem {
@@ -84,6 +82,12 @@ export default function TrainingPlanPage() {
   const { kind, userId } = useParams<{ kind: Kind; userId: string }>();
   const navigate = useNavigate();
   const { success, error } = useToast();
+
+  // Stay inside the learner's own track — the two enrolment sections are separate.
+  const trackNav = roleNavMap.apprentice;
+  const backHref = userId
+    ? `/users/${userId}${kind === 'commercial' ? '?source=commercial' : ''}`
+    : '/users';
 
   const [step, setStep] = useState(1);
   const [learnerName, setLearnerName] = useState('');
@@ -286,7 +290,7 @@ export default function TrainingPlanPage() {
         await updateEnrolmentUser(userId, { programme, cohort, group, trainingPlan });
       }
       success('Training plan saved', `Plan for ${learnerName || 'learner'} was saved.`);
-      navigate('/delivery');
+      navigate(backHref);
     } catch (err) {
       error('Could not save training plan', err instanceof Error ? err.message : 'Unexpected error');
     } finally {
@@ -306,10 +310,10 @@ export default function TrainingPlanPage() {
 
   return (
     <WorkspaceShell
-      role="compliance"
-      roleLabel={enrolmentNav.label}
-      navItems={enrolmentNav.items}
-      workspaceLabel={enrolmentNav.workspaceLabel}
+      role="apprentice"
+      roleLabel={trackNav.label}
+      navItems={trackNav.items}
+      workspaceLabel={trackNav.workspaceLabel}
       pageTitle="Training plan"
       pageSubtitle={learnerName || 'Build a learner training plan'}
       userName="Enrolment Officer"
@@ -474,7 +478,7 @@ export default function TrainingPlanPage() {
 
             {/* footer nav */}
             <div className="flex items-center justify-between gap-3">
-              <button className={btnSecondary} onClick={() => navigate('/delivery')}>Cancel</button>
+              <button className={btnSecondary} onClick={() => navigate(backHref)}>Cancel</button>
               <div className="flex items-center gap-3">
                 {step > 1 && <button className={btnSecondary} onClick={back}><i className="ri-arrow-left-line" />Back</button>}
                 {step < 3 && (
