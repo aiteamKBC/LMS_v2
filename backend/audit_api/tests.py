@@ -3,7 +3,7 @@ import json
 
 from django.test import SimpleTestCase
 
-from .views import _build_audit_payload, _build_student_source_data, _group_months, _signoff_row
+from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _signoff_row
 
 
 class AptemLmsAuditPayloadTests(SimpleTestCase):
@@ -138,6 +138,93 @@ class AptemLmsAuditPayloadTests(SimpleTestCase):
 
         self.assertEqual([month["month_key"] for month in months], ["2026-07"])
         self.assertEqual(months[0]["weeks"][0]["aptem_items"][0]["activity_name"], "Past Activity")
+
+    def test_live_session_category_only_uses_attendance_rows(self):
+        present = _normalize_attendance_item({"ID": 1521, "date": "2026-05-01", "Attendance": 1, "module": "Live session"}, 0)
+        absent = _normalize_attendance_item({"ID": 1521, "date": "2026-05-08", "Attendance": 0, "module": "Live session"}, 1)
+        lms_session = {
+            "source": "LMS",
+            "component_type": "LMS component",
+            "component_name": "Summary revision session",
+            "course_module": "Marketing",
+        }
+
+        self.assertEqual(present["status"], "Present")
+        self.assertEqual(absent["status"], "Absent")
+        self.assertEqual(_activity_category(present), "live_session")
+        self.assertEqual(_activity_category(absent), "live_session")
+        self.assertNotEqual(_activity_category(lms_session), "live_session")
+
+    def test_assignment_json_rows_keep_hours_and_evidence_details(self):
+        source_rows = _assignment_source_rows({
+            "learner_id": 3582,
+            "assignments": json.dumps([
+                {
+                    "raw": {
+                        "Id": 27517,
+                        "Status": "Completed",
+                        "DueDate": "2025-08-30T00:00:00+01:00",
+                        "ActualHours": 3,
+                        "PlannedHours": 8,
+                        "ComponentName": "August- Marketing Impact - Introduction to Marketing (Coach Led Assignment)",
+                        "ComponentType": "Assignment",
+                    },
+                    "evidence": [{"kind": "File", "name": "Assessment.docx", "status": "Accepted"}],
+                    "actual_hours": 3,
+                    "planned_hours": 8,
+                    "component_id": 27517,
+                    "component_name": "August- Marketing Impact - Introduction to Marketing (Coach Led Assignment)",
+                    "component_type": "Assignment",
+                }
+            ]),
+        })
+        item = _normalize_assignment_item(source_rows[0], 0)
+
+        self.assertEqual(item["source_id"], "27517")
+        self.assertEqual(item["activity_name"], "August- Marketing Impact - Introduction to Marketing (Coach Led Assignment)")
+        self.assertEqual(item["status"], "Completed")
+        self.assertEqual(item["actual_hours"], 3)
+        self.assertEqual(item["planned_hours"], 8)
+        self.assertEqual(item["hours_variance"], -5)
+        self.assertEqual(item["relevant_date"], "2025-08-30")
+        self.assertEqual(item["raw"]["evidence"][0]["name"], "Assessment.docx")
+
+    def test_assignment_report_blob_gets_internal_azure_url(self):
+        source_rows = _assignment_source_rows({
+            "learner_id": 3582,
+            "assignments": json.dumps([{
+                "raw": {"Id": 27517, "ComponentName": "Assignment", "PlannedHours": 8},
+                "evidence": [{
+                    "kind": "File",
+                    "name": "Assessment.docx",
+                    "report_blob": "July 2025- Level 4 Marketing Executive/Ella Pennells-3582/9101-AssessmentReport.pdf",
+                }],
+            }]),
+        })
+
+        blob_url = source_rows[0]["evidence"][0]["assessment_report_blob_url"]
+        self.assertIn("/audit_api/blob/?container=evidence-approved&blob=", blob_url)
+        self.assertIn("9101-AssessmentReport.pdf", blob_url)
+
+    def test_assignment_evidence_is_enriched_with_coach_feedback(self):
+        item = _normalize_assignment_item({
+            "raw": {"Id": 27517, "ComponentName": "Assignment", "PlannedHours": 8},
+            "evidence": [{"kind": "File", "name": "Assessment.docx", "evidence_id": 9101}],
+        }, 0)
+
+        _enrich_assignment_items_with_evidence_details("3582", [item], {
+            "3582": {
+                "9101": {
+                    "evidence_id": 9101,
+                    "feedbacks": [{"id": 7218, "author": "Esraa Yasser", "date": "2025-09-02T09:26:01", "message": "<p>Great work.</p>"}],
+                    "report_blob": "July 2025- Level 4 Marketing Executive/Ella Pennells-3582/9101-AssessmentReport.pdf",
+                }
+            }
+        })
+
+        evidence = item["raw"]["evidence"][0]
+        self.assertEqual(evidence["feedbacks"][0]["author"], "Esraa Yasser")
+        self.assertIn("assessment_report_blob_url", evidence)
 
     def test_signature_invalidation_message_when_snapshot_changes(self):
         row = _signoff_row({
