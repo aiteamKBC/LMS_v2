@@ -271,6 +271,20 @@ export default function Home() {
     navigate(section.workspacePath);
   };
 
+  // Enrolment-type choices from the modal — both sign in as the compliance
+  // demo account (the enrolment section's account) before routing in.
+  const chooseApprenticeshipEnrolment = () => {
+    setEnrolmentChoiceOpen(false);
+    login('compliance@kbc.test');
+    navigate('/users');
+  };
+
+  const choosedelivery = () => {
+    setEnrolmentChoiceOpen(false);
+    login('compliance@kbc.test');
+    navigate('/users');
+  };
+
   const scrollToWorkspaces = () => {
     // Reset and replay the card wave on every CTA click.
     setPortalWave(false);
