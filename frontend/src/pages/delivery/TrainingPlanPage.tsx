@@ -84,9 +84,10 @@ export default function TrainingPlanPage() {
   const { success, error } = useToast();
 
   // Stay inside the learner's own track — the two enrolment sections are separate.
-  const trackRole = kind === 'commercial' ? 'commercial' : 'apprentice';
-  const trackNav = roleNavMap[trackRole];
-  const backHref = `/${trackRole}/delivery`;
+  const trackNav = roleNavMap.apprentice;
+  const backHref = userId
+    ? `/users/${userId}${kind === 'commercial' ? '?source=commercial' : ''}`
+    : '/users';
 
   const [step, setStep] = useState(1);
   const [learnerName, setLearnerName] = useState('');
@@ -309,7 +310,7 @@ export default function TrainingPlanPage() {
 
   return (
     <WorkspaceShell
-      role={trackRole}
+      role="apprentice"
       roleLabel={trackNav.label}
       navItems={trackNav.items}
       workspaceLabel={trackNav.workspaceLabel}

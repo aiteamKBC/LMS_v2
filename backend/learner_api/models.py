@@ -41,6 +41,16 @@ class SafeJSONField(models.JSONField):
             return value
 
 
+def _serialise_quiz_ref(value):
+    """Keep learner API quiz IDs numeric when their database column is text."""
+    if value in (None, ""):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 class LearnerTypeQuerySet(models.QuerySet):
     """Queryset for the merged learner table, scoped by "Learner_type"."""
 
