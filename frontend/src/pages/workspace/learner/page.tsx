@@ -6,12 +6,15 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 
 /* ─────────────────────────────────────────────
@@ -45,14 +48,59 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
+const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: string }> = {
+  accepted: { label: 'Reflection accepted', style: 'bg-emerald-100 text-emerald-700', icon: 'ri-check-double-line' },
+  submitted_for_tutor_review: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  pending: { label: 'Reflection awaiting review', style: 'bg-primary-100 text-primary-700', icon: 'ri-time-line' },
+  referred: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  reject: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+  rejected: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
+};
+
 /** One component row inside the current-week card. */
-function CurrentWeekRow({ c, videos, onOpen }: {
-  c: JourneyComponent; videos: LearnerVideoProgress[]; onOpen?: () => void;
+function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
+  c: JourneyComponent;
+  videos: LearnerVideoProgress[];
+  learnerKind?: string;
+  learnerId?: string;
+  onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
+  const [reflectionStatus, setReflectionStatus] = useState('');
+
+  useEffect(() => {
+    const validKind = learnerKind === 'commercial' || learnerKind === 'apprenticeship';
+    const activityId = c.isQuiz && c.quizMeta?.quizId != null
+      ? `quiz-${c.quizMeta.quizId}`
+      : c.componentId;
+    if (!validKind || !learnerId || !activityId) {
+      setReflectionStatus('');
+      return;
+    }
+
+    let cancelled = false;
+    void loadLearningReflectionSubmission({
+      learnerKind: learnerKind as LearnerKind,
+      learnerId,
+      activityType: c.isQuiz ? 'quiz' : componentNoun(c.type),
+      activityId,
+    })
+      .then((submission) => {
+        if (!cancelled) setReflectionStatus(submission?.status || '');
+      })
+      .catch(() => {
+        if (!cancelled) setReflectionStatus('');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [c.componentId, c.isQuiz, c.quizMeta?.quizId, c.type, learnerId, learnerKind]);
+
+  const reflection = REFLECTION_STATUS[reflectionStatus];
   return (
     <button
       type="button"
@@ -83,6 +131,12 @@ function CurrentWeekRow({ c, videos, onOpen }: {
           {prog.state === 'watched' && <i className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
+        {reflection && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
+            <i className={`${reflection.icon} text-[10px]`} />
+            {reflection.label}
+          </span>
+        )}
         {c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><i className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
@@ -143,7 +197,14 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
         ) : (
           <div className="space-y-2">
             {components.map((c, i) => (
-              <CurrentWeekRow key={c.componentId || `${c.title}-${i}`} c={c} videos={videos} onOpen={openFor(c)} />
+              <CurrentWeekRow
+                key={c.componentId || `${c.title}-${i}`}
+                c={c}
+                videos={videos}
+                learnerKind={kind}
+                learnerId={learnerId}
+                onOpen={openFor(c)}
+              />
             ))}
           </div>
         )}
@@ -275,7 +336,7 @@ function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
+function MiniCalendar({ kind, id }: { kind?: LearnerKind; id?: string }) {
   const now = useMemo(() => new Date(), []);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -381,17 +442,17 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   return (
     <div>
       {/* Month nav */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="mb-3 flex items-center justify-between rounded-xl border border-primary-100/70 bg-gradient-to-r from-primary-50/70 to-background-50 px-3 py-2.5">
         <span className="text-[13px] font-heading font-semibold text-foreground-900">{MINI_MONTHS[vm]} {vy}</span>
         <div className="flex items-center gap-1">
-          <button onClick={goToday} className="text-[11px] font-medium px-2 py-1 rounded-md bg-background-100 text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer">Today</button>
-          <button onClick={prev} aria-label="Previous month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
-          <button onClick={next} aria-label="Next month" className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
+          <button onClick={goToday} className="rounded-lg border border-foreground-100 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600 shadow-sm transition-smooth hover:border-primary-200 hover:text-primary-600 cursor-pointer">Today</button>
+          <button onClick={prev} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
+          <button onClick={next} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
         </div>
       </div>
 
       {/* Weekday header */}
-      <div className="grid grid-cols-7 gap-1 mb-1">
+      <div className="mb-1.5 grid grid-cols-7 gap-1 px-1">
         {MINI_WD.map((w, i) => <div key={i} className="text-center text-[10px] font-semibold text-foreground-400">{w}</div>)}
       </div>
 
@@ -400,8 +461,8 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
         {cells.map((d, i) => (
           <div
             key={i}
-            className={`h-9 rounded-lg flex flex-col items-center justify-center ${d == null ? '' : 'border border-foreground-100'} ${
-              d != null && isToday(d) ? 'bg-primary-500 border-primary-500 text-white' : 'text-foreground-700'
+            className={`h-10 rounded-lg flex flex-col items-center justify-center transition-smooth ${d == null ? '' : 'border border-foreground-100 bg-background-50 hover:border-primary-200 hover:bg-primary-50/40'} ${
+              d != null && isToday(d) ? '!bg-primary-500 !border-primary-500 text-white shadow-sm shadow-primary-500/20' : 'text-foreground-700'
             }`}
           >
             {d != null && (
@@ -415,8 +476,8 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
       </div>
 
       {/* Next sessions */}
-      <div className="mt-4 pt-3 border-t border-foreground-100">
-        <div className="flex items-center justify-between mb-2">
+      <div className="mt-4 border-t border-foreground-100 pt-4">
+        <div className="mb-3 flex items-center justify-between">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Next sessions</p>
           <button
             onClick={() => { setShowBook((v) => !v); setBookErr(null); }}
@@ -431,16 +492,16 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
         ) : (
           <div className="space-y-2">
             {upcoming.map(({ ev, dt }) => (
-              <div key={ev.id} className="flex items-center gap-2.5">
-                <div className="w-9 shrink-0 rounded-lg bg-background-100 py-1 text-center">
+              <div key={ev.id} className="group flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 transition-smooth hover:border-primary-200 hover:shadow-sm">
+                <div className="w-10 shrink-0 rounded-lg bg-primary-50 py-1.5 text-center ring-1 ring-inset ring-primary-100">
                   <p className="text-[12px] font-bold leading-none text-foreground-800">{dt.d}</p>
-                  <p className="text-[9px] uppercase text-foreground-400 mt-0.5">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
+                  <p className="mt-1 text-[9px] font-semibold uppercase text-primary-500">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-semibold text-foreground-900 truncate">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
-                  <p className="text-[11px] text-foreground-400 truncate">{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
+                  <p className="truncate text-[12px] font-semibold text-foreground-900">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-foreground-400"><i className="ri-time-line mr-1" />{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
                 </div>
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
+                <span className={`h-2 w-2 shrink-0 rounded-full ring-4 ring-background-100 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
               </div>
             ))}
           </div>
@@ -527,7 +588,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
 type StationTone = 'done' | 'current' | 'upcoming';
 
 /** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number }) {
+function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
   const t = tone === 'done'
     ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
     : tone === 'current'
@@ -535,8 +596,8 @@ function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: str
       : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
   const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
   const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
-  return (
-    <div className="flex flex-col items-center gap-1.5 w-[76px] shrink-0 text-center">
+  const content = (
+    <>
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} className="-rotate-90 absolute inset-0">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
@@ -549,6 +610,20 @@ function JourneyNode({ icon, label, sub, tone, pct }: { icon: string; label: str
       </div>
       <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
       {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
+    </>
+  );
+
+  return href ? (
+    <a
+      href={href}
+      aria-label={`Open ${label}`}
+      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+    >
+      {content}
+    </a>
+  ) : (
+    <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
+      {content}
     </div>
   );
 }
@@ -563,7 +638,7 @@ function stationTone(s: ModuleStation): StationTone {
   return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
 }
 
-function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null; loading: boolean; loadError: string | null }) {
+function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
 
@@ -605,6 +680,7 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
                 sub={s.pct == null ? '—' : `${s.pct}%`}
                 tone={stationTone(s)}
                 pct={s.pct ?? 0}
+                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
               />
             </Fragment>
           ))}
@@ -615,7 +691,11 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
 
       {/* Current-module card */}
       {current ? (
-        <div className="mt-4 rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5">
+        <a
+          href={`${journeyHref}?module=${current.index + 1}`}
+          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
+          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+        >
           <div className="flex items-center gap-2 mb-2.5">
             <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><i className="ri-flag-2-fill text-sm" /></span>
             <div className="min-w-0">
@@ -623,13 +703,14 @@ function MiniJourney({ real, loading, loadError }: { real: LearnerDetail | null;
               <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
             </div>
             <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
+            <i className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
             <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
             <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
           </div>
-        </div>
+        </a>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><i className="ri-trophy-fill" /></span>
@@ -705,6 +786,70 @@ export default function LearnerOverview() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
+  const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
+  const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(isRealMode);
+
+  useEffect(() => {
+    if (!isRealMode || !kind || !id) {
+      setAttendance(null);
+      setAttendanceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAttendance(null);
+    setAttendanceLoading(true);
+    fetchLearnerAttendance(kind, id)
+      .then((record) => {
+        if (!cancelled) setAttendance(record);
+      })
+      .catch(() => {
+        if (!cancelled) setAttendance(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAttendanceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealMode, kind, id]);
+
+  useEffect(() => {
+    if (!isRealMode || !kind || !id) {
+      setEvidence([]);
+      setEvidenceLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setEvidence([]);
+    setEvidenceLoading(true);
+    fetchEvidence(kind, id)
+      .then((records) => {
+        if (!cancelled) setEvidence(records);
+      })
+      .catch(() => {
+        if (!cancelled) setEvidence([]);
+      })
+      .finally(() => {
+        if (!cancelled) setEvidenceLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealMode, kind, id]);
+
+  const evidenceStats = useMemo(() => {
+    const approved = evidence.filter((record) => record.status === 'approved').length;
+    const pending = evidence.filter((record) => record.status === 'pending').length;
+    const rejected = evidence.filter((record) => record.status === 'rejected').length;
+    const progress = evidence.length ? Math.round((approved / evidence.length) * 100) : 0;
+    return { total: evidence.length, approved, pending, rejected, progress };
+  }, [evidence]);
 
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
@@ -857,15 +1002,6 @@ export default function LearnerOverview() {
               <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
               <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
             </div>
-            {/* avatar */}
-            <div className="absolute right-8 bottom-0 top-0 w-1/2 hidden md:flex items-end justify-end pointer-events-none">
-              <img
-                src="https://public.readdy.ai/ai/img_res/63cca6b6-155e-4d44-9b95-588ef15c4704.png"
-                alt="Learner"
-                className="h-full w-auto object-contain object-bottom"
-                style={{ maxHeight: '115%', transform: 'translateY(8%)' }}
-              />
-            </div>
             <div className="relative h-full flex flex-col justify-center p-6 md:p-8">
               <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
                 <div className="flex-1 min-w-0 max-w-xl">
@@ -889,58 +1025,6 @@ export default function LearnerOverview() {
             >
               <i className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></i>
             </a>
-            )}
-          </section>
-        </SectionReveal>
-
-        {/* ================================================================
-            SECTION 2 — TODAY'S FOCUS
-            ================================================================ */}
-        <SectionReveal delay={80}>
-          <section className="relative rounded-2xl overflow-hidden bg-background-50 border border-foreground-200/50 card-premium">
-            <div className="absolute inset-0 bg-gradient-to-r from-background-100/60 via-transparent to-transparent pointer-events-none" />
-            {isRealMode ? (
-              <div className="relative p-5 md:p-6 flex items-center gap-5">
-                <div className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center shrink-0">
-                  <i className="ri-presentation-line text-foreground-400 text-2xl"></i>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground-400 uppercase tracking-widest mb-1 font-label">Today&apos;s Focus</p>
-                  <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-500 tracking-tight mb-1">Not tracked yet</h2>
-                  <p className="text-sm text-foreground-400">Live session scheduling isn&apos;t wired up for this learner yet.</p>
-                </div>
-              </div>
-            ) : (
-            <div className="relative p-5 md:p-6 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-              <div className="w-14 h-14 rounded-2xl bg-accent-500 flex items-center justify-center shrink-0 shadow-sm shadow-accent-500/20">
-                <i className="ri-presentation-line text-foreground-950 text-2xl"></i>
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-accent-600 uppercase tracking-widest mb-1 font-label">Today&apos;s Focus</p>
-                <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-900 tracking-tight mb-1">Live Session: Campaign Targeting</h2>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-foreground-500">
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-calendar-line text-accent-500"></i> {p.nextLiveSession.day}
-                  </span>
-                  <span className="text-foreground-300">&middot;</span>
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-time-line text-accent-500"></i> {p.nextLiveSession.time}
-                  </span>
-                  <span className="text-foreground-300">&middot;</span>
-                  <span className="flex items-center gap-1.5">
-                    <i className="ri-hourglass-line text-accent-500"></i> 2.0 OTJ Hours
-                  </span>
-                </div>
-              </div>
-
-              <a
-                href="/learner/training-plan"
-                className="shrink-0 px-6 py-3 rounded-xl bg-accent-500 text-foreground-950 text-sm font-semibold font-label hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm shadow-accent-500/15"
-              >
-                Join Session <i className="ri-arrow-right-line"></i>
-              </a>
-            </div>
             )}
           </section>
         </SectionReveal>
@@ -971,7 +1055,28 @@ export default function LearnerOverview() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
               {isRealMode ? (
                 <>
-                  <HealthCard icon="ri-calendar-check-line" label="Attendance" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                  {attendance ? (
+                    <HealthCard
+                      icon="ri-calendar-check-line"
+                      label="Attendance"
+                      value={`${attendance.attendanceRate}%`}
+                      detail={`${attendance.present}/${attendance.sessions} sessions`}
+                      status={attendance.attendanceRate >= 90 ? 'green' : attendance.attendanceRate >= 80 ? 'amber' : 'red'}
+                      progress={attendance.attendanceRate}
+                      showBar
+                      href="/learner/attendance"
+                    />
+                  ) : (
+                    <HealthCard
+                      icon="ri-calendar-check-line"
+                      label="Attendance"
+                      value="—"
+                      detail={attendanceLoading ? 'Loading attendance…' : 'No attendance record yet'}
+                      status="muted"
+                      progress={0}
+                      href="/learner/attendance"
+                    />
+                  )}
                   {otj.activities > 0 ? (
                     <HealthCard
                       icon="ri-time-line"
@@ -1019,7 +1124,28 @@ export default function LearnerOverview() {
                   ) : (
                     <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="emerald" progress={0} badgeLabel="Defined" />
                   )}
-                  <HealthCard icon="ri-folder-check-line" label="Evidence" value="—" detail="Not tracked yet" status="muted" progress={0} />
+                  {evidenceStats.total > 0 ? (
+                    <HealthCard
+                      icon="ri-folder-check-line"
+                      label="Evidence"
+                      value={`${evidenceStats.total} Submitted`}
+                      detail={`${evidenceStats.approved} approved · ${evidenceStats.pending} pending${evidenceStats.rejected ? ` · ${evidenceStats.rejected} rejected` : ''}`}
+                      status={evidenceStats.rejected > 0 ? 'red' : evidenceStats.pending > 0 ? 'amber' : 'green'}
+                      progress={evidenceStats.progress}
+                      href="/learner/evidence"
+                      badgeLabel={evidenceStats.rejected > 0 ? 'Action Required' : evidenceStats.pending > 0 ? 'Needs Review' : 'Approved'}
+                    />
+                  ) : (
+                    <HealthCard
+                      icon="ri-folder-check-line"
+                      label="Evidence"
+                      value="—"
+                      detail={evidenceLoading ? 'Loading evidence…' : 'No evidence submitted yet'}
+                      status="muted"
+                      progress={0}
+                      href="/learner/evidence"
+                    />
+                  )}
                 </>
               ) : (
                 <>
@@ -1100,10 +1226,18 @@ export default function LearnerOverview() {
               </div>
 
               {/* ── My Calendar ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col shadow-[0_5px_24px_rgba(28,10,55,0.04)]">
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">My Calendar</h2>
-                  <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+                      <i className="ri-calendar-2-line text-base" />
+                    </span>
+                    <div>
+                      <h2 className="text-base font-heading font-semibold leading-tight text-foreground-900">My Calendar</h2>
+                      <p className="mt-0.5 text-[11px] text-foreground-400">Sessions and upcoming reviews</p>
+                    </div>
+                  </div>
+                  <a href="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
                     Open <i className="ri-arrow-right-line ml-0.5"></i>
                   </a>
                 </div>
@@ -1132,11 +1266,16 @@ export default function LearnerOverview() {
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
-                  <a href={`/learner/modules/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <a href={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     Open <i className="ri-arrow-right-line ml-0.5"></i>
                   </a>
                 </div>
-                <MiniJourney real={real} loading={loading} loadError={loadError} />
+                <MiniJourney
+                  real={real}
+                  loading={loading}
+                  loadError={loadError}
+                  journeyHref={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'}
+                />
               </div>
 
             </div>
@@ -1163,7 +1302,7 @@ export default function LearnerOverview() {
                           key={comp.id}
                           component={comp}
                           status={effectiveStatus}
-                          canMarkComplete={comp.status !== 'completed' && !userCompletions[i]}
+                          canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
                           onMarkComplete={() => handleMarkComplete(i)}
                         />
                       );
@@ -1222,41 +1361,6 @@ export default function LearnerOverview() {
           </>
         )}
 
-        {/* ================================================================
-            SECTION 6 — SUPPORT PANEL
-            ================================================================ */}
-        <SectionReveal delay={240}>
-          <section className="bg-background-50 rounded-xl border border-foreground-200/50 p-5 md:p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center shrink-0">
-                  <i className="ri-customer-service-2-line text-primary-600 text-lg"></i>
-                </div>
-                <div>
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Need Help?</h2>
-                  <p className="text-sm text-foreground-500">
-                    {isRealMode
-                      ? 'The support team is here to help this learner succeed.'
-                      : <>Your coach {p.coach.name} and the support team are here to help you succeed.</>}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <a href="/learner/messages?contact=med-maher" className="px-4 py-2 rounded-lg border border-foreground-200 text-sm font-medium text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-chat-smile-2-line mr-1.5"></i> Contact Coach
-                </a>
-                <a href="/learner/support?action=new-ticket&category=wellbeing" className="px-4 py-2 rounded-lg border border-foreground-200 text-sm font-medium text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-heart-pulse-line mr-1.5"></i> Wellbeing Support
-                </a>
-                <a href="/learner/messages?contact=learner-support" className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold font-label hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shadow-sm shadow-primary-500/15">
-                  <i className="ri-customer-service-2-line mr-1.5"></i> Talk With Us
-                </a>
-              </div>
-            </div>
-          </section>
-        </SectionReveal>
-
       </div>
     </WorkspaceShell>
   );
@@ -1299,7 +1403,7 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
     : null;
 
   const Card = (
-    <div className={`relative overflow-hidden rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer ${S.tint || 'bg-background-50'}`}>
+    <div className={`relative flex h-full flex-col overflow-hidden rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer ${S.tint || 'bg-background-50'}`}>
       {S.tint && <div className="absolute inset-0 bg-background-50 -z-10" />}
       {/* Top row: icon + status badge */}
       <div className="flex items-center justify-between mb-3">
@@ -1333,13 +1437,13 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
         </div>
       )}
 
-      <p className="text-xs text-foreground-400 mt-2">{detail}</p>
+      <p className="mt-auto pt-2 text-xs text-foreground-400">{detail}</p>
     </div>
   );
 
   if (href) {
     return (
-      <a href={href} className="block">
+      <a href={href} className="block h-full">
         {Card}
       </a>
     );

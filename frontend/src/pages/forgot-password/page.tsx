@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { BrandLockup } from '@/components/BrandLockup';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -34,15 +35,7 @@ export default function ForgotPasswordPage() {
       <div className="flex-1 flex items-center justify-center p-6 md:p-8 lg:p-12 bg-background-50">
         <div className="w-full max-w-[420px] animate-fade-in-up">
           {/* Logo */}
-          <div className="flex items-center gap-3 mb-10">
-            <div className="w-10 h-10 rounded-xl bg-primary-500 flex items-center justify-center">
-              <span className="text-white font-bold text-lg font-heading">K</span>
-            </div>
-            <div>
-              <p className="text-foreground-900 font-heading text-lg font-semibold leading-tight">KBC LearningOS</p>
-              <p className="text-[11px] text-foreground-400 tracking-wide">Kent Business College</p>
-            </div>
-          </div>
+          <BrandLockup size="default" className="mb-10" />
 
           <div className="mb-8">
             <h2 className="text-[28px] font-heading font-semibold text-foreground-950 mb-2 tracking-tight leading-tight">

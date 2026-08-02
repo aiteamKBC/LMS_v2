@@ -11,7 +11,9 @@ export type ModuleComponentType =
   | 'reflection'
   | 'assignment'
   | 'checkpoint'
-  | 'coaching-preparation';
+  | 'coaching-preparation'
+  | 'recording-placeholder'
+  | 'workplace-evidence';
 
 export type ComponentSettingValue = string | number | boolean | string[];
 export type ComponentSettings = Record<string, ComponentSettingValue>;
@@ -94,7 +96,36 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: [],
     requiredSettings: [],
     capabilities: ['ksb-mapping', 'reflection', 'evidence', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('live-session'), sessionPurpose: '', sessionDate: '', sessionTime: '', selectedGroupKeys: [], selectedGroupNames: [], liveSessionUrl: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true },
+    defaultSettings: {
+      ...advancedDefaults('live-session'),
+      sessionPurpose: '',
+      sessionDate: '',
+      sessionTime: '',
+      sessionDateTimeUtc: '',
+      durationMinutes: 60,
+      selectedGroupKeys: [],
+      selectedGroupNames: [],
+      liveSessionUrl: '',
+      teamsEventId: '',
+      teamsLiveSessionId: '',
+      teamsMeetingOptionsUrl: '',
+      teamsOrganizerEmail: '',
+      teamsAttendees: [],
+      teamsProvider: '',
+      teamsRepeat: 'none',
+      teamsRepeatOccurrences: 1,
+      teamsLobbyBypass: 'invited',
+      teamsRecording: 'record-transcribe',
+      teamsSpokenLanguage: 'en-GB',
+      teamsMeetingType: 'live-session',
+      teamsRequestResponses: true,
+      teamsAllowTimeProposals: true,
+      teamsHideAttendees: false,
+      preparationInstructions: '',
+      reflectionQuestions: '',
+      attendanceRequired: true,
+      recordingExpected: true,
+    },
   },
   {
     type: 'video',

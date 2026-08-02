@@ -18,6 +18,11 @@ export interface JourneyComponent {
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   resourceUrl?: string | null;
+  liveSessionUrl?: string | null;
+  teamsLiveSessionId?: string | null;
+  sessionDate?: string | null;
+  sessionTime?: string | null;
+  sessionDateTimeUtc?: string | null;
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
@@ -45,25 +50,17 @@ export function componentContentKind(type: string | null | undefined): ContentKi
 
 /* ═══════════════════════════════════════════════════════
    COMPLETION CRITERIA
-   A component with KSBs mapped can only be completed once
-   those mappings carry at least COMPONENT_KSB_WEIGHT_TARGET
-   total weight AND the learner has uploaded evidence for it.
-   Components with no KSBs mapped are not gated.
-   Mirrors COMPONENT_KSB_WEIGHT_TARGET / _completion_criteria
-   in learner_api/components.py, which is the authority — this
-   copy exists so the UI can explain what's outstanding.
+   KSB weights describe curriculum contribution and never block
+   a learner from finishing an activity. Assignments remain gated
+   because they require an approved evidence upload.
    ═══════════════════════════════════════════════════════ */
-export const COMPONENT_KSB_WEIGHT_TARGET = 100;
-
 /** Only assignments collect uploaded evidence, so only they can require it. */
 export function componentRequiresEvidence(type: string | null | undefined): boolean {
   return (type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
 }
 
 export interface ComponentCriteria {
-  gated: boolean;          // false => no KSBs mapped, nothing to satisfy
-  weightTotal: number;
-  weightMet: boolean;
+  gated: boolean;          // true only when an evidence upload is required
   evidenceRequired: boolean;
   evidenceMet: boolean;
   met: boolean;            // overall: safe to complete
@@ -72,18 +69,13 @@ export interface ComponentCriteria {
 /** Evaluate the completion gate. `evidenceCount` is the learner's approved
  * uploads for this component (pass 0 when not yet known). */
 export function componentCriteria(c: JourneyComponent, evidenceCount: number): ComponentCriteria {
-  const weightTotal = Number(c.ksbWeightTotal || 0);
-  const gated = Number(c.ksbMappingCount || 0) > 0;
-  const weightMet = weightTotal >= COMPONENT_KSB_WEIGHT_TARGET;
   const evidenceRequired = componentRequiresEvidence(c.type);
   const evidenceMet = evidenceRequired ? evidenceCount > 0 : true;
   return {
-    gated,
-    weightTotal,
-    weightMet,
+    gated: evidenceRequired,
     evidenceRequired,
     evidenceMet,
-    met: !gated || (weightMet && evidenceMet),
+    met: evidenceMet,
   };
 }
 
@@ -109,7 +101,7 @@ export function ksbParentCode(code: string): string {
   return String(code || '').trim().toUpperCase().split('.')[0];
 }
 
-export type KsbStatus = 'complete' | 'in-progress' | 'not-started' | 'not-scheduled';
+export type KsbStatus = 'complete' | 'in-progress' | 'not-started';
 
 export interface KsbContributor {
   componentId: string;
@@ -129,7 +121,7 @@ export interface KsbProgress {
   availableWeight: number;      // total weight this KSB can earn from the plan
   earnedWeight: number;         // weight from components already completed
   remainingWeight: number;
-  pct: number;                  // earnedWeight / availableWeight (0 when unscheduled)
+  pct: number;                  // earnedWeight / availableWeight (0 when no weight is available)
   status: KsbStatus;
   contributors: KsbContributor[];   // components that develop this KSB
   doneCount: number;
@@ -190,13 +182,11 @@ export function buildKsbProgress(src: KsbProgressSource): KsbProgress[] {
     const pct = availableWeight > 0
       ? Math.max(0, Math.min(100, Math.round((earnedWeight / availableWeight) * 100)))
       : 0;
-    const status: KsbStatus = contributors.length === 0
-      ? 'not-scheduled'
-      : earnedWeight >= availableWeight && availableWeight > 0
-        ? 'complete'
-        : earnedWeight > 0
-          ? 'in-progress'
-          : 'not-started';
+    const status: KsbStatus = earnedWeight >= availableWeight && availableWeight > 0
+      ? 'complete'
+      : earnedWeight > 0
+        ? 'in-progress'
+        : 'not-started';
     return {
       code,
       type: (k.type || code.charAt(0) || '?').toUpperCase(),
@@ -418,8 +408,15 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
+            liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
+            teamsLiveSessionId: c.teamsLiveSessionId,
+            sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
-              ? real.quizAttempts.filter((a) => a.quizId === c.quizMeta!.quizId)
+              // Normalised progress rows store quiz_ref as text, while the
+              // curriculum API exposes quiz ids as numbers. Compare their
+              // canonical string values so saved attempts still decorate the
+              // learner-facing quiz card with its Passed/Attempted status.
+              ? real.quizAttempts.filter((a) => String(a.quizId) === String(c.quizMeta!.quizId))
               : undefined,
           }));
         return {

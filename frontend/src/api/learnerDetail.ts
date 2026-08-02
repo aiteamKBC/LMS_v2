@@ -45,6 +45,11 @@ export interface LearnerComponentEntry {
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   resourceUrl?: string | null;          // generic external/download URL
+  liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
+  teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
+  sessionDate?: string | null;
+  sessionTime?: string | null;
+  sessionDateTimeUtc?: string | null;
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };

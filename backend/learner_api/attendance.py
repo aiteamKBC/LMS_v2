@@ -1,10 +1,9 @@
-from django.db import DatabaseError, connection
+from django.db import DatabaseError
 from django.http import JsonResponse
 
 from .learner_detail import SOURCE_MODELS
-
-
-ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
+from .models import LearnerProfile
+from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
 def _error(message, status):
@@ -59,22 +58,8 @@ def _summarize_attendance(rows):
         'consecutiveMissed': consecutive_missed,
         'updatedAt': updated_at.isoformat() if updated_at else None,
         'attendanceRate': attendance_rate,
+        'source': 'microsoft-teams',
     }
-
-
-def _fetch_rows(cursor, where_clause, params):
-    cursor.execute(
-        f'''
-            SELECT learner_id, learner_name, learner_email, session_date,
-                   attendance_status, minutes_late, catchup_completed, updated_at
-            FROM {ATTENDANCE_TABLE}
-            WHERE {where_clause}
-            ORDER BY session_date DESC, id DESC
-        ''',
-        params,
-    )
-    columns = [column.name for column in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
 def learner_attendance(request, kind, learner_id):
@@ -93,16 +78,9 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        with connection.cursor() as cursor:
-            rows = []
-            if source.email and source.email.strip():
-                rows = _fetch_rows(
-                    cursor,
-                    'lower(trim(learner_email)) = lower(trim(%s))',
-                    [source.email],
-                )
-            if not rows:
-                rows = _fetch_rows(cursor, 'learner_id = %s', [learner_id])
+        mirror = LearnerProfile.objects.filter(pk=learner_id).only('id', 'email').first()
+        email = (mirror.email if mirror else source.email) or ''
+        rows = fetch_verified_teams_attendance_rows([learner_id], [email])
     except DatabaseError as exc:
         return _error(f'Unable to load attendance: {exc}', 502)
 

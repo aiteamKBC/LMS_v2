@@ -82,14 +82,20 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
+    "CHAT_DEMO_BOOTSTRAP_ENABLED",
+    "true" if DEBUG else "false",
+).lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
+OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net").split(",")
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net,api.kentbusinesscollege.net").split(",")
     if host.strip()
 ]
 
@@ -98,6 +104,8 @@ ALLOWED_HOSTS = [
 
 INSTALLED_APPS = [
     'quiz_api',
+    'rest_framework',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -106,13 +114,16 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'coach_api',
     'learner_api',
+    'audit_api',
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
+    'chat',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'config.cors.ChatCorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -139,14 +150,45 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
+ASGI_APPLICATION = 'config.asgi.application'
+
+# DRF is used by the chat API. Session authentication keeps it compatible with
+# Django's existing browser login flow; projects using another auth mechanism
+# can add it here without changing chat permissions.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework.authentication.SessionAuthentication',
+    ),
+}
+
+# Redis is used only as the Channels transport. Chat history and read state are
+# always persisted in PostgreSQL (or the configured Django default database).
+CHAT_REDIS_URL = (
+    os.environ.get('CHAT_REDIS_URL')
+    or os.environ.get('REDIS_URL')
+    or 'redis://127.0.0.1:6379/1'
+)
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [CHAT_REDIS_URL],
+        },
+    },
+}
 
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("DATABASEURL")
+DATABASE_URL = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("DATABASEURL")
+    or os.environ.get("Database_url")
+)
+USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
 
-if DATABASE_URL:
+if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
     DATABASES = {
@@ -177,7 +219,7 @@ _enrolment_database_url = (
     or os.environ.get('DATABASEURL')
     or os.environ.get('DATABASE_URL')
 )
-if _enrolment_database_url:
+if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
@@ -187,6 +229,10 @@ DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001',
+    'https://lms.kentbusinesscollege.net',
+    'https://api.kentbusinesscollege.net',
 ]
 
 

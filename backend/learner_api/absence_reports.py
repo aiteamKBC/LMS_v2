@@ -1,18 +1,26 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
+import logging
 from datetime import date, time
-from pathlib import Path
 from uuid import uuid4
 
 from django.conf import settings
-from django.core.files.storage import FileSystemStorage
 from django.db import DatabaseError, connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachAbsenceReport
 
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .evidence_storage import (
+    azure_configured,
+    blob_url,
+    delete_blob,
+    resolve_read_url,
+    upload_to_quarantine,
+)
+from .models import LearnerProfile
 
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_REASONS = {"illness", "work", "emergency", "travel", "technical", "other"}
 REASON_LABELS = {
@@ -24,12 +32,14 @@ REASON_LABELS = {
 }
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+UPLOAD_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+}
 DEFAULT_COACH_NAME = "Med Maher"
 DEFAULT_COACH_EMAIL = "med.maher@kbc.ac.uk"
-EVIDENCE_STORAGE = FileSystemStorage(
-    location=Path(settings.BASE_DIR) / "media" / "absence-evidence",
-    base_url="/media/absence-evidence/",
-)
 ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
 
 
@@ -38,8 +48,9 @@ def _error(message, status=400):
 
 
 def _source_learner(kind, learner_id):
-    model = CommercialUser if kind == "commercial" else EnrolmentUser if kind == "apprenticeship" else None
-    return model.objects.filter(pk=learner_id).first() if model else None
+    if kind not in {"commercial", "apprenticeship"}:
+        return None
+    return LearnerProfile.objects.filter(pk=learner_id).first()
 
 
 def _fetch_missed_sessions(learner, learner_id):
@@ -131,6 +142,13 @@ def _resolve_absent_attendance(
 
 
 def _serialize(report):
+    allowed_containers = {
+        settings.AZURE_QUARANTINE_CONTAINER,
+        settings.AZURE_APPROVED_CONTAINER,
+    }
+    evidence_url = ""
+    if report.status != CoachAbsenceReport.STATUS_DECLINED:
+        evidence_url = resolve_read_url(report.evidence_image_url, allowed_containers)
     return {
         "id": report.id,
         "attendanceId": report.attendance_id,
@@ -143,7 +161,7 @@ def _serialize(report):
         "status": report.status,
         "evidenceProvided": report.evidence_provided,
         "evidenceKind": report.evidence_kind,
-        "evidenceUrl": report.evidence_image_url,
+        "evidenceUrl": evidence_url,
         "evidenceText": report.evidence_text,
         "coachNote": report.coach_note,
         "attendanceRate": report.attendance_rate,
@@ -221,6 +239,8 @@ def learner_absence_reports(request, kind, learner_id):
             return _error("Evidence must be a JPG, PNG, WEBP, or PDF file.")
         if upload.size > MAX_UPLOAD_SIZE:
             return _error("Evidence must be smaller than 10 MB.")
+        if not azure_configured():
+            return _error("Evidence storage is not configured.", 503)
 
     try:
         attendance_rate = int(request.POST.get("attendanceRate", ""))
@@ -234,14 +254,32 @@ def learner_absence_reports(request, kind, learner_id):
     owner_email = str(getattr(active, "coach_email", "") or "").strip() or DEFAULT_COACH_EMAIL
     reason = other_reason if reason_category == "other" else REASON_LABELS[reason_category]
     evidence_url = ""
-    saved_name = ""
+    blob_name = ""
+    quarantine_container = settings.AZURE_QUARANTINE_CONTAINER
+
+    if upload is not None:
+        extension = UPLOAD_EXTENSIONS[upload.content_type]
+        blob_name = f"absence-reports/{kind}/{learner_id}/{uuid4().hex}{extension}"
+        try:
+            upload_to_quarantine(upload, blob_name, upload.content_type)
+            evidence_url = blob_url(quarantine_container, blob_name)
+        except Exception:
+            logger.exception(
+                "Could not upload absence evidence for %s learner %s attendance %s",
+                kind,
+                learner_id,
+                attendance_id,
+            )
+            try:
+                delete_blob(quarantine_container, blob_name)
+            except Exception:
+                pass
+            return _error(
+                "Could not upload the evidence to secure storage. Please retry.",
+                502,
+            )
 
     try:
-        if upload is not None:
-            extension = Path(upload.name).suffix.lower()
-            saved_name = EVIDENCE_STORAGE.save(f"{uuid4().hex}{extension}", upload)
-            evidence_url = EVIDENCE_STORAGE.url(saved_name)
-
         with transaction.atomic():
             previous_absences = CoachAbsenceReport.objects.filter(learner_id=learner_id).count()
             report = CoachAbsenceReport.objects.create(
@@ -266,9 +304,18 @@ def learner_absence_reports(request, kind, learner_id):
                 evidence_text=evidence_text,
                 previous_absences=previous_absences,
             )
-    except (DatabaseError, OSError) as exc:
-        if saved_name:
-            EVIDENCE_STORAGE.delete(saved_name)
-        return _error(f"Could not save absence report: {exc}", 502)
+    except Exception:
+        logger.exception(
+            "Could not save absence report for %s learner %s attendance %s",
+            kind,
+            learner_id,
+            attendance_id,
+        )
+        if blob_name:
+            try:
+                delete_blob(quarantine_container, blob_name)
+            except Exception:
+                pass
+        return _error("The evidence was uploaded, but the absence report could not be saved.", 502)
 
     return JsonResponse(_serialize(report), status=201)

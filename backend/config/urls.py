@@ -25,8 +25,10 @@ urlpatterns = [
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),
     path('learner_api/', include('learner_api.urls')),
+    path('audit_api/', include('audit_api.urls')),
     path('engagement_api/', include('engagement_api.urls')),
     path('enrolment_api/', include('enrolment_api.urls')),
+    path('api/chat/', include('chat.urls')),
 ]
 
 if settings.DEBUG:

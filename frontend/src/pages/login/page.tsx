@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { BrandLockup } from '@/components/BrandLockup';
 
 const DEMO_PASSWORD = 'Password123';
 
@@ -88,15 +89,7 @@ export default function LoginPage() {
       <div className="flex-1 flex items-center justify-center p-6 md:p-8 lg:p-12 bg-background-50">
         <div className="w-full max-w-[420px] animate-login-fade-in">
           {/* Logo */}
-          <div className="flex items-center gap-3 mb-10 animate-login-slide-up" style={{ animationDelay: '100ms' }}>
-            <div className="w-10 h-10 rounded-xl bg-primary-500 flex items-center justify-center">
-              <span className="text-white font-bold text-lg font-heading">K</span>
-            </div>
-            <div>
-              <p className="text-foreground-900 font-heading text-lg font-semibold leading-tight">KBC LearningOS</p>
-              <p className="text-[11px] text-foreground-400 tracking-wide">Kent Business College</p>
-            </div>
-          </div>
+          <BrandLockup size="default" className="mb-10 animate-login-slide-up" />
 
           <div className="mb-8 animate-login-slide-up" style={{ animationDelay: '200ms' }}>
             <h2 className="text-[32px] font-heading font-semibold text-foreground-950 mb-2 tracking-tight leading-tight">Welcome back</h2>

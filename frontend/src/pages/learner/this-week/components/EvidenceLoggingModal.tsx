@@ -26,6 +26,7 @@ interface EvidenceLoggingModalProps {
     otjhPaid: string;
     otjhActual: number;
     dateCompleted: string;
+    signedDeclaration: boolean;
   }) => void;
   title: string;
   componentType: string;
@@ -51,10 +52,10 @@ const TABS = [
 ] as const;
 
 const BENEFIT_TAGS = [
-  'Improved Productivity', 'Better Customer Service', 'Improved Marketing Performance',
-  'Improved Planning', 'Improved Communication', 'Improved Data Usage',
-  'Reduced Errors', 'Improved Compliance', 'Cost Saving',
-  'Improved Quality', 'Improved Teamwork', 'Innovation',
+  'Improved productivity', 'Better customer service', 'Better marketing performance',
+  'Better project planning or control', 'Improved communication', 'Better data use',
+  'Reduced errors', 'Better compliance', 'Cost saving',
+  'Improved quality', 'Improved teamwork', 'Stronger innovation',
 ];
 
 export function EvidenceLoggingModal({
@@ -74,9 +75,9 @@ export function EvidenceLoggingModal({
   const [draftSaved, setDraftSaved] = useState(false);
 
   /* ── Tab 2: KSBs ── */
-  const [ksbExplanations, setKsbExplanations] = useState<Record<string, string>>();
-  const [confidenceBefore, setConfidenceBefore] = useState<Record<string, number>>();
-  const [confidenceAfter, setConfidenceAfter] = useState<Record<string, number>>();
+  const [ksbExplanations, setKsbExplanations] = useState<Record<string, string>>({});
+  const [confidenceBefore, setConfidenceBefore] = useState<Record<string, number>>({});
+  const [confidenceAfter, setConfidenceAfter] = useState<Record<string, number>>({});
 
   /* ── Tab 3: Apply ── */
   const [applicationType, setApplicationType] = useState('');
@@ -100,8 +101,10 @@ export function EvidenceLoggingModal({
   const [otjhConfirmed, setOtjhConfirmed] = useState(false);
 
   /* ── Tab 7: Review ── */
+  const [aiChecking, setAiChecking] = useState(false);
   const [aiCheckRun, setAiCheckRun] = useState(false);
-  const [aiChecks, setAiChecks] = useState<Record<string, boolean>>();
+  const [aiChecks, setAiChecks] = useState<Record<string, boolean>>({});
+  const [signedDeclaration, setSignedDeclaration] = useState(false);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -129,8 +132,10 @@ export function EvidenceLoggingModal({
       setOtjhActual(plannedOTJH);
       setDateCompleted(new Date().toISOString().split('T')[0]);
       setOtjhConfirmed(false);
+      setAiChecking(false);
       setAiCheckRun(false);
       setAiChecks({});
+      setSignedDeclaration(false);
     } else {
       document.body.style.overflow = '';
     }
@@ -194,17 +199,20 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
 
   /* ── AI Quality Check ── */
   const runAiCheck = () => {
-    setAiCheckRun(true);
+    setAiChecking(true);
+    setAiCheckRun(false);
     setTimeout(() => {
       setAiChecks({
         reflection: reflection.trim().length > 50,
         wordCount: wordCount >= MIN_WORDS,
-        ksbs: Object.keys(ksbExplanations).length > 0,
-        application: applicationText.trim().length > 20,
-        otjh: otjhConfirmed && otjhActual > 0,
-        benefit: selectedBenefits.length > 0,
-        evidence: files.length > 0 || evidenceDescription.trim().length > 0,
+        ksbs: ksbCodes.length === 0 || Object.values(ksbExplanations).some(value => value.trim().length > 0),
+        application: applicationType !== '' && applicationText.trim().length > 20,
+        otjh: otjhConfirmed && otjhActual > 0 && otjhPaid !== '' && dateCompleted !== '',
+        benefit: selectedBenefits.length > 0 && benefitExplanation.trim().length > 20,
+        evidence: files.length > 0 && hasConsent,
       });
+      setAiChecking(false);
+      setAiCheckRun(true);
     }, 1500);
   };
 
@@ -241,24 +249,51 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
       otjhPaid,
       otjhActual,
       dateCompleted,
+      signedDeclaration,
     });
     setSubmitted(true);
   };
 
-  const canSubmit = reflection.trim().length > 50 && otjhConfirmed && (files.length > 0 || evidenceDescription.trim().length > 0);
+  const allKsbRatingsComplete = ksbCodes.every(
+    code => confidenceBefore[code] !== undefined && confidenceAfter[code] !== undefined
+  );
+  const ksbExplanationReady = ksbCodes.length === 0
+    || Object.values(ksbExplanations).some(value => value.trim().length > 0);
+  const applicationReady = applicationType !== '' && applicationText.trim().length > 20;
+  const evidenceReady = files.length > 0 && hasConsent;
+  const benefitReady = selectedBenefits.length > 0 && benefitExplanation.trim().length > 20;
+  const otjhReady = otjhConfirmed && otjhActual > 0 && otjhPaid !== '' && dateCompleted !== '';
+  const canSubmit = wordCount >= MIN_WORDS
+    && allKsbRatingsComplete
+    && ksbExplanationReady
+    && applicationReady
+    && evidenceReady
+    && benefitReady
+    && otjhReady
+    && signedDeclaration;
 
   const isTabComplete = (tabId: string) => {
     switch (tabId) {
       case 'learning': return wordCount >= MIN_WORDS;
-      case 'ksbs': return Object.keys(ksbExplanations).length > 0;
-      case 'apply': return applicationType !== '' && applicationText.trim().length > 20;
-      case 'evidence': return files.length > 0 || evidenceDescription.trim().length > 0;
-      case 'benefit': return selectedBenefits.length > 0;
-      case 'otjh': return otjhConfirmed && otjhActual > 0;
-      case 'review': return aiCheckRun;
+      case 'ksbs': return allKsbRatingsComplete && ksbExplanationReady;
+      case 'apply': return applicationReady;
+      case 'evidence': return evidenceReady;
+      case 'benefit': return benefitReady;
+      case 'otjh': return otjhReady;
+      case 'review': return canSubmit;
       default: return false;
     }
   };
+
+  const submissionChecklist = [
+    { label: `Reflection (≥ ${MIN_WORDS} words)`, complete: wordCount >= MIN_WORDS },
+    { label: ksbCodes.length === 0 ? 'No KSB explanation required' : 'At least one KSB explained and rated', complete: ksbExplanationReady && allKsbRatingsComplete },
+    { label: 'Workplace application or support request', complete: applicationReady },
+    { label: 'Evidence uploaded and coach visibility confirmed', complete: evidenceReady },
+    { label: 'Employer benefit selected and explained', complete: benefitReady },
+    { label: 'OTJH confirmed', complete: otjhReady },
+    { label: 'Signed declaration', complete: signedDeclaration },
+  ];
 
   if (!mounted) return null;
 
@@ -271,11 +306,16 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
         }`}
       />
       <div
-        className={`fixed inset-0 z-[61] flex flex-col transition-all duration-300 ease-out ${
+        className={`fixed inset-0 z-[61] flex items-center justify-center p-3 md:p-6 transition-all duration-300 ease-out ${
           isOpen ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
         }`}
       >
-        <div className="flex-1 bg-background-50 flex flex-col overflow-hidden">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="evidence-modal-title"
+          className="w-full max-w-5xl h-[min(92vh,860px)] bg-background-50 border border-foreground-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        >
 
           {/* ════════════════════════════════════════
               HEADER — Professional Redesign
@@ -302,7 +342,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                     <i className="ri-folder-upload-line text-primary-600 text-lg"></i>
                   </span>
                   <div className="min-w-0">
-                    <h2 className="text-[15px] font-heading font-bold text-foreground-900 leading-tight">My Learning Evidence &amp; Reflection</h2>
+                    <h2 id="evidence-modal-title" className="text-[15px] font-heading font-bold text-foreground-900 leading-tight">My Learning Evidence &amp; Reflection</h2>
                     <p className="text-sm text-foreground-500 mt-0.5 leading-snug">{title}</p>
                     <p className="text-[11px] text-foreground-400 mt-1">{componentType === 'Evidence' ? 'Upload Workplace Project Evidence' : 'Upload Learning Activity Evidence'}</p>
                   </div>
@@ -344,7 +384,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
               PROGRESS STEPPER — Redesigned
               ════════════════════════════════════════ */}
           <div className="shrink-0 bg-background-100/40 px-5 md:px-8 py-3 border-b border-background-200/40">
-            <div className="flex items-center">
+            <div className="flex items-center overflow-x-auto">
               {TABS.map((tab, i) => {
                 const isActive = activeTab === tab.id;
                 const isCompleted = isTabComplete(tab.id);
@@ -479,8 +519,8 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   {activeTab === 'learning' && (
                     <div className="space-y-5">
                       <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">What have you learned from this activity?</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Explain the key concepts, models, methods or techniques you learned. <span className="font-semibold text-foreground-700">Minimum: {MIN_WORDS} words.</span></p>
+                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">What have you learnt from this activity?</h3>
+                        <p className="text-sm text-foreground-500 mb-4">Summarise the key ideas, methods, models, tools, concepts or techniques you understood from this {componentType.toLowerCase()}. <span className="font-semibold text-foreground-700">Aim for at least {MIN_WORDS} words.</span></p>
 
                         {/* Toolbar — improved */}
                         <div className="flex items-center gap-2 mb-3">
@@ -518,7 +558,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                         <textarea
                           value={reflection}
                           onChange={(e) => setReflection(e.target.value)}
-                          placeholder="Describe what you learned from this activity, the key concepts and models you explored, and how they connect to your programme learning outcomes..."
+                          placeholder={`Summarise what you learnt from this ${componentType.toLowerCase()}...`}
                           rows={12}
                           className="w-full rounded-xl border border-foreground-200 bg-white px-4 py-3 text-sm text-foreground-700 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100/50 resize-none transition-smooth shadow-sm"
                         />
@@ -542,8 +582,8 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   {activeTab === 'ksbs' && (
                     <div className="space-y-5">
                       <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">KSB Development</h3>
-                        <p className="text-sm text-foreground-500 mb-4">These KSBs are mapped to this component. Explain how this activity helped develop each one, and rate your confidence before and after.</p>
+                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">KSB confidence check</h3>
+                        <p className="text-sm text-foreground-500 mb-4">Rate your confidence before and after this activity for each mapped KSB. This helps show the progress you made.</p>
 
                         <div className="space-y-4">
                           {ksbCodes.map(code => {
@@ -563,7 +603,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                   <span className="text-[10px] text-foreground-400 bg-background-100 px-1.5 py-0.5 rounded border border-foreground-200">Pre-mapped</span>
                                 </div>
 
-                                <p className="text-sm text-foreground-600 mb-3">How did this activity help develop this KSB?</p>
+                                <p className="text-sm text-foreground-600 mb-3">Briefly explain how this activity developed {code}.</p>
                                 <textarea
                                   value={ksbExplanations[code] || ''}
                                   onChange={(e) => setKsbExplanations(prev => ({ ...prev, [code]: e.target.value }))}
@@ -578,14 +618,14 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                     <input
                                       type="range"
                                       min="1"
-                                      max="10"
-                                      value={confidenceBefore[code] || 5}
+                                      max="5"
+                                      value={confidenceBefore[code] ?? 1}
                                       onChange={(e) => setConfidenceBefore(prev => ({ ...prev, [code]: parseInt(e.target.value) }))}
                                       className="w-full accent-primary-500"
                                     />
                                     <div className="flex justify-between text-xs text-foreground-400 mt-1">
                                       <span>Low</span>
-                                      <span className="font-semibold text-primary-600">{confidenceBefore[code] || 5}/10</span>
+                                      <span className="font-semibold text-primary-600">{confidenceBefore[code] ?? 1}/5</span>
                                       <span>High</span>
                                     </div>
                                   </div>
@@ -594,14 +634,14 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                     <input
                                       type="range"
                                       min="1"
-                                      max="10"
-                                      value={confidenceAfter[code] || 5}
+                                      max="5"
+                                      value={confidenceAfter[code] ?? 1}
                                       onChange={(e) => setConfidenceAfter(prev => ({ ...prev, [code]: parseInt(e.target.value) }))}
                                       className="w-full accent-accent-500"
                                     />
                                     <div className="flex justify-between text-xs text-foreground-400 mt-1">
                                       <span>Low</span>
-                                      <span className="font-semibold text-accent-600">{confidenceAfter[code] || 5}/10</span>
+                                      <span className="font-semibold text-accent-600">{confidenceAfter[code] ?? 1}/5</span>
                                       <span>High</span>
                                     </div>
                                   </div>
@@ -619,13 +659,13 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                     <div className="space-y-5">
                       <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
                         <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">How can this learning be applied in your workplace?</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Select one option and describe your workplace application plan.</p>
+                        <p className="text-sm text-foreground-500 mb-4">Choose the option that best describes whether you know how to use this learning at work.</p>
 
                         <div className="space-y-3 mb-5">
                           {[
                             { value: 'already', label: 'I have already applied this learning' },
                             { value: 'plan', label: 'I plan to apply this learning' },
-                            { value: 'unsure', label: 'I am unsure and need support' },
+                            { value: 'unsure', label: "I'm not sure how to apply — I need support" },
                           ].map(opt => (
                             <label
                               key={opt.value}
@@ -648,7 +688,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                           ))}
                         </div>
 
-                        {applicationType !== '' && (
+                        {applicationType !== '' && applicationType !== 'unsure' && (
                           <div className="rounded-xl border border-foreground-200 bg-white p-5 shadow-sm">
                             <p className="text-sm font-semibold text-foreground-800 mb-3">Workplace Application Plan</p>
                             <div className="space-y-2 mb-4">
@@ -668,6 +708,22 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             />
                           </div>
                         )}
+
+                        {applicationType === 'unsure' && (
+                          <div className="space-y-3">
+                            <textarea
+                              value={applicationText}
+                              onChange={(e) => setApplicationText(e.target.value)}
+                              placeholder="Describe what support you need from your coach or employer."
+                              rows={6}
+                              className="w-full rounded-xl border border-foreground-200 bg-white px-4 py-3 text-sm text-foreground-700 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100/50 resize-none transition-smooth shadow-sm"
+                            />
+                            <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50/60 px-4 py-3 text-sm text-amber-800">
+                              <i className="ri-alert-line mt-0.5 shrink-0"></i>
+                              <span>Submitting this will alert your coach so they can discuss the support you need in your next meeting.</span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -676,8 +732,8 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   {activeTab === 'evidence' && (
                     <div className="space-y-5">
                       <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">Workplace Evidence</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Upload evidence showing how this learning was applied. Supported: PDF, Word, PowerPoint, Excel, Image, Screenshot, Email, Meeting Notes, Audio, Video, Link.</p>
+                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">Upload evidence of your learning</h3>
+                        <p className="text-sm text-foreground-500 mb-4">Upload at least one file for your coach to review. Supported: PDF, Word, PowerPoint, Excel, image, screenshot, email, meeting notes, audio or video.</p>
 
                         {/* Upload area */}
                         <div
@@ -747,8 +803,14 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             onChange={(e) => setHasConsent(e.target.checked)}
                             className="mt-0.5 accent-primary-500"
                           />
-                          <span className="text-sm text-foreground-600 leading-relaxed">I confirm I have permission to upload this evidence and it does not contain any confidential or personal information about others without their consent.</span>
+                          <span className="text-sm text-foreground-600 leading-relaxed">I confirm that this evidence can be viewed by my coach and that I have removed or hidden any confidential, personal or commercially sensitive information where necessary.</span>
                         </label>
+                        {files.length > 0 && !hasConsent && (
+                          <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
+                            <i className="ri-alert-line"></i>
+                            Confirm coach visibility before continuing.
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -757,8 +819,8 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   {activeTab === 'benefit' && (
                     <div className="space-y-5">
                       <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">How will your employer benefit?</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Select the business benefits that apply and explain the expected impact.</p>
+                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">How could your employer or business benefit from this learning?</h3>
+                        <p className="text-sm text-foreground-500 mb-4">Select all relevant benefits, then explain how this learning could improve outcomes for your team or company.</p>
 
                         <div className="flex flex-wrap gap-2 mb-5">
                           {BENEFIT_TAGS.map(tag => (
@@ -778,11 +840,11 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                         </div>
 
                         <div>
-                          <p className="text-sm font-semibold text-foreground-800 mb-2">Explain the expected business benefit</p>
+                          <p className="text-sm font-semibold text-foreground-800 mb-2">Explain the expected benefit</p>
                           <textarea
                             value={benefitExplanation}
                             onChange={(e) => setBenefitExplanation(e.target.value)}
-                            placeholder="How will this learning improve your workplace performance, your team, or your organisation?"
+                            placeholder="Explain how this could improve your team, employer or business outcomes."
                             rows={5}
                             className="w-full rounded-xl border border-foreground-200 bg-white px-4 py-3 text-sm text-foreground-700 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100/50 resize-none transition-smooth shadow-sm"
                           />
@@ -794,180 +856,169 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   {/* ── TAB 6: OTJH ── */}
                   {activeTab === 'otjh' && (
                     <div className="space-y-5">
-                      <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">Off-The-Job Hours Declaration</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Confirm the hours you spent on this learning activity.</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <label className="block">
+                          <span className="block text-xs font-medium text-foreground-700 mb-1.5">Planned time</span>
+                          <div className="h-11 flex items-center rounded-xl border border-foreground-200 bg-background-100 px-3 text-sm text-foreground-400 shadow-sm">
+                            {plannedOTJH}h
+                          </div>
+                        </label>
+                        <label className="block">
+                          <span className="block text-xs font-medium text-foreground-700 mb-1.5">Actual time spent (hours)</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={otjhActual}
+                            onChange={(e) => setOtjhActual(parseFloat(e.target.value) || 0)}
+                            className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm text-foreground-800 shadow-sm focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100/50"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="block text-xs font-medium text-foreground-700 mb-1.5">Date completed</span>
+                          <input
+                            type="date"
+                            value={dateCompleted}
+                            onChange={(e) => setDateCompleted(e.target.value)}
+                            className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm text-foreground-800 shadow-sm focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100/50"
+                          />
+                        </label>
+                      </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
-                          <div className="bg-white rounded-xl p-4 border border-foreground-200 shadow-sm">
-                            <p className="text-[11px] text-foreground-400 uppercase tracking-wider font-semibold mb-1">Planned Hours</p>
-                            <p className="text-xl font-heading font-bold text-foreground-900">{plannedOTJH}h</p>
-                          </div>
-                          <div className="bg-white rounded-xl p-4 border border-foreground-200 shadow-sm">
-                            <p className="text-[11px] text-foreground-400 uppercase tracking-wider font-semibold mb-1">Actual Hours</p>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.1"
-                                value={otjhActual}
-                                onChange={(e) => setOtjhActual(parseFloat(e.target.value) || 0)}
-                                className="w-20 text-xl font-heading font-bold text-foreground-900 bg-white border-2 border-foreground-200 rounded-lg px-2 py-1 focus:outline-none focus:border-primary-500"
-                              />
-                              <span className="text-sm text-foreground-500">hours</span>
-                            </div>
-                          </div>
-                          <div className="bg-white rounded-xl p-4 border border-foreground-200 shadow-sm">
-                            <p className="text-[11px] text-foreground-400 uppercase tracking-wider font-semibold mb-1">Date Completed</p>
-                            <input
-                              type="date"
-                              value={dateCompleted}
-                              onChange={(e) => setDateCompleted(e.target.value)}
-                              className="text-sm font-medium text-foreground-900 bg-white border-2 border-foreground-200 rounded-lg px-2 py-1 focus:outline-none focus:border-primary-500"
-                            />
-                          </div>
-                        </div>
-
-                        <p className="text-sm font-semibold text-foreground-800 mb-3">Was this completed during paid working hours?</p>
-                        <div className="space-y-2 mb-5">
+                      <fieldset>
+                        <legend className="text-xs font-medium text-foreground-700 mb-2">Completed during paid working hours?</legend>
+                        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
                           {[
-                            { value: 'yes', label: 'Yes — fully during paid working hours' },
-                            { value: 'no', label: 'No — completed outside normal working hours' },
-                            { value: 'partially', label: 'Partially — some during, some outside working hours' },
+                            { value: 'yes', label: 'Yes' },
+                            { value: 'no', label: 'No' },
+                            { value: 'partially', label: 'Partly' },
                           ].map(opt => (
-                            <label
-                              key={opt.value}
-                              className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-smooth shadow-sm ${
-                                otjhPaid === opt.value
-                                  ? 'border-primary-300 bg-primary-50/40'
-                                  : 'border-foreground-200 bg-white hover:border-primary-300'
-                              }`}
-                            >
+                            <label key={opt.value} className="flex items-center gap-2 cursor-pointer text-sm text-foreground-700">
                               <input
                                 type="radio"
                                 name="otjhPaid"
                                 value={opt.value}
                                 checked={otjhPaid === opt.value}
                                 onChange={() => setOtjhPaid(opt.value)}
-                                className="accent-primary-500"
+                                className="h-4 w-4 accent-primary-600"
                               />
-                              <span className="text-sm text-foreground-700">{opt.label}</span>
+                              {opt.label}
                             </label>
                           ))}
                         </div>
+                      </fieldset>
 
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={otjhConfirmed}
-                            onChange={(e) => setOtjhConfirmed(e.target.checked)}
-                            className="mt-0.5 accent-primary-500"
-                          />
-                          <span className="text-sm text-foreground-600 leading-relaxed">
-                            I confirm the OTJH information is accurate and reflects genuine apprenticeship learning. I understand that false OTJH declarations are a serious matter and may result in referral or disciplinary action.
-                          </span>
-                        </label>
+                      <div className="rounded-xl border border-foreground-200 bg-primary-50/30 px-4 py-3 text-sm leading-relaxed text-foreground-500">
+                        I confirm that the time recorded is accurate. I confirm that this activity supported development of my apprenticeship KSBs. I confirm it was completed during my normal paid working hours, unless I have explained an agreed exception.
                       </div>
+
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={otjhConfirmed}
+                          onChange={(e) => setOtjhConfirmed(e.target.checked)}
+                          className="h-4 w-4 accent-primary-600"
+                        />
+                        <span className="text-sm text-foreground-700">I confirm this OTJH record is accurate.</span>
+                      </label>
                     </div>
                   )}
 
                   {/* ── TAB 7: REVIEW ── */}
                   {activeTab === 'review' && (
-                    <div className="space-y-5">
-                      <div className="bg-background-100/50 rounded-xl p-5 border border-background-200/50">
-                        <h3 className="text-[15px] font-heading font-semibold text-foreground-900 mb-1">Submission Review</h3>
-                        <p className="text-sm text-foreground-500 mb-4">Review your submission before sending it to your coach. Run an AI quality check to identify any missing elements.</p>
-
-                        {/* AI Check Button */}
-                        <button
-                          onClick={runAiCheck}
-                          disabled={aiCheckRun}
-                          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap mb-5 ${
-                            aiCheckRun
-                              ? 'bg-background-100 text-foreground-300 cursor-not-allowed'
-                              : 'bg-primary-500 text-white hover:bg-primary-600 shadow-sm shadow-primary-500/15'
-                          }`}
-                        >
-                          <i className={`${aiCheckRun ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></i>
-                          {aiCheckRun ? 'Running AI Check...' : 'Run AI Quality Check'}
-                        </button>
-
-                        {/* AI Check Results */}
-                        {aiCheckRun && Object.keys(aiChecks).length > 0 && (
-                          <div className="rounded-xl border border-foreground-200 bg-white p-5 mb-5 shadow-sm">
-                            <p className="text-sm font-semibold text-foreground-800 mb-3">AI Quality Check Results</p>
-                            <div className="space-y-2">
-                              {[
-                                { key: 'reflection', label: 'Reflection completed', icon: 'ri-lightbulb-line' },
-                                { key: 'wordCount', label: 'Minimum word count met', icon: 'ri-file-text-line' },
-                                { key: 'ksbs', label: 'KSB explanations provided', icon: 'ri-focus-3-line' },
-                                { key: 'application', label: 'Workplace application completed', icon: 'ri-briefcase-line' },
-                                { key: 'otjh', label: 'OTJH declared', icon: 'ri-time-line' },
-                                { key: 'benefit', label: 'Employer benefit completed', icon: 'ri-building-line' },
-                                { key: 'evidence', label: 'Evidence uploaded or described', icon: 'ri-folder-upload-line' },
-                              ].map(check => (
-                                <div key={check.key} className="flex items-center gap-2">
-                                  <i className={`${check.icon} text-sm ${aiChecks[check.key] ? 'text-primary-500' : 'text-foreground-300'}`}></i>
-                                  <span className={`text-sm ${aiChecks[check.key] ? 'text-foreground-700' : 'text-foreground-400'}`}>{check.label}</span>
-                                  {aiChecks[check.key] ? (
-                                    <i className="ri-check-line text-emerald-500 text-sm ml-auto"></i>
-                                  ) : (
-                                    <i className="ri-alert-line text-amber-500 text-sm ml-auto"></i>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-foreground-200 bg-white px-4 py-3 shadow-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-sm font-medium text-foreground-800">AI quality check</p>
+                          <button
+                            onClick={runAiCheck}
+                            disabled={aiChecking}
+                            className="flex items-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 py-2 text-xs font-medium text-foreground-700 shadow-sm transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <i className={`${aiChecking ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></i>
+                            {aiChecking ? 'Checking...' : aiCheckRun ? 'Run again' : 'Run check'}
+                          </button>
+                        </div>
+                        {aiCheckRun && (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 border-t border-foreground-100 pt-3">
+                            {[
+                              { key: 'wordCount', label: 'Reflection quality' },
+                              { key: 'ksbs', label: 'KSB explanation' },
+                              { key: 'application', label: 'Workplace application' },
+                              { key: 'evidence', label: 'Evidence and consent' },
+                              { key: 'benefit', label: 'Employer benefit' },
+                              { key: 'otjh', label: 'OTJH record' },
+                            ].map(check => (
+                              <div key={check.key} className="flex items-center gap-2 text-xs">
+                                <i className={`${aiChecks[check.key] ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-amber-500'}`}></i>
+                                <span className={aiChecks[check.key] ? 'text-foreground-700' : 'text-foreground-500'}>{check.label}</span>
+                              </div>
+                            ))}
                           </div>
                         )}
+                      </div>
 
-                        {/* Learner Declaration */}
-                        <div className={`rounded-xl border p-5 shadow-sm ${
-                          canSubmit ? 'border-emerald-300 bg-emerald-50/30' : 'border-foreground-200 bg-white'
-                        }`}>
-                          <p className="text-sm font-semibold text-foreground-800 mb-3">Learner Declaration</p>
-                          <div className="flex items-start gap-3 mb-3">
-                            <span className="w-8 h-8 rounded-full bg-accent-100 flex items-center justify-center shrink-0 text-accent-600 text-xs font-bold">SW</span>
-                            <div>
-                              <p className="text-sm font-medium text-foreground-700">Sophie Williams</p>
-                              <p className="text-xs text-foreground-400">12 Jun 2026 &middot; 14:32</p>
-                            </div>
-                          </div>
-                          <p className="text-sm text-foreground-600 mb-3 leading-relaxed">
-                            I confirm this submission is accurate and represents my own learning and workplace application. I understand that all evidence is subject to coach and quality assurance review.
-                          </p>
-                          <div className="flex items-center gap-2 text-xs text-foreground-500">
-                            <i className="ri-shield-check-line text-primary-500"></i>
-                            <span>Electronic signature on file</span>
-                          </div>
+                      <div className="rounded-xl border border-primary-200 bg-primary-50/30 p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <i className="ri-shield-check-line text-primary-500"></i>
+                          <h3 className="text-sm font-semibold text-foreground-800">Learner declaration &amp; signature</h3>
                         </div>
+                        <p className="text-xs leading-relaxed text-foreground-500 mb-3">
+                          Your stored signature is reused on every submission and saved with the document dated and time-stamped for legal and compliance reasons.
+                        </p>
+                        <div className="rounded-xl border border-foreground-200 bg-white px-4 py-2.5 text-sm italic text-foreground-700 shadow-sm mb-3">
+                          Sophie Williams
+                        </div>
+                        <label className="flex items-start gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={signedDeclaration}
+                            onChange={(e) => setSignedDeclaration(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 accent-primary-600"
+                          />
+                          <span className="text-sm text-foreground-700">I confirm this evidence is accurate and electronically sign it.</span>
+                        </label>
+                        <p className="mt-2 text-xs text-foreground-500">
+                          Will be stored as: <span className="font-semibold">Sophie Williams</span> &middot; {new Date().toLocaleDateString('en-GB')} &middot; {new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
 
-                        {/* Submit actions */}
-                        <div className="flex items-center gap-3 pt-4">
+                      <div className="rounded-xl border border-foreground-200 bg-white p-4">
+                        <h3 className="text-xs font-semibold text-foreground-800 mb-2">Submission checklist</h3>
+                        <div className="space-y-1.5">
+                          {submissionChecklist.map(item => (
+                            <div key={item.label} className="flex items-center gap-2 text-xs">
+                              <i className={`${item.complete ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-foreground-500'}`}></i>
+                              <span className={item.complete ? 'text-foreground-700' : 'text-foreground-500'}>{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 border-t border-foreground-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs text-foreground-500">
+                          Status on submit: <span className="font-semibold">Submitted for tutor review</span> — KSBs &amp; OTJH stay pending until validated.
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0">
                           <button
                             onClick={() => setDraftSaved(true)}
-                            className="px-5 py-2.5 rounded-xl border border-foreground-200 text-sm font-medium text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap shadow-sm"
+                            className="rounded-xl border border-foreground-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-700 shadow-sm transition-smooth hover:bg-background-100"
                           >
-                            <i className="ri-save-line mr-1.5"></i>
-                            Save Draft
+                            {draftSaved ? 'Draft saved' : 'Save draft'}
                           </button>
                           <button
                             onClick={handleSubmit}
                             disabled={!canSubmit}
-                            className={`flex-1 px-5 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 ${
+                            className={`flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition-smooth ${
                               canSubmit
-                                ? 'bg-primary-500 text-white hover:bg-primary-600 shadow-sm shadow-primary-500/15'
-                                : 'bg-background-100 text-foreground-300 cursor-not-allowed'
+                                ? 'bg-primary-600 text-white hover:bg-primary-700 shadow-sm'
+                                : 'cursor-not-allowed bg-foreground-300 text-white'
                             }`}
                           >
-                            <i className="ri-send-plane-line text-sm"></i>
-                            Submit For Review
+                            <i className="ri-edit-line"></i>
+                            Submit for tutor review
                           </button>
                         </div>
-                        {!canSubmit && (
-                          <p className="text-xs text-amber-600 mt-2">
-                            Please complete the Learning reflection, Evidence, and OTJH declaration before submitting.
-                          </p>
-                        )}
                       </div>
                     </div>
                   )}
@@ -977,6 +1028,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
               {/* ════════════════════════════════════════
                   BOTTOM NAV
                   ════════════════════════════════════════ */}
+              {activeTab !== 'review' && (
               <div className="shrink-0 bg-background-50 border-t border-foreground-200 px-5 md:px-8 py-3 flex items-center justify-between">
                 <button
                   onClick={() => {
@@ -991,19 +1043,18 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   <i className="ri-arrow-left-line mr-1"></i> Previous
                 </button>
                 <div className="flex items-center gap-2">
-                  {activeTab !== 'review' && (
-                    <button
-                      onClick={() => {
-                        const idx = TABS.findIndex(t => t.id === activeTab);
-                        if (idx < TABS.length - 1) setActiveTab(TABS[idx + 1].id);
-                      }}
-                      className="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
-                    >
-                      Next <i className="ri-arrow-right-line ml-1"></i>
-                    </button>
-                  )}
+                  <button
+                    onClick={() => {
+                      const idx = TABS.findIndex(t => t.id === activeTab);
+                      if (idx < TABS.length - 1) setActiveTab(TABS[idx + 1].id);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+                  >
+                    Next <i className="ri-arrow-right-line ml-1"></i>
+                  </button>
                 </div>
               </div>
+              )}
             </>
           )}
         </div>

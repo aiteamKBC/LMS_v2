@@ -152,7 +152,6 @@ def _ensure_quiz_assessment_type_column():
             "programme_id",
             "programme_name",
             "title",
-            "imported_from_training_plan_id",
             "updated_at",
             "created_at",
         }
@@ -168,8 +167,7 @@ def _ensure_quiz_assessment_type_column():
                   partition by q.id
                   order by
                     case
-                      when mam.imported_from_training_plan_id = q.programme_id then 0
-                      when lower(mam.title) = lower(q.module) then 1
+                      when lower(mam.title) = lower(q.module) then 0
                       else 2
                     end,
                     mam.updated_at desc nulls last,
@@ -182,15 +180,15 @@ def _ensure_quiz_assessment_type_column():
               join {_curriculum_table_name(modules_table)} mam
                 on coalesce(trim(mam.programme_id), '') <> ''
                and (
-                 mam.imported_from_training_plan_id = q.programme_id
-                 or (
-                   (lower(mam.title) = lower(q.module) or lower(q.module) like ('%%' || lower(mam.title) || '%%'))
-                   and (
-                     lower(mam.programme_name) = lower(q.programme)
-                     or lower(mam.programme_id) = lower(q.programme)
-                     or lower(mam.programme_name) = lower(tp."Program")
-                     or lower(mam.programme_id) = lower(tp."Program")
-                   )
+                 (
+                   lower(mam.title) = lower(q.module)
+                   or lower(q.module) like ('%%' || lower(mam.title) || '%%')
+                 )
+                 and (
+                   lower(mam.programme_name) = lower(q.programme)
+                   or lower(mam.programme_id) = lower(q.programme)
+                   or lower(mam.programme_name) = lower(tp."Program")
+                   or lower(mam.programme_id) = lower(tp."Program")
                  )
                  or lower(mam.programme_name) = lower(tp."Program")
                  or lower(mam.programme_id) = lower(tp."Program")
@@ -255,8 +253,7 @@ def _ensure_quiz_assessment_type_column():
                       partition by q.id
                       order by
                         case
-                          when mam.imported_from_training_plan_id = q.programme_id then 0
-                          when lower(mam.title) = lower(q.module) then 1
+                          when lower(mam.title) = lower(q.module) then 0
                           else 2
                         end,
                         mam.updated_at desc nulls last,
@@ -269,15 +266,15 @@ def _ensure_quiz_assessment_type_column():
                   join curriculum.modules mam
                     on coalesce(trim(mam.programme_id), '') <> ''
                    and (
-                     mam.imported_from_training_plan_id = q.programme_id
-                     or (
-                       (lower(mam.title) = lower(q.module) or lower(q.module) like ('%%' || lower(mam.title) || '%%'))
-                       and (
-                         lower(mam.programme_name) = lower(q.programme)
-                         or lower(mam.programme_id) = lower(q.programme)
-                         or lower(mam.programme_name) = lower(tp."Program")
-                         or lower(mam.programme_id) = lower(tp."Program")
-                       )
+                     (
+                       lower(mam.title) = lower(q.module)
+                       or lower(q.module) like ('%%' || lower(mam.title) || '%%')
+                     )
+                     and (
+                       lower(mam.programme_name) = lower(q.programme)
+                       or lower(mam.programme_id) = lower(q.programme)
+                       or lower(mam.programme_name) = lower(tp."Program")
+                       or lower(mam.programme_id) = lower(tp."Program")
                      )
                      or lower(mam.programme_name) = lower(tp."Program")
                      or lower(mam.programme_id) = lower(tp."Program")
@@ -302,8 +299,7 @@ def _ensure_quiz_assessment_type_column():
                       partition by q.id
                       order by
                         case
-                          when mam.imported_from_training_plan_id = q.programme_id then 0
-                          when lower(mam.title) = lower(q.module) then 1
+                          when lower(mam.title) = lower(q.module) then 0
                           else 2
                         end,
                         mam.updated_at desc nulls last,
@@ -313,8 +309,7 @@ def _ensure_quiz_assessment_type_column():
                   join curriculum.modules mam
                     on coalesce(trim(mam.programme_id), '') <> ''
                    and (
-                     mam.imported_from_training_plan_id = q.programme_id
-                     or lower(mam.title) = lower(q.module)
+                     lower(mam.title) = lower(q.module)
                      or lower(q.module) like ('%%' || lower(mam.title) || '%%')
                      or lower(mam.programme_name) = lower(q.programme)
                      or lower(mam.programme_id) = lower(q.programme)
@@ -807,25 +802,6 @@ def _match_programme_catalogue_id(programme, module, title, supplied_id=None):
 
     try:
         with connection.cursor() as cursor:
-            if supplied_text and _curriculum_column_exists(modules_table, "imported_from_training_plan_id"):
-                cursor.execute(
-                    f"""
-                    select programme_id
-                    from {_curriculum_table_name(modules_table)}
-                    from curriculum.modules
-                    where coalesce(trim(programme_id), '') <> ''
-                      and imported_from_training_plan_id = %s
-                    order by
-                      {_quote_ident("updated_at") if _curriculum_column_exists(modules_table, "updated_at") else "programme_id"} desc nulls last,
-                      {_quote_ident("created_at") if _curriculum_column_exists(modules_table, "created_at") else "programme_id"} desc nulls last
-                    limit 1
-                    """,
-                    [supplied_text],
-                )
-                row = cursor.fetchone()
-                if row and row[0]:
-                    return row[0]
-
             if (
                 supplied_text
                 and _curriculum_table_exists("Training_plan")
@@ -1655,14 +1631,11 @@ def training_plan_options(request):
                       max(mam.module_catalogue_id) as module_catalogue_id
                     from curriculum."Training_plan" tp
                     left join curriculum.modules mam
-                      on mam.imported_from_training_plan_id = tp.id::text
-                      or (
-                        mam.title = tp.module_name
-                        and (
-                          mam.programme_id = tp."Program"
-                          or mam.programme_name = tp."Program"
-                          or tp."Program" like mam.programme_name || ' %%'
-                        )
+                      on mam.title = tp.module_name
+                     and (
+                       mam.programme_id = tp."Program"
+                       or mam.programme_name = tp."Program"
+                       or tp."Program" like mam.programme_name || ' %%'
                       )
                     where coalesce(trim(tp."Program"), '') <> ''
                       and coalesce(trim(tp.module_name), '') <> ''

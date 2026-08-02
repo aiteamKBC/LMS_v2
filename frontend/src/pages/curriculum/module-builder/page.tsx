@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import Swal from 'sweetalert2';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
@@ -12,6 +13,7 @@ import {
   componentTypeGroups,
   componentTypes,
   createEmptyComponent,
+  createTeamsMeeting,
   createEmptyWeek,
   createLocalModuleDraft,
   createNewModule,
@@ -22,6 +24,7 @@ import {
   getDefaultStructure,
   getDefaultComponentSettings,
   loadModuleStructure,
+  loadTeamsMeetingConfiguration,
   makeAuthoringId,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
@@ -37,8 +40,16 @@ import {
   type ModuleComponent,
   type ModuleComponentType,
   type ModuleWeek,
+  type TeamsMeetingInput,
+  type TeamsMeetingResult,
 } from './moduleAuthoringData';
-import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel, type GroupOption, type WeekComponentUploader, type WeekScope } from '@/pages/curriculum/week-builder/page';
+// The shared week-authoring UI arrives through curriculum/shared/components rather
+// than from week-builder/page directly: these three components only render once a
+// week is expanded, so the lazy wrappers keep Week Builder's ~159 kB chunk (dnd-kit
+// and the RichTextEditor included) off the initial Module Builder load. Types come
+// from the non-lazy barrel — type imports are erased and pull in no runtime code.
+import { ComponentEditor as WeekComponentEditor, WeekComponentRail, WeekOverviewPanel } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
+import type { GroupOption, WeekComponentUploader, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
 import { fetchComponentPointsDefaults, fetchWeekTemplates, fetchWeekTemplateDetail, filterWeekTemplatesForScope, loadCurriculumScope, type WeekTemplate } from '@/pages/curriculum/week-builder/weekTemplateData';
 import {
   CONTENT_STATUSES,
@@ -106,6 +117,14 @@ type ProgrammeKsbMapState = {
   modules: ModuleBuilderListItem[];
 };
 
+type ModuleScopeLock = {
+  programmeId: string;
+  programmeName: string;
+  ksbSourceId: string;
+  ksbSourceLabel: string;
+  locked: boolean;
+};
+
 type QuizPackageSummary = {
   id: number;
   title: string;
@@ -131,19 +150,14 @@ type WizardModuleDraftPayload = {
   cohortName?: string;
   groupId?: string;
   groupName?: string;
+  ksbSourceId?: string;
+  ksbSourceLabel?: string;
   title?: string;
   description?: string;
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
 };
-
-const statusFilters = [
-  { key: 'all', label: 'All' },
-  { key: 'published', label: 'Published' },
-  { key: 'draft', label: 'Draft' },
-  { key: 'review', label: 'In Review' },
-];
 
 const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
 
@@ -186,7 +200,6 @@ async function showBuilderDeleteSwal({
 
 export default function ModuleBuilder() {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
   const [programmeFilter, setProgrammeFilter] = useState<string>('All');
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -212,6 +225,7 @@ export default function ModuleBuilder() {
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
+  const [ksbMapLoadingId, setKsbMapLoadingId] = useState<string | null>(null);
   const [programmeKsbLoading, setProgrammeKsbLoading] = useState(false);
   const [sessionKsbMappingOpen, setSessionKsbMappingOpen] = useState(false);
   const [dragState, setDragState] = useState<DragState>(null);
@@ -232,6 +246,9 @@ export default function ModuleBuilder() {
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes();
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
   const liveCurriculumProgrammes = curriculumProgrammes;
+  const wizardModulePayload = useMemo(() => (
+    typeof window === 'undefined' ? null : readWizardModuleDraft(new URLSearchParams(window.location.search))
+  ), []);
 
   // Reuse of the week-builder component editor needs group options, rule-driven
   // points and a scope — sourced the same way the week builder does.
@@ -314,13 +331,59 @@ export default function ModuleBuilder() {
     ksbSourceOptions(ksbSets, standards)
   ), [ksbSets, standards]);
   const workspaceKsbProfileValue = useMemo(() => {
+    const wizardSource = cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
+    if (wizardSource) return wizardSource;
     const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
     if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
     const matchingProfile = ksbSetForModule(ksbSets, workingModule, curriculumProgrammes);
     if (matchingProfile) return ksbSetSourceId(matchingProfile);
     const matchingStandard = standardForModule(standards, workingModule, curriculumProgrammes);
     return matchingStandard ? ksbStandardSourceId(matchingStandard) : '';
-  }, [curriculumProgrammes, ksbSets, standards, workingModule]);
+  }, [curriculumProgrammes, ksbSets, standards, wizardModulePayload?.ksbSourceId, workingModule]);
+
+  const resolveModuleScopeLock = useCallback((module: ModuleCatalogueItem | ModuleBuilderListItem): ModuleScopeLock => {
+    const wizardSource = cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
+    if (wizardModulePayload && (wizardModulePayload.programmeId || wizardModulePayload.programme || wizardSource)) {
+      const programmeIdentity = resolveProgrammeIdentity(wizardModulePayload.programme || module.programmeName || '', wizardModulePayload.programmeId || module.programmeId || '');
+      return {
+        programmeId: programmeIdentity.programmeId,
+        programmeName: programmeIdentity.programmeName,
+        ksbSourceId: wizardSource,
+        ksbSourceLabel: wizardModulePayload.ksbSourceLabel || ksbSourceLabels[wizardSource] || wizardSource,
+        locked: true,
+      };
+    }
+    const usage = deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes);
+    const rawProgrammeName = usage?.programme || module.programmeName || module.sourceModule?.programme || '';
+    const rawProgrammeId = usage?.programmeId || module.programmeId || module.sourceModule?.programmeId || '';
+    const programmeIdentity = resolveProgrammeIdentity(rawProgrammeName, String(rawProgrammeId || ''));
+    const scopedModule = {
+      ...module,
+      programmeName: programmeIdentity.programmeName,
+      programmeId: programmeIdentity.programmeId,
+    } as ModuleCatalogueItem;
+    const matchingProfile = ksbSetForModule(ksbSets, scopedModule, curriculumProgrammes);
+    const matchingStandard = standardForModule(standards, scopedModule, curriculumProgrammes);
+    const ksbSourceId = matchingProfile ? ksbSetSourceId(matchingProfile) : matchingStandard ? ksbStandardSourceId(matchingStandard) : cleanKsbSourceId(module.ksbProfileSourceId);
+    const ksbSourceLabel = ksbSourceLabels[ksbSourceId] || ksbSourceLabels[`profile:${ksbSourceId}`] || ksbSourceLabels[`standard:${ksbSourceId}`] || ksbSourceId;
+    const locked = Boolean(
+      programmeIdentity.programmeName
+      && programmeIdentity.programmeName !== 'Unassigned programme'
+      && (usage || matchingProfile || matchingStandard),
+    );
+    return {
+      programmeId: programmeIdentity.programmeId,
+      programmeName: programmeIdentity.programmeName,
+      ksbSourceId,
+      ksbSourceLabel,
+      locked,
+    };
+  }, [curriculumProgrammes, ksbSets, ksbSourceLabels, programmeFilter, resolveProgrammeIdentity, standards, wizardModulePayload]);
+
+  const workingModuleScopeLock = useMemo(
+    () => (workingModule ? resolveModuleScopeLock(workingModule) : null),
+    [resolveModuleScopeLock, workingModule],
+  );
 
   // Scope + module-scoped uploader passed to the shared week-builder editor.
   const weekScopeForModule = useMemo<WeekScope>(() => ({
@@ -337,7 +400,6 @@ export default function ModuleBuilder() {
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
-    if (statusFilter !== 'all' && module.status !== statusFilter) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
     return true;
   });
@@ -345,7 +407,6 @@ export default function ModuleBuilder() {
   const published = catalogueModules.filter(module => module.status === 'published').length;
   const draftCount = catalogueModules.filter(module => module.status === 'draft').length;
   const totalComponents = catalogueModules.reduce((total, module) => total + (module.lessonCount || 0), 0);
-  const totalDeliveryUses = catalogueModules.reduce((total, module) => total + (module.deliveryUsages?.length || 0), 0);
 
   const selectedWeek = workingModule?.weekStructure.find(week => week.id === selection?.weekId) || null;
   const selectedComponent =
@@ -380,11 +441,21 @@ export default function ModuleBuilder() {
     setNoticeAlert(null);
     try {
       const remote = await loadModuleStructure(structureId);
-      const next = recalculateModule(remote ? { ...remote, sourceModule: module.sourceModule || remote.sourceModule } : getDefaultStructure(module));
+      const base = remote ? { ...module, ...remote, sourceModule: module.sourceModule || remote.sourceModule } : getDefaultStructure(module);
+      const scopeLock = resolveModuleScopeLock(base);
+      const scopedBase = {
+        ...base,
+        programmeId: scopeLock.programmeId || base.programmeId,
+        programmeName: scopeLock.programmeName || base.programmeName,
+        ksbProfileSourceId: scopeLock.ksbSourceId || base.ksbProfileSourceId,
+      } as ModuleBuilderListItem;
+      scopedBase.deliveryUsages = (module as ModuleBuilderListItem).deliveryUsages;
+      const next = recalculateModule(scopedBase);
+      const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
-      setSelection(next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null);
-      setSettingsOpen(openSettings);
+      setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
+      setSettingsOpen(openSettings || deepLinkTarget.openSettings);
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
@@ -392,26 +463,34 @@ export default function ModuleBuilder() {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
     }
-  }, [finishLoadingProgress]);
+  }, [finishLoadingProgress, resolveModuleScopeLock]);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
+    const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
     const requestedId = moduleStructureIdentifier(module);
     const workingId = workingModule ? moduleStructureIdentifier(workingModule) : '';
+    setKsbMapLoadingId(loadingId);
     if (!requestedId) {
+      await wait(180);
       setKsbMapModule(module);
+      setKsbMapLoadingId(null);
       return;
     }
     if (workingModule && requestedId && requestedId === workingId) {
+      await wait(180);
       setKsbMapModule({ ...module, ...workingModule, deliveryUsages: module.deliveryUsages });
+      setKsbMapLoadingId(null);
       return;
     }
 
     try {
-      const remote = await loadModuleStructure(requestedId);
+      const [remote] = await Promise.all([loadModuleStructure(requestedId), wait(180)]);
       setKsbMapModule(remote ? { ...module, ...remote, deliveryUsages: module.deliveryUsages } : module);
     } catch (err) {
       console.warn('Unable to load full module structure for KSB map.', err);
       setKsbMapModule(module);
+    } finally {
+      setKsbMapLoadingId(null);
     }
   }, [workingModule]);
 
@@ -440,23 +519,26 @@ export default function ModuleBuilder() {
   }, [catalogueModules, curriculumProgrammes, programmeFilter, programmeKsbLoading]);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let active = true;
     setQuizzesLoading(true);
-    fetch('/quiz_api/quizzes/?status=all&assessmentType=quiz', { signal: controller.signal })
+    fetch('/quiz_api/quizzes/?status=all&assessmentType=quiz')
       .then(response => {
         if (!response.ok) throw new Error(`Unable to load quizzes (${response.status})`);
         return response.json();
       })
       .then(data => {
+        if (!active) return;
         const results = Array.isArray(data?.results) ? data.results : [];
         setQuizPackages(results);
       })
       .catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (!active) return;
         console.warn('Unable to load LMS quizzes.', error);
       })
-      .finally(() => setQuizzesLoading(false));
-    return () => controller.abort();
+      .finally(() => {
+        if (active) setQuizzesLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -485,6 +567,17 @@ export default function ModuleBuilder() {
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
   }, [saveStartedAt, saving]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const requestedProgramme = (params.get('programme') || params.get('programmeId') || '').trim();
+    if (!requestedProgramme || loading || programmeFilter !== 'All') return;
+    const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
+    const match = programmeOptions.find(option => (
+      option !== 'All' && (option === requestedProgramme || normaliseDeepLinkValue(option) === requestedNormalised)
+    ));
+    if (match) setProgrammeFilter(match);
+  }, [loading, programmeFilter, programmeOptions]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -519,6 +612,7 @@ export default function ModuleBuilder() {
           cohortName: wizardPayload.cohortName || '',
           groupId: wizardPayload.groupId || '',
           groupName: wizardPayload.groupName || '',
+          ksbProfileSourceId: cleanKsbSourceId(wizardPayload.ksbSourceId),
           title: wizardPayload.title,
           description: wizardPayload.description || '',
           weeks: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
@@ -574,6 +668,7 @@ export default function ModuleBuilder() {
       cohortName: wizardPayload.cohortName || '',
       groupId: wizardPayload.groupId || '',
       groupName: wizardPayload.groupName || '',
+      ksbProfileSourceId: cleanKsbSourceId(wizardPayload.ksbSourceId),
       catalogueId: isCanonicalModuleCatalogueId(requestedKey) ? requestedKey : undefined,
       title: wizardPayload.title,
       description: wizardPayload.description || '',
@@ -657,7 +752,13 @@ export default function ModuleBuilder() {
   const persistWorkingModule = useCallback(async (options: { closeAfterSave?: boolean } = {}) => {
     const closeAfterSave = options.closeAfterSave !== false;
     if (!workingModule) return null;
-    const validationIssues = validateModuleAuthoringStructure(workingModule);
+    const scopedWorkingModule = workingModuleScopeLock?.locked ? {
+      ...workingModule,
+      programmeId: workingModuleScopeLock.programmeId || workingModule.programmeId,
+      programmeName: workingModuleScopeLock.programmeName || workingModule.programmeName,
+      ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || workingModule.ksbProfileSourceId,
+    } : workingModule;
+    const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
     if (validationIssues.length) {
       setActionMessage(firstValidationMessage(validationIssues));
       setSaveSuccess(null);
@@ -669,11 +770,11 @@ export default function ModuleBuilder() {
     setSaveStartedAt(Date.now());
     setActionMessage(null);
     setSaveSuccess(null);
-    const normalisedModule = normaliseComponentTitles(workingModule);
-    const selectedKsbSourceId = cleanKsbSourceId(normalisedModule.ksbProfileSourceId);
+    const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
+    const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
     const moduleToSave = recalculateModule({
       ...normalisedModule,
-      ksbProfileSourceId: selectedKsbSourceId && ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes)
+      ksbProfileSourceId: selectedKsbSourceId && (workingModuleScopeLock?.locked || ksbSourceMatchesModule(selectedKsbSourceId, ksbSets, standards, normalisedModule, curriculumProgrammes))
         ? selectedKsbSourceId
         : '',
     });
@@ -744,7 +845,7 @@ export default function ModuleBuilder() {
         setSaveStartedAt(null);
       }
     }
-  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule]);
+  }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleScopeLock]);
 
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
@@ -982,10 +1083,6 @@ export default function ModuleBuilder() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedWorkingModuleChanges]);
 
-  const handleStatusChange = useCallback((status: string) => {
-    updateWorkingModule(module => ({ ...module, status }));
-  }, [updateWorkingModule]);
-
   useEffect(() => {
     if (!noticeAlert) return;
     let active = true;
@@ -1049,10 +1146,12 @@ export default function ModuleBuilder() {
           <WorkspaceHeader
             module={workingModule}
             programmeOptions={programmeOptions.filter(option => option !== 'All')}
+            scopeLock={workingModuleScopeLock}
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onBack={() => { void requestDirtyNavigation(() => closeWorkingModule()); }}
             onProgrammeChange={programmeName => {
+              if (workingModuleScopeLock?.locked) return;
               void requestDirtyNavigation(() => {
                 updateWorkingModule(module => {
                   const programmeIdentity = resolveProgrammeIdentity(programmeName, module.programmeId);
@@ -1066,9 +1165,9 @@ export default function ModuleBuilder() {
             ksbProfileValue={workspaceKsbProfileValue}
             standardsLoading={standardsLoading}
             onKsbProfileChange={sourceId => {
+              if (workingModuleScopeLock?.locked) return;
               updateWorkingModule(module => ({ ...module, ksbProfileSourceId: cleanKsbSourceId(sourceId) }));
             }}
-            onStatusChange={handleStatusChange}
           />
 
           {(saving || saveSuccess || (actionMessage && !deletingModuleId)) && (
@@ -1117,13 +1216,29 @@ export default function ModuleBuilder() {
               {selectedComponent && selectedWeek ? (
                 <WeekComponentEditor
                   component={selectedComponent}
-                  onChange={updates => updateWorkingModule(module => ({
-                    ...module,
-                    weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? {
-                      ...week,
-                      components: week.components.map(component => component.id === selectedComponent.id ? { ...component, ...updates } : component),
-                    } : week),
-                  }))}
+                  onChange={updates => updateWorkingModule(module => {
+                    const updatedSettings = updates.settings as ModuleComponent['settings'] | undefined;
+                    const sharesTeamsLink = selectedComponent.type === 'live-session'
+                      && updatedSettings
+                      && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
+                    const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                    return {
+                      ...module,
+                      weekStructure: module.weekStructure.map(week => ({
+                        ...week,
+                        components: week.components.map(component => {
+                          if (component.id === selectedComponent.id) return { ...component, ...updates };
+                          if (sharesTeamsLink && component.type === 'live-session') {
+                            return {
+                              ...component,
+                              settings: { ...component.settings, liveSessionUrl: sharedTeamsUrl },
+                            };
+                          }
+                          return component;
+                        }),
+                      })),
+                    };
+                  })}
                   onBack={() => requestSelectionChange({ kind: 'week', weekId: selectedWeek.id })}
                   groupOptions={componentGroupOptions}
                   rulePoints={componentPointsByType[selectedComponent.type]}
@@ -1284,27 +1399,23 @@ export default function ModuleBuilder() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${catalogueModules.length} modules - ${published} published - ${draftCount} draft - ${totalComponents} components`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-6 space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-layout-4-line text-white text-2xl"></i>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Module Builder</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                {loading ? 'Loading live LMS modules...' : 'Design and manage learning modules with sessions and KSB mapping from the LMS database'}
-              </p>
+      <div className="p-4 sm:p-5 space-y-4">
+        <div className="rounded-2xl border border-foreground-200/70 bg-background-50 px-5 py-4 shadow-sm">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
+                <i className="ri-layout-4-line text-xl"></i>
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
+                <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
+                  {loading ? 'Loading live LMS modules...' : 'Manage module structures, delivery scope and KSB mapping in one workspace.'}
+                </p>
+              </div>
             </div>
-            <button onClick={() => setCreateOpen(true)} disabled={saving || creatingQuickModule} className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white/20 backdrop-blur-sm text-white rounded-xl text-[12px] font-semibold hover:bg-white/30 transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-wait disabled:opacity-70">
-              {creatingQuickModule ? (
-                <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden="true"></span>
-              ) : (
-                <i className="ri-add-line"></i>
-              )}
-              {creatingQuickModule ? 'Creating...' : 'New Module'}
+            <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
+              <i className="ri-add-line"></i>
+              New module
             </button>
           </div>
         </div>
@@ -1323,56 +1434,26 @@ export default function ModuleBuilder() {
           </div>
         )}
 
-        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-          <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
-            <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
-          </div>
-          <select value={programmeFilter} onChange={event => setProgrammeFilter(event.target.value)} className="px-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
-            {programmeOptions.map(option => <option key={option}>{option}</option>)}
-          </select>
-          <button
-            type="button"
-            onClick={() => { void openProgrammeKsbMap(); }}
-            disabled={programmeFilter === 'All' || programmeKsbLoading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <i className={programmeKsbLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></i>
-            {programmeKsbLoading ? 'Loading KSBs...' : 'Review programme KSBs'}
-          </button>
-          <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
-            {statusFilters.map(filter => (
-              <button key={filter.key} onClick={() => setStatusFilter(filter.key)} className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${statusFilter === filter.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                {filter.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {Array.from({ length: 4 }).map((_, index) => <StatsCardSkeleton key={index} />)}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatsCard label="Total Modules" value={catalogueModules.length.toString()} icon="ri-stack-line" color="primary" />
-            <StatsCard label="Published" value={published.toString()} icon="ri-check-double-line" color="emerald" />
-            <StatsCard label="Components" value={totalComponents.toString()} icon="ri-layout-grid-line" color="accent" />
-            <StatsCard label="Delivery Uses" value={totalDeliveryUses.toString()} icon="ri-route-line" color="secondary" />
-          </div>
-        )}
-
-        <div className="rounded-2xl border border-foreground-200/60 bg-background-50">
-          <div className="flex flex-col gap-2 border-b border-background-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-[12px] font-bold text-foreground-900">Module catalogue</p>
-              <p className="text-[11px] text-foreground-500">Modules are scoped by programme, cohort and group, so matching titles can carry different KSB mappings.</p>
+        <div className="rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[13px] font-bold text-foreground-950">Module catalogue</p>
+                <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{filtered.length} shown</span>
+              </div>
+              <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
-            <span className="rounded-full bg-background-100 px-3 py-1 text-[11px] font-semibold text-foreground-600">
-              {filtered.length} shown
-            </span>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative min-w-0 sm:w-80">
+                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
+              </div>
+              <select value={programmeFilter} onChange={event => setProgrammeFilter(event.target.value)} className="h-10 min-w-44 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
+                {programmeOptions.map(option => <option key={option}>{option}</option>)}
+              </select>
+            </div>
           </div>
-          <div className="max-h-[calc(100vh-345px)] min-h-[420px] overflow-auto p-3">
+          <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {loading ? (
               <ModuleListSkeleton />
             ) : filtered.length > 0 ? (
@@ -1382,6 +1463,7 @@ export default function ModuleBuilder() {
                     key={module.catalogueId}
                     module={module}
                     onKsbMap={() => { void openKsbMap(module); }}
+                    ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onBuild={() => openModule(module)}
                     onSettings={() => openModule(module, true)}
                     onDuplicate={() => duplicateModule(module)}
@@ -1393,20 +1475,24 @@ export default function ModuleBuilder() {
               <div className="px-4 py-14 text-center">
                 <i className="ri-inbox-line mb-3 block text-3xl text-foreground-300"></i>
                 <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
-                <p className="mt-1 text-[12px] text-foreground-400">Try changing the search, programme, or status filter.</p>
+                <p className="mt-1 text-[12px] text-foreground-400">Try changing the search or programme filter.</p>
               </div>
             )}
           </div>
         </div>
+        {/* Mounted only while open, matching the programmes and programme-detail
+            pages. The wizard's ~1,700 lines of hooks and memos otherwise re-run on
+            every render of this page just to hit its own `if (!isOpen) return null`. */}
         {createOpen && (
-          <NewModuleChoiceModal
-            programmeOptions={programmeOptions.filter(option => option !== 'All')}
-            defaultProgramme={programmeFilter !== 'All' ? programmeFilter : undefined}
+          <AddCurriculumStructureWizard
+            isOpen={createOpen}
             onClose={() => setCreateOpen(false)}
-            onCreate={input => {
+            onSaved={() => {
               setCreateOpen(false);
-              createQuickModule(input);
+              reload({ silent: true });
             }}
+            startStep="programme"
+            modulePlacementMode
           />
         )}
         {ksbMapDisplayModule && (
@@ -1505,88 +1591,45 @@ function SaveStatusPanel({ saving, elapsedSeconds, success, error, module }: {
   );
 }
 
-function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, standardsLoading, saving, saved, onBack, onProgrammeChange, onKsbProfileChange, onStatusChange }: {
+function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfileValue, scopeLock, standardsLoading, onBack, onProgrammeChange, onKsbProfileChange }: {
   module: ModuleCatalogueItem;
   programmeOptions: string[];
   ksbProfileOptions: Array<{ id: string; label: string }>;
   ksbProfileValue: string;
+  scopeLock: ModuleScopeLock | null;
+  saving?: boolean;
+  saved?: boolean;
   standardsLoading: boolean;
-  saving: boolean;
-  saved: boolean;
   onBack: () => void;
   onProgrammeChange: (programmeName: string) => void;
   onKsbProfileChange: (sourceId: string) => void;
-  onStatusChange: (status: string) => void;
 }) {
   const moduleMetrics = [
-    { label: 'Sessions', value: String(module.sessionsNumber || module.sourceModule?.weeks || module.weeks || 0), icon: 'ri-calendar-check-line' },
     { label: 'Weeks', value: String(module.weekStructure.length), icon: 'ri-stack-line' },
     { label: 'Components', value: String(module.lessonCount), icon: 'ri-layout-grid-line' },
     { label: 'OTJH', value: module.totalOtjh.toFixed(1), icon: 'ri-time-line' },
   ];
-  const saveStateLabel = saving ? 'Saving changes' : saved ? 'Saved' : 'Unsaved draft';
-  const saveStateClasses = saving
-    ? 'bg-amber-50 text-amber-700 border-amber-200'
-    : saved
-      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-      : 'bg-background-100 text-foreground-500 border-background-200';
+  const programmeLocked = Boolean(scopeLock?.locked);
+  const lockedKsbLabel = scopeLock?.ksbSourceLabel || (ksbProfileValue ? ksbProfileValue.replace(/^(profile|standard):/, '') : 'No source selected');
 
   return (
-    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm lg:p-5">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_140px] lg:items-start">
-        <div className="flex min-w-0 items-start gap-3">
-          <button onClick={onBack} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-700 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700" title="Back" aria-label="Back">
-            <i className="ri-arrow-left-line"></i>
+    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+      <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <button onClick={onBack} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1" title="Back to modules" aria-label="Back to modules">
+            <i className="ri-arrow-left-line text-base"></i>
+            Back to modules
           </button>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={module.status} />
-              <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold ${saveStateClasses}`}>
-                <i className={saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-check-line' : 'ri-pencil-line'}></i>
-                {saveStateLabel}
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-500">
-                <i className="ri-calendar-check-line"></i>
-                {module.sessionsNumber || module.sourceModule?.weeks || module.weeks || 0} sessions
-              </span>
-            </div>
-            <h2 className="mt-2 max-w-[calc(100vw-140px)] truncate text-xl font-heading font-bold text-foreground-950 lg:max-w-[820px]" title={module.title}>{module.title}</h2>
-            <p className="mt-1 max-w-[calc(100vw-140px)] truncate text-[12px] text-foreground-500 lg:max-w-[820px]">{moduleListSubLabel(module)}</p>
+          <div className="min-w-0 border-l border-background-200 pl-3">
+            <h2 className="max-w-[calc(100vw-180px)] truncate text-lg font-heading font-bold text-foreground-950 lg:max-w-[760px]" title={module.title}>{module.title}</h2>
+            <p className="mt-0.5 max-w-[calc(100vw-180px)] truncate text-[12px] text-foreground-500 lg:max-w-[760px]">{moduleListSubLabel(module)}</p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <select value={module.status} onChange={event => onStatusChange(event.target.value)} className="h-10 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400">
-            <option value="draft">Draft</option>
-            <option value="review">In Review</option>
-            <option value="published">Published</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 border-t border-background-200 pt-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-        <div className="grid min-w-0 grid-cols-1 gap-2 sm:max-w-xl sm:grid-cols-2">
-          <label className="block min-w-0">
-            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Programme</span>
-            <select value={module.programmeName} onChange={event => onProgrammeChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
-              {programmeOptions.map(option => <option key={option}>{option}</option>)}
-              {!programmeOptions.includes(module.programmeName) && <option>{module.programmeName}</option>}
-            </select>
-          </label>
-          <label className="block min-w-0">
-            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
-            <select value={ksbProfileValue} onChange={event => onKsbProfileChange(event.target.value)} className="h-9 w-full rounded-lg border border-background-200 bg-background-100/50 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
-              <option value="">{standardsLoading ? 'Loading standards...' : 'No source selected'}</option>
-              {ksbProfileOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
-              {ksbProfileValue && !ksbProfileOptions.some(option => option.id === ksbProfileValue) && <option value={ksbProfileValue}>{ksbProfileValue.replace(/^(profile|standard):/, '')}</option>}
-            </select>
-          </label>
-        </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center lg:justify-end">
-          <QualityRing score={module.qualityScore} />
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-3 gap-2">
             {moduleMetrics.map(metric => (
-              <div key={metric.label} className="min-w-[82px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-2">
+              <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
                   <i className={`${metric.icon} text-[12px]`}></i>{metric.label}
                 </div>
@@ -1596,23 +1639,25 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
           </div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function QualityRing({ score }: { score: number }) {
-  const bounded = Math.max(0, Math.min(100, Math.round(score || 0)));
-  return (
-    <div className="flex min-w-[138px] items-center gap-2 rounded-lg border border-primary-100 bg-primary-50 px-2.5 py-2">
-      <div
-        className="grid h-9 w-9 place-items-center rounded-full"
-        style={{ background: `conic-gradient(oklch(var(--primary-500)) ${bounded * 3.6}deg, oklch(var(--background-200)) 0deg)` }}
-      >
-        <div className="grid h-6 w-6 place-items-center rounded-full bg-background-50 text-[9px] font-bold text-primary-700">{bounded}%</div>
-      </div>
-      <div>
-        <p className="text-[9px] font-bold uppercase tracking-wide text-primary-700">Quality</p>
-        <p className="text-[11px] font-medium text-foreground-500">Authoring health</p>
+      <div className="grid gap-2 border-t border-background-200 bg-background-100/30 px-4 py-2.5 sm:grid-cols-2 lg:max-w-[760px] lg:px-5">
+          <label className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">Programme</span>
+            <select value={module.programmeName} disabled={programmeLocked} onChange={event => onProgrammeChange(event.target.value)} className={`h-8 w-full rounded-lg border border-background-200 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50 ${programmeLocked ? 'cursor-not-allowed bg-background-100 text-foreground-500' : 'bg-background-50'}`}>
+              {programmeOptions.map(option => <option key={option}>{option}</option>)}
+              {!programmeOptions.includes(module.programmeName) && <option>{module.programmeName}</option>}
+            </select>
+            {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked from programme delivery scope</span>}
+          </label>
+          <label className="block min-w-0">
+            <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
+            <select value={ksbProfileValue} disabled={programmeLocked} onChange={event => onKsbProfileChange(event.target.value)} className={`h-8 w-full rounded-lg border border-background-200 px-3 text-[12px] font-semibold text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50 ${programmeLocked ? 'cursor-not-allowed bg-background-100 text-foreground-500' : 'bg-background-50'}`}>
+              <option value="">{standardsLoading ? 'Loading standards...' : 'No source selected'}</option>
+              {ksbProfileOptions.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              {ksbProfileValue && !ksbProfileOptions.some(option => option.id === ksbProfileValue) && <option value={ksbProfileValue}>{lockedKsbLabel}</option>}
+            </select>
+            {programmeLocked && <span className="mt-0.5 block text-[9px] font-semibold text-foreground-400">Locked to programme KSB source</span>}
+          </label>
       </div>
     </div>
   );
@@ -2222,6 +2267,7 @@ function TypeSpecificFields({
   const getStringArray = (key: string) => Array.isArray(s[key]) ? (s[key] as string[]).map(value => String(value || '').trim()).filter(Boolean) : [];
   const [uploadingResource, setUploadingResource] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
 
   const handleResourceUpload = async (file: File, componentType: 'podcast' | 'powerpoint' | 'assignment') => {
     setUploadingResource(true);
@@ -2273,7 +2319,9 @@ function TypeSpecificFields({
     };
     return (
       <EditorBlock title="Live Teams session">
-        <p className="rounded-lg bg-primary-50 border border-primary-100 px-3 py-2 text-[11px] font-medium text-primary-700">Teams link, date and attendance sync are added later by MIS when this module is allocated to a cohort.</p>
+        <p className="rounded-lg border border-primary-100 bg-primary-50 px-3 py-2 text-[11px] font-medium text-primary-700">
+          Create the Microsoft Teams meeting here, invite attendees, and keep its join link with this live-session component.
+        </p>
         <div className="rounded-xl border border-background-200 bg-background-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -2314,16 +2362,63 @@ function TypeSpecificFields({
             </p>
           )}
         </div>
-        {!!selectedGroupKeys.length && (
-          <div className="rounded-xl border border-background-200 bg-background-50 p-3">
-            <div className="mb-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Teams link</p>
-              <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">Applies to the selected group{selectedGroupKeys.length === 1 ? '' : 's'}.</p>
+        <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
+              {getString('liveSessionUrl') ? (
+                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
+                  <i className="ri-microsoft-teams-line mr-1"></i>
+                  Open meeting link
+                </a>
+              ) : (
+                <p className="mt-1 text-[11px] font-semibold text-foreground-500">No Teams meeting has been created yet.</p>
+              )}
+              {getString('teamsOrganizerEmail') && <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">Organizer: {getString('teamsOrganizerEmail')}</p>}
             </div>
-            <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            <button
+              type="button"
+              onClick={() => setTeamsMeetingOpen(true)}
+              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
+            >
+              <i className="ri-calendar-event-line"></i>
+              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+            </button>
           </div>
-        )}
+          {getString('liveSessionUrl') && (
+            <div className="mt-3">
+              <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
+            </div>
+          )}
+        </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
+        {teamsMeetingOpen && (
+          <TeamsMeetingModal
+            component={component}
+            onClose={() => setTeamsMeetingOpen(false)}
+            onCreated={(result, input) => {
+              const meeting = result.meeting;
+              onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
+              onSettingChange('teamsEventId', meeting.eventId);
+              onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
+              onSettingChange('teamsMeetingOptionsUrl', meeting.meetingOptionsUrl);
+              onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
+              onSettingChange('teamsAttendees', meeting.attendees);
+              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
+              onSettingChange('durationMinutes', meeting.durationMinutes);
+              onSettingChange('teamsProvider', meeting.provider);
+              onSettingChange('teamsRepeat', meeting.repeat);
+              onSettingChange('teamsRepeatOccurrences', meeting.repeatOccurrences);
+              onSettingChange('teamsLobbyBypass', input.lobbyBypass);
+              onSettingChange('teamsRecording', input.recording);
+              onSettingChange('teamsSpokenLanguage', input.spokenLanguage);
+              onSettingChange('teamsMeetingType', input.meetingType);
+              onSettingChange('teamsRequestResponses', input.requestResponses);
+              onSettingChange('teamsAllowTimeProposals', input.allowNewTimeProposals);
+              onSettingChange('teamsHideAttendees', input.hideAttendees);
+            }}
+          />
+        )}
       </EditorBlock>
     );
   }
@@ -2485,6 +2580,226 @@ function TypeSpecificFields({
       <TextInput label="Checkpoint title" value={getString('checkpointTitle')} onChange={value => onSettingChange('checkpointTitle', value)} />
       <TextArea label="Checkpoint questions" value={getString('checkpointQuestions')} onChange={value => onSettingChange('checkpointQuestions', value)} rows={4} />
     </EditorBlock>
+  );
+}
+
+function localDateTimeValue(value?: string) {
+  const parsed = value ? new Date(value) : new Date(Date.now() + 30 * 60 * 1000);
+  const date = Number.isNaN(parsed.getTime()) ? new Date(Date.now() + 30 * 60 * 1000) : parsed;
+  date.setMinutes(Math.ceil(date.getMinutes() / 15) * 15, 0, 0);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function meetingSettingString(component: ModuleComponent, key: string, fallback = '') {
+  return String(component.settings[key] ?? fallback);
+}
+
+function meetingSettingBool(component: ModuleComponent, key: string, fallback: boolean) {
+  const value = component.settings[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function TeamsMeetingModal({
+  component,
+  onClose,
+  onCreated,
+}: {
+  component: ModuleComponent;
+  onClose: () => void;
+  onCreated: (result: TeamsMeetingResult, input: TeamsMeetingInput) => void;
+}) {
+  const storedAttendees = Array.isArray(component.settings.teamsAttendees)
+    ? (component.settings.teamsAttendees as string[]).join('\n')
+    : '';
+  const [title, setTitle] = useState(component.title || 'Live session');
+  const [organizerEmail, setOrganizerEmail] = useState(meetingSettingString(component, 'teamsOrganizerEmail'));
+  const [attendees, setAttendees] = useState(storedAttendees);
+  const [startDateTime, setStartDateTime] = useState(localDateTimeValue(meetingSettingString(component, 'sessionDateTimeUtc')));
+  const [durationMinutes, setDurationMinutes] = useState(Number(component.settings.durationMinutes || 60));
+  const [repeat, setRepeat] = useState<TeamsMeetingInput['repeat']>(meetingSettingString(component, 'teamsRepeat', 'none') as TeamsMeetingInput['repeat']);
+  const [repeatOccurrences, setRepeatOccurrences] = useState(Number(component.settings.teamsRepeatOccurrences || 12));
+  const [lobbyBypass, setLobbyBypass] = useState(meetingSettingString(component, 'teamsLobbyBypass', 'invited'));
+  const [recording, setRecording] = useState(meetingSettingString(component, 'teamsRecording', 'record-transcribe'));
+  const [spokenLanguage, setSpokenLanguage] = useState(meetingSettingString(component, 'teamsSpokenLanguage', 'en-GB'));
+  const [meetingType, setMeetingType] = useState(meetingSettingString(component, 'teamsMeetingType', 'live-session'));
+  const [details, setDetails] = useState(meetingSettingString(component, 'sessionPurpose', component.description));
+  const [requestResponses, setRequestResponses] = useState(meetingSettingBool(component, 'teamsRequestResponses', true));
+  const [allowNewTimeProposals, setAllowNewTimeProposals] = useState(meetingSettingBool(component, 'teamsAllowTimeProposals', true));
+  const [hideAttendees, setHideAttendees] = useState(meetingSettingBool(component, 'teamsHideAttendees', false));
+  const [configurationLoading, setConfigurationLoading] = useState(true);
+  const [graphConfigured, setGraphConfigured] = useState(true);
+  const [graphTimeZone, setGraphTimeZone] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<TeamsMeetingResult | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    loadTeamsMeetingConfiguration()
+      .then(configuration => {
+        if (!active) return;
+        setGraphConfigured(configuration.configured);
+        setGraphTimeZone(configuration.timeZone);
+        setOrganizerEmail(current => current || configuration.defaultOrganizer || '');
+      })
+      .catch(err => {
+        if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
+      })
+      .finally(() => {
+        if (active) setConfigurationLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const submit = async () => {
+    setError('');
+    if (!title.trim()) return setError('Meeting title is required.');
+    if (!organizerEmail.trim()) return setError('Enter the Microsoft 365 organizer email.');
+    const start = new Date(startDateTime);
+    if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
+    const input: TeamsMeetingInput = {
+      title: title.trim(),
+      organizerEmail: organizerEmail.trim(),
+      attendees: attendees.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+      localStartDateTime: startDateTime,
+      startDateTimeUtc: start.toISOString(),
+      durationMinutes,
+      repeat,
+      repeatOccurrences,
+      lobbyBypass,
+      recording,
+      spokenLanguage,
+      meetingType,
+      details,
+      requestResponses,
+      allowNewTimeProposals,
+      hideAttendees,
+      transactionId: makeAuthoringId('TEAMS'),
+    };
+    setSubmitting(true);
+    try {
+      const result = await createTeamsMeeting(input);
+      setCreated(result);
+      onCreated(result, input);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5" onClick={submitting ? undefined : onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="teams-meeting-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300">
+              <i className="ri-microsoft-teams-line text-xl"></i>
+            </span>
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Live session</p>
+              <h3 id="teams-meeting-title" className="mt-0.5 text-base font-heading font-bold text-white">Create Microsoft Teams meeting</h3>
+              <p className="mt-1 text-[11px] font-medium text-white/65">Set the calendar invitation and meeting preferences, then generate the join link.</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white hover:bg-white/20 disabled:opacity-50" aria-label="Close">
+            <i className="ri-close-line"></i>
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
+          {created ? (
+            <div className="mx-auto max-w-2xl space-y-4 py-4">
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-center">
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><i className="ri-check-line text-3xl"></i></span>
+                <h4 className="mt-3 text-base font-heading font-bold text-emerald-900">Teams meeting created</h4>
+                <p className="mt-1 text-[12px] font-medium text-emerald-700">The join link is now attached to this Live Session component.</p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {(created.meeting.joinUrl || created.meeting.webLink) && (
+                    <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white hover:bg-primary-600">
+                      <i className="ri-external-link-line"></i> Open Teams meeting
+                    </a>
+                  )}
+                  {created.meeting.meetingOptionsUrl && (
+                    <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100">
+                      <i className="ri-settings-3-line"></i> Teams Meeting options
+                    </a>
+                  )}
+                </div>
+              </div>
+              {!!created.warnings.length && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                  {created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,0.8fr)]">
+              <section className="space-y-4 rounded-2xl border border-background-200 bg-background-50 p-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Meeting details</p>
+                  <h4 className="mt-1 text-[13px] font-heading font-bold text-foreground-900">Calendar invitation</h4>
+                </div>
+                <TextInput label="Title" value={title} onChange={setTitle} required />
+                <TextInput label="Organizer Microsoft 365 email" value={organizerEmail} onChange={setOrganizerEmail} required />
+                <div>
+                  <TextArea label="Attendees" value={attendees} onChange={setAttendees} rows={4} />
+                  <p className="mt-1 text-[10px] font-semibold text-foreground-400">One email per line, or separate emails with commas or semicolons.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-[10px] font-semibold uppercase text-foreground-400">Start</span>
+                    <input type="datetime-local" value={startDateTime} onChange={event => setStartDateTime(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-[13px] text-foreground-900 focus:border-primary-300 focus:outline-none" />
+                  </label>
+                  <SelectInput label="Duration" value={String(durationMinutes)} options={['30', '45', '60', '90', '120', '180']} labels={{ '30': '30 minutes', '45': '45 minutes', '60': '1 hour', '90': '1 hour 30 minutes', '120': '2 hours', '180': '3 hours' }} onChange={value => setDurationMinutes(Number(value))} />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <SelectInput label="Repeat" value={repeat} options={['none', 'daily', 'weekdays', 'weekly']} labels={{ none: 'Does not repeat', daily: 'Daily', weekdays: 'Every weekday', weekly: 'Weekly' }} onChange={value => setRepeat(value as TeamsMeetingInput['repeat'])} />
+                  {repeat !== 'none' && <NumberInput label="Number of sessions" value={repeatOccurrences} min={2} max={52} step={1} onChange={setRepeatOccurrences} />}
+                </div>
+                <TextArea label="Details" value={details} onChange={setDetails} rows={5} />
+              </section>
+
+              <section className="space-y-4 rounded-2xl border border-primary-100 bg-primary-50/40 p-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Advanced options</p>
+                  <p className="mt-1 text-[11px] font-semibold text-foreground-500">Saved with the component. Microsoft 365 policy can override some options.</p>
+                </div>
+                <SelectInput label="Who can bypass the lobby?" value={lobbyBypass} options={['invited', 'organization', 'organization-excluding-guests', 'everyone', 'organizer']} labels={{ invited: 'People invited to this meeting', organization: 'People in my organization', 'organization-excluding-guests': 'Organization, excluding guests', everyone: 'Everyone', organizer: 'Only organizers' }} onChange={setLobbyBypass} />
+                <SelectInput label="Recording" value={recording} options={['none', 'record', 'record-transcribe']} labels={{ none: 'Do not start automatically', record: 'Record automatically', 'record-transcribe': 'Record and transcribe' }} onChange={setRecording} />
+                <SelectInput label="Spoken language" value={spokenLanguage} options={['en-GB', 'en-US', 'ar-EG', 'fr-FR']} labels={{ 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' }} onChange={setSpokenLanguage} />
+                <SelectInput label="Type" value={meetingType} options={['teams-meeting', 'live-session']} labels={{ 'teams-meeting': 'Teams meeting', 'live-session': 'Teams meeting / live session' }} onChange={setMeetingType} />
+                <div className="space-y-2 rounded-xl border border-dashed border-primary-200 bg-background-50/80 p-3">
+                  <Checkbox label="Request responses" checked={requestResponses} onChange={setRequestResponses} />
+                  <Checkbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
+                  <Checkbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
+                </div>
+                {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Microsoft calendar time zone: {graphTimeZone}</p>}
+              </section>
+            </div>
+          )}
+
+          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</p>}
+          {!configurationLoading && !graphConfigured && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">Microsoft Graph credentials are missing from the backend environment.</p>}
+        </div>
+
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-5 py-4">
+          <p className="text-[10px] font-semibold text-foreground-400">Creating sends calendar invitations to the attendee emails.</p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
+            {!created && (
+              <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[175px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
+                <i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>
+                {submitting ? 'Creating meeting...' : 'Create with these options'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3331,7 +3646,7 @@ function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
       </div>
       <div className="space-y-2">
         {mappings.map(mapping => (
-          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} sourceLabels={sourceLabels} />
+          <SessionKsbReadableCard key={mapping.id} mapping={mapping} module={module} />
         ))}
         {!mappings.length && <p className="rounded-xl border border-dashed border-background-300 bg-background-50 px-3 py-6 text-center text-[11px] font-semibold text-foreground-400">None mapped.</p>}
       </div>
@@ -3339,20 +3654,18 @@ function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
   );
 }
 
-function SessionKsbReadableCard({ mapping, module, sourceLabels }: { mapping: KsbMapping; module: ModuleCatalogueItem; sourceLabels: Record<string, string> }) {
-  const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
+function SessionKsbReadableCard({ mapping, module }: { mapping: KsbMapping; module: ModuleCatalogueItem }) {
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
   const placements = ksbMappingPlacements(module, mapping);
   return (
     <article
-      title={`${mapping.description || mapping.code}${sourceLabel ? ` - ${sourceLabel}` : ''}`}
+      title={mapping.description || mapping.code}
       className={`rounded-xl border p-3 ${ksbCodeChipClass(mapping.code)}`}
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[12px] font-extrabold text-foreground-950">{mapping.code}</span>
         <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbClassificationLabel(classification)}</span>
         <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
-        {sourceLabel && <span className="max-w-full truncate rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{sourceLabel}</span>}
       </div>
       {mapping.description && <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
       <div className="mt-2 flex flex-wrap gap-1">
@@ -3740,51 +4053,35 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <form
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-background-50 shadow-2xl"
+        className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-foreground-200 bg-background-50 shadow-2xl"
         onClick={event => event.stopPropagation()}
         onSubmit={event => {
           event.preventDefault();
           handleCreate();
         }}
       >
-        <div className="relative shrink-0 overflow-hidden bg-primary-950 px-5 py-5 text-white">
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/10" />
+        <div className="relative shrink-0 overflow-hidden border-b border-background-200 bg-background-50 px-5 py-4">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-white/15">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
                 <i className="ri-layout-4-line text-xl"></i>
               </span>
               <div>
-                <h3 className="text-base font-heading font-bold text-white">Create new module</h3>
-                <p className="mt-1 text-[12px] text-white/70">Set the core module details, then open the builder to add weeks and components.</p>
+                <h3 className="text-base font-heading font-bold text-foreground-950">Create new module</h3>
+                <p className="mt-1 text-[12px] text-foreground-500">Set the module scope and schedule. You can add weeks and components next.</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20" aria-label="Close"><i className="ri-close-line"></i></button>
+            <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
-              <p className="text-[10px] font-bold uppercase text-primary-600">Step 1</p>
-              <p className="mt-1 text-[12px] font-bold text-primary-950">Programme</p>
-            </div>
-            <div className="rounded-xl border border-background-200 bg-background-100/60 px-4 py-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Step 2</p>
-              <p className="mt-1 text-[12px] font-bold text-foreground-900">Module identity</p>
-            </div>
-            <div className="rounded-xl border border-background-200 bg-background-100/60 px-4 py-3">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">Step 3</p>
-              <p className="mt-1 text-[12px] font-bold text-foreground-900">Sessions and dates</p>
-            </div>
-          </div>
-
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-background-100/35 p-5">
           <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-100 text-primary-700"><i className="ri-book-open-line"></i></span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className="ri-book-open-line"></i></span>
               <div>
                 <p className="text-[13px] font-bold text-foreground-950">Module setup</p>
-                <p className="text-[11px] text-foreground-500">Only new draft modules are created here.</p>
+                <p className="text-[11px] text-foreground-500">New modules start as drafts.</p>
               </div>
             </div>
 
@@ -3799,7 +4096,7 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
 
           <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700"><i className="ri-calendar-check-line"></i></span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><i className="ri-calendar-check-line"></i></span>
               <div>
                 <p className="text-[13px] font-bold text-foreground-950">Delivery shape</p>
                 <p className="text-[11px] text-foreground-500">Set the session count and module date range.</p>
@@ -3835,7 +4132,7 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
           </section>
 
           <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
-            <p className="text-[11px] font-semibold text-primary-800">The module will be saved as a draft and opened immediately in the Module Builder.</p>
+            <p className="text-[11px] font-semibold text-primary-800">The module will open immediately after it is created.</p>
           </div>
 
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -4125,16 +4422,16 @@ function ksbSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumStan
   const profileOptions = ksbSets
     .map(set => {
       const id = ksbSetSourceId(set);
-      const count = flattenKsbEntries(set.ksbs).length;
+      const title = ksbSetDisplayTitle(set);
       return {
         id,
-        label: `Profile: ${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''} - ${count} KSBs`,
+        label: title,
       };
     });
   const standardOptions = standards
     .map(standard => ({
       id: ksbStandardSourceId(standard),
-      label: `Standard: ${standard.code || standard.standardRef || standard.id} - ${standard.name} - ${standard.total} KSBs`,
+      label: standard.name || standard.code || standard.standardRef || standard.id,
     }));
   return [...profileOptions, ...standardOptions].filter(option => {
       if (seen.has(option.id)) return false;
@@ -4147,11 +4444,11 @@ function ksbMapSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumS
   const profileOptions = ksbSets.map(set => {
     const id = ksbSetSourceId(set);
     const options = flattenKsbEntries(set.ksbs).map(option => ({ ...option, sourceType: 'framework', sourceId: id }));
-    const name = `${set.programmeName || set.standard || 'Profile'}${set.standard ? ` (${set.standard})` : ''}`;
+    const name = ksbSetDisplayTitle(set);
     return {
       id,
-      label: `Profile: ${name} - ${options.length} KSBs`,
-      title: set.standard || set.programmeName || 'Profile',
+      label: `${name} - ${options.length} KSBs`,
+      title: name,
       subtitle: set.programmeName || set.standard || '',
       options,
     };
@@ -4237,11 +4534,11 @@ function ksbSourceLabelMap(standards: CurriculumStandard[], ksbSets: CurriculumK
 }
 
 function readableKsbSetLabel(set: CurriculumKsbSet) {
-  const title = String(set.standard || set.programmeName || set.profileId || set.frameworkId || 'KSB profile').trim();
-  const subtitle = String(set.programmeName || '').trim();
-  return subtitle && normaliseDeepLinkValue(subtitle) !== normaliseDeepLinkValue(title)
-    ? `${title} / ${subtitle}`
-    : title;
+  return ksbSetDisplayTitle(set);
+}
+
+function ksbSetDisplayTitle(set: CurriculumKsbSet) {
+  return String(set.standard || set.programmeName || set.ksbProfileId || set.profileId || set.frameworkId || 'KSB profile').trim();
 }
 
 function legacyKsbProfileNumericId(value: string) {
@@ -4314,6 +4611,7 @@ function moduleStandardCandidates(module: ModuleCatalogueItem, programmes: Curri
     module.programmeName,
     module.sourceModule?.programmeId,
     module.sourceModule?.programme,
+    ...((module as ModuleBuilderListItem).deliveryUsages || []).flatMap(usage => [usage.programmeId, usage.programme]),
   ];
   const moduleKeys = new Set(rawCandidates.map(normaliseDeepLinkValue).filter(Boolean));
   programmes.forEach(programme => {
@@ -4786,6 +5084,7 @@ function StatusBadge({ status }: { status: string }) {
 function ModuleCatalogueCard({
   module,
   onKsbMap,
+  ksbMapLoading,
   onBuild,
   onSettings,
   onDuplicate,
@@ -4793,6 +5092,7 @@ function ModuleCatalogueCard({
 }: {
   module: ModuleBuilderListItem;
   onKsbMap: () => void;
+  ksbMapLoading: boolean;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
@@ -4810,40 +5110,45 @@ function ModuleCatalogueCard({
   // weekCount = module.weekStructure.length || module.weeks || 0
 
   return (
-    <article className="group rounded-xl border border-background-200 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px_auto] lg:items-center">
+    <article className="group rounded-xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm transition-smooth hover:border-primary-200/80 hover:shadow-md">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-100 text-primary-700' : 'bg-amber-100 text-amber-700'}`}>
+          <div className="flex flex-wrap items-start gap-3">
+            <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
               <i className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></i>
             </span>
-            <div className="min-w-0">
-              <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
-              <p className="mt-0.5 text-[11px] text-foreground-500">{moduleListSubLabel(module)}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h3 className="truncate text-[14px] font-heading font-bold text-foreground-950">{module.title}</h3>
+                <StatusBadge status={module.status} />
+              </div>
+              <p className="mt-1 text-[11px] text-foreground-500">{moduleListSubLabel(module)}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
+                  {cleanModuleMeta(module.programmeName) || 'No programme'}
+                </span>
+                <ModuleMetricPill icon="ri-calendar-check-line" label={`${sessionCount} sessions`} />
+                <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
+                <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
+                <ModuleDeliverySummary module={module} />
+              </div>
             </div>
-            <StatusBadge status={module.status} />
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
-              {cleanModuleMeta(module.programmeName) || 'No programme'}
-            </span>
-            <ModuleMetricPill icon="ri-calendar-check-line" label={`${sessionCount} sessions`} />
-            <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
-            <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
           </div>
         </div>
 
-        <ModuleDeliverySummary module={module} />
-
-        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <button onClick={onKsbMap} className="inline-flex items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-all duration-150 hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1 active:translate-y-px active:bg-primary-100">
-            <i className="ri-node-tree"></i>
-            Review KSBs
+        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          <button
+            onClick={onKsbMap}
+            disabled={ksbMapLoading}
+            aria-busy={ksbMapLoading}
+            className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
+          >
+            <i className={ksbMapLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></i>
+            {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
-          <button onClick={onBuild} className="inline-flex items-center gap-1.5 rounded-lg bg-primary-500 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
+          <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700">
             <i className="ri-hammer-line"></i>
-            Build
+            Edit components
           </button>
           <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
           <IconButton label="Duplicate" icon="ri-file-copy-line" onClick={onDuplicate} />
@@ -4883,32 +5188,33 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
   onBuild: () => void;
 }) {
   const [query, setQuery] = useState('');
+  const allSourceOptions = useMemo(() => ksbMapSourceOptions(ksbSets, standards), [ksbSets, standards]);
+  const defaultSourceId = useMemo(() => {
+    const selected = cleanKsbSourceId(module.ksbProfileSourceId);
+    if (selected && allSourceOptions.some(option => option.id === selected)) return selected;
+    const matchingProfile = ksbSetForModule(ksbSets, module, programmes);
+    if (matchingProfile) return ksbSetSourceId(matchingProfile);
+    const matchingStandard = standardForModule(standards, module, programmes);
+    return matchingStandard ? ksbStandardSourceId(matchingStandard) : allSourceOptions[0]?.id || '';
+  }, [allSourceOptions, ksbSets, module, programmes, standards]);
   const sourceOptions = useMemo(() => {
-    return ksbMapSourceOptions(ksbSets, standards)
+    return allSourceOptions
       .map(option => {
-        const appliedCount = moduleKsbMapRows(module, sourceLabels, option).length;
+        const appliedCount = moduleKsbMapRows(module, sourceLabels, option, option.id === defaultSourceId).length;
         return {
           ...option,
           appliedCount,
         };
       })
-      .filter(option => option.appliedCount > 0);
-  }, [ksbSets, module, sourceLabels, standards]);
-  const defaultSourceId = useMemo(() => {
-    const selected = cleanKsbSourceId(module.ksbProfileSourceId);
-    if (selected && sourceOptions.some(option => option.id === selected)) return selected;
-    const matchingProfile = ksbSetForModule(ksbSets, module, programmes);
-    if (matchingProfile) return ksbSetSourceId(matchingProfile);
-    const matchingStandard = standardForModule(standards, module, programmes);
-    return matchingStandard ? ksbStandardSourceId(matchingStandard) : sourceOptions[0]?.id || '';
-  }, [ksbSets, module, programmes, sourceOptions, standards]);
+      .filter(option => option.appliedCount > 0 || option.id === defaultSourceId);
+  }, [allSourceOptions, defaultSourceId, module, sourceLabels]);
   const [selectedSourceId, setSelectedSourceId] = useState(defaultSourceId);
   useEffect(() => {
     if (!selectedSourceId && defaultSourceId) setSelectedSourceId(defaultSourceId);
     else if (selectedSourceId && sourceOptions.length && !sourceOptions.some(option => option.id === selectedSourceId)) setSelectedSourceId(defaultSourceId);
   }, [defaultSourceId, selectedSourceId, sourceOptions]);
-  const selectedSource = sourceOptions.find(option => option.id === selectedSourceId) || null;
-  const rows = moduleKsbMapRows(module, sourceLabels, selectedSource);
+  const selectedSource = sourceOptions.find(option => option.id === selectedSourceId) || allSourceOptions.find(option => option.id === selectedSourceId) || null;
+  const rows = moduleKsbMapRows(module, sourceLabels, selectedSource, selectedSource?.id === defaultSourceId);
   const filteredRows = useMemo(() => {
     const search = query.trim().toLowerCase();
     return rows.filter(row => {
@@ -5175,31 +5481,20 @@ function ModuleDeliverySummary({ module }: { module: ModuleBuilderListItem }) {
   const usages = module.deliveryUsages || [];
   if (!usages.length) {
     return (
-      <div className="rounded-xl border border-dashed border-background-300 bg-background-100/40 px-3 py-2">
-        <p className="text-[10px] font-bold uppercase text-foreground-400">Delivery usage</p>
-        <p className="mt-1 text-[12px] font-semibold text-foreground-600">Not attached to a delivery yet</p>
-      </div>
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-background-300 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+        <i className="ri-route-line text-[11px]"></i>
+        No delivery
+      </span>
     );
   }
-  const visible = usages.slice(0, 2);
-  const remaining = usages.length - visible.length;
+  const first = usages[0];
+  const remaining = usages.length - 1;
   return (
-    <div className="rounded-xl border border-primary-100 bg-primary-50/40 px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-[10px] font-bold uppercase text-primary-700">Used in {usages.length} {usages.length === 1 ? 'delivery' : 'deliveries'}</p>
-        <i className="ri-route-line text-primary-500"></i>
-      </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-      {visible.map(usage => (
-        <span key={usage.id} className="rounded-full bg-background-50 px-2 py-1 text-[10px] font-semibold text-foreground-700 shadow-sm">
-          {formatDeliveryUsage(usage)}
-        </span>
-      ))}
-      {remaining > 0 && (
-        <span className="rounded-full bg-primary-100 px-2 py-1 text-[10px] font-bold text-primary-700">+{remaining} more</span>
-      )}
-      </div>
-    </div>
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
+      <i className="ri-route-line text-[11px]"></i>
+      <span className="truncate">Used in {usages.length} {usages.length === 1 ? 'delivery' : 'deliveries'}: {formatDeliveryUsage(first)}</span>
+      {remaining > 0 && <span className="rounded-full bg-background-50 px-1.5 text-[9px] font-black text-primary-700">+{remaining}</span>}
+    </span>
   );
 }
 
@@ -5287,6 +5582,23 @@ function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programme
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
   ].map(normaliseDeepLinkValue).filter(Boolean);
   return moduleKeys.some(key => selectedKeys.includes(key));
+}
+
+function deliveryUsageForModuleScope(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
+  const usages = module.deliveryUsages || [];
+  if (!usages.length) return null;
+  if (programmeName === 'All') return usages[0];
+  const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
+  const selectedKeys = [
+    programmeName,
+    selected?.name,
+    selected?.id,
+    selected?.sourceId,
+    selected?.standard,
+  ].map(normaliseDeepLinkValue).filter(Boolean);
+  return usages.find(usage => (
+    [usage.programme, usage.programmeId].map(normaliseDeepLinkValue).some(key => selectedKeys.includes(key))
+  )) || usages[0];
 }
 
 function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage | null {
@@ -5425,6 +5737,8 @@ function readWizardModuleDraft(params: URLSearchParams): WizardModuleDraftPayloa
     cohortName: params.get('cohortName') || '',
     groupId: params.get('groupId') || '',
     groupName: params.get('groupName') || '',
+    ksbSourceId: params.get('ksbSourceId') || params.get('ksbProfileSourceId') || '',
+    ksbSourceLabel: params.get('ksbSourceLabel') || '',
     title,
     description: params.get('description') || '',
     sessionsNumber: Number(params.get('sessionsNumber') || 1),
@@ -5456,6 +5770,21 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   if (canonicalId) return canonicalId;
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
+}
+
+function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {
+  const focus = String(params.get('focus') || '').trim();
+  const weekId = String(params.get('week') || params.get('weekId') || '').trim();
+  const componentId = String(params.get('component') || params.get('componentId') || '').trim();
+  const openSettings = focus === 'ksb-mapping' || Boolean(params.get('mapping') || params.get('mappingId') || params.get('ksb'));
+  if (componentId) {
+    const week = module.weekStructure.find(item => item.components.some(component => component.id === componentId));
+    if (week) return { selection: { kind: 'component', weekId: week.id, componentId }, openSettings: true };
+  }
+  if (weekId && module.weekStructure.some(week => week.id === weekId)) {
+    return { selection: { kind: 'week', weekId }, openSettings };
+  }
+  return { selection: null, openSettings };
 }
 
 function sortCatalogueOptionsForPicker(a: ModuleCatalogueItem, b: ModuleCatalogueItem) {
@@ -5578,33 +5907,6 @@ function EmptyEditor({ onAddWeek }: { onAddWeek: () => void }) {
       <p className="mt-2 text-sm font-semibold text-foreground-700">No week selected</p>
       <button onClick={onAddWeek} className="mt-4 px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600">Add week</button>
     </section>
-  );
-}
-
-function StatsCard({ label, value, icon, color }: { label: string; value: string; icon: string; color: string }) {
-  const bgMap: Record<string, string> = { primary: 'bg-primary-100 text-primary-600', emerald: 'bg-emerald-100 text-emerald-600', accent: 'bg-accent-100 text-accent-600', secondary: 'bg-secondary-100 text-secondary-600' };
-  return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className={`w-7 h-7 rounded-md ${bgMap[color]} flex items-center justify-center`}>
-          <i className={`${icon} text-xs`}></i>
-        </span>
-        <span className="text-[10px] font-semibold text-foreground-400 uppercase">{label}</span>
-      </div>
-      <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
-    </div>
-  );
-}
-
-function StatsCardSkeleton() {
-  return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 animate-pulse">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="w-7 h-7 rounded-md bg-background-200"></span>
-        <span className="h-2.5 w-24 rounded bg-background-200"></span>
-      </div>
-      <span className="block h-6 w-12 rounded bg-background-200"></span>
-    </div>
   );
 }
 
@@ -5780,13 +6082,15 @@ function uniqueMappings(mappings: KsbMapping[]) {
   });
 }
 
-function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null): ModuleKsbMapRow[] {
+function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
   const rows = new Map<string, ModuleKsbMapRow>();
   const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
   const fallbackSource = conciseKsbSourceLabel(fallbackSourceFull);
+  const sourceCodes = new Set<string>();
   source?.options.forEach(option => {
     const code = String(option.code || '').trim().toUpperCase();
     if (!code) return;
+    sourceCodes.add(code);
     const sourceId = String(option.sourceId || source.id || '').trim();
     const key = ksbMappingIdentity({ code, sourceType: option.sourceType || (sourceId.startsWith('standard:') ? 'standard' : 'framework'), sourceId });
     rows.set(key, {
@@ -5808,7 +6112,6 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     const sourceLabel = conciseKsbSourceLabel(sourceFull);
     const mappingSourceId = cleanKsbSourceId(mapping.sourceId);
     const selectedSourceId = cleanKsbSourceId(source?.id);
-    if (selectedSourceId && mappingSourceId && mappingSourceId !== selectedSourceId) return;
     const mappingKey = ksbMappingIdentity(mapping);
     const selectedSourceKey = selectedSourceId
       ? ksbMappingIdentity({
@@ -5817,12 +6120,18 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
         sourceId: selectedSourceId,
       })
       : '';
-    const rowKey = rows.has(mappingKey) ? mappingKey : (selectedSourceKey && rows.has(selectedSourceKey) ? selectedSourceKey : mappingKey);
+    const canUseSelectedSourceByCode = Boolean(allowSelectedSourceCodeFallback && selectedSourceId && sourceCodes.has(code));
+    if (selectedSourceId && mappingSourceId && mappingSourceId !== selectedSourceId && !canUseSelectedSourceByCode) return;
+    const rowKey = selectedSourceKey && canUseSelectedSourceByCode && rows.has(selectedSourceKey)
+      ? selectedSourceKey
+      : rows.has(mappingKey)
+        ? mappingKey
+        : (selectedSourceKey && rows.has(selectedSourceKey) ? selectedSourceKey : mappingKey);
     const current = rows.get(rowKey) || {
       code,
       description: mapping.description || '',
-      source: sourceLabel || fallbackSource,
-      sourceFull: sourceFull || fallbackSourceFull,
+      source: canUseSelectedSourceByCode ? fallbackSource : sourceLabel || fallbackSource,
+      sourceFull: canUseSelectedSourceByCode ? fallbackSourceFull : sourceFull || fallbackSourceFull,
       weight: 0,
       locations: [],
       applied: false,
@@ -6008,6 +6317,8 @@ function componentTypeDescription(type: ModuleComponentType) {
     checkpoint: 'End-of-month KSB check',
     'monthly-ksb-quiz': 'Tracks KSB progression',
     'coaching-preparation': 'Monthly coaching meeting prep',
+    'recording-placeholder': 'Teams recording placeholder',
+    'workplace-evidence': 'Workplace evidence upload',
   };
   return descriptions[type] || 'Add a component';
 }

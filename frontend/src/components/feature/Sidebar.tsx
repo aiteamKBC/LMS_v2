@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect } fr
 import { useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { BrandLockup } from '@/components/BrandLockup';
 
 export interface SidebarNavItem {
   id: string;
@@ -167,9 +168,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
       {/* Logo */}
       <div className="relative z-10 flex items-center justify-center h-14 px-3 shrink-0">
-        <div className="w-6 h-6 rounded-md bg-accent-400 flex items-center justify-center transition-transform duration-300 hover:scale-110">
-          <span className="text-foreground-950 font-bold text-xs font-heading">K</span>
-        </div>
+        <img src="/kbc-logo.png" alt="Kent Business College" className="h-8 w-14 object-contain object-left transition-transform duration-300 hover:scale-105" />
       </div>
 
       {/* Navigation */}
@@ -260,14 +259,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
       {/* Logo */}
       <div className="relative z-10 flex items-center h-14 px-3 shrink-0">
-        <div className="flex items-center gap-3 overflow-hidden flex-1">
-          <div className="w-7 h-7 rounded-md bg-accent-400 flex items-center justify-center shrink-0">
-            <span className="text-foreground-950 font-bold text-xs font-heading">K</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold font-heading tracking-tight whitespace-nowrap">KBC LearningOS</p>
-          </div>
-        </div>
+        <BrandLockup size="compact" theme="dark" />
       </div>
 
       {/* Mobile navigation */}

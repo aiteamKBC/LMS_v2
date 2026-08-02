@@ -87,7 +87,6 @@ export interface ModuleCatalogueItem {
   authoringStatus?: ModuleStatus;
   sourceType?: string;
   sourceId?: string;
-  importedFromTrainingPlanId?: string;
   deliveryStatus?: string;
   deliveryMetadata?: Record<string, string>;
   ksbProfileSourceId?: string;
@@ -209,7 +208,19 @@ export function createEmptyWeek(moduleId: string, weekNumber: number): ModuleWee
   };
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
+function normalisePlaceholderText(value: unknown) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: Pick<ModuleWeek, 'weekNumber' | 'title'>) {
+  const titleKey = normalisePlaceholderText(component.title);
+  const weekKeys = [week.title, `Week ${week.weekNumber}`].map(normalisePlaceholderText).filter(Boolean);
+  const typeKey = normalisePlaceholderText(component.type);
+  const hasKsbMappings = Boolean((component.ksbMappings || []).length);
+  return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
+}
+
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -226,6 +237,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
     title: input.title,
     description: input.description,
     status: input.status || 'draft',
+    ksbProfileSourceId: input.ksbProfileSourceId || '',
     sessionsNumber: Math.max(0, Math.round(Number(input.sessionsNumber ?? input.weeks) || 0)),
     startDate: input.startDate || '',
     endDate: input.endDate || '',
@@ -251,7 +263,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -357,6 +369,35 @@ export async function loadModuleStructure(catalogueId: string): Promise<ModuleCa
   }
 }
 
+export interface ModuleStructureResolveRequest {
+  requestId: string;
+  identifier: string;
+  identifiers?: string[];
+}
+
+export interface ModuleStructureResolveResult {
+  requestId: string;
+  identifier: string;
+  catalogueId: string;
+  found: boolean;
+  missing?: boolean;
+  componentCount?: number;
+  hasComponents?: boolean;
+  message?: string;
+  module?: ModuleCatalogueItem;
+}
+
+export async function loadModuleStructuresBatch(modules: ModuleStructureResolveRequest[]): Promise<ModuleStructureResolveResult[]> {
+  const response = await apiJson<{ results: ModuleStructureResolveResult[] }>('/curriculum/modules/resolve-structures/', {
+    method: 'POST',
+    body: JSON.stringify({ modules }),
+  });
+  return response.results.map(result => ({
+    ...result,
+    module: result.module ? recalculateModule(result.module) : undefined,
+  }));
+}
+
 export async function updateModuleSettings(moduleCatalogueId: string, payload: Partial<ModuleCatalogueItem>) {
   try {
     const response = await apiJson<{ updated: boolean; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/settings/`, {
@@ -448,7 +489,6 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     authoringStatus: module.authoringStatus || module.status || 'draft',
     sourceType: undefined,
     sourceId: undefined,
-    importedFromTrainingPlanId: undefined,
     deliveryStatus: module.deliveryStatus,
     ksbProfileSourceId: '',
     tutor,
@@ -492,21 +532,9 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
   if (module.weekStructure.length) return recalculateModule(module);
 
   const source = module.sourceModule;
-  const sessionNames = source?.sessionNames || [];
-  const weekCount = Math.max(1, source?.weeks || sessionNames.length || module.weeks || 1);
+  const weekCount = Math.max(1, source?.weeks || source?.sessionNames?.length || module.weeks || 1);
   const weekStructure = Array.from({ length: weekCount }, (_, index) => {
     const week = createEmptyWeek(module.id, index + 1);
-    const sessionTitle = sessionNames[index] || (sessionNames.length === 1 ? sessionNames[0] : '');
-    if (sessionTitle) {
-      week.components = [
-        {
-          ...createEmptyComponent(week.id, 'live-session', 1),
-          title: sessionTitle,
-          description: 'Placeholder lesson derived from the existing module catalogue.',
-          ksbMappings: module.moduleKsbMappings.slice(0, 2),
-        },
-      ];
-    }
     return week;
   });
 
@@ -529,14 +557,16 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
       moduleId,
       ksbMappings: normaliseKsbMappings(week.ksbMappings || [], fallbackKsbSource),
       weekNumber: index + 1,
-      components: (week.components || []).map(component => ({
-        ...component,
-        moduleId,
-        weekId,
-        workplaceEvidenceRequired: false,
-        ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
-        settings: normaliseComponentSettings(component.type, component.settings || {}),
-      })),
+      components: (week.components || [])
+        .filter(component => !isGeneratedWeekPlaceholderComponent(component, { ...week, weekNumber: index + 1 }))
+        .map(component => ({
+          ...component,
+          moduleId,
+          weekId,
+          workplaceEvidenceRequired: false,
+          ksbMappings: normaliseKsbMappings(component.ksbMappings || [], fallbackKsbSource),
+          settings: normaliseComponentSettings(component.type, component.settings || {}),
+        })),
     };
   });
   const allComponents = normalisedWeeks.flatMap(week => week.components);
@@ -695,6 +725,157 @@ export async function uploadComponentResource(input: { moduleCatalogueId: string
   form.set('moduleCatalogueId', input.moduleCatalogueId);
   form.set('componentType', input.componentType);
   return apiForm<ComponentUploadResult>(`/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form, { timeoutMs: 90000 });
+}
+
+export interface TeamsMeetingInput {
+  title: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters?: string[];
+  localStartDateTime: string;
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  repeat: 'none' | 'daily' | 'weekdays' | 'weekly';
+  repeatOccurrences: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  meetingType: string;
+  details: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  hideAttendees: boolean;
+  transactionId: string;
+  moduleDraftId?: string;
+  moduleCatalogueId?: string;
+  moduleTitle?: string;
+  scheduledOccurrences?: Array<{
+    sessionNumber: number;
+    startDateTimeUtc: string;
+    durationMinutes: number;
+  }>;
+}
+
+export interface TeamsMeetingResult {
+  created: boolean;
+  meeting: {
+    liveSessionId: string;
+    eventId: string;
+    onlineMeetingId: string;
+    joinUrl: string;
+    webLink: string;
+    meetingOptionsUrl: string;
+    organizerEmail: string;
+    attendees: string[];
+    presenters: string[];
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    repeat: string;
+    repeatOccurrences: number;
+    trackedOccurrences: number;
+    provider: string;
+    trackingReady: boolean;
+    settingsApplied: boolean;
+  };
+  warnings: string[];
+}
+
+export interface TeamsMeetingConfiguration {
+  configured: boolean;
+  defaultOrganizer: string;
+  timeZone: string;
+}
+
+export function loadTeamsMeetingConfiguration() {
+  return apiJson<TeamsMeetingConfiguration>('/curriculum/teams-meetings/', { timeoutMs: 15000 });
+}
+
+export function createTeamsMeeting(input: TeamsMeetingInput) {
+  return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
+    method: 'POST',
+    body: JSON.stringify(input),
+    timeoutMs: 45000,
+  });
+}
+
+export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string }) {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting'] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+    timeoutMs: 45000,
+  });
+}
+
+export interface TeamsArtifactSyncResult {
+  synced: {
+    attendanceReports: number;
+    attendanceRecords: number;
+    transcripts: number;
+    recordings: number;
+  };
+  errors: string[];
+  partial: boolean;
+}
+
+export interface TeamsAttendanceRecord {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  total_attendance_seconds: number;
+  intervals?: Array<{
+    joinDateTime?: string;
+    leaveDateTime?: string;
+  }> | string;
+}
+
+export interface TeamsMeetingArtifact {
+  id: string;
+  artifact_type: 'transcript' | 'recording' | string;
+  created_datetime?: string;
+  end_datetime?: string;
+}
+
+export interface TeamsMeetingOccurrence {
+  id: string;
+  session_number: number;
+  scheduled_start: string;
+  scheduled_end: string;
+  actual_start?: string;
+  actual_end?: string;
+  participant_count: number;
+  attendance_report_id?: string;
+  status: string;
+  attendance: TeamsAttendanceRecord[];
+  artifacts: TeamsMeetingArtifact[];
+}
+
+export interface TeamsMeetingArtifactsResult {
+  series: {
+    id: string;
+    module_title: string;
+    organizer_email: string;
+    join_url: string;
+    online_meeting_id: string;
+  };
+  occurrences: TeamsMeetingOccurrence[];
+}
+
+export function syncTeamsMeetingArtifacts(liveSessionId: string) {
+  return apiJson<TeamsArtifactSyncResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
+    method: 'POST',
+    timeoutMs: 45000,
+  });
+}
+
+export function loadTeamsMeetingArtifacts(liveSessionId: string) {
+  return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
+    timeoutMs: 30000,
+  });
+}
+
+export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId: string) {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
 }
 
 class ApiError extends Error {

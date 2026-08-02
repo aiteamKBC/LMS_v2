@@ -410,7 +410,7 @@ class LearnerProfile(models.Model):
                 "componentId": entry.component_ref,
                 "componentTitle": entry.component_title,
                 "componentType": entry.component_type,
-                "quizId": entry.quiz_ref,
+                "quizId": _serialise_quiz_ref(entry.quiz_ref),
                 "attempt": entry.attempt,
                 "grade": float(entry.grade) if entry.grade is not None else None,
                 "achievedScore": float(entry.achieved_score) if entry.achieved_score is not None else None,
@@ -452,7 +452,10 @@ class LearnerProfile(models.Model):
 
     @property
     def activity_feed(self):
-        return [
+        return self.activity_feed_entries()
+
+    def activity_feed_entries(self, *, newest_first=False):
+        entries = [
             {
                 "kind": event.kind,
                 "action": event.action,
@@ -460,7 +463,7 @@ class LearnerProfile(models.Model):
                 "detail": event.detail,
                 "componentId": event.component_ref,
                 "componentType": event.component_type,
-                "quizId": event.quiz_ref,
+                "quizId": _serialise_quiz_ref(event.quiz_ref),
                 "module": event.module_title,
                 "week": event.week_title,
                 "passed": event.passed,
@@ -468,6 +471,12 @@ class LearnerProfile(models.Model):
             }
             for event in self.activity_events.all()
         ]
+        return list(reversed(entries)) if newest_first else entries
+
+    @property
+    def latest_activity_feed(self):
+        """Newest-first feed from Learner.learner_activity_events."""
+        return self.activity_feed_entries(newest_first=True)
 
 
 class LearnerKsb(models.Model):
@@ -704,18 +713,11 @@ class ActiveUser(models.Model):
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
     # — legacy read-only store; new attempts go to training_plan_progress.
     weekly_quizzes = SafeJSONField(db_column="Weekly_Quizzes", null=True, blank=True)
-    # Chronological activity log (newest appended last). Each entry:
-    # {kind:'quiz'|'video', action, title, detail, at, quizId?/componentId?, week, module}.
-    # Appended when a learner finishes a component (quizzes.py / videos.py).
+    # Legacy mirror of the learner activity feed. Current dashboards read from
+    # Learner.learner_activity_events via LearnerProfile.activity_feed_entries().
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
-    # Unified training-plan progress log. Every record carries a "kind":
-    #   "quiz"  -> {kind, week, attempt, grade, Score, module, passed, quizId,
-    #              quizName, ksbs, feedback, reportedTime, questions, startedAt,
-    #              submittedAt, timeTaken}
-    #   "video" -> {kind, week, module, componentId, videoTitle, ksbs, feedback,
-    #              reportedTime, startedAt, submittedAt, timeTaken}
-    # Appended to by learner_api.quizzes.submit_quiz_attempt and
-    # learner_api.videos.submit_video_progress.
+    # Legacy mirror of the learner progress log. Current dashboards read from
+    # Learner.learner_progress_entries via LearnerProfile.training_plan_progress.
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
 
     class Meta:
@@ -764,7 +766,11 @@ class UnactiveUser(models.Model):
 
     training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
     ksbs = SafeJSONField(db_column="KSBs", null=True, blank=True)
+    # Legacy archive mirror retained for compatibility; current UI reads from
+    # Learner.learner_progress_entries when a learner profile is available.
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
+    # Legacy mirror retained for archive compatibility; current UI reads from
+    # Learner.learner_activity_events when the learner has an active profile.
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
 
     class Meta:

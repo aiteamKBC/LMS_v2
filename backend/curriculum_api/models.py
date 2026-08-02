@@ -16,7 +16,6 @@ class ModuleAuthoringModule(models.Model):
     quality_score = models.IntegerField(default=0)
     source_type = models.CharField(max_length=64, blank=True, default='')
     source_id = models.CharField(max_length=128, blank=True, default='')
-    imported_from_training_plan_id = models.CharField(max_length=128, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -66,6 +65,7 @@ class ModuleAuthoringComponent(models.Model):
     tutor_validation_required = models.BooleanField(default=False)
     display_order = models.IntegerField(default=0)
     settings_json = models.JSONField(default=dict, blank=True)
+    live_sessions_link = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -132,6 +132,102 @@ class ModuleAuthoringAdvancedDetails(models.Model):
 
     class Meta:
         db_table = 'curriculum"."module_authoring_advanced_details'
+        managed = False
+
+
+class LiveSession(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    module_catalogue_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    module_draft_id = models.CharField(max_length=255, blank=True, default='', db_index=True)
+    module_title = models.CharField(max_length=500, blank=True, default='')
+    provider = models.CharField(max_length=64, default='Microsoft Teams')
+    graph_event_id = models.CharField(max_length=512, blank=True, null=True)
+    online_meeting_id = models.TextField(blank=True, default='')
+    join_url = models.TextField(blank=True, default='')
+    web_link = models.TextField(blank=True, default='')
+    meeting_options_url = models.TextField(blank=True, default='')
+    organizer_email = models.CharField(max_length=320)
+    attendees = models.JSONField(default=list, blank=True)
+    presenters = models.JSONField(default=list, blank=True)
+    start_datetime = models.DateTimeField(blank=True, null=True)
+    timezone = models.CharField(max_length=128, blank=True, default='')
+    duration_minutes = models.IntegerField(default=60)
+    repeat_pattern = models.CharField(max_length=32, default='none')
+    repeat_occurrences = models.IntegerField(default=1)
+    lobby_bypass = models.CharField(max_length=64, default='invited')
+    recording = models.CharField(max_length=64, default='none')
+    spoken_language = models.CharField(max_length=32, default='en-GB')
+    meeting_type = models.CharField(max_length=64, default='live-session')
+    request_responses = models.BooleanField(default=True)
+    allow_time_proposals = models.BooleanField(default=True)
+    hide_attendees = models.BooleanField(default=False)
+    status = models.CharField(max_length=32, default='active')
+    warnings = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_sessions'
+        managed = False
+
+
+class LiveSessionOccurrence(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    live_session_id = models.CharField(max_length=128, db_index=True)
+    session_number = models.IntegerField()
+    graph_event_id = models.CharField(max_length=512, blank=True, default='')
+    scheduled_start = models.DateTimeField()
+    scheduled_end = models.DateTimeField()
+    actual_start = models.DateTimeField(blank=True, null=True)
+    actual_end = models.DateTimeField(blank=True, null=True)
+    join_url = models.TextField(blank=True, default='')
+    attendance_report_id = models.CharField(max_length=512, blank=True, default='')
+    participant_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=32, default='scheduled')
+    artifacts_synced_at = models.DateTimeField(blank=True, null=True)
+    last_sync_error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_occurrences'
+        managed = False
+
+
+class LiveSessionAttendance(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    occurrence_id = models.CharField(max_length=128, db_index=True)
+    graph_record_id = models.CharField(max_length=512, blank=True, default='')
+    email = models.CharField(max_length=320, blank=True, default='')
+    display_name = models.CharField(max_length=500, blank=True, default='')
+    role = models.CharField(max_length=64, blank=True, default='')
+    total_attendance_seconds = models.IntegerField(default=0)
+    intervals = models.JSONField(default=list, blank=True)
+    raw_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_attendance'
+        managed = False
+
+
+class LiveSessionArtifact(models.Model):
+    id = models.CharField(max_length=128, primary_key=True)
+    occurrence_id = models.CharField(max_length=128, db_index=True)
+    artifact_type = models.CharField(max_length=32)
+    graph_artifact_id = models.TextField()
+    call_id = models.TextField(blank=True, default='')
+    content_correlation_id = models.TextField(blank=True, default='')
+    content_url = models.TextField(blank=True, default='')
+    created_datetime = models.DateTimeField(blank=True, null=True)
+    end_datetime = models.DateTimeField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'curriculum"."live_session_artifacts'
         managed = False
 
 

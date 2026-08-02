@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { BrandLockup } from '@/components/BrandLockup';
 import { adminNavItems } from '@/mocks/navigation';
 import RbacManagementPage from './RbacManagementPage';
 import AiSettingsPage from './AiSettingsPage';
@@ -318,9 +319,7 @@ function BrandingSettingsContent() {
     <div className="space-y-4">
       <SettingsSection title="Logo & Identity">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-xl bg-primary-500 flex items-center justify-center">
-            <span className="text-white font-bold text-xl font-heading">K</span>
-          </div>
+          <BrandLockup size="default" />
           <div>
             <button className="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-[12px] font-medium hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
               Upload Logo

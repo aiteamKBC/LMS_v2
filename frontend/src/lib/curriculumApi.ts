@@ -6,6 +6,7 @@ interface CurriculumRequestInit {
   body?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  skipCache?: boolean;
 }
 
 export interface CurriculumProgramme {
@@ -27,6 +28,7 @@ export interface CurriculumProgramme {
   color: string;
   description: string;
   structureType?: 'scheduled' | 'free' | string;
+  ksbProfileSourceId?: string;
 }
 
 export interface CurriculumModule {
@@ -56,19 +58,20 @@ export interface CurriculumModule {
     weekNumber: number;
     title: string;
     displayOrder?: number;
+    ksbMappings?: CurriculumComponent['ksbMappings'];
     components?: CurriculumComponent[];
   }>;
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
   ksbCount: number;
+  ksbProfileSourceId?: string;
   lessons: number;
   quizzes: number;
   assignments: number;
   status: 'published' | 'draft' | 'review' | string;
   authoringStatus?: 'published' | 'draft' | 'review' | string;
   sourceType?: string;
-  importedFromTrainingPlanId?: string;
   deliveryStatus?: string;
   author: string;
   tutor?: string;
@@ -78,6 +81,7 @@ export interface CurriculumModule {
   notes: string;
   sessionNames: string[];
   ksbCodes: string[];
+  moduleKsbMappings?: CurriculumComponent['ksbMappings'];
 }
 
 export interface CurriculumComponent {
@@ -351,6 +355,61 @@ export interface CurriculumKsbCoverageResponse {
       total: number;
       modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string; weight: number; mappings: CurriculumKsbTraceMapping[] }>;
     }>;
+  };
+}
+
+export interface CurriculumProgrammeAssignedLearner {
+  id: number | string;
+  name: string;
+  email: string;
+  programme: string;
+  programmeStatus: string;
+  cohort: string;
+  group: string;
+  lifecycleStatus: string;
+  coachName?: string;
+  coachEmail?: string;
+  completedHours?: number;
+  plannedHours?: number;
+  targetHours?: number;
+  progressHours?: number;
+  progressVariance?: string | number | null;
+  otjhStatus?: string;
+}
+
+export interface CurriculumLearnerKsbConsumptionItem {
+  code: string;
+  expectedWeight: number;
+  consumedWeight: number;
+  cappedConsumedWeight: number;
+  progressPercentage: number;
+  rawProgressPercentage: number;
+  status: 'complete' | 'in_progress' | 'not_started' | string;
+}
+
+export interface CurriculumLearnerKsbConsumption {
+  learnerId: number | string;
+  learnerName: string;
+  email: string;
+  cohort: string;
+  group: string;
+  consumedWeightTotal: number;
+  expectedWeightTotal: number;
+  cappedConsumedWeightTotal: number;
+  progressPercentage: number;
+  ksbs: CurriculumLearnerKsbConsumptionItem[];
+}
+
+export interface CurriculumProgrammeLearnerKsbImpactResponse {
+  scope: 'programme';
+  identifier: string;
+  assignedLearnerCount: number;
+  assignedLearners: CurriculumProgrammeAssignedLearner[];
+  programmeCoverage: CurriculumKsbCoverageResponse;
+  learnerKsbConsumption: CurriculumLearnerKsbConsumption[];
+  consumptionSources: {
+    progress: Array<Record<string, unknown>>;
+    learningReflectionSubmissions: Array<Record<string, unknown>>;
   };
 }
 
@@ -638,16 +697,80 @@ interface CurriculumCollection<T> {
   results: T[];
 }
 
+// Combines several abort signals into one. Prefers the native implementation and
+// falls back to a manual relay for older browsers.
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const nativeAny = (AbortSignal as unknown as { any?: (list: AbortSignal[]) => AbortSignal }).any;
+  if (typeof nativeAny === 'function') return nativeAny.call(AbortSignal, signals);
+  const controller = new AbortController();
+  const forward = (signal: AbortSignal) => {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return;
+    }
+    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+  };
+  signals.forEach(forward);
+  return controller.signal;
+}
+
+// Shares an in-flight GET between concurrent callers. GETs are intentionally
+// not tied to component cleanup signals: React StrictMode can unmount/remount
+// immediately in development, and aborting those requests fills DevTools with
+// noisy "(cancelled)" rows even though the next mount needs the same data.
+const inFlightGets = new Map<string, Promise<unknown>>();
+const completedGets = new Map<string, { value: unknown; expiresAt: number }>();
+const GET_CACHE_TTL_MS = 30_000;
+
+export function clearCurriculumGetCache() {
+  completedGets.clear();
+  inFlightGets.clear();
+}
+
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
-  const controller = init?.timeoutMs && !init.signal ? new AbortController() : null;
-  const timeout = controller && init?.timeoutMs
-    ? window.setTimeout(() => controller.abort(), init.timeoutMs)
+  const method = (init?.method || 'GET').toUpperCase();
+  if (method !== 'GET') {
+    clearCurriculumGetCache();
+    return fetchJsonUncached<T>(path, init);
+  }
+
+  if (!init?.skipCache) {
+    const cached = completedGets.get(path);
+    if (cached && cached.expiresAt > Date.now()) {
+      return settleWithCallerAbort(Promise.resolve(cached.value as T), init?.signal);
+    }
+    if (cached) completedGets.delete(path);
+  }
+
+  const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
+  const existing = inFlightGets.get(path) as Promise<T> | undefined;
+  const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
+    if (!init?.skipCache) completedGets.set(path, { value, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+    return value;
+  });
+  if (!existing) {
+    inFlightGets.set(path, pending as Promise<unknown>);
+    const clearInFlight = () => {
+      if (inFlightGets.get(path) === (pending as Promise<unknown>)) inFlightGets.delete(path);
+    };
+    pending.then(clearInFlight, clearInFlight);
+  }
+  return settleWithCallerAbort(pending, init?.signal);
+}
+
+async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  const timeoutController = init?.timeoutMs ? new AbortController() : null;
+  const timeout = timeoutController && init?.timeoutMs
+    ? window.setTimeout(() => timeoutController.abort(), init.timeoutMs)
     : null;
-  const { timeoutMs: _timeoutMs, ...fetchInit } = init || {};
+  const { timeoutMs: _timeoutMs, signal: callerSignal, skipCache: _skipCache, ...fetchInit } = init || {};
+  const signal = callerSignal && timeoutController
+    ? anySignal([callerSignal, timeoutController.signal])
+    : callerSignal || timeoutController?.signal;
   try {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...fetchInit,
-    signal: init?.signal || controller?.signal,
+    signal,
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init?.headers || {}),
@@ -669,7 +792,11 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   return response.json();
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error(`Curriculum API timed out for ${path}`);
+      // Only a timeout becomes a generic error; a caller-initiated abort must stay
+      // an AbortError so effect cleanups can tell cancellation from failure.
+      if (timeoutController?.signal.aborted && !callerSignal?.aborted) {
+        throw new Error(`Curriculum API timed out for ${path}`);
+      }
     }
     throw error;
   } finally {
@@ -677,13 +804,31 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   }
 }
 
+function abortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+function settleWithCallerAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(abortError());
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
 async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): Promise<T[]> {
   const payload = await fetchJson<CurriculumCollection<T>>(path, init);
   return payload.results;
 }
 
-export function fetchCurriculumModules(signal?: AbortSignal): Promise<CurriculumModule[]> {
-  return fetchCollection<CurriculumModule>('/curriculum/modules/', { signal });
+// `compact` drops weekStructure (~94% of this payload) server-side. Only pass it
+// from callers that read module identity/metadata alone: anything that reads
+// weekStructure, its nested components, or ranks duplicate modules by component
+// count must keep the full response. See fetchCurriculumModules callers.
+export function fetchCurriculumModules(signal?: AbortSignal, options: { compact?: boolean } = {}): Promise<CurriculumModule[]> {
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${options.compact ? '?compact=true' : ''}`, { signal });
 }
 
 export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[] } = {}): Promise<CurriculumComponent[]> {
@@ -726,12 +871,22 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal });
 }
 
-export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
+  if (params.actualMappings) query.set('actual_mappings', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal });
+}
+
+export function fetchCurriculumProgrammeLearnerKsbImpact(programmeId: string, params: { sourceType?: string; sourceId?: string; learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerKsbImpactResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumProgrammeLearnerKsbImpactResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-ksb-impact/${suffix}`, { signal });
 }
 
 export function fetchCurriculumModuleKsbCoverage(moduleId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -800,8 +955,8 @@ export function updateCurriculumKsbFramework(id: string, input: CurriculumKsbFra
   return patchJson<{ updated: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`, input);
 }
 
-export function archiveCurriculumKsbFramework(id: string) {
-  return deleteJson<{ archived: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
+export function deleteCurriculumKsbFramework(id: string) {
+  return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
 }
 
 export function fetchCurriculumSessions(signal?: AbortSignal): Promise<CurriculumSession[]> {
@@ -837,7 +992,7 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/?include_archived=true`, { signal });
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/`, { signal });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
@@ -854,11 +1009,12 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId'>>;
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   programmeId?: string;
   programmeName?: string;
   programme?: string;
+  ksbProfileSourceId?: string;
   cohortId?: string;
   cohortName?: string;
   cohort?: string;
@@ -909,7 +1065,7 @@ export type CurriculumProgrammeTreeInput = {
       modules: CurriculumModuleAttachmentInput[];
     }>;
   }>;
-  archiveMissing?: boolean;
+  removeMissing?: boolean;
   hydrationComplete?: boolean;
 };
 export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
@@ -942,7 +1098,7 @@ export function saveCurriculumProgrammeTree(input: CurriculumProgrammeTreeInput)
     groups: CurriculumGroup[];
     modules: CurriculumModule[];
     removedModuleIds: string[];
-    archivedMissing: boolean;
+    removedMissing: boolean;
   }>('/curriculum/programmes/tree/', input);
 }
 
