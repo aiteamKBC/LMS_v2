@@ -45,6 +45,22 @@ def upload_to_quarantine(file_obj, blob_name, content_type):
     return blob_name
 
 
+def upload_blob(file_obj, container, blob_name, content_type, overwrite=True):
+    """Write directly to `container`, bypassing the quarantine lifecycle.
+
+    Only for content the platform generates itself (see enrolment_api/documents.py)
+    — learner-supplied uploads must still go through upload_to_quarantine so they
+    get scanned before anyone can download them.
+    """
+    client = _service_client().get_blob_client(container=container, blob=blob_name)
+    client.upload_blob(
+        file_obj,
+        overwrite=overwrite,
+        content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
+    )
+    return blob_name
+
+
 def move_blob(src_container, dst_container, blob_name):
     """Azure has no atomic move; copy server-side then delete the source.
     Small files complete near-instantly; poll copy status for large ones."""

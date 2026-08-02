@@ -1,21 +1,23 @@
-"""Database router: send the `learner_api` app's models to the Neon `enrolment` DB.
+"""Database router: send Neon-backed apps' models to the `enrolment` DB.
 
-Everything else (auth, sessions, admin, migrations) stays on `default` (SQLite).
-The enrolment table is managed outside Django, so migrations never touch it.
+`learner_api` and `enrolment_api` both map unmanaged tables that live in the Neon
+`enrolment` schema. Everything else (auth, sessions, admin, migrations) stays on
+`default` (SQLite). Those tables are created outside Django — by the app's
+`apply_*` management commands — so migrations never touch them.
 """
 
-APP_LABEL = "learner_api"
+APP_LABELS = frozenset({"learner_api", "enrolment_api"})
 ENROLMENT_DB = "enrolment"
 
 
 class EnrolmentRouter:
     def db_for_read(self, model, **hints):
-        if model._meta.app_label == APP_LABEL:
+        if model._meta.app_label in APP_LABELS:
             return ENROLMENT_DB
         return None
 
     def db_for_write(self, model, **hints):
-        if model._meta.app_label == APP_LABEL:
+        if model._meta.app_label in APP_LABELS:
             return ENROLMENT_DB
         return None
 
@@ -24,8 +26,8 @@ class EnrolmentRouter:
         return None
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
-        # learner_api models are unmanaged (managed=False) — never migrate them.
-        if app_label == APP_LABEL:
+        # These apps' models are unmanaged (managed=False) — never migrate them.
+        if app_label in APP_LABELS:
             return False
         # Keep every other app off the Neon database entirely.
         if db == ENROLMENT_DB:

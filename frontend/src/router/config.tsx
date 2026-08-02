@@ -275,7 +275,6 @@ import SettingsHub from "../pages/admin/settings/page";
 import UsersListPage from "../pages/users/page";
 import BoardPage from "../pages/users/BoardPage";
 import WizardPage from "../pages/users/wizard/WizardPage";
-import CommercialLearnersPage from "../pages/delivery/LearnersPage";
 import TrainingPlanBuilderPage from "../pages/delivery/TrainingPlanPage";
 import ThisWeekPage from "../pages/learner/this-week/page";
 import TrainingPlanPage from "../pages/learner/training-plan/page";
@@ -304,6 +303,7 @@ import MySchedulePage from "../pages/learner/clubs/events/schedule/page";
 import LearnerCalendarPage from "../pages/learner/calendar/page";
 import GatewayReadinessPage from "../pages/learner/gateway/page";
 import LearnerProfilePage from "../pages/learner/profile/page";
+import LearnerOnboardingPage from "../pages/learner/onboarding/page";
 import SupportPage from "../pages/learner/support/page";
 import MessagesPage from "../pages/learner/messages/page";
 import GeneralNotificationsPage from "../pages/notifications/page";
@@ -608,16 +608,10 @@ const routes: RouteObject[] = [
     element: <BoardPage />,
   },
   {
-    path: "/users/:userId/wizard",
+    // Single route with an optional param — two sibling routes would remount the
+    // wizard (and refetch the board) on every step change.
+    path: "/users/:userId/wizard/:stepSlug?",
     element: <WizardPage />,
-  },
-  {
-    path: "/users/:userId/wizard/:stepSlug",
-    element: <WizardPage />,
-  },
-  {
-    path: "/delivery",
-    element: <CommercialLearnersPage />,
   },
   {
     path: "/training-plan/:kind/:userId",
@@ -768,6 +762,15 @@ const routes: RouteObject[] = [
   {
     path: "/learner/profile",
     element: <LearnerProfilePage />,
+  },
+  {
+    // The learner's own enrolment wizard. Paramless: it resolves to the logged-in
+    // learner via useMyLearner, like the other /learner/* self-view pages.
+    // One route with an optional param, NOT two sibling routes — two separate
+    // route entries make React Router unmount/remount the page on every step
+    // change, refetching the board and losing in-progress wizard state.
+    path: "/learner/onboarding/:stepSlug?",
+    element: <LearnerOnboardingPage />,
   },
   {
     path: "/learner/support",

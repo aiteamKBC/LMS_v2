@@ -6,6 +6,7 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -705,6 +706,10 @@ export default function LearnerOverview() {
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
 
+  /* ── Onboarding learners land on their enrolment wizard, not the overview ──
+     Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
+  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading);
+
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
   const heroProgramme = isRealMode ? (real?.programme || '') : p.programme;
@@ -817,6 +822,15 @@ export default function LearnerOverview() {
     { icon: 'ri-check-double-line', label: `${p.evidenceValidated} Approved`, color: 'emerald' as const },
     { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
   ];
+
+  // Redirect is in flight — don't flash the overview on the way to the wizard.
+  if (redirectingToOnboarding) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
+        <i className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+      </div>
+    );
+  }
 
   return (
     <WorkspaceShell

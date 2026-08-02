@@ -6,6 +6,8 @@ Routes (mounted under /learner_api/ in config/urls.py):
     GET  /learner_api/enrolment-users/options/    -> canonical dropdown option lists
     GET  /learner_api/enrolment-users/<id>/       -> EnrolmentBoard
     PATCH/PUT /learner_api/enrolment-users/<id>/  -> update flat fields; returns board
+    GET  /learner_api/staff-users/                -> {count, results:[staff rows]}
+    POST /learner_api/staff-users/                -> create an admin/staff account
 
 CSRF is exempted: this is an internal same-origin dev API reached through the
 Vite proxy, with no cookie-based auth.
@@ -18,16 +20,24 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import cohort_dates, sync_active_user
-from .constants import STATUS_CHOICES, TYPE_CHOICES, PROGRAMME_STATUS_CHOICES
+from .constants import (
+    STATUS_CHOICES,
+    TYPE_CHOICES,
+    PROGRAMME_STATUS_CHOICES,
+    POSITION_CHOICES,
+    LEARNER_TYPE_CHOICES,
+)
 from .mappers import (
     ValidationError,
     to_board,
     to_commercial_row,
     to_list_row,
+    to_staff_row,
     write_commercial_fields,
     write_fields,
+    write_staff_fields,
 )
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .models import CommercialUser, EnrolmentUser, LearnerProfile, StaffUser
 
 
 def _parse_body(request):
@@ -46,8 +56,10 @@ def _error(message, status):
 @csrf_exempt
 def learner_coach(request, pk):
     """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
-    mirror (columns coach_name / coach_email). Set from the delivery "Enrolled
-    learners" page. The learner must be Active (they only have a mirror row then).
+    mirror (columns coach_name / coach_email). Set from the Delivery block of the
+    learner's own page (BoardPage's Programme panel). The learner must be Active —
+    they only have a mirror row then — so this 404s otherwise and the UI treats
+    that as "no coach yet" rather than an error.
 
         GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
         PATCH /learner_api/learners/<id>/coach/   -> {coachName?, coachEmail?} -> same
@@ -94,9 +106,27 @@ def learner_coach(request, pk):
 
 @csrf_exempt
 def enrolment_users(request):
+    """The single learner collection — both kinds live in one table.
+
+    GET  ?learnerType=apprenticeship|commercial narrows the listing; omitted
+         returns every learner regardless of kind.
+    POST accepts "learnerType" to say which kind to create (default
+         apprenticeship). Both land in enrolment."Created_users".
+    """
     if request.method == "GET":
+        wanted = (request.GET.get("learnerType") or "").strip()
+        if wanted and wanted not in LEARNER_TYPE_CHOICES:
+            return _error(
+                f"Invalid learnerType: {wanted!r}. Allowed: {', '.join(LEARNER_TYPE_CHOICES)}", 400
+            )
         try:
-            rows = [to_list_row(u) for u in EnrolmentUser.objects.all().order_by("id")]
+            qs = EnrolmentUser.all_learners.all()
+            if wanted == "apprenticeship":
+                # Rows predating the merge have a NULL type and are apprenticeship.
+                qs = qs.exclude(learner_type="commercial")
+            elif wanted == "commercial":
+                qs = qs.filter(learner_type="commercial")
+            rows = [to_list_row(u) for u in qs.order_by("id")]
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse({"count": len(rows), "results": rows})
@@ -120,7 +150,9 @@ def enrolment_users(request):
             fields["end_date"] = end
 
         try:
-            user = EnrolmentUser.objects.create(**fields)
+            # all_learners: the default manager is scoped to apprenticeship, so
+            # creating through it would fight the learnerType we just set.
+            user = EnrolmentUser.all_learners.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_list_row(user), status=201)
@@ -137,6 +169,8 @@ def enrolment_user_options(request):
             "status": STATUS_CHOICES,
             "type": TYPE_CHOICES,
             "programmeStatus": PROGRAMME_STATUS_CHOICES,
+            "position": POSITION_CHOICES,
+            "learnerType": LEARNER_TYPE_CHOICES,
         }
     )
 
@@ -144,7 +178,10 @@ def enrolment_user_options(request):
 @csrf_exempt
 def enrolment_user_detail(request, pk):
     try:
-        user = EnrolmentUser.objects.get(pk=pk)
+        # all_learners, not objects: `objects` is scoped to apprenticeship rows, so
+        # looking a learner up by id must span both kinds or a commercial learner
+        # 404s here — ids are unique across the single table.
+        user = EnrolmentUser.all_learners.get(pk=pk)
     except EnrolmentUser.DoesNotExist:
         return _error("User not found.", 404)
     except DatabaseError as exc:
@@ -210,6 +247,70 @@ def commercial_users(request):
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_commercial_row(user), status=201)
+
+    return _error("Method not allowed.", 405)
+
+
+@csrf_exempt
+def staff_users(request):
+    """Staff/admin accounts — enrolment."Staff_users".
+
+    GET accepts a repeatable ?position= filter, used by the create-user form's
+    Case owner dropdown to list only the staff who can own a case.
+    """
+    if request.method == "GET":
+        positions = [p for p in request.GET.getlist("position") if p.strip()]
+        try:
+            qs = StaffUser.objects.all()
+            if positions:
+                qs = qs.filter(position__in=positions)
+            rows = [to_staff_row(u) for u in qs.order_by("username", "id")]
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        return JsonResponse({"count": len(rows), "results": rows})
+
+    if request.method == "POST":
+        try:
+            payload = _parse_body(request)
+            fields = write_staff_fields(payload, require_create=True)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
+        try:
+            user = StaffUser.objects.create(**fields)
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        return JsonResponse(to_staff_row(user), status=201)
+
+    return _error("Method not allowed.", 405)
+
+
+@csrf_exempt
+def staff_user_detail(request, pk):
+    try:
+        user = StaffUser.objects.get(pk=pk)
+    except StaffUser.DoesNotExist:
+        return _error("Staff user not found.", 404)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    if request.method == "GET":
+        return JsonResponse(to_staff_row(user))
+
+    if request.method in ("PATCH", "PUT"):
+        try:
+            payload = _parse_body(request)
+            fields = write_staff_fields(payload)
+        except ValidationError as exc:
+            return _error(str(exc), 400)
+        if fields:
+            for attr, value in fields.items():
+                setattr(user, attr, value)
+            try:
+                # auto_now on Updated_at only fires when it's in update_fields.
+                user.save(update_fields=[*fields.keys(), "updated_at"])
+            except DatabaseError as exc:
+                return _error(f"Database error: {exc}", 502)
+        return JsonResponse(to_staff_row(user))
 
     return _error("Method not allowed.", 405)
 

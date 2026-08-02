@@ -1,23 +1,35 @@
 import { useState } from 'react';
 import { useToast } from '@/hooks/useToast';
-import { createCommercialUser, type CommercialUserRow } from '@/api/commercialUsers';
+import { updateCommercialUser, type CommercialUserRow } from '@/api/commercialUsers';
 import { PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { Modal } from '@/pages/users/components/Modal';
 import { inputClass, btnPrimary, btnSecondary } from '@/pages/users/components/ui';
 
 // ============================================================================
-// Create commercial user — inline modal opened from the Learners hub.
-// Writes a new row to enrolment."Commercial_users".
+// Edit commercial learner — user info only.
+//
+// The commercial track deliberately has no deep-details wizard: pressing Edit
+// on the learner directory reopens exactly the fields captured at creation.
 // ============================================================================
 
 interface FieldDef {
-  name: string;
+  name: keyof EditableFields;
   label: string;
   type: 'text' | 'email' | 'tel' | 'select';
   required?: boolean;
   placeholder?: string;
   options?: string[];
   colSpan?: boolean;
+}
+
+interface EditableFields {
+  username: string;
+  email: string;
+  phone: string;
+  programmeStatus: string;
+  employer: string;
+  lineManager: string;
+  organization: string;
 }
 
 const FIELDS: FieldDef[] = [
@@ -30,12 +42,31 @@ const FIELDS: FieldDef[] = [
   { name: 'organization', label: 'Organisation', type: 'text', placeholder: 'e.g. Kent Business College', colSpan: true },
 ];
 
-export function CommercialUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (row: CommercialUserRow) => void }) {
+export function EditCommercialUserModal({
+  user,
+  onClose,
+  onSaved,
+  onError,
+}: {
+  user: CommercialUserRow;
+  onClose: () => void;
+  onSaved: (row: CommercialUserRow) => void;
+  onError?: (message: string) => void;
+}) {
   const { success, error } = useToast();
-  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [formData, setFormData] = useState<EditableFields>({
+    username: user.username ?? '',
+    email: user.email ?? '',
+    phone: user.phone ?? '',
+    programmeStatus: user.programmeStatus ?? '',
+    employer: user.employer ?? '',
+    lineManager: user.lineManager ?? '',
+    organization: user.organization ?? '',
+  });
   const [submitting, setSubmitting] = useState(false);
 
-  const setField = (name: string, value: string) => setFormData((prev) => ({ ...prev, [name]: value }));
+  const setField = (name: keyof EditableFields, value: string) =>
+    setFormData((prev) => ({ ...prev, [name]: value }));
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -46,20 +77,21 @@ export function CommercialUserModal({ onClose, onCreated }: { onClose: () => voi
     }
     setSubmitting(true);
     try {
-      const row = await createCommercialUser({
-        username: formData.username,
-        email: formData.email,
-        phone: formData.phone,
-        employer: formData.employer,
-        lineManager: formData.lineManager,
-        organization: formData.organization,
+      const row = await updateCommercialUser(user.id, {
+        username: formData.username.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        employer: formData.employer.trim(),
+        lineManager: formData.lineManager.trim(),
+        organization: formData.organization.trim(),
         programmeStatus: formData.programmeStatus,
       });
-      success('User created', `${row.username} was saved to the database.`);
-      onCreated(row);
-      onClose();
+      success('Learner updated', `${row.username} was saved.`);
+      onSaved(row);
     } catch (err) {
-      error('Could not create user', err instanceof Error ? err.message : 'Unexpected error');
+      const message = err instanceof Error ? err.message : 'Unexpected error';
+      if (onError) onError(message);
+      else error('Could not save learner', message);
     } finally {
       setSubmitting(false);
     }
@@ -67,14 +99,14 @@ export function CommercialUserModal({ onClose, onCreated }: { onClose: () => voi
 
   return (
     <Modal
-      title="Add commercial learner"
+      title="Edit learner details"
       size="max-w-2xl"
       onClose={onClose}
       footer={
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Cancel</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-user-add-line" />Create learner</>}
+            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save changes</>}
           </button>
         </>
       }
@@ -88,7 +120,7 @@ export function CommercialUserModal({ onClose, onCreated }: { onClose: () => voi
             </label>
             {field.type === 'select' ? (
               <select
-                value={formData[field.name] ?? ''}
+                value={formData[field.name]}
                 onChange={(e) => setField(field.name, e.target.value)}
                 className={`${inputClass} cursor-pointer`}
               >
@@ -98,7 +130,7 @@ export function CommercialUserModal({ onClose, onCreated }: { onClose: () => voi
             ) : (
               <input
                 type={field.type}
-                value={formData[field.name] ?? ''}
+                value={formData[field.name]}
                 placeholder={field.placeholder}
                 onChange={(e) => setField(field.name, e.target.value)}
                 className={inputClass}

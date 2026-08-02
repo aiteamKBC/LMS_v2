@@ -1,15 +1,79 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchEnrolmentBoard } from '@/api/enrolmentUsers';
+import { fetchEnrolmentBoard, updateEnrolmentUser, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
+import { fetchCommercialBoard } from '@/api/commercialUsers';
+import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, type EnrolmentDocument } from '@/api/enrolmentDocuments';
+import type { LearnerKind } from '@/api/extendedIlr';
 import type { EnrolmentBoard, FsBlock } from './types';
 import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, FileList, Pagination, Hero, HeroStat, iconBtn, btnSecondary } from './components/ui';
 
-const enrolmentNav = roleNavMap.compliance;
+const enrolmentNav = roleNavMap.apprentice;
 
 function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void }[] }) {
   return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} />)}</>;
+}
+
+/**
+ * Programme status, set from the page hero.
+ *
+ * Replaced the separate "Enrolled learners" delivery list, which re-listed the
+ * same learners this page already covers. Styled for the hero's dark gradient
+ * rather than with the standard light `inputClass`. The pick is held locally
+ * until Save, so a mis-click never writes to the learner's record.
+ */
+function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initial: string }) {
+  const [val, setVal] = useState(initial);
+  const [saved, setSaved] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => { setVal(initial); setSaved(initial); }, [initial]);
+
+  const dirty = val !== saved;
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      // One endpoint for both learner kinds — they share one table.
+      await updateEnrolmentUser(learnerId, { programmeStatus: val });
+      setSaved(val);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      <span className="text-[10px] uppercase tracking-wider text-white/60">Programme status</span>
+      <div className="flex items-center gap-2">
+        <select
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          aria-label="Programme status"
+          className="px-3 py-2 text-[13px] font-medium bg-white/15 backdrop-blur-sm border border-white/25 rounded-lg text-white outline-none cursor-pointer hover:bg-white/20 focus:border-white/50 transition-smooth max-w-[200px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
+        >
+          <option value="">— Set status —</option>
+          {PROGRAMME_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        {dirty && (
+          <button
+            onClick={save}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white text-primary-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
+          >
+            {saving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save</>}
+          </button>
+        )}
+      </div>
+      {err && <span className="text-[11px] text-red-200"><i className="ri-error-warning-line mr-1" />{err}</span>}
+    </div>
+  );
 }
 
 function FunctionalSkill({ subject, block }: { subject: string; block: FsBlock }) {
@@ -32,8 +96,70 @@ function FunctionalSkill({ subject, block }: { subject: string; block: FsBlock }
   );
 }
 
+/**
+ * Generated compliance paperwork for this learner (Extended ILR today, the other
+ * seven document types as they are built). Rows come from
+ * enrolment."Enrolment_Documents"; opening one mints a short-lived SAS URL so the
+ * Azure container itself stays private.
+ */
+function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind; learnerId: string; programme: string }) {
+  const [docs, setDocs] = useState<EnrolmentDocument[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchEnrolmentDocuments(kind, learnerId)
+      .then((r) => !cancelled && setDocs(r))
+      .catch((e: Error) => !cancelled && setErr(e.message));
+    return () => { cancelled = true; };
+  }, [kind, learnerId]);
+
+  const open = async (id: string) => {
+    setOpening(id);
+    try {
+      window.open(await getEnrolmentDocumentUrl(kind, learnerId, id), '_blank', 'noopener');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not open the document');
+    } finally {
+      setOpening(null);
+    }
+  };
+
+  return (
+    <>
+      <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
+      {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
+      {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
+      {docs !== null && docs.length === 0 && <EmptyState text="No documents" />}
+      {docs !== null && docs.length > 0 && (
+        <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
+          {docs.map((d) => (
+            <div key={d.id} className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
+                <i className="ri-file-pdf-line text-red-500 shrink-0" />
+                <span className="truncate">{d.docLabel}</span>
+                {d.signed && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>}
+              </span>
+              <span className="flex items-center gap-3 shrink-0">
+                <span className="text-[11px] text-foreground-400">{d.generatedAt ? new Date(d.generatedAt).toLocaleString('en-GB') : ''}</span>
+                <ActionLink label={opening === d.id ? 'Opening…' : 'View'} icon="ri-external-link-line" onClick={() => open(d.id)} />
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function BoardPage() {
   const { userId = '' } = useParams();
+  const [search] = useSearchParams();
+  // Ids overlap between the two learner tables, so the row's source travels
+  // in the URL and decides which record this board reads.
+  const isCommercial = search.get('source') === 'commercial';
+  const suffix = isCommercial ? '?source=commercial' : '';
   const [board, setBoard] = useState<EnrolmentBoard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,13 +167,13 @@ export default function BoardPage() {
   const load = () => {
     setLoading(true);
     setError(null);
-    fetchEnrolmentBoard(userId)
+    (isCommercial ? fetchCommercialBoard(userId) : fetchEnrolmentBoard(userId))
       .then(setBoard)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   };
 
-  useEffect(load, [userId]);
+  useEffect(load, [userId, isCommercial]);
 
   if (loading || error || !board) {
     return (
@@ -70,13 +196,17 @@ export default function BoardPage() {
 
 function BoardView({ board }: { board: EnrolmentBoard }) {
   const navigate = useNavigate();
+  const [search] = useSearchParams();
   const userId = board.user.id;
   const [contactPage, setContactPage] = useState(1);
 
   const CONTACTS_PER_PAGE = 5;
   const contactPages = Math.max(1, Math.ceil(board.contacts.length / CONTACTS_PER_PAGE));
   const contactRows = board.contacts.slice((contactPage - 1) * CONTACTS_PER_PAGE, contactPage * CONTACTS_PER_PAGE);
-  const showWizard = () => navigate(`/users/${userId}/wizard`);
+  // Carry the learner's source through to the wizard — ids overlap across tables.
+  const isCommercial = search.get('source') === 'commercial';
+  const suffix = isCommercial ? '?source=commercial' : '';
+  const showWizard = () => navigate(`/users/${userId}/wizard${suffix}`);
 
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
@@ -89,6 +219,7 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
             subtitle={<>Owner: {board.user.owner || '—'}{board.programme.name ? ` · ${board.programme.name}` : ''}</>}
             right={
               <>
+                <HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />
                 <HeroStat value={board.programme.onboardingStatus} label="Onboarding" />
                 <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
                   <i className="ri-magic-line" />Show Wizard
@@ -127,7 +258,9 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
           </SectionPanel>
 
           {/* 3.3 Programme */}
-          <SectionPanel title="Programme" icon="ri-graduation-cap-line" actions={<Actions items={[{ label: 'learning plan overview' }, { label: 'show wizard', onClick: showWizard }, { label: 'stop' }]} />}>
+          {/* "build training plan" carried over from the retired delivery list,
+              which was the only route into the builder. */}
+          <SectionPanel title="Programme" icon="ri-graduation-cap-line" actions={<Actions items={[{ label: 'build training plan', icon: 'ri-tools-line', onClick: () => navigate(`/training-plan/${isCommercial ? 'commercial' : 'apprenticeship'}/${userId}`) }, { label: 'show wizard', onClick: showWizard }, { label: 'stop' }]} />}>
             <div className="border border-foreground-100 rounded-lg p-3 mb-3">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-[12px] font-semibold text-foreground-800">Programme Details</p>
@@ -135,6 +268,7 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
               </div>
               <FieldRow readonly label="Programme Type" value={board.programme.type} />
               <FieldRow readonly label="Programme" value={board.programme.name} />
+              <FieldRow readonly label="Cohort" value={board.programme.cohort} />
               <FieldRow readonly label="Start date" value={board.programme.startDate} />
               <FieldRow readonly label="End date" value={board.programme.endDate} />
               <FieldRow readonly label="Enrolled" value={`${board.programme.enrolledAt} by ${board.programme.enrolledBy}`} />
@@ -249,8 +383,7 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
 
           {/* 3.14 Compliance documents */}
           <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
-            <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">Programme Name</p>
-            <EmptyState text="No documents" />
+            <ComplianceDocuments kind={isCommercial ? 'commercial' : 'apprenticeship'} learnerId={userId} programme={board.programme.name} />
           </SectionPanel>
 
           {/* 3.15 Review documents */}

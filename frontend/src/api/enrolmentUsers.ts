@@ -11,8 +11,13 @@ export const STATUS_OPTIONS = ['FullUser', 'Invited', 'Prospect', 'Expired', 'Ca
 
 export const TYPE_OPTIONS = ['User', 'Employer', 'Referrer', 'Admin', 'Caseowner'];
 
+// Mirrors PROGRAMME_STATUS_CHOICES in backend/learner_api/constants.py, which
+// validates writes — a value missing there is rejected on save.
 export const PROGRAMME_STATUS_OPTIONS = [
   'Ready to enrol',
+  // While a learner is at this status their landing page sends them to their own
+  // enrolment wizard (/learner/onboarding) rather than the usual overview.
+  'Onboarding',
   'On probation',
   'Active',
   'Non starter',
@@ -38,9 +43,56 @@ export const PROGRAMME_STATUS_OPTIONS = [
   'In Work (Voluntary)',
 ];
 
-export interface CreateEnrolmentUserInput {
+/**
+ * The Aptem "Add user" field set, shared by both learner tables — the create
+ * form is the same for apprenticeship and commercial learners, and the backend
+ * accepts these keys on either endpoint (see APTEM_TEXT_FIELDS/APTEM_BOOL_FIELDS
+ * in backend/learner_api/mappers.py).
+ */
+export interface AptemUserFields {
+  title?: string;
+  preferredName?: string;
+  gender?: string;
+  legalSex?: string;
+  age?: string;
+  niNumber?: string;
+  referrer?: string;
+  referrerAddress?: string;
+  referrerContact?: string;
+  targetProgramme?: string;
+  postcode?: string;
+  address?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  townCity?: string;
+  county?: string;
+  country?: string;
+  caseOwner?: string;
+  learningProvider?: string;
+  employerAddress?: string;
+  mentor?: string;
+  referenceNumber?: string;
+  extendedBreak?: string;
+  /** Radio: invite the new user into the platform on create. */
+  inviteToPlatform?: boolean;
+  allowCheckpoint?: boolean;
+  allowConsole?: boolean;
+  allowClassic?: boolean;
+}
+
+/**
+ * Which kind of learner a row is. Both kinds live in the single
+ * enrolment."Enrolment_Users" table, distinguished by this column.
+ */
+export type LearnerType = 'apprenticeship' | 'commercial';
+
+export const LEARNER_TYPE_OPTIONS: LearnerType[] = ['apprenticeship', 'commercial'];
+
+export interface CreateEnrolmentUserInput extends AptemUserFields {
   username: string;
   email: string;
+  /** Defaults to 'apprenticeship' server-side when omitted. */
+  learnerType?: LearnerType;
   type?: string;
   status?: string;
   programmeStatus?: string;
@@ -72,9 +124,13 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-/** List all enrolment users (mapped to UserListRow). */
-export async function fetchEnrolmentUsers(): Promise<UserListRow[]> {
-  const data = await request<{ count: number; results: UserListRow[] }>(`${BASE}/`);
+/**
+ * List learners from the single learner table. Both kinds are returned unless
+ * `learnerType` narrows it — each row carries its own `learnerType`/`source`.
+ */
+export async function fetchEnrolmentUsers(learnerType?: LearnerType): Promise<UserListRow[]> {
+  const qs = learnerType ? `?learnerType=${encodeURIComponent(learnerType)}` : '';
+  const data = await request<{ count: number; results: UserListRow[] }>(`${BASE}/${qs}`);
   return data.results;
 }
 

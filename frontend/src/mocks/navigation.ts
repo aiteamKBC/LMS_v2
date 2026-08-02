@@ -7,6 +7,10 @@ export const learnerNavItems: SidebarNavItem[] = [
   // Overview — standalone (not grouped)
   { id: 'learner-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/learner' },
 
+  // The learner's own enrolment wizard — relevant while onboarding, and stays
+  // available afterwards as a record of what they submitted.
+  { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
+
   // Learning group
   {
     id: 'learner-group-learning',
@@ -391,11 +395,28 @@ export const engagementNavItems: SidebarNavItem[] = [
 ];
 
 // ============================================================================
-// ENROLMENT WORKSPACE — Grouped sidebar (7 groups, status dots only, no counters)
+// ENROLMENT WORKSPACES — two fully separate tracks.
+//
+// A single enrolment section — the apprentice track — whose lists cover both
+// apprenticeship and commercial learners.
 // ============================================================================
+
+/**
+ * The one enrolment track: the users directory (all learners) and the wizard.
+ * The separate "Delivery / Enrolled learners" list was removed — it re-listed the
+ * same learners as the directory, and its programme-status and coach controls now
+ * live on the learner's own page (see BoardPage's Programme panel).
+ */
+export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
+];
+
+/**
+ * Legacy sidebar. Still backs `roleNavMap.compliance`, which the wider
+ * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
+ */
 export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
-  { id: 'delivery', label: 'delivery', icon: 'ri-briefcase-4-line', href: '/delivery', statusDot: 'amber' },
 ];
 
 // ============================================================================
@@ -873,6 +894,7 @@ export const roleNavMap: Record<string, { items: SidebarNavItem[]; label: string
   curriculum: { items: curriculumNavItems, label: 'Curriculum Designer', workspaceLabel: 'Curriculum Studio' },
   engagement: { items: engagementNavItems, label: 'Engagement Manager', workspaceLabel: 'Engagement Command Centre' },
   compliance: { items: enrolmentNavItems, label: 'Enrolment Officer', workspaceLabel: 'Enrolment Workspace' },
+  apprentice: { items: apprenticeNavItems, label: 'Enrolment Officer', workspaceLabel: 'Enrolment' },
   mis: { items: misNavItems, label: 'MIS Operations', workspaceLabel: 'MIS Operations Centre' },
   qa: { items: qaNavItems, label: 'QA Officer', workspaceLabel: 'QA Review Centre' },
   leadership: { items: leadershipNavItems, label: 'Senior Leadership', workspaceLabel: 'Leadership Intelligence Centre' },
