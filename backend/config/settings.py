@@ -92,6 +92,11 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
+KBC_LMS_SCHEMA_URL = os.environ.get(
+    "KBC_LMS_SCHEMA_URL",
+    "https://kentbusinesscollege.org/wp-json/kbc-lms/v1/all-students-schema",
+)
+KBC_LMS_API_KEY = os.environ.get("KBC_LMS_API_KEY", "")
 
 ALLOWED_HOSTS = [
     host.strip()
