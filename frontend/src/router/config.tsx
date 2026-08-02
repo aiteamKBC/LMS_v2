@@ -63,7 +63,6 @@ const CoachOtjhReports = lazy(() => import("../pages/coach/otjh-reports/page"));
 const CoachProgressReviews = lazy(() => import("../pages/coach/progress-reviews/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
-const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
@@ -137,6 +136,7 @@ const LearnerCalendarPage = lazy(() => import("../pages/learner/calendar/page"))
 const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page"));
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
+const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
@@ -268,6 +268,17 @@ const routes: RouteObject[] = [
     element: <ForgotPasswordPage />,
   },
   {
+    // The learner's own enrolment wizard. Onboarding learners are redirected
+    // here by useOnboardingRedirect, so the bare path must resolve; the wizard
+    // then navigates between steps by slug.
+    path: "/learner/onboarding",
+    element: <LearnerOnboardingPage />,
+  },
+  {
+    path: "/learner/onboarding/:stepSlug",
+    element: <LearnerOnboardingPage />,
+  },
+  {
     path: "/workspace/learner",
     element: <LearnerOverview />,
   },
@@ -367,10 +378,7 @@ const routes: RouteObject[] = [
     path: "/users/:userId/wizard/:stepSlug",
     element: <WizardPage />,
   },
-  {
-    path: "/delivery",
-    element: <CommercialLearnersPage />,
-  },
+ 
   {
     path: "/activity-categories",
     element: <Navigate to="/workspace/auditor" replace />,

@@ -24,8 +24,13 @@ export interface TrainingActivity {
   isSpecial: boolean;
   isLive: boolean;
   ksbs: string[] | null;
+  ksbCodes: string[];
   ksbLabels: string | null;
   assessmentMethod: string;
+  primaryAction: string;
+  primaryIcon: string;
+  dateDueFormatted: string;
+  teamsMeetingUrl: string | null;
   instructions: string | null;
   completeWhen: string | null;
   completedDate: string | null;
@@ -34,12 +39,14 @@ export interface TrainingActivity {
   qaApprovedDate: string | null;
   otjhAwarded: number | null;
   pointsEarned: number | null;
-  ksbsAchieved: string[] | null;
+  ksbsAchieved: string[];
   referralReason: string | null;
   referralSource: string | null;
   requiredActions: string | null;
+  score?: number | null;
   coachFeedback: { text: string; from: string; date: string } | null;
-  aiFeedback: { score: number; summary: string } | null;
+  qaFeedback: { text: string; from: string; date: string } | null;
+  aiFeedback: { score: number; summary: string; date?: string } | null;
 }
 
 export interface WeekGroup {
@@ -106,19 +113,25 @@ const a = (
   overrides: Partial<TrainingActivity> = {},
 ): TrainingActivity => ({
   id, title, type, status, typeIcon, duration, dueDate, plannedOTJH, actualOTJH, points,
-  weekNumber, globalWeek, month, monthKey, weekLabel, isSpecial, isLive, ksbs, ksbLabels,
+  weekNumber, globalWeek, month, monthKey, weekLabel, isSpecial, isLive, ksbs, ksbCodes: ksbs || [], ksbLabels,
   assessmentMethod, instructions, completeWhen,
+  primaryAction: defaultPrimaryAction(type, status),
+  primaryIcon: defaultPrimaryIcon(type, status),
+  dateDueFormatted: dueDate,
+  teamsMeetingUrl: null,
   completedDate: null,
   evidenceSubmittedDate: null,
   coachApprovedDate: null,
   qaApprovedDate: null,
   otjhAwarded: null,
   pointsEarned: null,
-  ksbsAchieved: null,
+  ksbsAchieved: [],
   referralReason: null,
   referralSource: null,
   requiredActions: null,
+  score: null,
   coachFeedback: null,
+  qaFeedback: null,
   aiFeedback: null,
   ...overrides,
 });
@@ -200,7 +213,46 @@ export const TRAINING_ACTIVITIES: TrainingActivity[] = [
 /* ═══════════════════════════════════════════════════════
    BUILD WEEK GROUPS + MONTH GROUPS
    ═══════════════════════════════════════════════════════ */
-function calculateWeekGroup(acts: TrainingActivity[]): Omit<WeekGroup, 'activities'> {
+interface WeekGroupStats {
+  completed: number;
+  overdue: number;
+  total: number;
+}
+
+function defaultPrimaryAction(type: ActivityType, status: ActivityStatus): string {
+  if (status === 'Completed') return 'View Summary';
+  if (status === 'Evidence Submitted') return 'View Submission';
+  if (status === 'Referred') return 'Update Submission';
+  if (status === 'Evidence Required') return 'Log Evidence';
+  if (status === 'In Progress') {
+    if (type === 'Quiz') return 'Continue Quiz';
+    if (type === 'Reading') return 'Continue Reading';
+    if (type === 'Podcast') return 'Continue Listening';
+    if (type === 'Video') return 'Continue Watching';
+    return 'Continue Learning';
+  }
+  if (type === 'Quiz') return 'Take Quiz';
+  if (type === 'Reading') return 'Read';
+  if (type === 'Podcast') return 'Listen';
+  if (type === 'Video') return 'Watch Video';
+  if (type === 'Evidence') return 'Log Evidence';
+  if (type === 'Reflection') return 'Start Reflection';
+  return 'Start Activity';
+}
+
+function defaultPrimaryIcon(type: ActivityType, status: ActivityStatus): string {
+  if (status === 'Completed' || status === 'Evidence Submitted') return 'ri-file-list-line';
+  if (status === 'Referred') return 'ri-edit-line';
+  if (status === 'Evidence Required') return 'ri-file-add-line';
+  if (type === 'Quiz') return 'ri-questionnaire-line';
+  if (type === 'Reading') return 'ri-book-open-line';
+  if (type === 'Podcast') return 'ri-headphone-line';
+  if (type === 'Video') return 'ri-play-circle-line';
+  if (type === 'Reflection') return 'ri-chat-quote-line';
+  return 'ri-task-line';
+}
+
+function calculateWeekGroup(acts: TrainingActivity[]): WeekGroupStats {
   const nonSpecial = acts.filter(x => !x.isSpecial);
   return {
     completed: nonSpecial.filter(x => x.status === 'Completed').length,
@@ -259,11 +311,155 @@ export const TRAINING_MONTH_GROUPS: MonthGroup[] = MONTH_DEFS.map(mdef => {
 export const CURRENT_GLOBAL_WEEK = 20;
 export const TOTAL_WEEKS = 20;
 
-export function getWeekData(weekNum: number) {
-  const acts = TRAINING_ACTIVITIES.filter(x => x.globalWeek === weekNum);
+type WeekDetailKsbType = 'Knowledge' | 'Skill' | 'Behaviour';
+type WeekDetailDeadlinePriority = 'completed' | 'today' | 'due-this-week' | 'upcoming';
+
+interface WeekDetailKsb {
+  code: string;
+  type: WeekDetailKsbType;
+  desc: string;
+  progress: number;
+  components: string[];
+}
+
+interface WeekDetailDeadline {
+  title: string;
+  date: string;
+  priority: WeekDetailDeadlinePriority;
+}
+
+interface WeekDetailResource {
+  title: string;
+  type: 'Video' | 'Reading' | 'Podcast' | 'Template' | 'Download' | 'Recording';
+  description: string;
+  href: string;
+  icon: string;
+}
+
+interface WeekDetailGuidance {
+  notes: string;
+  suggestedFocus: string;
+  supportAvailable: string;
+}
+
+interface WeekDetailData {
+  activities: TrainingActivity[];
+  stats: WeekGroupStats;
+  components: TrainingActivity[];
+  modulePeriod: {
+    label: string;
+    liveTitle: string;
+  };
+  dateRange: {
+    start: string;
+    end: string;
+  };
+  ksbs: WeekDetailKsb[];
+  deadlines: WeekDetailDeadline[];
+  resources: WeekDetailResource[];
+  tutorGuidance: WeekDetailGuidance;
+  coachGuidance: WeekDetailGuidance;
+}
+
+function ksbTypeFromCode(code: string): WeekDetailKsbType {
+  if (code.startsWith('S')) return 'Skill';
+  if (code.startsWith('B')) return 'Behaviour';
+  return 'Knowledge';
+}
+
+function ksbDescription(code: string, type: WeekDetailKsbType) {
+  if (type === 'Skill') return `${code} is developed through this week's applied learning activities.`;
+  if (type === 'Behaviour') return `${code} is reinforced through reflection, practice, and evidence building this week.`;
+  return `${code} is covered through this week's knowledge and understanding activities.`;
+}
+
+function resourceTypeForActivity(activity: TrainingActivity): WeekDetailResource['type'] {
+  if (activity.type === 'Video') return 'Video';
+  if (activity.type === 'Reading') return 'Reading';
+  if (activity.type === 'Podcast') return 'Podcast';
+  if (activity.type === 'Quiz') return 'Download';
+  if (activity.type === 'Evidence' || activity.type === 'Activity' || activity.type === 'Reflection') return 'Template';
+  return 'Recording';
+}
+
+function weekGroupForNumber(weekNum: number) {
+  return TRAINING_MONTH_GROUPS
+    .flatMap((month) => month.weekGroups)
+    .find((week) => week.weekNumber === weekNum) || null;
+}
+
+function deadlinePriorityForActivity(activity: TrainingActivity, index: number): WeekDetailDeadlinePriority {
+  if (activity.status === 'Completed') return 'completed';
+  if (activity.status === 'overdue' || activity.status === 'Referred') return 'due-this-week';
+  if (index === 0 || activity.status === 'In Progress' || activity.status === 'Evidence Required' || activity.status === 'Evidence Submitted') {
+    return 'today';
+  }
+  return 'upcoming';
+}
+
+export function getWeekData(weekNum: number): WeekDetailData {
+  const acts = TRAINING_ACTIVITIES.filter((x) => x.globalWeek === weekNum);
+  const stats = calculateWeekGroup(acts);
+  const weekGroup = weekGroupForNumber(weekNum);
+  const modulePeriodMatch = MODULE_PERIODS.find((period) => weekNum >= period.weeksStart && weekNum <= period.weeksEnd);
+  const moduleLabel = modulePeriodMatch?.label || `Week ${weekNum} Learning`;
+  const dateRange = {
+    start: weekGroup?.weekStart || `Week ${weekNum} Start`,
+    end: weekGroup?.weekEnd || `Week ${weekNum} End`,
+  };
+  const nonSpecialActivities = acts.filter((activity) => !activity.isSpecial);
+  const ksbCodes = Array.from(new Set(nonSpecialActivities.flatMap((activity) => activity.ksbs || [])));
+  const completedStates = new Set(['Completed', 'Evidence Submitted']);
+
+  const ksbs: WeekDetailKsb[] = ksbCodes.map((code) => {
+    const mappedActivities = nonSpecialActivities.filter((activity) => (activity.ksbs || []).includes(code));
+    const completedActivities = mappedActivities.filter((activity) => completedStates.has(activity.status)).length;
+    const type = ksbTypeFromCode(code);
+    return {
+      code,
+      type,
+      desc: ksbDescription(code, type),
+      progress: mappedActivities.length > 0 ? Math.round((completedActivities / mappedActivities.length) * 100) : 0,
+      components: mappedActivities.map((activity) => activity.title),
+    };
+  });
+
+  const deadlines: WeekDetailDeadline[] = nonSpecialActivities.map((activity, index) => ({
+    title: activity.title,
+    date: activity.dueDate,
+    priority: deadlinePriorityForActivity(activity, index),
+  }));
+
+  const resources: WeekDetailResource[] = nonSpecialActivities.slice(0, 6).map((activity) => ({
+    title: activity.title,
+    type: resourceTypeForActivity(activity),
+    description: activity.ksbLabels || activity.instructions || `${activity.type} resource linked to ${moduleLabel}.`,
+    href: '#',
+    icon: activity.typeIcon,
+  }));
+
   return {
     activities: acts,
-    stats: calculateWeekGroup(acts),
+    stats,
+    components: acts,
+    modulePeriod: {
+      label: moduleLabel,
+      liveTitle: `${moduleLabel} - Week ${weekNum}`,
+    },
+    dateRange,
+    ksbs,
+    deadlines,
+    resources,
+    tutorGuidance: {
+      notes: `Focus on the key outcomes for ${moduleLabel} and use the weekly activities to build confidence before the next review.`,
+      suggestedFocus: nonSpecialActivities[0]?.title || `Complete the priority activities scheduled for Week ${weekNum}.`,
+      supportAvailable: 'Use the learning resources, bring blockers to your tutor, and ask for clarification on any technical concepts.',
+    },
+    coachGuidance: {
+      notes: `Keep your OTJH up to date and link your evidence clearly to the skills and knowledge covered in ${moduleLabel}.`,
+      suggestedFocus: nonSpecialActivities.find((activity) => activity.status !== 'Completed')?.title || `Reflect on what you completed in Week ${weekNum}.`,
+      supportAvailable: 'Your coach can help with planning, pacing, evidence strategy, and any barriers affecting progress this week.',
+    },
   };
 }
 

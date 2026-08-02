@@ -75,6 +75,13 @@ export interface LearnerQuizQuestionResult {
 
 export interface LearnerQuizAttempt {
   kind?: 'quiz';
+  moduleId?: string | null;
+  moduleTitle?: string | null;
+  weekId?: string | null;
+  weekTitle?: string | null;
+  componentId?: string | null;
+  componentTitle?: string | null;
+  componentType?: string | null;
   attempt?: number;           // 1-based attempt number for this quiz
   grade: number;              // 0-1 decimal, e.g. 0.9
   achievedScore?: number;     // questions correct
@@ -106,6 +113,7 @@ export interface LearnerDetail {
   week: LearnerWeekEntry[];
   components: LearnerComponentEntry[];
   ksbs: LearnerKsbItem[];
+  progressKsbCodes?: string[];
   quizAttempts: LearnerQuizAttempt[];
   videoProgress?: LearnerVideoProgress[];
   componentProgress?: LearnerComponentProgress[];  // non-quiz, non-video completions

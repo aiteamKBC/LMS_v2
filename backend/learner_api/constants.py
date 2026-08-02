@@ -22,8 +22,30 @@ TYPE_CHOICES = [
     "Caseowner",
 ]
 
+# Which kind of learner a row in enrolment."Created_users" is. Both kinds share
+# that one table, and this column is the discriminator.
+LEARNER_TYPE_CHOICES = [
+    "apprenticeship",
+    "commercial",
+]
+
+# Staff positions, asked for at the foot of the "Create admin" form and stored on
+# enrolment."Staff_users"."Position". Validated in the API rather than by a DB
+# check constraint, so this list can grow without DDL.
+POSITION_CHOICES = [
+    "Caseowner",
+    "Admin",
+    "Enrolment",
+    "Curriculum team",
+    "Operations team",
+]
+
 PROGRAMME_STATUS_CHOICES = [
     "Ready to enrol",
+    # Learner is filling in their own enrolment wizard. While a learner sits at
+    # this status their /workspace/learner landing page redirects them to
+    # /learner/onboarding instead of the normal overview.
+    "Onboarding",
     "On probation",
     "Active",
     "Non starter",

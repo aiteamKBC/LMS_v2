@@ -135,6 +135,7 @@ const EMPTY_SUMMARY: TimetableSummary = {
     catchUp: { ...EMPTY_SUMMARY_METRICS },
   },
 };
+const UPCOMING_WINDOW_DAYS = 7;
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Data â€” June 2026 (spans 4 weeks)
@@ -1086,17 +1087,25 @@ export default function CoachTimetablePage() {
     [filteredEvents, selectedDay, viewMonth, viewYear],
   );
   const upcomingEvents = useMemo(() => {
+    const upcomingWindowEnd = new Date(todayStartTime);
+    upcomingWindowEnd.setDate(upcomingWindowEnd.getDate() + UPCOMING_WINDOW_DAYS);
+    const upcomingWindowEndTime = upcomingWindowEnd.getTime();
+
     return events
       .filter(ev => {
         const evDate = parseEventDate(ev);
-        return evDate.getTime() >= todayStartTime && ev.status !== 'completed' && ev.status !== 'cancelled';
+        return (
+          evDate.getTime() >= todayStartTime
+          && evDate.getTime() < upcomingWindowEndTime
+          && ev.status !== 'completed'
+          && ev.status !== 'cancelled'
+        );
       })
       .sort((a, b) => {
         const dateDelta = parseEventDate(a).getTime() - parseEventDate(b).getTime();
         if (dateDelta !== 0) return dateDelta;
         return a.startHour - b.startHour;
-      })
-      .slice(0, 5);
+      });
   }, [events, todayStartTime]);
   const statusFilterCounts: Record<StatusFilter, number> = {
     all: sourceFilteredVisibleRangeEvents.length,
@@ -2337,7 +2346,7 @@ export default function CoachTimetablePage() {
                         <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
                       </div>
                       <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Upcoming</p>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
                         <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
                       </div>
                     </div>
@@ -2353,13 +2362,13 @@ export default function CoachTimetablePage() {
                   <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
                     <i className="ri-calendar-todo-line"></i>
                   </span>
-                  Upcoming
+                  Next 7 Days
                 </h3>
                 <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-foreground-500 shadow-sm">
                   {upcomingEvents.length}
                 </span>
               </div>
-              <div className="space-y-2 p-3 md:p-4">
+              <div className="max-h-[36rem] space-y-2 overflow-y-auto p-3 pr-2 md:p-4 md:pr-3">
                 {upcomingEvents
                   .map(ev => {
                     const tc = eventConfig(ev);
@@ -2417,8 +2426,8 @@ export default function CoachTimetablePage() {
                     <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white text-foreground-300">
                       <i className="ri-calendar-check-line text-lg"></i>
                     </span>
-                    <p className="text-sm font-heading font-bold text-foreground-800">No upcoming events</p>
-                    <p className="mt-1 text-[11px] text-foreground-500">The forward schedule is clear.</p>
+                    <p className="text-sm font-heading font-bold text-foreground-800">No upcoming events in the next 7 days</p>
+                    <p className="mt-1 text-[11px] text-foreground-500">Nothing is scheduled over the next 7 days.</p>
                   </div>
                 )}
               </div>

@@ -14,25 +14,53 @@ authored expected_otjh (curriculum.components) and a programme-wide total.
 import json
 import logging
 import re
+from datetime import timedelta
 from html import unescape
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
+from django.utils import timezone
 
 from .active_users import completed_hours_from_progress, fmt_hours
 from .mappers import _s, to_learner_detail
-from .models import LearnerProfile
+from .models import EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
 
+# The enrolment record is the source: every learner exists in
+# enrolment."Created_users" from the moment they are created, whereas the
+# "Learner"."learners" profile only appears once enrolment is finished. Reading
+# the source here is what lets a still-onboarding learner load their page at all
+# (and carry a real programmeStatus, so the onboarding redirect can fire).
+# `kind` remains in the URL for backwards-compatible frontend routes; ids are
+# unique across the single table, so both resolve the same way.
 SOURCE_MODELS = {
-    # `kind` remains in the URL for backwards-compatible frontend routes, but
-    # both routes resolve the same canonical learner identity table.
-    "commercial": LearnerProfile,
-    "apprenticeship": LearnerProfile,
+    "commercial": EnrolmentUser,
+    "apprenticeship": EnrolmentUser,
 }
 
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+
+def _active_profile_for_source(source, source_pk):
+    """Resolve the active mirror after enrolment tables were consolidated.
+
+    ``Created_users`` and ``Learner.learners`` have independent primary-key
+    sequences, so their ids are no longer guaranteed to match.  Email is the
+    shared learner identity; the id lookup remains only as a compatibility
+    fallback for older records that do not have an email.
+    """
+    email = _s(getattr(source, "email", "")).strip()
+    if email:
+        return LearnerProfile.objects.filter(
+            email__iexact=email,
+            lifecycle_status="active",
+        ).first()
+
+    return LearnerProfile.objects.filter(
+        id=source_pk,
+        lifecycle_status="active",
+    ).first()
 
 
 def _video_url_from_settings(settings):
@@ -314,33 +342,221 @@ def _otjh_status(variance):
     return "At risk"
 
 
-def _cumulative_week_target(detail):
-    """Planned hours the learner should have reached by the CURRENT week —
-    the cumulative sum of expected_otjh for every week up to and including it.
+def _week_target_rows(detail):
+    weeks = detail.get("week") or []
+    if not weeks:
+        return []
 
-    "Current week" is the first week of the first module (test-data heuristic,
-    matching the frontend). CURRENT_WEEK_INDEX bumps this once real scheduling
-    lands, making the target accumulate across weeks. Returns a float (hours).
-    """
-    CURRENT_WEEK_INDEX = 0  # first week; raise as the learner advances
+    totals_by_week = {}
+    for component in detail.get("components", []):
+        key = (
+            component.get("module"),
+            component.get("week"),
+            component.get("moduleId"),
+            component.get("weekId"),
+        )
+        totals_by_week[key] = round(totals_by_week.get(key, 0.0) + float(component.get("expectedOtjh") or 0.0), 2)
 
-    modules = detail.get("modules") or []
-    if not modules:
+    return [
+        {
+            "module": week.get("module"),
+            "week": week.get("week"),
+            "moduleId": week.get("moduleId"),
+            "weekId": week.get("weekId"),
+            "otjh": totals_by_week.get(
+                (
+                    week.get("module"),
+                    week.get("week"),
+                    week.get("moduleId"),
+                    week.get("weekId"),
+                ),
+                0.0,
+            ),
+        }
+        for week in weeks
+    ]
+
+
+def _sequential_week_target(week_rows, learner_start_date=None, today=None):
+    if not week_rows:
         return 0.0
-    first_module = modules[0]
-    # Weeks of the first module, in the order to_learner_detail emitted them.
-    week_order = [w["week"] for w in detail.get("week", []) if w.get("module") == first_module]
-    if not week_order:
-        return 0.0
-    target_weeks = set(week_order[: CURRENT_WEEK_INDEX + 1])
+    if learner_start_date is None:
+        return round(float(week_rows[0].get("otjh") or 0.0), 2)
+    today = today or timezone.localdate()
+    weeks_elapsed = max(0, (today - learner_start_date).days // 7)
+    return round(sum(float(row.get("otjh") or 0.0) for row in week_rows[: weeks_elapsed + 1]), 2)
 
+
+def _schedule_based_week_target(week_rows, module_start_by_id, week_offset_by_id, today=None):
+    if not week_rows:
+        return None
+    today = today or timezone.localdate()
     total = 0.0
-    for c in detail.get("components", []):
-        if c.get("module") == first_module and c.get("week") in target_weeks:
-            otjh = c.get("expectedOtjh")
-            if otjh:
-                total += otjh
+    has_schedule = False
+    for row in week_rows:
+        module_id = row.get("moduleId")
+        week_id = row.get("weekId")
+        start_date = module_start_by_id.get(module_id)
+        offset = week_offset_by_id.get(week_id)
+        if start_date is None or offset is None:
+            continue
+        has_schedule = True
+        week_start = start_date + timedelta(days=offset * 7)
+        if week_start <= today:
+            total += float(row.get("otjh") or 0.0)
+    return round(total, 2) if has_schedule else None
+
+
+def _cumulative_week_target(detail, learner_start_date=None, today=None):
+    """Planned hours the learner should have reached by today.
+
+    Primary path: use each module's authored start_date plus the week's
+    display_order from curriculum.weeks, summing every week whose scheduled
+    start is on or before today.
+
+    Fallback: when schedule metadata is incomplete, use the learner's own
+    start_date and the saved week order as a sequential week-by-week pace.
+    """
+    week_rows = _week_target_rows(detail)
+    if not week_rows:
+        return 0.0
+
+    module_ids = sorted({row.get("moduleId") for row in week_rows if row.get("moduleId")})
+    week_ids = sorted({row.get("weekId") for row in week_rows if row.get("weekId")})
+    module_start_by_id = {}
+    week_offset_by_id = {}
+
+    if module_ids and week_ids:
+        try:
+            with connections["enrolment"].cursor() as cur:
+                cur.execute(
+                    "SELECT module_catalogue_id, start_date FROM curriculum.modules "
+                    "WHERE module_catalogue_id = ANY(%s)",
+                    [module_ids],
+                )
+                module_start_by_id = {module_id: start_date for module_id, start_date in cur.fetchall() if start_date}
+
+                cur.execute(
+                    "SELECT id, display_order, week_number FROM curriculum.weeks "
+                    "WHERE id = ANY(%s)",
+                    [week_ids],
+                )
+                for week_id, display_order, week_number in cur.fetchall():
+                    if display_order is not None:
+                        week_offset_by_id[week_id] = max(int(display_order), 0)
+                    elif week_number is not None:
+                        week_offset_by_id[week_id] = max(int(week_number) - 1, 0)
+        except DatabaseError as exc:
+            logger.warning("Could not resolve week schedule metadata for OTJ target: %s", exc)
+
+    scheduled_target = _schedule_based_week_target(
+        week_rows,
+        module_start_by_id,
+        week_offset_by_id,
+        today=today,
+    )
+    if scheduled_target is not None:
+        return scheduled_target
+
+    total = _sequential_week_target(week_rows, learner_start_date=learner_start_date, today=today)
     return round(total, 2)
+
+
+def _live_otjh_snapshot(detail, learner_profile=None):
+    planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
+    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
+
+    target_num = _cumulative_week_target(
+        detail,
+        learner_start_date=getattr(learner_profile, "start_date", None),
+    )
+    completed_num = float(completed) if completed else 0.0
+    progress_hours_num = round(completed_num - target_num, 2)
+    variance = round((completed_num - target_num) / target_num, 2) if target_num else None
+
+    target_str = fmt_hours(target_num)
+    progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
+    variance_str = "" if variance is None else str(variance)
+    variance_db = None if variance is None else variance
+    otjh_status = _otjh_status(variance)
+
+    return {
+        "planned_hours": planned,
+        "completed_hours": completed,
+        "target_hours": target_str,
+        "progress_hours": progress_hours_str,
+        "progress_variance": variance_db,
+        "otjh_status": otjh_status,
+        "plannedHours": planned,
+        "completedHours": completed,
+        "targetHours": target_str,
+        "progressHours": progress_hours_str,
+        "progressVariance": variance_str,
+        "otjhStatus": otjh_status,
+    }
+
+
+def _apply_live_otjh_snapshot(detail, snapshot):
+    detail["plannedHours"] = snapshot["plannedHours"]
+    detail["completedHours"] = snapshot["completedHours"]
+    detail["targetHours"] = snapshot["targetHours"]
+    detail["progressHours"] = snapshot["progressHours"]
+    detail["progressVariance"] = snapshot["progressVariance"]
+    detail["otjhStatus"] = snapshot["otjhStatus"]
+    return detail
+
+
+def _normalized_snapshot_value(value):
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def persist_live_otjh_snapshot(learner_profile, snapshot):
+    if learner_profile is None:
+        return []
+
+    calculated = {
+        "planned_hours": snapshot["planned_hours"],
+        "completed_hours": snapshot["completed_hours"],
+        "target_hours": snapshot["target_hours"],
+        "progress_hours": snapshot["progress_hours"],
+        "progress_variance": snapshot["progress_variance"],
+        "otjh_status": snapshot["otjh_status"],
+    }
+    changed_fields = []
+    for field, value in calculated.items():
+        if _normalized_snapshot_value(getattr(learner_profile, field, None)) != _normalized_snapshot_value(value):
+            setattr(learner_profile, field, value)
+            changed_fields.append(field)
+    if changed_fields:
+        learner_profile.save(update_fields=changed_fields)
+    return changed_fields
+
+
+def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
+    if learner_profile is None:
+        return {}
+
+    resolved_source = source or learner_profile
+    resolved_detail = detail
+    if resolved_detail is None:
+        resolved_detail = to_learner_detail(resolved_source, learner_profile)
+        resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"] = _resolve_from_master(
+            resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"]
+        )
+        resolved_detail["components"], resolved_detail["totalExpectedOtjh"] = _annotate_otjh(resolved_detail["components"])
+        resolved_detail["components"] = _append_week_quizzes(resolved_detail["week"], resolved_detail["components"])
+
+    snapshot = _live_otjh_snapshot(resolved_detail, learner_profile)
+    _apply_live_otjh_snapshot(resolved_detail, snapshot)
+    persist_live_otjh_snapshot(learner_profile, snapshot)
+    return snapshot
 
 
 def _resolve_from_master(modules, weeks, components):
@@ -682,16 +898,30 @@ def learner_detail(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        source = model.objects.get(pk=pk)
+        # all_learners, not objects: the default manager is scoped to
+        # apprenticeship rows, so a commercial learner would 404 here.
+        source = model.all_learners.get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
     try:
-        learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        learner_profile = _active_profile_for_source(source, pk)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+    if learner_profile and not learner_profile.assigned_ksbs.exists():
+        try:
+            from .active_users import refresh_learner_ksb_snapshot
+
+            refresh_learner_ksb_snapshot(learner_profile, source)
+            learner_profile = LearnerProfile.objects.filter(
+                id=learner_profile.id,
+                lifecycle_status="active",
+            ).first()
+        except DatabaseError as exc:
+            logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
     # Live-resolve titles + membership from the master authoring tables so coach
@@ -701,54 +931,11 @@ def learner_detail(request, kind, pk):
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
     detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
-
-    # Persist the plan's planned hours + the learner's completed hours onto the
-    # learner profile so the columns stay current as the plan/progress change,
-    # and echo them back so the card reads the same stored values.
-    planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
-    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
-
-    # Target = cumulative planned hours up to & including the CURRENT week (first
-    # week of the first module, matching the frontend heuristic; grows week by
-    # week as scheduling advances). Then:
-    #   progress_hours    = completed - target
-    #   progress_variance = (completed - target) / target   (None when target=0)
-    target_num = _cumulative_week_target(detail)
-    completed_num = float(completed) if completed else 0.0
-    progress_hours_num = round(completed_num - target_num, 2)
-    variance = round((completed_num - target_num) / target_num, 2) if target_num else None
-
-    target_str = fmt_hours(target_num)
-    progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
-    variance_str = "" if variance is None else str(variance)
-    variance_db = None if variance is None else variance
-    otjh_status = _otjh_status(variance)
-
-    detail["plannedHours"] = planned
-    detail["completedHours"] = completed
-    detail["targetHours"] = target_str
-    detail["progressHours"] = progress_hours_str
-    detail["progressVariance"] = variance_str
-    detail["otjhStatus"] = otjh_status
+    snapshot = _live_otjh_snapshot(detail, learner_profile)
+    _apply_live_otjh_snapshot(detail, snapshot)
     if learner_profile is not None:
         try:
-            calculated = {
-                "planned_hours": planned,
-                "completed_hours": completed,
-                "target_hours": target_str,
-                "progress_hours": progress_hours_str,
-                "progress_variance": variance_db,
-                "otjh_status": otjh_status,
-            }
-            changed_fields = []
-            for field, value in calculated.items():
-                if getattr(learner_profile, field) != value:
-                    setattr(learner_profile, field, value)
-                    changed_fields.append(field)
-            # This endpoint is read on almost every learner page. Avoid a
-            # remote database UPDATE when all calculated values are unchanged.
-            if changed_fields:
-                learner_profile.save(update_fields=changed_fields)
+            persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 

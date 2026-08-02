@@ -21,6 +21,13 @@ export interface UserListRow {
   notesCount?: number;
   hasTasks?: boolean;
   reference?: string;
+  /**
+   * Which table the row came from. The single enrolment section lists
+   * apprenticeship learners, commercial learners and staff/admin accounts, and
+   * their ids live in separate tables — so row actions must be routed by source,
+   * not id alone.
+   */
+  source?: 'apprenticeship' | 'commercial' | 'staff';
 }
 
 export interface UsersFilter {
@@ -222,10 +229,33 @@ export interface PersonalDetails {
   dob: string;
   age?: number;
   sex: string;
+  /** PNG data URL — drawn or uploaded via SignaturePad. */
+  signature?: string;
+  /** ISO date the signature was captured. */
+  signatureDate?: string;
 }
 
 export type CompetenceKind = 'Knowledge' | 'Skill' | 'Behaviour';
-export type RagLevel = 'always' | 'often' | 'sometimes' | 'rarely' | 'never';
+/**
+ * Self-assessment scale for the Skills Radar questionnaire (8 points, scored 8
+ * down to 1 — see COMPETENCE_LEVELS).
+ *
+ * The five original RAG values are kept in the union so assessments saved before
+ * the scale was widened still load and display instead of coming back as null.
+ */
+export type RagLevel =
+  | 'mastery'
+  | 'expert'
+  | 'proficient'
+  | 'consistently'
+  | 'frequently'
+  | 'occasionally'
+  | 'rarely'
+  | 'never'
+  // Legacy values (pre-8-point scale).
+  | 'always'
+  | 'often'
+  | 'sometimes';
 
 export interface Ksb {
   id: string; // e.g. "PCP-K1"
@@ -251,44 +281,26 @@ export interface SkillsRadarState {
   assessments: Record<string, KsbAssessment>;
 }
 
+/**
+ * Extended ILR — the learner-facing declaration form.
+ *
+ * Mirrors the printed "Extended ILR" pages of the OnBoarding-ILR document:
+ * contact preferences, next of kin, eligibility, employer details, other
+ * training, personal circumstances, programme understanding, additional
+ * information, media consent and the learning declarations. The statutory
+ * Learner Details capture (name / address / ethnicity / prior attainment)
+ * is not part of this step.
+ */
 export interface IlrForm {
-  familyName: string;
-  givenNames: string;
-  dob: string;
-  currentPostcode: string;
-  addressLine1: string;
-  addressLine2: string;
-  addressLine3: string;
-  addressLine4: string;
-  yearsAtAddress?: number;
-  telephone: string;
-  postcodePriorToEnrolment: string;
-  niNumber: string;
-  email: string;
-  legalSex: 'Male' | 'Female' | '';
-  pronouns?: string;
-  ethnicityCode: string;
-  hasLongTermDisability: boolean | null;
-  priorAttainment: { level: string; date: string }[];
-  employmentStatus: { code: string; date: string }[];
-  signatureUrl?: string;
-}
-
-export interface ContactPreferencesForm {
-  consent: { courses: boolean | null; surveys: boolean | null; byPost: boolean | null; byPhone: boolean | null; byEmail: boolean | null };
+  contact: { byPost: boolean | null; byPhone: boolean | null; byEmail: boolean | null };
   nextOfKin: {
     fullName: string;
     relationship: string;
     email: string;
     phone: string;
     sameAddressAsLearner: boolean | null;
-    postcode?: string;
-    address?: string;
-    address2?: string;
-    city?: string;
   };
   eligibility: {
-    countryOfBirth: string;
     employedInEngland: boolean | null;
     countryOfResidence: string;
     ukEeaNational: boolean | null;
@@ -296,15 +308,38 @@ export interface ContactPreferencesForm {
     residentPrev3Years: boolean | null;
     yearsInUk?: number;
     requiresWorkPermit: boolean | null;
-    evidenceDescription?: string;
+    evidenceDescription: string;
     evidenceFiles: string[];
   };
-  otherGovFundedTraining12m: boolean | null;
-  circumstances: { homeSituation: string; caringResponsibilities: string; other: string; supportNeeded: string; careLeaver: boolean | null };
+  employer: {
+    organisationName: string;
+    postcode: string;
+    address: string;
+    city: string;
+    lineManagerName: string;
+    lineManagerEmail: string;
+    lineManagerPhone: string;
+  };
+  otherTraining: { attended12m: boolean | null; completedWhen: string };
+  circumstances: { caringResponsibilities: string; other: string; careLeaver: boolean | null };
   understanding: { programmeUnderstanding: string; careerProgression: string };
-  additional: { wageRateBand: string; disabilityDiscussEmployer: string; otherIncome?: string; aged16to18: boolean | null; aged19to24: boolean | null };
-  media: { consent: boolean | null; preferredName: string; genderIdentity: string; genderOther?: string; pronouns: string };
-  declarations: { plrShared: boolean | null; dfeContact: boolean | null; epaoDetails: boolean | null; kbcHoldsCerts: boolean | null; infoAccurate: boolean | null };
+  additional: { aged16to18: boolean | null; aged19to24: boolean | null };
+  media: { consent: boolean | null };
+  declarations: {
+    plrShared: boolean | null;
+    dfeContact: boolean | null;
+    epaoDetails: boolean | null;
+    kbcHoldsCerts: boolean | null;
+    infoAccurate: boolean | null;
+    over50PercentEngland: boolean | null;
+    wageRateBand: string;
+    knownByOtherName: boolean | null;
+    plrAccessAware: boolean | null;
+  };
+  /** Learning declaration signature block (learner). */
+  learnerSignature: { firstNames: string; surname: string; signatureUrl?: string; date: string };
+  /** Provider / sub-contractor declaration signature block. */
+  providerSignature: { printName: string; signatureUrl?: string; date: string };
 }
 
 export interface PlrRecord {
@@ -344,7 +379,6 @@ export interface WizardDraft {
   personalDetails: PersonalDetails;
   skillsRadar: SkillsRadarState;
   ilr: IlrForm;
-  contactPreferences: ContactPreferencesForm;
   plr: PlrState;
   cvJob: CvJobForm;
   policies: PoliciesState;
@@ -359,8 +393,7 @@ export const WIZARD_STEPS: WizardStepDef[] = [
   { slug: 'introduction', label: 'Introduction' },
   { slug: 'personal-details', label: 'Personal Details' },
   { slug: 'skills-radar', label: 'Skills Radar' },
-  { slug: 'ilr', label: 'Individualised Learner Record' },
-  { slug: 'contact-preferences', label: 'Contact Preferences' },
+  { slug: 'ilr', label: 'Extended ILR' },
   { slug: 'plr', label: 'Personal Learning Record' },
   { slug: 'cv-job', label: 'CV / Job Description' },
   { slug: 'policies', label: 'Policies' },
