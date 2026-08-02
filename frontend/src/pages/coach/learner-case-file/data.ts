@@ -419,6 +419,14 @@ export function formatFraction(current: number | null, total: number | null) {
   return `${roundNumber(current)}/${roundNumber(total)}`;
 }
 
+function parseHoursValue(value: string | number | null | undefined): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  const match = String(value ?? '').match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
 export function toneFromPercent(value: number | null, amberThreshold = 80) {
   if (value === null) {
     return 'neutral';
@@ -443,6 +451,22 @@ export function ksbCategory(code: string) {
 export function quizGradeValue(attempt: LearnerQuizAttempt) {
   const match = String(attempt.grade || '').match(/-?\d+(\.\d+)?/);
   return match ? Number(match[0]) : 0;
+}
+
+export function resolveQuizAttemptTitle(detail: LearnerDetail | null, attempt: LearnerQuizAttempt) {
+  const matchedComponent = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId);
+  return attempt.componentTitle || matchedComponent?.component || `Quiz ${attempt.quizId}`;
+}
+
+export function resolveQuizAttemptModule(detail: LearnerDetail | null, attempt: LearnerQuizAttempt) {
+  const matchedComponent = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId);
+  return attempt.moduleTitle || matchedComponent?.module || null;
+}
+
+export function formatQuizAttemptScore(attempt: LearnerQuizAttempt) {
+  return attempt.achievedScore != null && attempt.totalScore != null
+    ? `${roundNumber(attempt.achievedScore)}/${roundNumber(attempt.totalScore)}`
+    : '';
 }
 
 async function request<T>(url: string): Promise<T> {
@@ -815,7 +839,12 @@ function buildCaseFileData(args: {
   const journey = buildLearnerJourney(args.detail);
   const touchedKsbCodes = Array.from(
     new Set(
-      (args.detail?.quizAttempts || []).flatMap((attempt) => attempt.ksbs || []),
+      [
+        ...(args.detail?.progressKsbCodes || []),
+        ...(args.detail?.quizAttempts || []).flatMap((attempt) => attempt.ksbs || []),
+        ...(args.detail?.videoProgress || []).flatMap((entry) => entry.ksbs || []),
+        ...(args.detail?.componentProgress || []).flatMap((entry) => entry.ksbs || []),
+      ],
     ),
   ).sort();
   const programme = args.detail?.programme || args.snapshot?.cohortName || args.attendance?.programme || '';
@@ -838,6 +867,9 @@ function buildCaseFileData(args: {
   };
   const progressReviews = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'progress-review');
   const monthlyCoachMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents, 'mcr');
+  const detailCompletedHours = parseHoursValue(args.detail?.completedHours);
+  const detailTargetHours = parseHoursValue(args.detail?.targetHours);
+  const detailPlannedHours = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
 
   return {
     learnerId: args.learnerId,
@@ -862,9 +894,9 @@ function buildCaseFileData(args: {
     employerPhone: args.snapshot?.employerPhone || '',
     overallProgress: args.snapshot?.overallProgress ?? args.attendance?.overallProgress ?? null,
     attendanceRate: args.attendance?.attendance ?? null,
-    otjhCompleted: args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
-    otjhTarget: args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
-    otjhPlanned: args.snapshot?.otjhPlanned ?? null,
+    otjhCompleted: detailCompletedHours ?? args.snapshot?.otjhCompleted ?? args.attendance?.otjhCompleted ?? null,
+    otjhTarget: detailTargetHours ?? args.snapshot?.otjhTarget ?? args.attendance?.otjhTarget ?? null,
+    otjhPlanned: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? null,
     ksbProgress: args.snapshot?.ksbProgress ?? args.attendance?.ksbProgress ?? null,
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.snapshot?.startDate || formatDisplayDate(args.detail?.quizAttempts[0]?.startedAt) || '--',
@@ -964,16 +996,14 @@ function activityTone(entry: LearnerActivityEntry): CaseFileActivityItem['tone']
   return 'amber';
 }
 
-function fallbackQuizAttemptDetail(detail: LearnerDetail | null, attempt: LearnerQuizAttempt) {
-  const title = detail?.components.find((component) => component.quizMeta?.quizId === attempt.quizId)?.component || `Quiz ${attempt.quizId}`;
+export function fallbackQuizAttemptDetail(detail: LearnerDetail | null, attempt: LearnerQuizAttempt) {
+  const title = resolveQuizAttemptTitle(detail, attempt);
   const grade = formatAttemptGrade(attempt);
-  const score = attempt.achievedScore != null && attempt.totalScore != null
-    ? `${roundNumber(attempt.achievedScore)}/${roundNumber(attempt.totalScore)}`
-    : '';
+  const score = formatQuizAttemptScore(attempt);
   return [title, grade, score].filter(Boolean).join(' - ');
 }
 
-function formatAttemptGrade(attempt: LearnerQuizAttempt) {
+export function formatAttemptGrade(attempt: LearnerQuizAttempt) {
   const rawGrade = Number(attempt.grade);
   if (Number.isNaN(rawGrade)) {
     return '--';
@@ -982,7 +1012,7 @@ function formatAttemptGrade(attempt: LearnerQuizAttempt) {
   return `${percent}%`;
 }
 
-function sortAttemptsNewestFirst(attempts: LearnerQuizAttempt[]) {
+export function sortAttemptsNewestFirst(attempts: LearnerQuizAttempt[]) {
   return [...attempts].sort((left, right) => sortableDate(right.submittedAt) - sortableDate(left.submittedAt));
 }
 

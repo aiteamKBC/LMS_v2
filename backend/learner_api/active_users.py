@@ -5,6 +5,7 @@ The module name is retained for import compatibility. Runtime data is stored in
 JSON tables are not read or written here.
 """
 
+import json
 import logging
 import re
 from datetime import timedelta
@@ -59,11 +60,17 @@ def _reported_minutes(value):
             return minutes + seconds / 60
         except (TypeError, ValueError):
             return 0.0
-    match = re.search(r"\d+(?:\.\d+)?", text)
+    lower_text = text.lower()
+    hour_matches = [float(amount) for amount in re.findall(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b", lower_text)]
+    minute_matches = [float(amount) for amount in re.findall(r"(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m)\b", lower_text)]
+    if hour_matches or minute_matches:
+        return sum(hour_matches) * 60 + sum(minute_matches)
+
+    match = re.search(r"\d+(?:\.\d+)?", lower_text)
     if not match:
         return 0.0
-    amount = float(match.group(0))
-    return amount * 60 if "hour" in text.lower() or "hr" in text.lower() else amount
+    # The learner-facing reflection UI stores bare numeric input as HOURS.
+    return float(match.group(0)) * 60
 
 
 def fmt_hours(hours):
@@ -74,13 +81,63 @@ def fmt_hours(hours):
     return str(int(value)) if value == int(value) else str(value)
 
 
+def _progress_text(record, *fields):
+    for field in fields:
+        value = _s(record.get(field))
+        if value:
+            return value
+    return ""
+
+
+def otjh_progress_dedupe_key(record, index=0):
+    if not isinstance(record, dict):
+        return f"entry:{index}"
+
+    kind = _s(record.get("kind")).lower()
+    quiz_id = _s(record.get("quizId"))
+    if quiz_id:
+        return f"quiz:{quiz_id}"
+
+    component_id = _s(record.get("componentId"))
+    if component_id:
+        return f"component:{component_id}"
+
+    title = _progress_text(record, "title", "quizName", "componentTitle", "component")
+    module = _progress_text(record, "moduleTitle", "module")
+    week = _progress_text(record, "weekTitle", "week")
+    if title:
+        return "|".join(part for part in ("legacy", kind, module, week, title) if part)
+
+    ksbs = ",".join(sorted(_s(code).upper() for code in record.get("ksbs") or [] if _s(code)))
+    reported_time = _s(record.get("reportedTime")).lower()
+    if kind or reported_time or ksbs:
+        return "|".join(part for part in ("legacy", kind, reported_time, ksbs) if part)
+
+    return f"entry:{index}"
+
+
+def dedupe_otjh_progress_records(progress):
+    if not isinstance(progress, list):
+        return []
+    seen = set()
+    unique = []
+    for index, record in enumerate(progress):
+        if not isinstance(record, dict):
+            continue
+        key = otjh_progress_dedupe_key(record, index)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(record)
+    return unique
+
+
 def completed_hours_from_progress(progress):
     if not isinstance(progress, list):
         return "0"
     minutes = sum(
         _reported_minutes(record.get("reportedTime"))
-        for record in progress
-        if isinstance(record, dict)
+        for record in dedupe_otjh_progress_records(progress)
     )
     return fmt_hours(minutes / 60)
 
@@ -275,23 +332,318 @@ def cohort_dates(programme, cohort):
     return (row[0], row[1]) if row else (None, None)
 
 
-def _fetch_ksb_items(programme):
+def _plan_module_ids(training_plan):
+    module_ids = []
+    for module in training_plan or []:
+        if not isinstance(module, dict):
+            continue
+        module_id = _s(module.get("moduleId"))
+        if module_id:
+            module_ids.append(module_id)
+    return sorted(set(module_ids))
+
+
+def _ksb_sort_key(code):
+    text = _s(code).upper()
+    prefix = text[:1]
+    suffix = text[1:]
+    parts = []
+    for token in re.findall(r"\d+|[A-Z]+", suffix):
+        parts.append((0, int(token)) if token.isdigit() else (1, token))
+    return (
+        {"K": 0, "S": 1, "B": 2}.get(prefix, 99),
+        tuple(parts),
+        text,
+    )
+
+
+def _ksb_type_from_code(code):
+    return {
+        "K": "Knowledge",
+        "S": "Skills",
+        "B": "Behaviours",
+    }.get(_s(code).upper()[:1], "")
+
+
+def _ksb_number_from_code(code):
+    text = _s(code).upper()
+    return text[1:].strip() if len(text) > 1 else ""
+
+
+def _clean_ksb_profile_source_id(value):
+    text = _s(value)
+    if text.lower().startswith("profile:"):
+        return text.split(":", 1)[1].strip()
+    return text
+
+
+def _ksb_code_from_parts(code="", ksb_type=""):
+    raw_code = _s(code).upper()
+    raw_type = _s(ksb_type).upper()
+    if raw_code and raw_code[:1] in {"K", "S", "B"}:
+        return raw_code
+    prefix = raw_type[:1] if raw_type[:1] in {"K", "S", "B"} else ""
+    if prefix and raw_code:
+        return f"{prefix}{raw_code}"
+    return raw_code
+
+
+def _coerce_ksb_items(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(value, list):
+        return []
+
+    items = []
+    for position, item in enumerate(value, 1):
+        if not isinstance(item, dict):
+            continue
+        code = _ksb_code_from_parts(item.get("code"), item.get("type"))
+        number = _s(item.get("number")) or _ksb_number_from_code(code) or _s(item.get("code"))
+        description = _s(item.get("description")) or _s(item.get("title"))
+        raw_type = _s(item.get("type"))
+        normalized_type = _ksb_type_from_code(code) or {
+            "KNOWLEDGE": "Knowledge",
+            "K": "Knowledge",
+            "SKILL": "Skills",
+            "SKILLS": "Skills",
+            "S": "Skills",
+            "BEHAVIOUR": "Behaviours",
+            "BEHAVIOURS": "Behaviours",
+            "BEHAVIOR": "Behaviours",
+            "BEHAVIORS": "Behaviours",
+            "B": "Behaviours",
+        }.get(raw_type.upper(), raw_type)
+        display_order = item.get("displayOrder")
+        try:
+            display_order = int(display_order)
+        except (TypeError, ValueError):
+            display_order = position
+        if not code:
+            continue
+        items.append(
+            {
+                "code": code,
+                "number": number,
+                "type": normalized_type,
+                "description": description,
+                "_display_order": display_order,
+            }
+        )
+
+    items.sort(key=lambda item: (item.get("_display_order", 0), _ksb_sort_key(item.get("code"))))
+    for item in items:
+        item.pop("_display_order", None)
+    return items
+
+
+def _resolve_programme_id(programme="", training_plan=None):
+    module_ids = _plan_module_ids(training_plan)
+    if module_ids:
+        try:
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    "WHERE module_catalogue_id = ANY(%s) AND programme_id IS NOT NULL AND programme_id <> '' "
+                    "ORDER BY programme_id LIMIT 1",
+                    [module_ids],
+                )
+                row = cursor.fetchone()
+        except DatabaseError as exc:
+            logger.warning("Could not resolve programme id from module snapshot for %s: %s", module_ids, exc)
+        else:
+            if row and _s(row[0]):
+                return _s(row[0])
+
     programme = _s(programme)
     if not programme:
+        return ""
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(NULLIF(program_id, ''), NULLIF(name, '')) AS programme_id "
+                "FROM curriculum.programmes "
+                "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
+                "   OR lower(btrim(COALESCE(program_id, ''))) = lower(%s) "
+                "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
+                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                [programme, programme, programme],
+            )
+            row = cursor.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve programme id for %s: %s", programme, exc)
+        return ""
+    return _s(row[0]) if row else ""
+
+
+def _fetch_ksb_items_for_programme(programme_id, programme):
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT ksb_items FROM curriculum.ksb_profiles "
+                "WHERE is_active AND ("
+                "      (%s <> '' AND programme_id = %s) "
+                "   OR (programme_name = %s OR %s LIKE programme_name || ' %%')"
+                ") "
+                "ORDER BY CASE "
+                "    WHEN %s <> '' AND programme_id = %s THEN 0 "
+                "    WHEN programme_name = %s THEN 1 "
+                "    ELSE 2 "
+                "END, updated_at DESC NULLS LAST LIMIT 1",
+                [programme_id, programme_id, programme, programme, programme_id, programme_id, programme],
+            )
+            row = cursor.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not find KSB profile for %s / %s: %s", programme_id, programme, exc)
+        return []
+    return _coerce_ksb_items(row[0]) if row else []
+
+
+def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_plan=None):
+    module_ids = _plan_module_ids(training_plan)
+    if not module_ids:
+        return []
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT DISTINCT ON (upper(mapping.ksb_code)) "
+                "       upper(mapping.ksb_code) AS code, "
+                "       COALESCE(NULLIF(mapping.ksb_description, ''), '') AS description "
+                "FROM curriculum.ksb_mappings mapping "
+                "LEFT JOIN curriculum.modules module ON module.module_catalogue_id = mapping.module_catalogue_id "
+                "WHERE mapping.module_catalogue_id = ANY(%s) "
+                "  AND mapping.ksb_code IS NOT NULL "
+                "  AND mapping.ksb_code <> '' "
+                "  AND ("
+                "        (%s = '' AND %s = '') "
+                "     OR module.programme_id = %s "
+                "     OR module.programme_name = %s "
+                "     OR %s LIKE module.programme_name || ' %%'"
+                "  ) "
+                "ORDER BY upper(mapping.ksb_code), "
+                "         CASE mapping.classification "
+                "             WHEN 'main' THEN 0 "
+                "             WHEN 'secondary' THEN 1 "
+                "             WHEN 'possible' THEN 2 "
+                "             ELSE 3 "
+                "         END, "
+                "         mapping.weight DESC, "
+                "         mapping.ksb_description",
+                [module_ids, programme_id, programme, programme_id, programme, programme],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not derive KSBs from plan mappings for %s / %s: %s", programme_id, programme, exc)
+        return []
+    items = [
+        {
+            "code": code,
+            "number": _ksb_number_from_code(code),
+            "type": _ksb_type_from_code(code),
+            "description": _s(description),
+        }
+        for code, description in rows
+        if _s(code)
+    ]
+    return sorted(items, key=lambda item: _ksb_sort_key(item.get("code")))
+
+
+def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=None):
+    module_ids = _plan_module_ids(training_plan)
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT COALESCE(NULLIF(ksb_profile_source_id, ''), '') "
+                "FROM curriculum.programmes "
+                "WHERE (%s <> '' AND programme_id = %s) "
+                "   OR name = %s "
+                "   OR %s LIKE name || ' %%' "
+                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                [programme_id, programme_id, programme, programme],
+            )
+            row = cursor.fetchone()
+            source_id = _clean_ksb_profile_source_id(row[0]) if row else ""
+            if source_id:
+                return source_id
+            if not module_ids:
+                return ""
+            cursor.execute(
+                "SELECT COALESCE(NULLIF(module.ksb_profile_source_id, ''), '') "
+                "FROM curriculum.modules module "
+                "WHERE module.module_catalogue_id = ANY(%s) "
+                "  AND module.ksb_profile_source_id IS NOT NULL "
+                "  AND module.ksb_profile_source_id <> '' "
+                "  AND ("
+                "        (%s = '' AND %s = '') "
+                "     OR module.programme_id = %s "
+                "     OR module.programme_name = %s "
+                "     OR %s LIKE module.programme_name || ' %%'"
+                "  ) "
+                "ORDER BY module.updated_at DESC NULLS LAST LIMIT 1",
+                [module_ids, programme_id, programme, programme_id, programme, programme],
+            )
+            row = cursor.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve KSB profile source for %s / %s: %s", programme_id, programme, exc)
+        return ""
+    return _clean_ksb_profile_source_id(row[0]) if row else ""
+
+
+def _fetch_ksb_items_from_profile_source(profile_source_id):
+    profile_source_id = _clean_ksb_profile_source_id(profile_source_id)
+    if not profile_source_id:
         return []
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE is_active AND (programme_name = %s OR %s LIKE programme_name || ' %%') "
+                "WHERE is_active AND (id = %s OR ksb_profile_id = %s) "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme, programme],
+                [profile_source_id, profile_source_id],
             )
             row = cursor.fetchone()
     except DatabaseError as exc:
-        logger.warning("Could not find KSB profile for %s: %s", programme, exc)
+        logger.warning("Could not find KSB profile from source %s: %s", profile_source_id, exc)
         return []
-    return row[0] if row and isinstance(row[0], list) else []
+    return _coerce_ksb_items(row[0]) if row else []
+
+
+def _fetch_ksb_items(programme, training_plan=None):
+    programme = _s(programme)
+    programme_id = _resolve_programme_id(programme, training_plan=training_plan)
+    if not programme and not programme_id:
+        return []
+    items = _fetch_ksb_items_for_programme(programme_id, programme)
+    if items:
+        return items
+    profile_source_id = _resolve_ksb_profile_source_id(
+        programme_id=programme_id,
+        programme=programme,
+        training_plan=training_plan,
+    )
+    if profile_source_id:
+        items = _fetch_ksb_items_from_profile_source(profile_source_id)
+        if items:
+            return items
+    items = _fetch_ksb_items_from_plan_mappings(
+        programme_id=programme_id,
+        programme=programme,
+        training_plan=training_plan,
+    )
+    if items:
+        return items
+    return []
+
+
+def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
+    plan = training_plan if training_plan is not None else get_training_plan(source)
+    items = _fetch_ksb_items(getattr(source, "programme", None), training_plan=plan)
+    if items:
+        replace_learner_ksbs(learner, items)
+    return items
 
 
 def sync_active_user(source):
@@ -320,8 +672,9 @@ def sync_active_user(source):
         with transaction.atomic(using="enrolment"):
             learner, _ = LearnerProfile.objects.update_or_create(id=source.id, defaults=defaults)
             if status.lower() == ACTIVE_STATUS:
-                replace_training_plan(learner, get_training_plan(source))
-                replace_learner_ksbs(learner, _fetch_ksb_items(source.programme))
+                training_plan = get_training_plan(source)
+                replace_training_plan(learner, training_plan)
+                refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None
     except DatabaseError as exc:
         logger.warning("Could not sync learner %s: %s", source.id, exc)

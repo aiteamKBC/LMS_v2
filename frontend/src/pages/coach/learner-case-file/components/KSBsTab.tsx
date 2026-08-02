@@ -15,6 +15,13 @@ interface KsbRow {
   latestSeen: string | null;
 }
 
+interface KsbProgressLink {
+  code: string;
+  module: string | null;
+  submittedAt: string | null;
+  passed: boolean;
+}
+
 export default function KSBsTab({ data }: CaseFileTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -59,7 +66,7 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
     <div className="space-y-5">
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard icon="ri-stack-line" label="Defined KSBs" value={String(rows.length)} tone="primary" />
-        <StatCard icon="ri-links-line" label="Quiz Linked" value={String(linkedCount)} tone="accent" />
+        <StatCard icon="ri-links-line" label="Progress Linked" value={String(linkedCount)} tone="accent" />
         <StatCard icon="ri-check-double-line" label="Passed Quiz Link" value={String(passedCount)} tone="emerald" />
         <StatCard icon="ri-focus-3-line" label="Unlinked" value={String(uncoveredCount)} tone="amber" />
       </section>
@@ -72,11 +79,12 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
                 <i className="ri-bar-chart-box-line text-primary-500"></i> KSB Coverage
               </h2>
               <p className="text-[12px] text-foreground-500 mt-1">
-                {formatPercent(coveragePercent)} of programme KSBs have at least one live quiz link.
+                {formatPercent(coveragePercent)} of programme KSBs have at least one learner progress link.
               </p>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 max-w-xl">
-              Validation is not exposed by the current backend. The statuses below reflect live quiz linkage only.
+              Validation is not exposed by the current backend. The statuses below reflect live learner progress, while
+              the passed state still comes from quiz results only.
             </div>
           </div>
 
@@ -90,7 +98,7 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
                 <div className="w-full h-2 rounded-full bg-background-200 overflow-hidden mt-3">
                   <div className="h-full rounded-full bg-primary-500" style={{ width: `${row.percent}%` }}></div>
                 </div>
-                <p className="text-[11px] text-foreground-400 mt-2">{formatPercent(row.percent)} linked via quiz activity</p>
+                <p className="text-[11px] text-foreground-400 mt-2">{formatPercent(row.percent)} linked via learner activity</p>
               </div>
             ))}
           </div>
@@ -136,9 +144,9 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
                         </span>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-foreground-500">
-                        <span>{row.linkCount} quiz link(s)</span>
+                        <span>{row.linkCount} progress link(s)</span>
                         <span>{row.passedCount} passed link(s)</span>
-                        <span>{row.latestSeen ? `Latest seen ${formatDisplayDate(row.latestSeen)}` : 'No linked quiz date yet'}</span>
+                        <span>{row.latestSeen ? `Latest seen ${formatDisplayDate(row.latestSeen)}` : 'No linked activity date yet'}</span>
                       </div>
                       {row.modules.length > 0 && (
                         <div className="flex flex-wrap gap-2 mt-3">
@@ -162,30 +170,102 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
 }
 
 function buildKsbRows(data: CaseFileTabProps['data']): KsbRow[] {
+  const progressLinks = buildProgressLinks(data);
   return (data.detail?.ksbs || [])
     .map((ksb) => {
       const code = String(ksb.code || '').trim().toUpperCase();
-      const linkedAttempts = (data.detail?.quizAttempts || []).filter((attempt) =>
-        (attempt.ksbs || []).some((item) => item.trim().toUpperCase() === code),
-      );
-      const passedAttempts = linkedAttempts.filter((attempt) => attempt.passed);
-      const latestSeen = linkedAttempts
-        .map((attempt) => attempt.submittedAt)
+      const linkedProgress = progressLinks.filter((entry) => entry.code === code);
+      const passedAttempts = linkedProgress.filter((entry) => entry.passed);
+      const latestSeen = linkedProgress
+        .map((entry) => entry.submittedAt)
         .filter(Boolean)
         .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
+      const status: KsbCoverageStatus = passedAttempts.length > 0
+        ? 'passed-link'
+        : linkedProgress.length > 0
+          ? 'attempt-link'
+          : 'unlinked';
 
       return {
         code,
         category: normalizeCategory(ksb.type, code),
         description: ksb.description || '--',
-        status: passedAttempts.length > 0 ? 'passed-link' : linkedAttempts.length > 0 ? 'attempt-link' : 'unlinked',
-        linkCount: linkedAttempts.length,
+        status,
+        linkCount: linkedProgress.length,
         passedCount: passedAttempts.length,
-        modules: Array.from(new Set(linkedAttempts.map((attempt) => attempt.module).filter(Boolean) as string[])),
+        modules: Array.from(new Set(linkedProgress.map((entry) => entry.module).filter(Boolean) as string[])),
         latestSeen,
       };
     })
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
+function buildProgressLinks(data: CaseFileTabProps['data']): KsbProgressLink[] {
+  const componentModuleById = new Map<string, string | null>();
+  const quizModuleById = new Map<number, string | null>();
+
+  for (const component of data.detail?.components || []) {
+    const moduleName = component.module || null;
+    const componentId = String(component.componentId || '').trim();
+    if (componentId) {
+      componentModuleById.set(componentId, moduleName);
+    }
+    if (component.quizMeta?.quizId != null) {
+      quizModuleById.set(component.quizMeta.quizId, moduleName);
+    }
+  }
+
+  const links: KsbProgressLink[] = [];
+
+  for (const attempt of data.detail?.quizAttempts || []) {
+    const moduleName = quizModuleById.get(attempt.quizId) || null;
+    for (const item of attempt.ksbs || []) {
+      const code = String(item || '').trim().toUpperCase();
+      if (!code) {
+        continue;
+      }
+      links.push({
+        code,
+        module: moduleName,
+        submittedAt: attempt.submittedAt || null,
+        passed: Boolean(attempt.passed),
+      });
+    }
+  }
+
+  for (const entry of data.detail?.videoProgress || []) {
+    const moduleName = componentModuleById.get(entry.componentId) || null;
+    for (const item of entry.ksbs || []) {
+      const code = String(item || '').trim().toUpperCase();
+      if (!code) {
+        continue;
+      }
+      links.push({
+        code,
+        module: moduleName,
+        submittedAt: entry.submittedAt || null,
+        passed: false,
+      });
+    }
+  }
+
+  for (const entry of data.detail?.componentProgress || []) {
+    const moduleName = componentModuleById.get(entry.componentId) || null;
+    for (const item of entry.ksbs || []) {
+      const code = String(item || '').trim().toUpperCase();
+      if (!code) {
+        continue;
+      }
+      links.push({
+        code,
+        module: moduleName,
+        submittedAt: entry.submittedAt || null,
+        passed: false,
+      });
+    }
+  }
+
+  return links;
 }
 
 function normalizeCategory(typeValue: string, code: string) {
@@ -201,8 +281,8 @@ function normalizeCategory(typeValue: string, code: string) {
 
 function statusLabel(status: KsbCoverageStatus) {
   if (status === 'passed-link') return 'Passed quiz link';
-  if (status === 'attempt-link') return 'Quiz attempt link';
-  return 'No quiz link';
+  if (status === 'attempt-link') return 'Progress link';
+  return 'No progress link';
 }
 
 function statusBadge(status: KsbCoverageStatus) {

@@ -27,7 +27,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       secondary: data.detail?.phone || data.programme || '--',
       tone: 'bg-accent-100 text-accent-700',
       target: data.email || data.displayName,
-      learnerId: data.id,
+      learnerId: data.learnerId,
     });
 
     if (data.coachName || data.coachEmail) {

@@ -61,8 +61,11 @@ function asNumber(value?: string | number | null): number | null {
 function reportedMinutes(value?: string | null): number {
   if (!value) return 0;
   const text = value.trim().toLowerCase();
-  const number = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
-  return text.includes('hour') || text.includes('hr') ? number * 60 : number;
+  const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
+  const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
+  if (hours || minutes) return (hours * 60) + minutes;
+  const numeric = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
+  return Number.isFinite(numeric) ? numeric * 60 : 0;
 }
 
 function formatMinutes(minutes: number): string {
@@ -437,11 +440,11 @@ export default function ProgressReviewsPage() {
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2 sm:min-w-[390px]">
-              {[
-                ['Completed', loading ? '-' : completed.length, 'text-emerald-600', 'ri-checkbox-circle-line'],
-                ['Planned', loading ? '-' : planned.length, 'text-primary-600', 'ri-calendar-event-line'],
-                ['All PRs', loading ? '-' : reviews.length, 'text-foreground-900', 'ri-stack-line'],
-              ].map(([label, value, color, icon]) => (
+              {([
+                { label: 'Completed', value: loading ? '-' : completed.length, color: 'text-emerald-600', icon: 'ri-checkbox-circle-line' },
+                { label: 'Planned', value: loading ? '-' : planned.length, color: 'text-primary-600', icon: 'ri-calendar-event-line' },
+                { label: 'All PRs', value: loading ? '-' : reviews.length, color: 'text-foreground-900', icon: 'ri-stack-line' },
+              ] as const).map(({ label, value, color, icon }) => (
                 <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-center backdrop-blur">
                   <i className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
                   <p className="mt-0.5 text-xl font-bold text-white">{value}</p>
