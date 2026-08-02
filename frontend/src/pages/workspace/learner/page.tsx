@@ -12,6 +12,7 @@ import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
@@ -335,7 +336,7 @@ function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
+function MiniCalendar({ kind, id }: { kind?: LearnerKind; id?: string }) {
   const now = useMemo(() => new Date(), []);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -850,6 +851,10 @@ export default function LearnerOverview() {
     return { total: evidence.length, approved, pending, rejected, progress };
   }, [evidence]);
 
+  /* ── Onboarding learners land on their enrolment wizard, not the overview ──
+     Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
+  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading);
+
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
   const heroProgramme = isRealMode ? (real?.programme || '') : p.programme;
@@ -962,6 +967,15 @@ export default function LearnerOverview() {
     { icon: 'ri-check-double-line', label: `${p.evidenceValidated} Approved`, color: 'emerald' as const },
     { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
   ];
+
+  // Redirect is in flight — don't flash the overview on the way to the wizard.
+  if (redirectingToOnboarding) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
+        <i className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+      </div>
+    );
+  }
 
   return (
     <WorkspaceShell
@@ -1288,7 +1302,7 @@ export default function LearnerOverview() {
                           key={comp.id}
                           component={comp}
                           status={effectiveStatus}
-                          canMarkComplete={comp.status !== 'completed' && !userCompletions[i]}
+                          canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
                           onMarkComplete={() => handleMarkComplete(i)}
                         />
                       );

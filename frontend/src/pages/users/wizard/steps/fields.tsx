@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { FieldRow, inputClass } from '../../components/ui';
+import { SignaturePad } from './SignaturePad';
 
 export function LabeledInput({
   label,
@@ -73,23 +74,44 @@ export function LabeledTextarea({
   );
 }
 
-/** Simple signature capture placeholder (mock): shows a signed state or an upload/sign affordance. */
+/**
+ * Signature capture. The value is a PNG data URL once signed — drawn by hand or
+ * uploaded from an existing image (see SignaturePad). Legacy values that are
+ * plain text (e.g. 'Signed digitally' from before capture existed) still render,
+ * as italic text rather than an image.
+ */
 export function SignatureField({ label = 'User signature', value, onChange }: { label?: string; value?: string; onChange: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const isImage = Boolean(value && value.startsWith('data:image/'));
+
   return (
     <div className="py-2.5">
       <p className="text-[12px] text-foreground-500 font-medium mb-2">{label}</p>
-      {value ? (
-        <div className="flex items-center gap-3">
-          <span className="px-4 py-6 border border-foreground-200 rounded-lg text-[13px] italic text-foreground-700 bg-background-50" style={{ fontFamily: 'cursive' }}>{value}</span>
+
+      {editing ? (
+        <SignaturePad
+          onCommit={(url) => { onChange(url); setEditing(false); }}
+          onCancel={() => setEditing(false)}
+        />
+      ) : value ? (
+        <div className="flex items-center gap-3 flex-wrap">
+          {isImage ? (
+            <img src={value} alt={label} className="h-16 max-w-[280px] object-contain px-3 py-2 border border-foreground-200 rounded-lg bg-white" />
+          ) : (
+            <span className="px-4 py-6 border border-foreground-200 rounded-lg text-[13px] italic text-foreground-700 bg-background-50" style={{ fontFamily: 'cursive' }}>{value}</span>
+          )}
+          <button onClick={() => setEditing(true)} className="text-[12px] text-primary-600 hover:underline cursor-pointer inline-flex items-center gap-1">
+            <i className="ri-pen-nib-line" />Replace
+          </button>
           <button onClick={() => onChange('')} className="text-[12px] text-red-500 hover:underline cursor-pointer">Clear</button>
         </div>
       ) : (
         <button
-          onClick={() => onChange('Signed digitally')}
+          onClick={() => setEditing(true)}
           className="w-full max-w-md h-24 border-2 border-dashed border-foreground-200 rounded-lg flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500 transition-smooth cursor-pointer"
         >
           <i className="ri-pen-nib-line text-2xl mb-1" />
-          <span className="text-[12px]">Click to sign</span>
+          <span className="text-[12px]">Click to sign or upload</span>
         </button>
       )}
     </div>

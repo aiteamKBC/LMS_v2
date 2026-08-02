@@ -1,15 +1,26 @@
-"""Unmanaged mapping of the existing Neon table enrolment."Enrolment_Users".
+"""Unmanaged mapping of the Neon learner table enrolment."Created_users".
 
-The table was created outside Django, so `managed = False` — Django never issues
-DDL for it. Column names in the source table are irregular (leading spaces, mixed
-case, slashes), so each field pins its exact `db_column`. The schema is targeted
-with the `schema"."table` quoting trick, which Django emits as
-`"enrolment"."Enrolment_Users"` — avoiding a search_path startup option that the
+ONE table holds every learner. `Created_users` is written by the user-creation
+form; its leading columns are exactly that form's fields, followed by the
+operational columns the rest of the app reads. "Learner_type" tells the two kinds
+apart ('apprenticeship' | 'commercial'), which is what the old
+Enrolment_Users + Commercial_users table pair used to encode structurally.
+
+`EnrolmentUser` keeps its historical class name (it is referenced across ~20
+modules) but now maps `Created_users`; `CommercialUser` is a proxy over the same
+table, scoped to the commercial rows.
+
+The tables were created outside Django, so `managed = False` — Django never issues
+DDL for them. Column names are irregular (leading spaces, mixed case, slashes), so
+each field pins its exact `db_column`. The schema is targeted with the
+`schema"."table` quoting trick, which Django emits as
+`"enrolment"."Created_users"` — avoiding a search_path startup option that the
 Neon connection pooler may reject.
 """
 import json
 
 from django.db import models
+from django.db.models.functions import Lower, Trim
 
 
 class SafeJSONField(models.JSONField):
@@ -30,18 +41,54 @@ class SafeJSONField(models.JSONField):
             return value
 
 
-def _serialise_quiz_ref(value):
-    """Keep the learner-detail API's quizId numeric when the DB stores text."""
-    if value in (None, ""):
-        return value
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return value
+class LearnerTypeQuerySet(models.QuerySet):
+    """Queryset for the merged learner table, scoped by "Learner_type"."""
+
+    def apprenticeship(self):
+        return self.filter(learner_type="apprenticeship")
+
+    def commercial(self):
+        return self.filter(learner_type="commercial")
+
+
+class CommercialManager(models.Manager):
+    """Default manager for CommercialUser: only ever sees commercial rows.
+
+    Both learner kinds live in one table since the merge, so the proxy's manager
+    filters on "Learner_type" — otherwise CommercialUser.objects.all() would
+    return apprenticeship learners too.
+    """
+
+    def get_queryset(self):
+        return LearnerTypeQuerySet(self.model, using=self._db).filter(learner_type="commercial")
+
+
+class ApprenticeshipManager(models.Manager):
+    """Default manager for EnrolmentUser: apprenticeship rows only.
+
+    Since the merge both kinds share one table, so an unfiltered manager would
+    make every apprenticeship listing include commercial learners. Rows predating
+    the merge are treated as apprenticeship (Learner_type is backfilled, but a
+    NULL is included defensively so a row can never vanish from both managers).
+    Use EnrolmentUser.all_learners for queries that intentionally span both.
+    """
+
+    def get_queryset(self):
+        return LearnerTypeQuerySet(self.model, using=self._db).exclude(learner_type="commercial")
 
 
 class EnrolmentUser(models.Model):
+    # `objects` is scoped to apprenticeship learners; `all_learners` spans both
+    # kinds (used by lookups that resolve a learner by id regardless of type).
+    objects = ApprenticeshipManager()
+    all_learners = models.Manager()
+
     id = models.AutoField(primary_key=True, db_column="id")
+
+    # Which kind of learner this row is: 'apprenticeship' | 'commercial'.
+    # Added by the merge_commercial_into_enrolment management command, which
+    # folded enrolment."Commercial_users" into this table.
+    learner_type = models.TextField(db_column="Learner_type", null=True, blank=True)
 
     # --- flat text columns ---
     username = models.TextField(db_column="Username", null=True, blank=True)
@@ -61,6 +108,15 @@ class EnrolmentUser(models.Model):
     # This column pre-existed as unused free text; repurposed here since apprentice
     # learners previously had no way to persist a training plan at all.
     learning_plan = SafeJSONField(db_column="Learning_plan", null=True, blank=True)
+    # Merged in from Commercial_users. Commercial learners store their plan here;
+    # apprenticeship learners use learning_plan above. get_training_plan() reads
+    # whichever is populated.
+    training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    # Legacy comma-joined summary columns, also merged in from Commercial_users.
+    # Superseded by training_plan; kept so old saved values stay visible.
+    modules = models.TextField(db_column="Modules", null=True, blank=True)
+    weeks = models.TextField(db_column="Weeks", null=True, blank=True)
+    components = models.TextField(db_column="Components", null=True, blank=True)
     phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
     date_of_birth = models.TextField(db_column="Date_of_birth", null=True, blank=True)
     organization = models.TextField(db_column="Orgnization", null=True, blank=True)  # source spelling
@@ -78,6 +134,38 @@ class EnrolmentUser(models.Model):
     onboarding_completed = models.TextField(db_column="Onboarding_completed", null=True, blank=True)
     managed_jobs = models.TextField(db_column="Managed_jobs_and_placements/workshops", null=True, blank=True)
     competencies = models.TextField(db_column="Competencies", null=True, blank=True)
+
+    # --- Aptem "Add user" fields (see apply_aptem_create_columns) ---
+    # Captured by the create-user form, which mirrors Aptem's own Add-user screen.
+    title = models.TextField(db_column="Title", null=True, blank=True)
+    preferred_name = models.TextField(db_column="Preferred_name", null=True, blank=True)
+    gender = models.TextField(db_column="Gender", null=True, blank=True)
+    referrer = models.TextField(db_column="Referrer", null=True, blank=True)
+    referrer_address = models.TextField(db_column="Referrer_address", null=True, blank=True)
+    referrer_contact = models.TextField(db_column="Referrer_contact", null=True, blank=True)
+    country = models.TextField(db_column="Country", null=True, blank=True)
+    case_owner = models.TextField(db_column="Case_owner", null=True, blank=True)
+    learning_provider = models.TextField(db_column="Learning_provider", null=True, blank=True)
+    mentor = models.TextField(db_column="Mentor", null=True, blank=True)
+    reference_number = models.TextField(db_column="Reference_number", null=True, blank=True)
+    extended_break = models.TextField(db_column="Extended_break", null=True, blank=True)
+    employer_address = models.TextField(db_column="Employer_address", null=True, blank=True)
+    target_programme = models.TextField(db_column="Target_programme", null=True, blank=True)
+    invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
+    allow_access_to_checkpoint = models.BooleanField(db_column="Allow_access_to_checkpoint", null=True, blank=True)
+    allow_access_to_console = models.BooleanField(db_column="Allow_access_to_console", null=True, blank=True)
+    allow_access_to_classic = models.BooleanField(db_column="Allow_access_to_classic", null=True, blank=True)
+
+    # --- personal / address (pre-existing columns, now written by the form) ---
+    legal_sex = models.TextField(db_column="Legal_Sex", null=True, blank=True)
+    age = models.TextField(db_column="Age", null=True, blank=True)
+    address = models.TextField(db_column="Address", null=True, blank=True)
+    current_postcode = models.TextField(db_column="Current_postcode", null=True, blank=True)
+    address_line_1 = models.TextField(db_column="Current_address_line_1", null=True, blank=True)
+    address_line_2 = models.TextField(db_column="Current_address_line_2", null=True, blank=True)
+    address_line_3 = models.TextField(db_column="Current_address_line_3", null=True, blank=True)
+    address_line_4 = models.TextField(db_column="Current_address_line_4", null=True, blank=True)
+    national_insurance_number = models.TextField(db_column="National_insurance_number", null=True, blank=True)
 
     # --- json columns ---
     sub_programme = models.JSONField(db_column="Sub-programme", null=True, blank=True)
@@ -100,56 +188,107 @@ class EnrolmentUser(models.Model):
 
     class Meta:
         managed = False
-        # Emitted by Django as "enrolment"."Enrolment_Users".
-        db_table = 'enrolment"."Enrolment_Users'
+        # Emitted by Django as "enrolment"."Created_users".
+        # The single learner table: both apprenticeship and commercial learners
+        # live here, told apart by "Learner_type". It replaced the old
+        # Enrolment_Users + Commercial_users pair — see the
+        # create_created_users_table management command.
+        db_table = 'enrolment"."Created_users'
+
+    def save(self, *args, **kwargs):
+        # Default a new row to apprenticeship. The CommercialUser proxy overrides
+        # this with 'commercial'; without a value the row would be invisible to
+        # the commercial manager and only reachable via all_learners.
+        if not self.learner_type:
+            self.learner_type = "apprenticeship"
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None and "learner_type" not in update_fields:
+                kwargs["update_fields"] = [*update_fields, "learner_type"]
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
 
 
-class CommercialUser(models.Model):
-    """Unmanaged mapping of enrolment."Commercial_users" (delivery)."""
+class CommercialUser(EnrolmentUser):
+    """Commercial (delivery) learners — a view onto the merged learner table.
+
+    Commercial_users was folded into Enrolment_Users by the
+    merge_commercial_into_enrolment command, so this is now a proxy over the same
+    table whose default manager only sees rows with Learner_type='commercial'.
+    Existing call sites (CommercialUser.objects.get/filter/create) keep working
+    and stay scoped to commercial learners.
+
+    Because it's a proxy, every column on EnrolmentUser is available here too —
+    including the apprenticeship-only compliance/ILR columns, which commercial
+    rows simply leave null.
+    """
+
+    objects = CommercialManager()
+
+    class Meta:
+        proxy = True
+
+    def save(self, *args, **kwargs):
+        # A row created through this proxy is a commercial learner; stamp the
+        # discriminator so the manager's filter can find it again.
+        if not self.learner_type:
+            self.learner_type = "commercial"
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None and "learner_type" not in update_fields:
+                kwargs["update_fields"] = [*update_fields, "learner_type"]
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
+
+
+class StaffUser(models.Model):
+    """Unmanaged mapping of enrolment."Staff_users" — non-learner accounts.
+
+    Backs the Create menu's "Create admin" path. Case owners, admins, enrolment
+    officers and the curriculum/operations teams are staff, not learners, so they
+    get their own table rather than sharing Enrolment_Users. `position` is
+    constrained to constants.POSITION_CHOICES by the API.
+
+    Created by the apply_staff_users_table management command; `id` is GENERATED
+    ALWAYS AS IDENTITY, so Django never supplies it on insert.
+    """
 
     id = models.AutoField(primary_key=True, db_column="id")
 
-    # --- step 1: user details ---
     username = models.TextField(db_column="Username", null=True, blank=True)
     email = models.TextField(db_column="Email", null=True, blank=True)
     phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
-    employer = models.TextField(db_column="Employer", null=True, blank=True)
-    line_manager = models.TextField(db_column="Line_manager", null=True, blank=True)
-    organization = models.TextField(db_column="Orgnization", null=True, blank=True)  # source spelling
-    programme_status = models.TextField(db_column="Programme_status", null=True, blank=True)
+    type = models.TextField(db_column="Type", null=True, blank=True)
+    status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space, matches the learner tables
+    # One of constants.POSITION_CHOICES.
+    position = models.TextField(db_column="Position", null=True, blank=True)
 
-    # --- step 2: programme details ---
-    programme = models.TextField(db_column="Programme", null=True, blank=True)
-    cohort = models.TextField(db_column="Cohort", null=True, blank=True)
-    group = models.TextField(db_column="Group", null=True, blank=True)
-    start_date = models.TextField(db_column="Start_date", null=True, blank=True)
-    end_date = models.TextField(db_column="End_date", null=True, blank=True)
-    # Cohort delivery window, copied from curriculum."cohort_authoring_details"
-    # (matched by Programme + Cohort name — see cohort_dates in active_users.py).
-    start_date = models.DateField(db_column="Start_date", null=True, blank=True)
-    end_date = models.DateField(db_column="End_date", null=True, blank=True)
+    title = models.TextField(db_column="Title", null=True, blank=True)
+    preferred_name = models.TextField(db_column="Preferred_name", null=True, blank=True)
+    gender = models.TextField(db_column="Gender", null=True, blank=True)
+    date_of_birth = models.TextField(db_column="Date_of_birth", null=True, blank=True)
+    organization = models.TextField(db_column="Orgnization", null=True, blank=True)  # source spelling, as elsewhere
+    case_owner = models.TextField(db_column="Case_owner", null=True, blank=True)
+    learning_provider = models.TextField(db_column="Learning_provider", null=True, blank=True)
+    reference_number = models.TextField(db_column="Reference_number", null=True, blank=True)
 
-    # Legacy comma-joined summary columns — superseded by `training_plan` below,
-    # kept only so old saved values remain visible until a learner's plan is
-    # re-saved. Never written to by current code.
-    modules = models.TextField(db_column="Modules", null=True, blank=True)
-    weeks = models.TextField(db_column="Weeks", null=True, blank=True)
-    components = models.TextField(db_column="Components", null=True, blank=True)
+    invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
+    allow_access_to_checkpoint = models.BooleanField(db_column="Allow_access_to_checkpoint", null=True, blank=True)
+    allow_access_to_console = models.BooleanField(db_column="Allow_access_to_console", null=True, blank=True)
+    allow_access_to_classic = models.BooleanField(db_column="Allow_access_to_classic", null=True, blank=True)
 
-    # Structured training plan (see mappers.TRAINING_PLAN docstring for shape).
-    # New column — added by the apply_training_plan_column management command.
-    training_plan = SafeJSONField(db_column="Training_plan", null=True, blank=True)
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
 
     class Meta:
         managed = False
-        # Emitted by Django as "enrolment"."Commercial_users".
-        db_table = 'enrolment"."Commercial_users'
+        # Emitted by Django as "enrolment"."Staff_users".
+        db_table = 'enrolment"."Staff_users'
 
     def __str__(self):
-        return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}>"
+        return f"{self.username or 'Unnamed'} <{self.email or 'no-email'}> [{self.position or 'no position'}]"
 
 
 class LearnerProfile(models.Model):
@@ -158,7 +297,17 @@ class LearnerProfile(models.Model):
     id = models.BigAutoField(primary_key=True)
     full_name = models.TextField()
     email = models.EmailField(max_length=320, unique=True)
-    email_normalized = models.TextField(editable=False, unique=True)
+    # GENERATED ALWAYS in Postgres — the database derives it from `email`, and an
+    # INSERT/UPDATE that names the column is rejected outright. `editable=False`
+    # only hides a field from forms; it stays in the write. GeneratedField with
+    # db_persist=True tells Django the DB owns the value, so it is read back but
+    # never written. (Without this, promoting a learner to Active fails with
+    # "cannot insert a non-DEFAULT value into column email_normalized".)
+    email_normalized = models.GeneratedField(
+        expression=Lower(Trim("email")),
+        output_field=models.TextField(),
+        db_persist=True,
+    )
     phone_number = models.TextField(blank=True)
     lifecycle_status = models.CharField(max_length=50, db_index=True)
     programme = models.TextField(blank=True)
@@ -181,8 +330,12 @@ class LearnerProfile(models.Model):
     gateway_review_date = models.DateField(null=True, blank=True)
     alert_notify_for_epa = models.DateField(null=True, blank=True)
     enter_epa = models.DateField(null=True, blank=True)
-    created_at = models.DateTimeField()
-    updated_at = models.DateTimeField()
+    # NOT NULL with a now() default in Postgres. Declared bare, Django sent an
+    # explicit NULL on insert and the constraint rejected the row, so promoting a
+    # learner to Active could not create their mirror. auto_now_add/auto_now make
+    # Django supply the timestamps itself.
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         managed = False

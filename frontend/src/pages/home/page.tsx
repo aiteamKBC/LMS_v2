@@ -267,24 +267,8 @@ export default function Home() {
 
   // Enter a section directly — sign in as its demo account, then route in.
   const enterWorkspace = (section: WorkspaceSection) => {
-    if (section.slug === 'enrolment') {
-      setEnrolmentChoiceOpen(true);
-      return;
-    }
     login(section.email);
     navigate(section.workspacePath);
-  };
-
-  const chooseApprenticeshipEnrolment = () => {
-    setEnrolmentChoiceOpen(false);
-    login('compliance@kbc.test');
-    navigate('/users');
-  };
-
-  const choosedelivery = () => {
-    setEnrolmentChoiceOpen(false);
-    login('compliance@kbc.test');
-    navigate('/delivery');
   };
 
   const scrollToWorkspaces = () => {

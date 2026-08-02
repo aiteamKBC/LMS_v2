@@ -1,14 +1,17 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { CASE_OWNER_OPTIONS } from '@/mocks/enrolment-console';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
+import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import type { UserListRow, UsersFilter } from './types';
-import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary, iconBtn } from './components/ui';
+import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { CreateUserModal } from './components/CreateUserModal';
+import { CreateAdminModal } from './components/CreateAdminModal';
 
-const enrolmentNav = roleNavMap.compliance;
+const enrolmentNav = roleNavMap.apprentice;
 const PAGE_SIZE = 8;
 
 const EMPTY_FILTER: UsersFilter = {
@@ -91,30 +94,77 @@ export default function UsersListPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [createAdminOpen, setCreateAdminOpen] = useState(false);
   const createRef = useRef<HTMLDivElement>(null);
+  const createBtnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Viewport coords for the portalled Create menu, measured from the button.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<UserListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // One directory for the whole enrolment section: every learner — both
+  // apprenticeship and commercial — comes from the single Enrolment_Users table
+  // in one call, each row carrying its own `learnerType`/`source`. Staff/admin
+  // accounts come from Staff_users.
   const load = () => {
     setLoading(true);
     setError(null);
-    fetchEnrolmentUsers()
-      .then((data) => setRows(data))
+    Promise.all([
+      fetchEnrolmentUsers(),
+      fetchStaffUsers().catch(() => [] as StaffUserRow[]),
+    ])
+      .then(([learners, staff]) => {
+        setRows([
+          ...learners,
+          // Staff rows already arrive in UserListRow shape from to_staff_row.
+          ...staff.map((r) => ({ ...r, source: 'staff' as const })),
+        ]);
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   };
 
   useEffect(load, []);
 
+  // The menu lives in a portal, so an outside-click test has to exempt it too.
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => { if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false); };
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (createRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setCreateOpen(false);
+    };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  // Anchor the portalled menu under the button, and keep it there while the
+  // page scrolls or resizes (fixed positioning doesn't follow the anchor).
+  useEffect(() => {
+    if (!createOpen) { setMenuPos(null); return; }
+    const place = () => {
+      const r = createBtnRef.current?.getBoundingClientRect();
+      if (r) setMenuPos({ top: r.bottom + 6, right: window.innerWidth - r.right });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [createOpen]);
+
   const groupOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.group).filter(Boolean))).sort(), [rows]);
+  // Staff rows report their position (Curriculum team, Operations team, ...) as
+  // their type, so the filter list is derived from the loaded rows rather than
+  // the fixed TYPE_OPTIONS — otherwise staff would be unfilterable.
+  const typeOptions = useMemo(
+    () => Array.from(new Set([...TYPE_OPTIONS, ...rows.map((r) => r.type).filter(Boolean)])).sort(),
+    [rows],
+  );
 
   const filtered = useMemo(() => rows.filter((r) => matches(r, applied)), [rows, applied]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
@@ -127,7 +177,16 @@ export default function UsersListPage() {
   const set = (patch: Partial<UsersFilter>) => setDraft((d) => ({ ...d, ...patch }));
   const search = () => { setApplied(draft); setPage(1); };
   const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setPage(1); };
-  const openUser = (id: string) => navigate(`/users/${id}`);
+  // Commercial and apprenticeship ids come from different tables and overlap,
+  // so every row action carries the row's source.
+  const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
+  // Staff live in their own table and have no learner profile/wizard, so their
+  // rows aren't links — routing one to /users/<id> would read a learner record
+  // with a colliding id.
+  const openUser = (row: UserListRow) => {
+    if (row.source === 'staff') return;
+    navigate(`/users/${row.id}${q(row)}`);
+  };
 
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
@@ -139,18 +198,29 @@ export default function UsersListPage() {
             title="User Management"
             subtitle={<><strong>{rows.length} users</strong> — {learners} learners, {admins} admins, {active} active on programme.</>}
             right={
-              <div className="relative" ref={createRef}>
+              <div ref={createRef}>
                 <button
+                  ref={createBtnRef}
                   onClick={() => setCreateOpen((o) => !o)}
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10"
                 >
                   <i className="ri-add-line" />Create<i className="ri-arrow-down-s-line" />
                 </button>
-                {createOpen && (
-                  <div className="absolute right-0 mt-1.5 w-44 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-30">
+                {/* Rendered into document.body: the Hero banner and the stats
+                    cards below it both create stacking contexts that paint over
+                    an in-flow menu no matter its z-index. A portal sidesteps
+                    that, so the menu is positioned from the button's rect. */}
+                {createOpen && menuPos && createPortal(
+                  <div
+                    ref={menuRef}
+                    style={{ top: menuPos.top, right: menuPos.right }}
+                    className="fixed w-44 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-[200]"
+                  >
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => navigate('/admin/bulk-user-import')}><i className="ri-upload-2-line mr-2 text-foreground-400" />Import users</button>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             }
@@ -172,7 +242,7 @@ export default function UsersListPage() {
             <MultiSelect label="Group" placeholder="Select groups" options={groupOptions} selected={draft.groups ?? []} onChange={(v) => set({ groups: v })} />
             <TextFilter label="Email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
             <MultiSelect label="Status" placeholder="Select statuses" options={STATUS_OPTIONS} selected={draft.statuses ?? []} onChange={(v) => set({ statuses: v })} />
-            <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...TYPE_OPTIONS.map((t) => ({ value: t, label: t }))]} />
+            <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
             <TextFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} />
             <SelectFilter label="Programme status" value={draft.programmeStatus ?? ''} onChange={(v) => set({ programmeStatus: v })} options={[{ value: '', label: '--All--' }, ...PROGRAMME_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} />
             <TextFilter label="NI number" value={draft.niNumber ?? ''} onChange={(v) => set({ niNumber: v })} />
@@ -191,28 +261,37 @@ export default function UsersListPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status', 'Notes', 'Tasks', 'Edit'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={10} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
+                {loading && <tr><td colSpan={7} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
                 {!loading && error && (
-                  <tr><td colSpan={10} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={7} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
                   </td></tr>
                 )}
                 {!loading && !error && pageRows.map((row, i) => {
                   const isLearner = row.type === 'User';
+                  const isStaff = row.source === 'staff';
                   return (
-                  <tr key={row.id} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
+                  <tr key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
                     <td className="py-2.5 px-3">
-                      <button onClick={() => openUser(row.id)} className="flex items-center gap-2.5 cursor-pointer group text-left">
-                        <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 ${isLearner ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>{initials(row.name)}</span>
-                        <span className="text-primary-600 group-hover:text-primary-700 group-hover:underline font-medium">{row.name}</span>
-                      </button>
+                      {/* Staff have no profile page, so their name is plain text. */}
+                      {isStaff ? (
+                        <span className="flex items-center gap-2.5">
+                          <span className="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 bg-secondary-100 text-secondary-700">{initials(row.name)}</span>
+                          <span className="font-medium text-foreground-800">{row.name}</span>
+                        </span>
+                      ) : (
+                        <button onClick={() => openUser(row)} className="flex items-center gap-2.5 cursor-pointer group text-left">
+                          <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 ${isLearner ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>{initials(row.name)}</span>
+                          <span className="text-primary-600 group-hover:text-primary-700 group-hover:underline font-medium">{row.name}</span>
+                        </button>
+                      )}
                     </td>
                     <td className="py-2.5 px-3">
                       <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${isLearner ? 'bg-primary-50 text-primary-700 border-primary-200/50' : 'bg-secondary-50 text-secondary-700 border-secondary-200/50'}`}>{row.type}</span>
@@ -223,15 +302,12 @@ export default function UsersListPage() {
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
-                    <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row.id)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
+                    <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
-                    <td className="py-2.5 px-3 text-foreground-600">{isLearner ? <span className="inline-flex items-center gap-1"><i className="ri-sticky-note-line text-foreground-400" />{row.notesCount ?? 0}</span> : null}</td>
-                    <td className="py-2.5 px-3">{isLearner ? <button className={iconBtn} aria-label="Tasks"><i className="ri-folder-line text-sm" /></button> : null}</td>
-                    <td className="py-2.5 px-3"><button className={iconBtn} aria-label="Edit user" onClick={() => openUser(row.id)}><i className="ri-pencil-line text-sm" /></button></td>
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -246,6 +322,7 @@ export default function UsersListPage() {
       </div>
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
+      {createAdminOpen && <CreateAdminModal onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
     </WorkspaceShell>
   );
 }

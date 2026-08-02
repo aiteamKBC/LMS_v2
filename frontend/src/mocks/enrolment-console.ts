@@ -22,6 +22,47 @@ export interface RagLevelMeta {
   tintText: string;
 }
 
+/**
+ * The learner-facing self-assessment scale: 8 options scored 8 (Mastery) down to
+ * 1 (Never), highest first, as presented in the questionnaire.
+ *
+ * RAG_LEVELS below is the older 5-point scale, kept only so assessments saved
+ * against it still render (see the legacy values on the RagLevel union).
+ */
+export interface CompetenceLevelMeta extends RagLevelMeta {
+  /** 8..1 — shown as the pill beside each option and used for scoring. */
+  score: number;
+}
+
+export const COMPETENCE_LEVELS: CompetenceLevelMeta[] = [
+  { level: 'mastery', score: 8, label: 'Mastery', help: 'I do not need any training as I am fully competent and can evidence my abilities.', cellFill: 'bg-emerald-600', dot: 'bg-emerald-600', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-300', tintText: 'text-emerald-700' },
+  { level: 'expert', score: 7, label: 'Expert', help: 'I coach others, solve complex problems, and drive improvements with minimal oversight.', cellFill: 'bg-emerald-500', dot: 'bg-emerald-500', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-300', tintText: 'text-emerald-700' },
+  { level: 'proficient', score: 6, label: 'Proficient', help: 'I work independently on typical tasks; targeted training would enhance advanced competence.', cellFill: 'bg-teal-500', dot: 'bg-teal-500', tintBg: 'bg-teal-50', tintBorder: 'border-teal-300', tintText: 'text-teal-700' },
+  { level: 'consistently', score: 5, label: 'Consistently', help: 'I am confident in my ability but would benefit from further training to be fully competent.', cellFill: 'bg-amber-400', dot: 'bg-amber-400', tintBg: 'bg-amber-50', tintBorder: 'border-amber-300', tintText: 'text-amber-700' },
+  { level: 'frequently', score: 4, label: 'Frequently', help: 'I can perform routine tasks with occasional support; additional training would improve consistency.', cellFill: 'bg-amber-500', dot: 'bg-amber-500', tintBg: 'bg-amber-50', tintBorder: 'border-amber-300', tintText: 'text-amber-700' },
+  { level: 'occasionally', score: 3, label: 'Occasionally', help: 'I can support simple tasks but still need training and close supervision.', cellFill: 'bg-orange-500', dot: 'bg-orange-500', tintBg: 'bg-orange-50', tintBorder: 'border-orange-300', tintText: 'text-orange-700' },
+  { level: 'rarely', score: 2, label: 'Rarely', help: 'I have some basic experience but still need training.', cellFill: 'bg-rose-500', dot: 'bg-rose-500', tintBg: 'bg-rose-50', tintBorder: 'border-rose-300', tintText: 'text-rose-700' },
+  { level: 'never', score: 1, label: 'Never', help: 'I have no experience and need training.', cellFill: 'bg-red-500', dot: 'bg-red-500', tintBg: 'bg-red-50', tintBorder: 'border-red-300', tintText: 'text-red-700' },
+];
+
+/** Score for a stored level, mapping legacy 5-point values onto the new scale. */
+const LEGACY_SCORES: Record<string, number> = { always: 8, often: 5, sometimes: 3 };
+
+export function competenceScore(level?: string | null): number | null {
+  if (!level) return null;
+  const found = COMPETENCE_LEVELS.find((l) => l.level === level);
+  return found ? found.score : LEGACY_SCORES[level] ?? null;
+}
+
+export function competenceMeta(level?: string | null): CompetenceLevelMeta | null {
+  if (!level) return null;
+  const found = COMPETENCE_LEVELS.find((l) => l.level === level);
+  if (found) return found;
+  // Legacy value — show it on the nearest new option so old data still renders.
+  const score = LEGACY_SCORES[level];
+  return score ? COMPETENCE_LEVELS.find((l) => l.score === score) ?? null : null;
+}
+
 export const RAG_LEVELS: RagLevelMeta[] = [
   { level: 'always', label: 'Always', help: 'I do not need any training as I am fully competent and can evidence my abilities.', cellFill: 'bg-blue-500', dot: 'bg-blue-500', tintBg: 'bg-blue-50', tintBorder: 'border-blue-300', tintText: 'text-blue-700' },
   { level: 'often', label: 'Often', help: 'I am confident in my ability but would benefit from further training to be fully competent.', cellFill: 'bg-emerald-500', dot: 'bg-emerald-500', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-300', tintText: 'text-emerald-700' },

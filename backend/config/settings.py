@@ -117,6 +117,7 @@ INSTALLED_APPS = [
     'audit_api',
     'curriculum_api',
     'engagement_api',
+    'enrolment_api',
     'chat',
 ]
 
@@ -289,6 +290,12 @@ AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evide
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+
+# Generated/signed enrolment paperwork (ILR and the other compliance documents)
+# — see enrolment_api/documents.py. Separate from the evidence containers: these
+# are produced by the platform, not uploaded by learners, so they need no
+# quarantine/scan step and are written straight to their own container.
+AZURE_ENROLMENT_DOCS_CONTAINER = os.environ.get("AZURE_Enrolment_Docs_CONTAINER", "enrolment-docs")
 
 LOGGING = {
     'version': 1,
