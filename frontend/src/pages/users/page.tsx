@@ -188,6 +188,14 @@ export default function UsersListPage() {
     navigate(`/users/${row.id}${q(row)}`);
   };
 
+  // The learner's own workspace view. `source` doubles as the :kind segment —
+  // staff have no learner record, so their rows get no link.
+  const openLearnerPage = (row: UserListRow) => {
+    if (row.source === 'staff') return;
+    const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
+    navigate(`/workspace/learner/${kind}/${row.id}`);
+  };
+
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Users" pageSubtitle="Directory of learners and administrators" userName="Enrolment Officer" userRole="Enrolment Officer">
       <div className="p-6 space-y-6">
@@ -261,15 +269,15 @@ export default function UsersListPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status', 'Learner page'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={7} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
+                {loading && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
                 {!loading && error && (
-                  <tr><td colSpan={7} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={8} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -304,10 +312,21 @@ export default function UsersListPage() {
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
+                    <td className="py-2.5 px-3">
+                      {isLearner ? (
+                        <button
+                          onClick={() => openLearnerPage(row)}
+                          title={`Open ${row.name}'s learner page`}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                        >
+                          <i className="ri-external-link-line text-[13px]" />View
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={7} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>

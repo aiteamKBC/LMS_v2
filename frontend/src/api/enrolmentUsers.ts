@@ -148,3 +148,12 @@ export function createEnrolmentUser(input: CreateEnrolmentUserInput): Promise<Us
 export function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUserInput> & Record<string, unknown>): Promise<EnrolmentBoard> {
   return request<EnrolmentBoard>(`${BASE}/${id}/`, { method: 'PATCH', body: JSON.stringify(patch) });
 }
+
+/**
+ * Finish enrolment: promote the learner out of enrolment."Created_users" into
+ * the live learner tables, set them Active and start their journey. Until this
+ * is called the learner exists only as an enrolment record.
+ */
+export function finishEnrolment(id: string): Promise<EnrolmentBoard> {
+  return request<EnrolmentBoard>(`${BASE}/${id}/finish/`, { method: 'POST' });
+}

@@ -6,6 +6,7 @@ urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
+    path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
     path("commercial-users/", views.commercial_users, name="commercial-users"),
     path("commercial-users/<int:pk>/", views.commercial_user_detail, name="commercial-user-detail"),
     path("staff-users/", views.staff_users, name="staff-users"),

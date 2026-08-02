@@ -19,7 +19,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import cohort_dates, sync_active_user
+from .active_users import cohort_dates, replace_training_plan, sync_active_user
 from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
@@ -175,9 +175,9 @@ def _update_profile_from_delivery_payload(profile, payload):
         value = str(payload.get(payload_key) or "").strip()
         setattr(profile, model_field, value)
         update_fields.append(model_field)
-    if "email" in update_fields:
-        profile.email_normalized = profile.email.strip().casefold()
-        update_fields.append("email_normalized")
+    # email_normalized is GENERATED ALWAYS in Postgres — the database derives it
+    # from `email`, and naming it in a write is rejected outright. See the field's
+    # note on LearnerProfile.
     if update_fields:
         profile.updated_at = timezone.now()
         update_fields.append("updated_at")
@@ -203,19 +203,18 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
         if requested_status in {"active", "fulluser"} or programme_status.casefold() == "active"
         else ("onboarding" if apprenticeship else "inactive")
     )
-    now = timezone.now()
+    # email_normalized is GENERATED ALWAYS in Postgres and created_at/updated_at
+    # are auto_now_add/auto_now — Django and the DB supply all three, so naming
+    # them here would be rejected on insert.
     return LearnerProfile.objects.create(
         full_name=name,
         email=email,
-        email_normalized=email.casefold(),
         phone_number=str(payload.get("phone") or "").strip(),
         lifecycle_status=lifecycle_status,
         programme=str(payload.get("programme") or "").strip(),
         programme_status=programme_status,
         cohort=str(payload.get("cohort") or "").strip(),
         group_name=str(payload.get("group") or "").strip(),
-        created_at=now,
-        updated_at=now,
     )
 
 
@@ -300,7 +299,7 @@ def enrolment_users(request):
     if request.method == "POST":
         try:
             payload = _parse_body(request)
-            profile = _create_profile_from_delivery_payload(payload, apprenticeship=True)
+            fields = write_fields(payload, require_create=True)
         except ValidationError as exc:
             return _error(str(exc), 400)
 
@@ -321,7 +320,7 @@ def enrolment_users(request):
             user = EnrolmentUser.all_learners.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(_profile_enrolment_row(profile), status=201)
+        return JsonResponse(to_list_row(user), status=201)
 
     return _error("Method not allowed.", 405)
 
@@ -347,25 +346,73 @@ def enrolment_user_detail(request, pk):
         # all_learners, not objects: `objects` is scoped to apprenticeship rows, so
         # looking a learner up by id must span both kinds or a commercial learner
         # 404s here — ids are unique across the single table.
-        user = EnrolmentUser.all_learners.get(pk=pk)
-    except EnrolmentUser.DoesNotExist:
-        return _error("User not found.", 404)
+        user = EnrolmentUser.all_learners.filter(pk=pk).first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
-    if profile is None:
+    if user is None:
         return _error("User not found.", 404)
     if request.method == "GET":
-        return JsonResponse(_profile_enrolment_board(profile))
+        return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
         try:
             payload = _parse_body(request)
-            _update_profile_from_delivery_payload(profile, payload)
+            fields = write_fields(payload)
         except ValidationError as exc:
             return _error(str(exc), 400)
+        try:
+            for attr, value in fields.items():
+                setattr(user, attr, value)
+            if fields:
+                user.save(update_fields=list(fields.keys()))
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(_profile_enrolment_board(profile))
+        return JsonResponse(to_board(user))
     return _error("Method not allowed.", 405)
+
+
+@csrf_exempt
+def enrolment_user_finish(request, pk):
+    """Promote an enrolled learner into the live learner tables.
+
+        POST /learner_api/enrolment-users/<id>/finish/  -> EnrolmentBoard
+
+    Enrolment happens entirely in enrolment."Created_users": every learner the
+    console creates lives there and nowhere else. This endpoint is the single
+    gate out of it. Only when enrolment is finished does the learner get a
+    "Learner"."learners" row — created by sync_active_user with the SAME id, so
+    the training plan, KSBs, progress, activity and chat rows that key off
+    learners.id all line up — and only then does their journey (learner page,
+    coach caseload, calendar) become reachable.
+
+    Deliberately explicit rather than automatic on create: an in-progress
+    enrolment must not appear as a live learner.
+    """
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+
+    try:
+        user = EnrolmentUser.all_learners.filter(pk=pk).first()
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if user is None:
+        return _error("User not found.", 404)
+
+    if not str(user.email or "").strip():
+        return _error("This learner needs an email address before enrolment can be finished.", 400)
+
+    try:
+        # Active is what makes sync_active_user build the plan/KSB child rows,
+        # so the status is set on the source row first and then mirrored.
+        user.programme_status = "Active"
+        user.save(update_fields=["programme_status"])
+        learner = sync_active_user(user)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    if learner is None:
+        return _error("Could not create the learner record. Please try again.", 502)
+
+    return JsonResponse(to_board(user))
 
 
 

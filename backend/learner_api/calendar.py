@@ -124,7 +124,8 @@ def learner_calendar(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        learner = model.objects.filter(pk=pk).first()
+        # all_learners: the default manager is scoped to apprenticeship rows.
+        learner = model.all_learners.filter(pk=pk).first()
     except DatabaseError as exc:
         logger.exception("learner_calendar: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -230,7 +231,8 @@ def learner_calendar_book(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        learner = model.objects.filter(pk=pk).first()
+        # all_learners: the default manager is scoped to apprenticeship rows.
+        learner = model.all_learners.filter(pk=pk).first()
         mirror = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: learner lookup failed")
