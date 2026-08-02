@@ -424,6 +424,22 @@ class LearnerProfile(models.Model):
 
     @property
     def ksbs(self):
+        try:
+            assignment = self.ksb_assignment
+        except LearnerKsbAssignment.DoesNotExist:
+            assignment = None
+        if assignment is not None:
+            return [
+                {
+                    "code": item.code,
+                    "number": item.number,
+                    "type": item.ksb_type,
+                    "description": item.description,
+                }
+                for item in assignment.profile_version.definitions.all()
+            ]
+
+        # Compatibility fallback while existing environments are migrated.
         return [
             {
                 "code": item.code,
@@ -548,6 +564,58 @@ class LearnerKsb(models.Model):
         managed = False
         db_table = 'Learner"."learner_ksbs'
         ordering = ("position", "id")
+
+
+class KsbProfileVersion(models.Model):
+    source_profile_id = models.CharField(max_length=255)
+    version_hash = models.CharField(max_length=64)
+    programme = models.TextField(blank=True)
+    definition_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."ksb_profile_versions'
+        unique_together = (("source_profile_id", "version_hash"),)
+
+
+class KsbDefinition(models.Model):
+    profile_version = models.ForeignKey(
+        KsbProfileVersion,
+        on_delete=models.CASCADE,
+        related_name="definitions",
+    )
+    position = models.PositiveIntegerField()
+    code = models.CharField(max_length=100)
+    number = models.CharField(max_length=100, blank=True)
+    ksb_type = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."ksb_definitions'
+        ordering = ("position", "id")
+        unique_together = (("profile_version", "code"),)
+
+
+class LearnerKsbAssignment(models.Model):
+    learner = models.OneToOneField(
+        LearnerProfile,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="ksb_assignment",
+    )
+    profile_version = models.ForeignKey(
+        KsbProfileVersion,
+        on_delete=models.PROTECT,
+        related_name="learner_assignments",
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_ksb_assignments'
 
 
 class LearnerTrainingPlanModule(models.Model):

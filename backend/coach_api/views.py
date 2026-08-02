@@ -871,6 +871,12 @@ def completed_ksb_codes(progress_entries: list[dict], activity_entries: list[dic
     for entry in [*progress_entries, *activity_entries]:
         if not isinstance(entry, dict):
             continue
+        # A failed quiz is an attempt, not KSB evidence.  Legacy failed
+        # attempts can carry an entire profile's codes, which previously made
+        # coach totals jump to almost 100% while the learner page correctly
+        # showed only KSBs evidenced by completed activities.
+        if clean_text(entry.get("kind")).lower() == "quiz" and entry.get("passed") is not True:
+            continue
         completed.update(extract_ksb_codes(entry.get("ksbs")))
     return completed
 
@@ -1054,6 +1060,7 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
+        "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
@@ -1064,7 +1071,7 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
         for row in queryset.order_by("full_name", "id")
         if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
     ]
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in rows])
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
     for row in rows:
         setattr(
             row,
@@ -1121,27 +1128,39 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
     return rows
 
 
-def fetch_source_schedule_rows(learner_ids: list[int]) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
-    if not learner_ids:
+def fetch_source_schedule_rows(
+    learners: list[LearnerProfile | SimpleNamespace],
+) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
+    """Map profile ids to Created_users source rows using email identity."""
+    if not learners:
         return {}, {}
 
-    # These are legacy source schemas and are not present in every deployment.
-    # LearnerProfile carries the canonical start/end dates, so a missing source
-    # table must not take down the entire coach calendar.
+    profile_ids_by_email = {
+        normalize_email(getattr(learner, "email", "")): int(learner.id)
+        for learner in learners
+        if getattr(learner, "id", None) is not None
+        and normalize_email(getattr(learner, "email", ""))
+    }
+    if not profile_ids_by_email:
+        return {}, {}
+
     try:
-        commercial_rows = {
-            row.id: row
-            for row in CommercialUser.objects.filter(id__in=learner_ids)
-        }
+        source_rows = EnrolmentUser.all_learners.annotate(
+            source_email_key=Lower(Trim("email"))
+        ).filter(source_email_key__in=profile_ids_by_email)
     except DatabaseError:
-        commercial_rows = {}
-    try:
-        enrolment_rows = {
-            row.id: row
-            for row in EnrolmentUser.objects.filter(id__in=learner_ids)
-        }
-    except DatabaseError:
-        enrolment_rows = {}
+        return {}, {}
+
+    commercial_rows = {}
+    enrolment_rows = {}
+    for row in source_rows:
+        profile_id = profile_ids_by_email.get(normalize_email(row.email))
+        if profile_id is None:
+            continue
+        if clean_text(row.learner_type).casefold() == "commercial":
+            commercial_rows[profile_id] = row
+        else:
+            enrolment_rows[profile_id] = row
     return commercial_rows, enrolment_rows
 
 
@@ -1161,7 +1180,7 @@ def resolve_caseload_source_row(
     if learner_id is None:
         return None
     if commercial_rows is None and enrolment_rows is None:
-        commercial_rows, enrolment_rows = fetch_source_schedule_rows([int(learner_id)])
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
     commercial_rows = commercial_rows or {}
     enrolment_rows = enrolment_rows or {}
     commercial_row = commercial_rows.get(learner_id)
@@ -1704,6 +1723,10 @@ def build_ksb_completed_details(
         ("progress", entry)
         for entry in dedupe_otjh_progress_records(progress_entries)
         if isinstance(entry, dict)
+        and not (
+            clean_text(entry.get("kind")).lower() == "quiz"
+            and entry.get("passed") is not True
+        )
     ]
     source_entries.extend(
         ("activity", entry)
@@ -3936,7 +3959,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
     )
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in active_rows])
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
     live_session_events = collect_live_session_events(
         owner_email, owner_name, start_date=start_date, end_date=end_date
     )

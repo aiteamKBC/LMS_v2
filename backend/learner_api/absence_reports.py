@@ -17,7 +17,8 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
-from .models import LearnerProfile
+from .identity import learner_profile_for_source
+from .models import CommercialUser, EnrolmentUser
 
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,10 @@ def _error(message, status=400):
 
 
 def _source_learner(kind, learner_id):
-    if kind not in {"commercial", "apprenticeship"}:
+    model = {"commercial": CommercialUser, "apprenticeship": EnrolmentUser}.get(kind)
+    if model is None:
         return None
-    return LearnerProfile.objects.filter(pk=learner_id).first()
+    return model.objects.filter(pk=learner_id).first()
 
 
 def _fetch_missed_sessions(learner, learner_id):
@@ -249,7 +251,7 @@ def learner_absence_reports(request, kind, learner_id):
     except (TypeError, ValueError):
         attendance_rate = None
 
-    active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
+    active = learner_profile_for_source(learner, learner_id, active_only=True)
     owner_name = str(getattr(active, "coach_name", "") or "").strip() or DEFAULT_COACH_NAME
     owner_email = str(getattr(active, "coach_email", "") or "").strip() or DEFAULT_COACH_EMAIL
     reason = other_reason if reason_category == "other" else REASON_LABELS[reason_category]

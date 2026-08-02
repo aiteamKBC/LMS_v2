@@ -18,7 +18,8 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import save_progress_record
 from .components import component_ksb_codes
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .identity import learner_profile_for_source
+from .models import CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -93,14 +94,14 @@ def submit_video_progress(request, component_id):
         video_title, _ctype = _video_title(component_id)
 
     try:
-        model.objects.get(pk=learner_id)
+        source = model.objects.get(pk=learner_id)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
+        active = learner_profile_for_source(source, learner_id, active_only=True)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

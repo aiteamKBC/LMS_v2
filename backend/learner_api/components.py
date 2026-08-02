@@ -20,7 +20,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import save_progress_record
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .identity import learner_profile_for_source
+from .models import CommercialUser, EnrolmentUser
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,7 @@ def submit_component_progress(request, component_id):
     component_title = client_title or live_title or TYPE_ACTIONS.get(component_type, (None, "Activity"))[1]
 
     try:
-        model.objects.get(pk=learner_id)
+        source = model.objects.get(pk=learner_id)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except (DatabaseError, ValueError) as exc:
@@ -230,7 +231,7 @@ def submit_component_progress(request, component_id):
         )
 
     try:
-        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
+        active = learner_profile_for_source(source, learner_id, active_only=True)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

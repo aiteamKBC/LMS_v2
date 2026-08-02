@@ -22,6 +22,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 
 from .active_users import completed_hours_from_progress, fmt_hours
+from .identity import learner_profile_for_source
 from .mappers import _s, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
@@ -50,17 +51,7 @@ def _active_profile_for_source(source, source_pk):
     shared learner identity; the id lookup remains only as a compatibility
     fallback for older records that do not have an email.
     """
-    email = _s(getattr(source, "email", "")).strip()
-    if email:
-        return LearnerProfile.objects.filter(
-            email__iexact=email,
-            lifecycle_status="active",
-        ).first()
-
-    return LearnerProfile.objects.filter(
-        id=source_pk,
-        lifecycle_status="active",
-    ).first()
+    return learner_profile_for_source(source, source_pk, active_only=True)
 
 
 def _video_url_from_settings(settings):
@@ -911,7 +902,7 @@ def learner_detail(request, kind, pk):
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    if learner_profile and not learner_profile.assigned_ksbs.exists():
+    if learner_profile and not learner_profile.ksbs:
         try:
             from .active_users import refresh_learner_ksb_snapshot
 

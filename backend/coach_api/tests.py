@@ -8,10 +8,48 @@ from django.test import SimpleTestCase, override_settings
 from coach_api.models import CoachAbsenceReport
 from coach_api.views import (
     build_monthly_activity_learner,
+    completed_ksb_codes,
+    fetch_source_schedule_rows,
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
 )
+
+
+class SourceProfileIdentityTests(SimpleTestCase):
+    @patch("coach_api.views.EnrolmentUser.all_learners.annotate")
+    def test_source_rows_are_keyed_by_profile_id_after_email_match(self, annotate):
+        source = SimpleNamespace(
+            id=19,
+            email="Mahmoud.Fouda@kentbusinesscollege.com",
+            learner_type="commercial",
+        )
+        annotate.return_value.filter.return_value = [source]
+        profile = SimpleNamespace(
+            id=2,
+            email="mahmoud.fouda@kentbusinesscollege.com",
+        )
+
+        commercial, apprenticeship = fetch_source_schedule_rows([profile])
+
+        self.assertEqual(commercial, {2: source})
+        self.assertEqual(apprenticeship, {})
+        annotate.return_value.filter.assert_called_once_with(
+            source_email_key__in={"mahmoud.fouda@kentbusinesscollege.com": 2}
+        )
+
+
+class CoachKsbEvidenceTests(SimpleTestCase):
+    def test_failed_quiz_codes_do_not_count_as_completed_ksbs(self):
+        completed = completed_ksb_codes(
+            [
+                {"kind": "quiz", "passed": False, "ksbs": ["K1", "K2", "S1"]},
+                {"kind": "video", "ksbs": ["K3.1", "B2.2"]},
+            ],
+            [],
+        )
+
+        self.assertEqual(completed, {"K3", "B2"})
 
 
 @override_settings(
