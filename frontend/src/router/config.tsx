@@ -136,6 +136,7 @@ const LearnerCalendarPage = lazy(() => import("../pages/learner/calendar/page"))
 const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page"));
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
+const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
@@ -264,6 +265,17 @@ const routes: RouteObject[] = [
   {
     path: "/forgot-password",
     element: <ForgotPasswordPage />,
+  },
+  {
+    // The learner's own enrolment wizard. Onboarding learners are redirected
+    // here by useOnboardingRedirect, so the bare path must resolve; the wizard
+    // then navigates between steps by slug.
+    path: "/learner/onboarding",
+    element: <LearnerOnboardingPage />,
+  },
+  {
+    path: "/learner/onboarding/:stepSlug",
+    element: <LearnerOnboardingPage />,
   },
   {
     path: "/workspace/learner",

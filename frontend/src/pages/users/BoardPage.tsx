@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchEnrolmentBoard, updateEnrolmentUser, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
+import { fetchEnrolmentBoard, updateEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
 import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, type EnrolmentDocument } from '@/api/enrolmentDocuments';
 import type { LearnerKind } from '@/api/extendedIlr';
@@ -72,6 +72,79 @@ function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initia
         )}
       </div>
       {err && <span className="text-[11px] text-red-200"><i className="ri-error-warning-line mr-1" />{err}</span>}
+    </div>
+  );
+}
+
+/**
+ * Finish enrolment — the one gate out of enrolment."Created_users".
+ *
+ * Every learner the console creates lives only as an enrolment record. Pressing
+ * this promotes them into the live learner tables (same id), sets them Active
+ * and starts their journey, so an in-progress enrolment never shows up as a
+ * live learner. Confirmed first because it is not a routine status tweak.
+ */
+function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string; status: string; onFinished: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  // Already promoted — the learner is live, so the gate is spent.
+  const done = status.trim().toLowerCase() === 'active';
+
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await finishEnrolment(learnerId);
+      setConfirming(false);
+      onFinished();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not finish enrolment');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/20 border border-emerald-300/40 text-[12px] font-semibold text-white">
+        <i className="ri-check-double-line" />Enrolment complete
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      {confirming ? (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={run}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-emerald-500 text-white rounded-xl text-[12px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer disabled:opacity-60 shadow-lg shadow-black/10"
+          >
+            {busy ? <><i className="ri-loader-4-line animate-spin" />Finishing…</> : <><i className="ri-check-line" />Confirm</>}
+          </button>
+          <button
+            onClick={() => { setConfirming(false); setErr(null); }}
+            disabled={busy}
+            className="px-3 py-2.5 rounded-xl text-[12px] font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer disabled:opacity-60"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setConfirming(true)}
+          title="Move this learner into the live learner tables and set them Active"
+          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer shadow-lg shadow-black/10"
+        >
+          <i className="ri-graduation-cap-line" />Finish enrolment
+        </button>
+      )}
+      {confirming && !err && <span className="text-[11px] text-white/70 max-w-[220px]">Starts this learner&apos;s journey and sets them Active.</span>}
+      {err && <span className="text-[11px] text-red-200 max-w-[220px]"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -191,10 +264,10 @@ export default function BoardPage() {
     );
   }
 
-  return <BoardView board={board} />;
+  return <BoardView board={board} onReload={load} />;
 }
 
-function BoardView({ board }: { board: EnrolmentBoard }) {
+function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () => void }) {
   const navigate = useNavigate();
   const [search] = useSearchParams();
   const userId = board.user.id;
@@ -224,6 +297,7 @@ function BoardView({ board }: { board: EnrolmentBoard }) {
                 <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
                   <i className="ri-magic-line" />Show Wizard
                 </button>
+                <FinishEnrolment learnerId={userId} status={board.programme.status || ''} onFinished={onReload} />
               </>
             }
           />
