@@ -1,5 +1,6 @@
 import datetime
 import json
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
@@ -7,6 +8,15 @@ from .views import _build_audit_payload, _build_student_source_data, _group_mont
 
 
 class AptemLmsAuditPayloadTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        today = patch("audit_api.views._today", return_value=datetime.date(2026, 12, 31))
+        today.start()
+        self.addCleanup(today.stop)
+        attendance = patch("audit_api.views._fetch_kbc_attendance_items", return_value=[])
+        attendance.start()
+        self.addCleanup(attendance.stop)
+
     def build_row(self, **overrides):
         row = {
             "Learner_ID": 3221,

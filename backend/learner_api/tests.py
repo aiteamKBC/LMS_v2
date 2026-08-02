@@ -6,8 +6,10 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
 from .active_users import (
+    _canonical_ksb_items,
     _coerce_ksb_items,
     _fetch_ksb_items,
+    _ksb_version_hash,
     _reported_minutes,
     completed_hours_from_progress,
     refresh_learner_ksb_snapshot,
@@ -75,7 +77,7 @@ class ProgressActivityProjectionTests(SimpleTestCase):
 
 
 class LearnerProfileResolutionTests(SimpleTestCase):
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_resolves_active_profile_by_email_before_source_id(self, profile_filter):
         expected = SimpleNamespace(id=2)
         profile_filter.return_value.first.return_value = expected
@@ -91,7 +93,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
             lifecycle_status="active",
         )
 
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_falls_back_to_source_id_only_when_source_has_no_email(self, profile_filter):
         expected = SimpleNamespace(id=19)
         profile_filter.return_value.first.return_value = expected
@@ -102,9 +104,9 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         )
 
         self.assertIs(result, expected)
-        profile_filter.assert_called_once_with(id=19, lifecycle_status="active")
+        profile_filter.assert_called_once_with(pk=19, lifecycle_status="active")
 
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_does_not_cross_link_an_unmatched_email_by_source_id(self, profile_filter):
         profile_filter.return_value.first.return_value = None
 
@@ -156,6 +158,24 @@ class AttendanceSummaryTests(SimpleTestCase):
 
 
 class LearnerKsbSnapshotTests(SimpleTestCase):
+    def test_versioned_ksb_content_is_canonical_and_deduplicated(self):
+        items = _canonical_ksb_items([
+            {"code": " k1 ", "number": "1", "type": "Knowledge", "description": "First"},
+            {"code": "K1", "number": "1", "type": "Knowledge", "description": "Duplicate"},
+            {"code": "S2", "number": "2", "type": "Skills", "description": "Second"},
+        ])
+
+        self.assertEqual([item["code"] for item in items], ["K1", "S2"])
+        self.assertEqual(items[0]["description"], "First")
+        self.assertEqual(len(_ksb_version_hash(items)), 64)
+        self.assertEqual(_ksb_version_hash(items), _ksb_version_hash(list(items)))
+
+    def test_version_hash_changes_when_a_definition_changes(self):
+        original = [{"code": "K1", "number": "1", "type": "Knowledge", "description": "Original"}]
+        changed = [{**original[0], "description": "Updated"}]
+
+        self.assertNotEqual(_ksb_version_hash(original), _ksb_version_hash(changed))
+
     def test_reported_minutes_treats_bare_numbers_as_hours(self):
         self.assertEqual(_reported_minutes("2"), 120.0)
         self.assertEqual(_reported_minutes("2h"), 120.0)

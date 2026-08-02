@@ -5,6 +5,7 @@ The module name is retained for import compatibility. Runtime data is stored in
 JSON tables are not read or written here.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -16,7 +17,9 @@ from django.utils.dateparse import parse_datetime
 
 from .mappers import get_training_plan
 from .models import (
-    LearnerKsb,
+    KsbDefinition,
+    KsbProfileVersion,
+    LearnerKsbAssignment,
     LearnerProfile,
     LearnerProgressEntry,
     LearnerProgressKsb,
@@ -170,22 +173,75 @@ def replace_training_plan(learner, plan):
             )
 
 
-def replace_learner_ksbs(learner, items):
-    LearnerKsb.objects.filter(learner=learner).delete()
-    LearnerKsb.objects.bulk_create(
-        [
-            LearnerKsb(
-                learner=learner,
-                position=position,
-                code=_s(item.get("code")),
-                number=_s(item.get("number")),
-                ksb_type=_s(item.get("type")),
-                description=_s(item.get("description")),
-            )
-            for position, item in enumerate(items or [], 1)
-            if isinstance(item, dict)
-        ]
-    )
+def _canonical_ksb_items(items):
+    canonical = []
+    seen = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        code = _s(item.get("code")).upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        canonical.append({
+            "code": code,
+            "number": _s(item.get("number")),
+            "type": _s(item.get("type")),
+            "description": _s(item.get("description")),
+        })
+    return canonical
+
+
+def _ksb_version_hash(items):
+    payload = json.dumps(items, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def replace_learner_ksbs(learner, items, *, source_profile_id=""):
+    """Assign one immutable shared KSB profile version to a learner.
+
+    Definitions are stored once per content version in curriculum; the learner
+    receives a single assignment row.  The legacy learner_ksbs snapshot is left
+    untouched as a rollback/read compatibility fallback.
+    """
+    canonical = _canonical_ksb_items(items)
+    if learner is None or not canonical:
+        return None
+
+    source_key = _s(source_profile_id) or f"programme:{_s(getattr(learner, 'programme', '')).casefold()}"
+    if source_key == "programme:":
+        source_key = "legacy"
+    version_hash = _ksb_version_hash(canonical)
+
+    with transaction.atomic(using="enrolment"):
+        version, created = KsbProfileVersion.objects.using("enrolment").get_or_create(
+            source_profile_id=source_key,
+            version_hash=version_hash,
+            defaults={
+                "programme": _s(getattr(learner, "programme", "")),
+                "definition_count": len(canonical),
+            },
+        )
+        if created:
+            KsbDefinition.objects.using("enrolment").bulk_create([
+                KsbDefinition(
+                    profile_version=version,
+                    position=position,
+                    code=item["code"],
+                    number=item["number"],
+                    ksb_type=item["type"],
+                    description=item["description"],
+                )
+                for position, item in enumerate(canonical, 1)
+            ])
+        # An existing learner stays pinned to the version assigned at enrolment.
+        # Curriculum edits create a new immutable version for future learners
+        # instead of changing historical requirements retroactively.
+        LearnerKsbAssignment.objects.using("enrolment").get_or_create(
+            learner=learner,
+            defaults={"profile_version": version},
+        )
+    return version
 
 
 def save_progress_record(learner, record, activity=None):
@@ -444,10 +500,10 @@ def _resolve_programme_id(programme="", training_plan=None):
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
-                "SELECT COALESCE(NULLIF(program_id, ''), NULLIF(name, '')) AS programme_id "
+                "SELECT COALESCE(NULLIF(programme_id, ''), NULLIF(name, '')) AS programme_id "
                 "FROM curriculum.programmes "
                 "WHERE lower(btrim(COALESCE(name, ''))) = lower(%s) "
-                "   OR lower(btrim(COALESCE(program_id, ''))) = lower(%s) "
+                "   OR lower(btrim(COALESCE(programme_id, ''))) = lower(%s) "
                 "   OR lower(%s) LIKE lower(btrim(COALESCE(name, ''))) || ' %%' "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
                 [programme, programme, programme],
@@ -620,9 +676,20 @@ def _fetch_ksb_items(programme, training_plan=None):
 
 def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
     plan = training_plan if training_plan is not None else get_training_plan(source)
-    items = _fetch_ksb_items(getattr(source, "programme", None), training_plan=plan)
+    programme = getattr(source, "programme", None)
+    items = _fetch_ksb_items(programme, training_plan=plan)
     if items:
-        replace_learner_ksbs(learner, items)
+        programme_id = _resolve_programme_id(programme, training_plan=plan)
+        profile_source_id = _resolve_ksb_profile_source_id(
+            programme_id=programme_id,
+            programme=_s(programme),
+            training_plan=plan,
+        )
+        replace_learner_ksbs(
+            learner,
+            items,
+            source_profile_id=profile_source_id or programme_id or _s(programme),
+        )
     return items
 
 
@@ -650,7 +717,20 @@ def sync_active_user(source):
     }
     try:
         with transaction.atomic(using="enrolment"):
-            learner, _ = LearnerProfile.objects.update_or_create(id=source.id, defaults=defaults)
+            source_email = _s(getattr(source, "email", "")).strip()
+            learner = (
+                LearnerProfile.objects.filter(email__iexact=source_email).first()
+                if source_email
+                else LearnerProfile.objects.filter(pk=source.id).first()
+            )
+            if learner is None:
+                # Never force the Created_users primary key into this table:
+                # both sequences are independent after the learner-table merge.
+                learner = LearnerProfile.objects.create(**defaults)
+            else:
+                for field, value in defaults.items():
+                    setattr(learner, field, value)
+                learner.save(update_fields=list(defaults))
             if status.lower() == ACTIVE_STATUS:
                 training_plan = get_training_plan(source)
                 replace_training_plan(learner, training_plan)

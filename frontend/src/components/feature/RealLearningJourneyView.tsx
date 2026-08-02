@@ -430,8 +430,8 @@ function ModuleActivityModal({ station, real, onClose }: { station: ModuleStatio
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white/80">
             <i className="ri-book-open-line" />Module {station.index + 1}
           </span>
-          <h2 id="module-activity-title" className="mt-3 pr-10 text-xl font-heading font-bold">{station.module.module}</h2>
-          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-white/65">
+          <h2 id="module-activity-title" className="mt-3 pr-10 text-xl font-heading font-bold !text-white">{station.module.module}</h2>
+          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs !text-white">
             <span><i className="ri-checkbox-circle-line mr-1.5" />{completedActivities.length} activities completed</span>
             <span><i className="ri-history-line mr-1.5" />{activityRecords.length} recorded actions</span>
             <span><i className="ri-stack-line mr-1.5" />{station.componentCount} total activities</span>
