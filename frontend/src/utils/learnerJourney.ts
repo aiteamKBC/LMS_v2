@@ -101,6 +101,16 @@ export function ksbParentCode(code: string): string {
   return String(code || '').trim().toUpperCase().split('.')[0];
 }
 
+/** Normalise API labels (Knowledge / Skill / Behaviour) to the compact keys
+ * used by the KSB page's category layout. */
+export function ksbTypeCode(type: string | null | undefined, code = ''): 'K' | 'S' | 'B' | '?' {
+  const value = String(type || code.charAt(0) || '').trim().toUpperCase();
+  if (value === 'K' || value.startsWith('KNOWLEDGE')) return 'K';
+  if (value === 'S' || value.startsWith('SKILL')) return 'S';
+  if (value === 'B' || value.startsWith('BEHAVIOUR') || value.startsWith('BEHAVIOR')) return 'B';
+  return '?';
+}
+
 export type KsbStatus = 'complete' | 'in-progress' | 'not-started';
 
 export interface KsbContributor {
@@ -139,6 +149,7 @@ export interface KsbProgressSource {
     ksbMappings?: { code: string; weight: number; classification?: string | null }[];
   }[];
   completedComponentIds: Iterable<string>;
+  evidencedKsbCodes?: Iterable<string>;
 }
 
 /** Derive weighted progress for every programme KSB.
@@ -146,6 +157,7 @@ export interface KsbProgressSource {
  * completed twice (retake / re-watch) contributes its weight only once. */
 export function buildKsbProgress(src: KsbProgressSource): KsbProgress[] {
   const done = new Set(src.completedComponentIds);
+  const evidenced = new Set(Array.from(src.evidencedKsbCodes || [], ksbParentCode));
   const byCode = new Map<string, KsbContributor[]>();
 
   for (const c of src.components || []) {
@@ -177,19 +189,24 @@ export function buildKsbProgress(src: KsbProgressSource): KsbProgress[] {
       .slice()
       .sort((a, b) => Number(a.done) - Number(b.done) || b.weight - a.weight);
     const availableWeight = contributors.reduce((s, c) => s + c.weight, 0);
-    const earnedWeight = contributors.reduce((s, c) => s + (c.done ? c.weight : 0), 0);
+    const recordedEvidence = evidenced.has(code);
+    const earnedWeight = recordedEvidence
+      ? availableWeight
+      : contributors.reduce((s, c) => s + (c.done ? c.weight : 0), 0);
     const doneCount = contributors.filter((c) => c.done).length;
-    const pct = availableWeight > 0
+    const pct = recordedEvidence
+      ? 100
+      : availableWeight > 0
       ? Math.max(0, Math.min(100, Math.round((earnedWeight / availableWeight) * 100)))
       : 0;
-    const status: KsbStatus = earnedWeight >= availableWeight && availableWeight > 0
+    const status: KsbStatus = recordedEvidence || (earnedWeight >= availableWeight && availableWeight > 0)
       ? 'complete'
       : earnedWeight > 0
         ? 'in-progress'
         : 'not-started';
     return {
       code,
-      type: (k.type || code.charAt(0) || '?').toUpperCase(),
+      type: ksbTypeCode(k.type, code),
       description: k.description || '',
       availableWeight,
       earnedWeight,
@@ -213,6 +230,27 @@ export function completedComponentIds(real: {
   for (const v of real?.videoProgress || []) if (v.componentId) ids.add(v.componentId);
   for (const c of real?.componentProgress || []) if (c.componentId) ids.add(c.componentId);
   return ids;
+}
+
+/** KSBs backed by a genuine completed learner activity. Failed quizzes are
+ * deliberately excluded: some legacy attempts attach an entire KSB profile
+ * even when the learner scored zero. Video/component completions remain valid
+ * evidence when a curriculum refresh has changed their authored component id.
+ */
+export function recordedKsbEvidenceCodes(real: LearnerDetail | null): Set<string> {
+  const codes = new Set<string>();
+  const records = [
+    ...(real?.quizAttempts || []).filter((attempt) => attempt.passed),
+    ...(real?.videoProgress || []),
+    ...(real?.componentProgress || []),
+  ];
+  for (const record of records) {
+    for (const rawCode of record.ksbs || []) {
+      const code = ksbParentCode(rawCode);
+      if (code) codes.add(code);
+    }
+  }
+  return codes;
 }
 
 /** Short noun used in the reflection copy ("this podcast", "this reading…"). */

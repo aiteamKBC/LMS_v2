@@ -42,6 +42,27 @@ SOURCE_MODELS = {
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
+def _active_profile_for_source(source, source_pk):
+    """Resolve the active mirror after enrolment tables were consolidated.
+
+    ``Created_users`` and ``Learner.learners`` have independent primary-key
+    sequences, so their ids are no longer guaranteed to match.  Email is the
+    shared learner identity; the id lookup remains only as a compatibility
+    fallback for older records that do not have an email.
+    """
+    email = _s(getattr(source, "email", "")).strip()
+    if email:
+        return LearnerProfile.objects.filter(
+            email__iexact=email,
+            lifecycle_status="active",
+        ).first()
+
+    return LearnerProfile.objects.filter(
+        id=source_pk,
+        lifecycle_status="active",
+    ).first()
+
+
 def _video_url_from_settings(settings):
     direct = _s(settings.get("videoUrl"))
     if direct:
@@ -886,7 +907,7 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        learner_profile = _active_profile_for_source(source, pk)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -895,7 +916,10 @@ def learner_detail(request, kind, pk):
             from .active_users import refresh_learner_ksb_snapshot
 
             refresh_learner_ksb_snapshot(learner_profile, source)
-            learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+            learner_profile = LearnerProfile.objects.filter(
+                id=learner_profile.id,
+                lifecycle_status="active",
+            ).first()
         except DatabaseError as exc:
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 

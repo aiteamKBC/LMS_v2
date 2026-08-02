@@ -19,9 +19,13 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
-from .learner_detail import _schedule_based_week_target, _sequential_week_target
+from .learner_detail import (
+    _active_profile_for_source,
+    _schedule_based_week_target,
+    _sequential_week_target,
+)
 from .mappers import to_learner_detail
-from .models import _serialise_quiz_ref
+from .models import _progress_entry_activity, _serialise_quiz_ref
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -29,6 +33,91 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertEqual(_serialise_quiz_ref("42"), 42)
         self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
         self.assertIsNone(_serialise_quiz_ref(None))
+
+
+class ProgressActivityProjectionTests(SimpleTestCase):
+    def test_projects_feed_fields_from_the_progress_entry(self):
+        occurred_at = datetime(2026, 8, 2, 10, 30, tzinfo=timezone.utc)
+        entry = SimpleNamespace(
+            kind="video",
+            feed_kind="video",
+            feed_action="Watched video",
+            feed_title="Project planning",
+            feed_detail="2h",
+            feed_occurred_at=occurred_at,
+            component_ref="COMP-1",
+            component_type="video",
+            quiz_ref=None,
+            module_title="Module 1",
+            week_title="Week 1",
+            component_title="Project planning",
+            passed=None,
+            submitted_at=occurred_at,
+            reported_time="2h",
+        )
+
+        self.assertEqual(
+            _progress_entry_activity(entry),
+            {
+                "kind": "video",
+                "action": "Watched video",
+                "title": "Project planning",
+                "detail": "2h",
+                "componentId": "COMP-1",
+                "componentType": "video",
+                "quizId": None,
+                "module": "Module 1",
+                "week": "Week 1",
+                "passed": None,
+                "at": "2026-08-02T10:30:00+00:00",
+            },
+        )
+
+
+class LearnerProfileResolutionTests(SimpleTestCase):
+    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    def test_resolves_active_profile_by_email_before_source_id(self, profile_filter):
+        expected = SimpleNamespace(id=2)
+        profile_filter.return_value.first.return_value = expected
+
+        result = _active_profile_for_source(
+            SimpleNamespace(email=" Learner@Example.com "),
+            source_pk=19,
+        )
+
+        self.assertIs(result, expected)
+        profile_filter.assert_called_once_with(
+            email__iexact="Learner@Example.com",
+            lifecycle_status="active",
+        )
+
+    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    def test_falls_back_to_source_id_only_when_source_has_no_email(self, profile_filter):
+        expected = SimpleNamespace(id=19)
+        profile_filter.return_value.first.return_value = expected
+
+        result = _active_profile_for_source(
+            SimpleNamespace(email="  "),
+            source_pk=19,
+        )
+
+        self.assertIs(result, expected)
+        profile_filter.assert_called_once_with(id=19, lifecycle_status="active")
+
+    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    def test_does_not_cross_link_an_unmatched_email_by_source_id(self, profile_filter):
+        profile_filter.return_value.first.return_value = None
+
+        result = _active_profile_for_source(
+            SimpleNamespace(email="missing@example.com"),
+            source_pk=19,
+        )
+
+        self.assertIsNone(result)
+        profile_filter.assert_called_once_with(
+            email__iexact="missing@example.com",
+            lifecycle_status="active",
+        )
 
 
 class AttendanceSummaryTests(SimpleTestCase):

@@ -643,7 +643,7 @@ def to_learner_detail(source, learner_profile):
         for code in _as_list(row.get("ksbs"))
         if _s(code)
     })
-    # Activity feed source of truth: Learner.learner_activity_events, newest first.
+    # Activity Feed is projected from the same normalized progress rows.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
 
     return {

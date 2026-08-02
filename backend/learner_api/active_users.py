@@ -16,7 +16,6 @@ from django.utils.dateparse import parse_datetime
 
 from .mappers import get_training_plan
 from .models import (
-    LearnerActivityEvent,
     LearnerKsb,
     LearnerProfile,
     LearnerProgressEntry,
@@ -142,31 +141,6 @@ def completed_hours_from_progress(progress):
     return fmt_hours(minutes / 60)
 
 
-def append_activity_entry(learner, entry):
-    if learner is None:
-        return None
-    next_order = (
-        LearnerActivityEvent.objects.filter(learner=learner)
-        .aggregate(value=Max("event_order"))["value"]
-        or 0
-    ) + 1
-    return LearnerActivityEvent.objects.create(
-        learner=learner,
-        event_order=next_order,
-        kind=_s(entry.get("kind")),
-        action=_s(entry.get("action")),
-        title=_s(entry.get("title")),
-        detail=_s(entry.get("detail")),
-        component_ref=_s(entry.get("componentId")) or None,
-        component_type=_s(entry.get("componentType")),
-        quiz_ref=_s(entry.get("quizId")) or None,
-        module_title=_s(entry.get("module")),
-        week_title=_s(entry.get("week")),
-        passed=entry.get("passed") if isinstance(entry.get("passed"), bool) else None,
-        occurred_at=_datetime(entry.get("at")),
-    )
-
-
 def replace_training_plan(learner, plan):
     LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
     for module_position, module in enumerate(plan or [], 1):
@@ -215,7 +189,7 @@ def replace_learner_ksbs(learner, items):
 
 
 def save_progress_record(learner, record, activity=None):
-    """Store one progress record and all child rows atomically."""
+    """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
     with transaction.atomic(using="enrolment"):
@@ -227,17 +201,18 @@ def save_progress_record(learner, record, activity=None):
             .aggregate(value=Max("entry_order"))["value"]
             or 0
         ) + 1
+        activity = activity if isinstance(activity, dict) else {}
         progress = LearnerProgressEntry.objects.create(
             learner=learner,
             entry_order=next_order,
             kind=_s(record.get("kind")) or "quiz",
             module_ref=_s(record.get("moduleId")) or None,
-            module_title=_s(record.get("moduleTitle") or record.get("module")),
+            module_title=_s(record.get("moduleTitle") or record.get("module") or activity.get("module")),
             week_ref=_s(record.get("weekId")) or None,
-            week_title=_s(record.get("weekTitle") or record.get("week")),
+            week_title=_s(record.get("weekTitle") or record.get("week") or activity.get("week")),
             component_ref=_s(record.get("componentId")) or None,
-            component_title=_s(record.get("componentTitle")),
-            component_type=_s(record.get("componentType")),
+            component_title=_s(record.get("componentTitle") or activity.get("title")),
+            component_type=_s(record.get("componentType") or activity.get("componentType")),
             quiz_ref=_s(record.get("quizId")) or None,
             attempt=record.get("attempt"),
             grade=_number(record.get("grade", record.get("Score"))),
@@ -249,6 +224,11 @@ def save_progress_record(learner, record, activity=None):
             started_at=_datetime(record.get("startedAt")),
             submitted_at=_datetime(record.get("submittedAt")),
             time_taken=_s(record.get("timeTaken")),
+            feed_kind=_s(activity.get("kind") or record.get("kind")),
+            feed_action=_s(activity.get("action")),
+            feed_title=_s(activity.get("title") or record.get("componentTitle")),
+            feed_detail=_s(activity.get("detail")),
+            feed_occurred_at=_datetime(activity.get("at") or record.get("submittedAt")),
         )
         LearnerProgressKsb.objects.bulk_create(
             [
@@ -289,8 +269,6 @@ def save_progress_record(learner, record, activity=None):
                     )
                 ]
             )
-        if activity:
-            append_activity_entry(learner, activity)
         learner.completed_hours = _number(
             completed_hours_from_progress(learner.training_plan_progress)
         )

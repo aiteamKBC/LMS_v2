@@ -1058,7 +1058,6 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
-        "activity_events",
     )
     rows = [
         row

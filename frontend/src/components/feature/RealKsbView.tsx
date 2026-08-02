@@ -4,7 +4,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import {
-  buildKsbProgress, completedComponentIds, componentTypeMeta, ksbParentCode,
+  buildKsbProgress, completedComponentIds, componentTypeMeta, ksbParentCode, recordedKsbEvidenceCodes,
   type KsbProgress, type KsbStatus,
 } from '@/utils/learnerJourney';
 
@@ -106,22 +106,25 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
     return ids;
   }, [real]);
 
+  const evidencedCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
+
   const progress = useMemo(() => buildKsbProgress({
     ksbs: programmeKsbs,
     components: real?.components ?? [],
     completedComponentIds: completedIds,
-  }), [real, programmeKsbs, completedIds]);
+    evidencedKsbCodes: evidencedCodes,
+  }), [real, programmeKsbs, completedIds, evidencedCodes]);
 
   const total = progress.length;
   const complete = progress.filter((k) => k.status === 'complete').length;
   const inProgress = progress.filter((k) => k.status === 'in-progress').length;
   const notStarted = progress.filter((k) => k.status === 'not-started').length;
 
-  // Headline is weight-based across everything the plan actually offers, so a
-  // single bulk record can no longer push it to a misleading number.
+  // Percentages represent KSB completion, matching the x/y counts shown to the
+  // learner. Authored weight remains visible as separate supporting data.
   const earnedWeight = progress.reduce((s, k) => s + k.earnedWeight, 0);
   const availableWeight = progress.reduce((s, k) => s + k.availableWeight, 0);
-  const overallPct = availableWeight > 0 ? Math.round((earnedWeight / availableWeight) * 100) : 0;
+  const overallPct = total > 0 ? Math.round((complete / total) * 100) : 0;
 
   const visible = useMemo(() => progress.filter((k) => (
     filter === 'all' ? true
@@ -129,21 +132,25 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
   )), [progress, filter]);
 
   const groups = useMemo(() => {
-    const by: Record<string, KsbProgress[]> = {};
-    for (const k of visible) (by[k.type] ||= []).push(k);
-    return TYPE_ORDER.filter((t) => by[t]?.length).map((t) => {
-      const items = by[t];
-      const av = items.reduce((s, k) => s + k.availableWeight, 0);
-      const ea = items.reduce((s, k) => s + k.earnedWeight, 0);
+    const allBy: Record<string, KsbProgress[]> = {};
+    const visibleBy: Record<string, KsbProgress[]> = {};
+    for (const k of progress) (allBy[k.type] ||= []).push(k);
+    for (const k of visible) (visibleBy[k.type] ||= []).push(k);
+    return TYPE_ORDER.filter((t) => visibleBy[t]?.length).map((t) => {
+      const allItems = allBy[t] || [];
+      const items = visibleBy[t] || [];
+      const av = allItems.reduce((s, k) => s + k.availableWeight, 0);
+      const ea = allItems.reduce((s, k) => s + k.earnedWeight, 0);
+      const completed = allItems.filter((k) => k.status === 'complete').length;
       return {
         type: t, ...TYPE_META[t], items,
-        complete: items.filter((k) => k.status === 'complete').length,
-        total: items.length,
-        pct: av > 0 ? Math.round((ea / av) * 100) : 0,
+        complete: completed,
+        total: allItems.length,
+        pct: allItems.length > 0 ? Math.round((completed / allItems.length) * 100) : 0,
         earned: ea, available: av,
       };
     });
-  }, [visible]);
+  }, [progress, visible]);
 
   return (
     <WorkspaceShell
@@ -172,10 +179,10 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
               </span>
               <div className="min-w-0">
                 <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white/75">
-                  <i className="ri-scales-3-line" />Weighted progress
+                  <i className="ri-checkbox-circle-line" />KSB completion
                 </span>
                 <h1 className="text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">KSB Progress</h1>
-                <p className="mt-1 text-sm !text-white/65">Track the weight earned from every activity in your training plan</p>
+                <p className="mt-1 text-sm !text-white/65">Track the KSBs evidenced by completed activities in your training plan</p>
               </div>
             </div>
 
@@ -185,10 +192,11 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
                 <span className="absolute text-sm font-heading font-bold tabular-nums !text-white">{overallPct}%</span>
               </div>
               <div className="min-w-[96px]">
-                <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Weight earned</p>
+                <p className="text-[9px] font-semibold uppercase tracking-wider !text-white/55">Fully evidenced</p>
                 <p className="mt-1 text-xl font-heading font-bold leading-none tabular-nums !text-white">
-                  {w(earnedWeight)}<span className="text-sm font-medium !text-white/50"> / {w(availableWeight)}</span>
+                  {complete}<span className="text-sm font-medium !text-white/50"> / {total}</span>
                 </p>
+                <p className="mt-1 text-[9px] !text-white/50">{w(earnedWeight)} / {w(availableWeight)} mapped weight</p>
                 <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/15">
                   <div className="h-full rounded-full bg-emerald-300 transition-all duration-700" style={{ width: `${overallPct}%` }} />
                 </div>
