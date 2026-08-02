@@ -63,7 +63,6 @@ const CoachOtjhReports = lazy(() => import("../pages/coach/otjh-reports/page"));
 const CoachProgressReviews = lazy(() => import("../pages/coach/progress-reviews/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
-const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
@@ -366,10 +365,7 @@ const routes: RouteObject[] = [
     path: "/users/:userId/wizard/:stepSlug",
     element: <WizardPage />,
   },
-  {
-    path: "/delivery",
-    element: <CommercialLearnersPage />,
-  },
+ 
   {
     path: "/activity-categories",
     element: <Navigate to="/workspace/auditor" replace />,
