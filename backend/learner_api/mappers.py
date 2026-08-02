@@ -636,6 +636,13 @@ def to_learner_detail(source, learner_profile):
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
     # written by learner_api.components.submit_component_progress.
     component_progress = [r for r in progress if r.get("kind") == "component"]
+    progress_ksb_codes = sorted({
+        _s(code).upper()
+        for row in progress
+        if isinstance(row, dict)
+        for code in _as_list(row.get("ksbs"))
+        if _s(code)
+    })
     # Activity feed source of truth: Learner.learner_activity_events, newest first.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
 
@@ -655,6 +662,7 @@ def to_learner_detail(source, learner_profile):
         "week": week,
         "components": components,
         "ksbs": _as_list(learner_profile.ksbs) if learner_profile else [],
+        "progressKsbCodes": progress_ksb_codes,
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
         "componentProgress": component_progress,

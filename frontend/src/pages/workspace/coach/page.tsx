@@ -311,8 +311,8 @@ function findAttendanceRecord(learner: CoachLearner, attendanceLearners: Attenda
   });
 }
 
-function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: AttendanceApiLearner[]) {
-  return learners.map((learner) => {
+function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: AttendanceApiLearner[]): CoachLearner[] {
+  return learners.map((learner): CoachLearner => {
     const attendance = findAttendanceRecord(learner, attendanceLearners);
     const hasAttendance = Boolean(
       attendance
@@ -415,7 +415,11 @@ function scheduleDateForEvent(event: CoachCalendarEvent): { value: string; statu
   return { value: fallbackValue, status: 'overdue', time: fallbackDate.getTime() };
 }
 
-function nextEventSummaryForLearner(events: CoachCalendarEvent[], learner: CoachLearner, source: string) {
+function nextEventSummaryForLearner(
+  events: CoachCalendarEvent[],
+  learner: CoachLearner,
+  source: string,
+): { label: string; status: ScheduleStatus } {
   const matches = events
     .filter(event => (
       event.source === source &&
@@ -441,8 +445,8 @@ function nextEventSummaryForLearner(events: CoachCalendarEvent[], learner: Coach
   };
 }
 
-function enrichLearnerSchedule(learners: CoachLearner[], events: CoachCalendarEvent[]) {
-  return learners.map(learner => {
+function enrichLearnerSchedule(learners: CoachLearner[], events: CoachCalendarEvent[]): CoachLearner[] {
+  return learners.map((learner): CoachLearner => {
     const nextMonthlyCoaching = nextEventSummaryForLearner(events, learner, 'mcr');
     const nextProgressReview = nextEventSummaryForLearner(events, learner, 'progress-review');
     return {

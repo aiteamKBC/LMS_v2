@@ -70,7 +70,14 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
   const breakdown = useMemo(() => {
     const map = new Map<string, number>();
     for (const r of rows) {
-      const mins = (() => { const m = String(r.hours).match(/\d+(\.\d+)?/); return m ? parseFloat(m[0]) : 0; })();
+      const mins = (() => {
+        const text = String(r.hours || '').trim().toLowerCase();
+        const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
+        const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
+        if (hours || minutes) return (hours * 60) + minutes;
+        const numeric = Number(text.match(/[\d.]+/)?.[0] || 0);
+        return Number.isFinite(numeric) ? numeric * 60 : 0;
+      })();
       map.set(r.type, (map.get(r.type) || 0) + mins / 60);
     }
     const max = Math.max(1, ...map.values());

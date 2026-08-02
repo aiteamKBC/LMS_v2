@@ -47,8 +47,11 @@ function inWindow(value: string | undefined | null, from: Date | null, to: Date)
 function minutesFrom(value?: string | null): number {
   if (!value) return 0;
   const text = value.toLowerCase();
-  const amount = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
-  return text.includes('hour') || text.includes('hr') ? amount * 60 : amount;
+  const hours = Number(text.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
+  const minutes = Number(text.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
+  if (hours || minutes) return (hours * 60) + minutes;
+  const numeric = Number.parseFloat(text.match(/\d+(?:\.\d+)?/)?.[0] || '0');
+  return Number.isFinite(numeric) ? numeric * 60 : 0;
 }
 
 function hoursLabel(minutes: number): string {

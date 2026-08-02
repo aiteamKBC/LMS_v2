@@ -99,10 +99,11 @@ function durationLabel(value?: string | null) {
 
 function minutesFromText(value?: string | null) {
   if (!value) return 0;
-  const hours = Number(value.match(/([\d.]+)\s*(?:h|hour)/i)?.[1] || 0);
-  const minutes = Number(value.match(/([\d.]+)\s*(?:m|min)/i)?.[1] || 0);
+  const hours = Number(value.match(/([\d.]+)\s*(?:hours?|hrs?|h)\b/i)?.[1] || 0);
+  const minutes = Number(value.match(/([\d.]+)\s*(?:minutes?|mins?|m)\b/i)?.[1] || 0);
   if (hours || minutes) return (hours * 60) + minutes;
-  return Number(value.match(/[\d.]+/)?.[0] || 0);
+  const numeric = Number(value.match(/[\d.]+/)?.[0] || 0);
+  return Number.isFinite(numeric) ? numeric * 60 : 0;
 }
 
 function formatMinutes(total: number) {

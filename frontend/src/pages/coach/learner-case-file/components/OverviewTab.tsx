@@ -3,10 +3,14 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { JourneyComponent, JourneyModule, JourneyWeek } from '@/utils/learnerJourney';
 import {
   flattenJourney,
+  formatAttemptGrade,
   formatDisplayDate,
+  formatQuizAttemptScore,
   formatHours,
   formatPercent,
   quizGradeValue,
+  resolveQuizAttemptModule,
+  resolveQuizAttemptTitle,
   type CaseFileTabProps,
 } from '../data';
 
@@ -27,7 +31,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
         <StatCard icon="ri-pie-chart-line" label="Overall Progress" value={formatPercent(data.overallProgress)} tone="primary" />
         <StatCard icon="ri-calendar-check-line" label="Attendance" value={formatPercent(data.attendanceRate)} tone="amber" />
         <StatCard icon="ri-time-line" label="OTJH Logged" value={formatHours(data.otjhCompleted)} tone="secondary" />
-        <StatCard icon="ri-line-chart-line" label="Plan OTJH" value={formatHours(data.totalExpectedOtjh || null)} tone="emerald" />
+        <StatCard icon="ri-line-chart-line" label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="emerald" />
         <StatCard icon="ri-award-line" label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} tone="accent" />
         <StatCard icon="ri-folder-upload-line" label="Evidence Count" value={String(data.evidenceCount ?? '--')} tone="primary" />
       </section>
@@ -45,7 +49,8 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
             {data.group ? <> Group assignment is <strong>{data.group}</strong>.</> : null}
             {' '}The coach snapshot shows <strong>{formatPercent(data.overallProgress)}</strong> overall progress,
             {' '}<strong>{formatPercent(data.attendanceRate)}</strong> attendance,
-            {' '}and <strong>{formatHours(data.otjhCompleted)}</strong> logged against a target of <strong>{formatHours(data.otjhTarget)}</strong>.
+            {' '}and <strong>{formatHours(data.otjhCompleted)}</strong> logged against a current target of <strong>{formatHours(data.otjhTarget)}</strong>
+            {' '}within an overall OTJH plan of <strong>{formatHours(data.totalExpectedOtjh || null)}</strong>.
             {' '}This learner currently has <strong>{flatComponents.length}</strong> structured component(s),
             {' '}<strong>{totalWeeks}</strong> learning week(s),
             {' '}and <strong>{data.detail?.quizAttempts.length || 0}</strong> recorded quiz attempt(s).
@@ -107,9 +112,9 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
                     <i className="ri-questionnaire-line text-base"></i>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-semibold text-foreground-900">{attempt.quizName}</p>
+                    <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
                     <p className="text-[11px] text-foreground-400">
-                      {attempt.module || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
+                      {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
@@ -121,7 +126,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
                       {attempt.passed ? 'Passed' : 'Submitted'}
                     </span>
                     <p className="text-[12px] font-semibold text-foreground-900 mt-1">
-                      {attempt.grade}{attempt.Score ? ` - ${attempt.Score}` : ''}
+                      {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
                     </p>
                     <p className="text-[10px] text-foreground-400">
                       {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
@@ -416,12 +421,6 @@ function humanizeComponentType(value?: string | null) {
   const normalized = normalizeComponentType(value);
   if (!normalized) return '';
   return normalized.replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function formatAttemptGrade(attempt: NonNullable<JourneyComponent['quizAttempts']>[number]) {
-  const rawGrade = quizGradeValue(attempt);
-  const percent = rawGrade > 0 && rawGrade <= 1 ? Math.round(rawGrade * 100) : Math.round(rawGrade);
-  return `${percent}%`;
 }
 
 function SummaryPill({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {

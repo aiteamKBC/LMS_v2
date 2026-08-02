@@ -25,8 +25,8 @@ export default function OTJHTab({ data }: CaseFileTabProps) {
     <div className="space-y-5">
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard icon="ri-time-line" label="Logged OTJH" value={formatHours(data.otjhCompleted)} tone="primary" />
-        <StatCard icon="ri-flag-2-line" label="Target OTJH" value={formatHours(data.otjhTarget)} tone="emerald" />
-        <StatCard icon="ri-route-line" label="Plan OTJH" value={formatHours(data.totalExpectedOtjh || null)} tone="secondary" />
+        <StatCard icon="ri-flag-2-line" label="Current Target" value={formatHours(data.otjhTarget)} tone="emerald" />
+        <StatCard icon="ri-route-line" label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="secondary" />
         <StatCard
           icon="ri-scales-3-line"
           label="Variance vs Target"

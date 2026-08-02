@@ -325,13 +325,6 @@ function getOtjhStatusKey(value?: string) {
   return 'other';
 }
 
-function getOtjhStatusRank(value?: string) {
-  const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
-  if (normalized === 'needattention') return 0;
-  if (normalized === 'ontrack') return 1;
-  return 2;
-}
-
 function getOtjhStatusMeta(value?: string) {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
   if (normalized === 'ontrack') {
@@ -344,10 +337,6 @@ function getOtjhStatusMeta(value?: string) {
     return { dot: 'bg-red-500', text: 'text-red-700' };
   }
   return { dot: 'bg-foreground-300', text: 'text-foreground-500' };
-}
-
-function getOtjhSortValue(status?: string, variance?: string) {
-  return (getOtjhStatusRank(status) * 1000) + parseVariance(variance || '0%');
 }
 
 function getKsbStatusMeta(value?: string) {
@@ -670,13 +659,30 @@ export default function CoachCaseload() {
     }
     list.sort((a, b) => {
       let va: number | string = 0, vb: number | string = 0;
+      if (sortKey === 'otjh') {
+        const completedDelta = sortDir === 'asc'
+          ? a.otjhCompleted - b.otjhCompleted
+          : b.otjhCompleted - a.otjhCompleted;
+        if (completedDelta !== 0) {
+          return completedDelta;
+        }
+
+        const targetDelta = sortDir === 'asc'
+          ? a.otjhTarget - b.otjhTarget
+          : b.otjhTarget - a.otjhTarget;
+        if (targetDelta !== 0) {
+          return targetDelta;
+        }
+
+        return a.name.localeCompare(b.name);
+      }
+
       switch (sortKey) {
         case 'name': va = a.name; vb = b.name; break;
         case 'progress': va = a.overallProgress; vb = b.overallProgress; break;
         case 'attendance': va = a.liveAttendanceRate ?? -1; vb = b.liveAttendanceRate ?? -1; break;
         case 'components': va = a.attendanceRate; vb = b.attendanceRate; break;
         case 'ksb': va = a.ksbProgress; vb = b.ksbProgress; break;
-        case 'otjh': va = getOtjhSortValue(a.otjhStatus, a.progressVariance); vb = getOtjhSortValue(b.otjhStatus, b.progressVariance); break;
       }
       if (typeof va === 'string') return sortDir === 'asc' ? va.localeCompare(vb as string) : (vb as string).localeCompare(va);
       return sortDir === 'asc' ? (va as number) - (vb as number) : (vb as number) - (va as number);
@@ -1324,8 +1330,9 @@ export default function CoachCaseload() {
                       <th className="w-[88px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Coach RAG</th>
                       <th className="w-[108px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Program Status</th>
                       <ThSort label="OTJH" sortKey="otjh" current={sortKey} dir={sortDir} onClick={() => handleSort('otjh')} className="w-[102px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="Attendance" sortKey="attendance" current={sortKey} dir={sortDir} onClick={() => handleSort('attendance')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
+                      <ThSort label="Components" sortKey="components" current={sortKey} dir={sortDir} onClick={() => handleSort('components')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
                       <ThSort label="KSB" sortKey="ksb" current={sortKey} dir={sortDir} onClick={() => handleSort('ksb')} className="w-[80px] text-center text-[9px]" contentClassName="justify-center" />
-                      <ThSort label="Components" sortKey="attendance" current={sortKey} dir={sortDir} onClick={() => handleSort('attendance')} className="w-[84px] text-center text-[9px]" contentClassName="justify-center" />
                       <ThSort label="OTJH Progress" sortKey="progress" current={sortKey} dir={sortDir} onClick={() => handleSort('progress')} className="w-[104px] text-center text-[9px]" contentClassName="justify-center" />
                       <th className="w-[88px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Start Date</th>
                       <th className="w-[96px] px-2 py-2.5 text-center text-[9px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap">Gateway Review</th>

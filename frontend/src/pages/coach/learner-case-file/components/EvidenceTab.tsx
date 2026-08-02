@@ -2,7 +2,11 @@ import { EmptyState } from '@/pages/users/components/ui';
 import { componentTypeMeta } from '@/utils/learnerJourney';
 import {
   flattenJourney,
+  formatAttemptGrade,
   formatDisplayDate,
+  formatQuizAttemptScore,
+  resolveQuizAttemptModule,
+  resolveQuizAttemptTitle,
   type CaseFileTabProps,
 } from '../data';
 
@@ -136,7 +140,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[13px] font-semibold text-foreground-900">{attempt.quizName}</p>
+                        <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
                         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                           attempt.passed
                             ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -146,10 +150,10 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
                         </span>
                       </div>
                       <p className="text-[11px] text-foreground-500 mt-1">
-                        {attempt.module || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
+                        {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
                       </p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-foreground-500">
-                        <span>{attempt.grade}{attempt.Score ? ` - ${attempt.Score}` : ''}</span>
+                        <span>{[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}</span>
                         <span>{attempt.ksbs?.length || 0} linked KSB(s)</span>
                       </div>
                     </div>

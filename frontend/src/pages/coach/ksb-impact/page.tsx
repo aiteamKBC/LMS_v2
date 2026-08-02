@@ -32,12 +32,33 @@ interface CaseloadApiLearner {
   behavioursCompleted?: number | null;
   behavioursTarget?: number | null;
   behavioursProgress?: number | null;
+  ksbCompletedDetails?: KsbCompletedDetail[];
   evidenceCount?: number;
   evidenceCountAvailable?: boolean;
   rawProgramStatus?: string;
   coachRag?: string;
   startDate?: string;
   gatewayReviewDate?: string;
+}
+
+interface KsbCompletedSource {
+  id?: string;
+  title?: string;
+  typeLabel?: string;
+  kind?: string;
+  module?: string;
+  week?: string;
+  reportedTime?: string;
+  hours?: number | null;
+  completedDate?: string;
+  detail?: string;
+}
+
+interface KsbCompletedDetail {
+  code?: string;
+  type?: string;
+  description?: string;
+  sources?: KsbCompletedSource[];
 }
 
 interface CaseloadApiResponse {
@@ -69,6 +90,7 @@ interface KsbImpactRow {
   behavioursCompleted: number | null;
   behavioursTarget: number | null;
   behavioursProgress: number | null;
+  completedDetails: KsbCompletedDetail[];
   ksbStatus: string;
   evidenceCount: number;
   evidenceCountAvailable: boolean;
@@ -87,6 +109,10 @@ function toNumber(value: unknown): number {
 function displayText(value?: string | null): string {
   const trimmed = (value || '').trim();
   return trimmed || MISSING_VALUE;
+}
+
+function optionalText(value?: string | null): string {
+  return (value || '').trim();
 }
 
 function percentage(completed: number, target: number): number {
@@ -147,6 +173,42 @@ function getStatusStyle(tone: RiskTone): string {
   return 'bg-amber-50 text-amber-700 border-amber-200/60';
 }
 
+function getKsbTypeStyle(type?: string): string {
+  const lowerType = optionalText(type).toLowerCase();
+  if (lowerType.includes('skill')) return 'bg-sky-50 text-sky-700 border-sky-100';
+  if (lowerType.includes('behaviour') || lowerType.includes('behavior')) return 'bg-emerald-50 text-emerald-700 border-emerald-100';
+  return 'bg-violet-50 text-violet-700 border-violet-100';
+}
+
+function toCompletedDetails(details?: KsbCompletedDetail[]): KsbCompletedDetail[] {
+  if (!Array.isArray(details)) return [];
+
+  return details
+    .map((detail, detailIndex) => {
+      const code = optionalText(detail.code);
+      const sources = Array.isArray(detail.sources) ? detail.sources : [];
+
+      return {
+        code,
+        type: displayText(detail.type),
+        description: optionalText(detail.description),
+        sources: sources.map((source, sourceIndex) => ({
+          id: optionalText(source.id) || `${code || detailIndex}-${sourceIndex}`,
+          title: displayText(source.title),
+          typeLabel: displayText(source.typeLabel),
+          kind: displayText(source.kind),
+          module: displayText(source.module),
+          week: displayText(source.week),
+          reportedTime: displayText(source.reportedTime),
+          hours: isNumber(source.hours) ? source.hours : null,
+          completedDate: displayText(source.completedDate),
+          detail: displayText(source.detail),
+        })),
+      };
+    })
+    .filter(detail => Boolean(detail.code));
+}
+
 function toKsbImpactRow(learner: CaseloadApiLearner): KsbImpactRow {
   const completed = Math.max(toNumber(learner.ksbCompleted), 0);
   const target = Math.max(toNumber(learner.ksbTarget), 0);
@@ -174,6 +236,7 @@ function toKsbImpactRow(learner: CaseloadApiLearner): KsbImpactRow {
     behavioursCompleted: isNumber(learner.behavioursCompleted) ? learner.behavioursCompleted : null,
     behavioursTarget: isNumber(learner.behavioursTarget) ? learner.behavioursTarget : null,
     behavioursProgress: isNumber(learner.behavioursProgress) ? learner.behavioursProgress : null,
+    completedDetails: toCompletedDetails(learner.ksbCompletedDetails),
     ksbStatus: displayText(learner.ksbStatus),
     evidenceCount: Math.max(toNumber(learner.evidenceCount), 0),
     evidenceCountAvailable: Boolean(learner.evidenceCountAvailable),
@@ -507,7 +570,7 @@ export default function CoachKsbImpact() {
                           onClick={() => setSelectedRowId(row.id)}
                           className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[10px] font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100"
                         >
-                          View
+                          Details
                         </button>
                       </div>
                     </div>
@@ -532,7 +595,7 @@ export default function CoachKsbImpact() {
         isOpen={selectedRow !== null}
         onClose={() => setSelectedRowId(null)}
         title={selectedRow?.learner || 'KSB Details'}
-        width="w-[520px]"
+        width="w-[560px]"
       >
         {selectedRow && (
           <div className="space-y-5">
@@ -621,8 +684,87 @@ export default function CoachKsbImpact() {
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-heading font-semibold text-foreground-900">Completed KSB Breakdown</h4>
+                  <p className="mt-1 text-[11px] text-foreground-400">Each completed KSB and the activity that surfaced it.</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-violet-50 px-3 py-1 text-[10px] font-bold text-violet-700">
+                  {selectedRow.completedDetails.length} KSB{selectedRow.completedDetails.length === 1 ? '' : 's'}
+                </span>
+              </div>
+
+              {selectedRow.completedDetails.length === 0 ? (
+                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center">
+                  <p className="text-[11px] font-semibold text-foreground-500">No completed KSB details available yet.</p>
+                </div>
+              ) : (
+                <div className="mt-4 max-h-[24rem] space-y-2 overflow-y-auto pr-1">
+                  {selectedRow.completedDetails.map(detail => (
+                    <div key={detail.code} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_5px_16px_rgba(15,23,42,0.03)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-xl bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-800">{detail.code}</span>
+                            <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${getKsbTypeStyle(detail.type)}`}>
+                              {detail.type}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-800">
+                            {detail.description || 'No programme description recorded for this KSB.'}
+                          </p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-slate-50 px-2.5 py-1 text-[9px] font-bold text-slate-500">
+                          {detail.sources?.length || 0} source{detail.sources?.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        {detail.sources && detail.sources.length > 0 ? (
+                          detail.sources.map(source => (
+                            <div key={source.id} className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-slate-500">
+                                  {source.typeLabel}
+                                </span>
+                                <span className="text-[9px] font-semibold text-slate-400">{source.completedDate}</span>
+                              </div>
+                              <p className="mt-1.5 truncate text-[11px] font-bold text-slate-900">{source.title}</p>
+                              <p className="mt-1 truncate text-[10px] text-slate-500">{source.module} / {source.week}</p>
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {source.reportedTime && source.reportedTime !== MISSING_VALUE && (
+                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                    Reported {source.reportedTime}
+                                  </span>
+                                )}
+                                {isNumber(source.hours) && (
+                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                    {source.hours}h
+                                  </span>
+                                )}
+                                {source.detail && source.detail !== MISSING_VALUE && source.detail !== source.reportedTime && (
+                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                    {source.detail}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold text-slate-400">
+                            This KSB is counted as complete, but no source metadata was recorded.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Granular Breakdown</h4>
-              <div className="grid grid-cols-2 gap-3 text-[11px]">
+              <div className="grid grid-cols-1 gap-3 text-[11px] sm:grid-cols-3">
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Knowledge %</p>
                   <p className={`mt-1 ${isNumber(selectedRow.knowledgeProgress) ? getMetricTone(selectedRow.knowledgeProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.knowledgeProgress)}</p>
@@ -634,10 +776,6 @@ export default function CoachKsbImpact() {
                 <div className="rounded-xl bg-background-100/60 p-3">
                   <p className="font-semibold text-foreground-500">Behaviours %</p>
                   <p className={`mt-1 ${isNumber(selectedRow.behavioursProgress) ? getMetricTone(selectedRow.behavioursProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.behavioursProgress)}</p>
-                </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="font-semibold text-foreground-500">Trend</p>
-                  <p className="mt-1 text-foreground-400">{MISSING_VALUE}</p>
                 </div>
               </div>
             </div>

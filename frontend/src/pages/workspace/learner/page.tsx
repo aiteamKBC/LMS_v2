@@ -336,7 +336,8 @@ function isoOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function MiniCalendar({ kind, id }: { kind?: LearnerKind; id?: string }) {
+function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
+  const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const now = useMemo(() => new Date(), []);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -357,15 +358,15 @@ function MiniCalendar({ kind, id }: { kind?: LearnerKind; id?: string }) {
   const [toast, setToast] = useState<string | null>(null);
 
   const loadEvents = useCallback(() => {
-    if (!kind || !id) { setLoading(false); return () => {}; }
+    if (!learnerKind || !id) { setLoading(false); return () => {}; }
     let cancelled = false;
     setLoading(true);
-    fetchLearnerCalendarEvents(kind, id)
+    fetchLearnerCalendarEvents(learnerKind, id)
       .then((res) => { if (!cancelled) { setEvents(res.events.filter((e) => e.status !== 'cancelled')); setErr(null); } })
       .catch((e: Error) => { if (!cancelled) setErr(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id]);
+  }, [learnerKind, id]);
 
   useEffect(() => loadEvents(), [loadEvents]);
 
@@ -380,11 +381,11 @@ function MiniCalendar({ kind, id }: { kind?: LearnerKind; id?: string }) {
   }, [id]);
 
   const submitBooking = async () => {
-    if (!kind || !id || submitting) return;
+    if (!learnerKind || !id || submitting) return;
     setSubmitting(true);
     setBookErr(null);
     try {
-      const res = await bookLearnerCalendarSession(kind, id, {
+      const res = await bookLearnerCalendarSession(learnerKind, id, {
         sessionType: bookType,
         scheduledDate: bookDate,
         scheduledTime: bookTime,
