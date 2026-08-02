@@ -125,8 +125,8 @@ export interface AuditMonth {
   month_key: string;
   label: string;
   summary: {
-    actual_hours: number;
-    planned_hours: number;
+    actual_hours: number | null;
+    planned_hours: number | null;
     aptem_items: number;
     lms_items: number;
     completed: number;
@@ -196,6 +196,9 @@ export interface AuditSignoffResponse {
   signoffs: { learner: AuditSignoff | null; coach: AuditSignoff | null };
 }
 
+const learnerAuditRequests = new Map<string, Promise<LearnerAuditResponse>>();
+const learnerPageRequests = new Map<string, Promise<AuditLearnersResponse>>();
+
 async function parse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -214,19 +217,23 @@ async function parse<T>(res: Response): Promise<T> {
 }
 
 export async function fetchLearnerAudit(learnerId: string): Promise<LearnerAuditResponse> {
+  const cachedRequest = learnerAuditRequests.get(learnerId);
+  if (cachedRequest) return cachedRequest;
   let res: Response;
-  try {
-    res = await fetch(`${BASE}/${learnerId}/`);
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  if (res.ok) return parse<LearnerAuditResponse>(res);
-  if (res.status === 502) {
-    const fallback = await fetchAuditLearnersPage({ search: learnerId, includeTest: true, includeAudit: true, limit: 1 });
-    const learner = fallback.results.find((row) => String(row.learnerId) === String(learnerId)) || fallback.results[0];
-    if (learner?.audit) return learner.audit;
-  }
-  return parse<LearnerAuditResponse>(res);
+  const request = (async () => {
+    try {
+      res = await fetch(`${BASE}/${learnerId}/`);
+    } catch {
+      throw new Error('Could not reach the server. Is the backend running on port 8000?');
+    }
+    return parse<LearnerAuditResponse>(res);
+  })();
+  learnerAuditRequests.set(learnerId, request);
+  request.then(
+    () => learnerAuditRequests.delete(learnerId),
+    () => learnerAuditRequests.delete(learnerId),
+  );
+  return request;
 }
 
 export interface AuditLearnersResponse {
@@ -235,6 +242,7 @@ export interface AuditLearnersResponse {
   pageSize: number;
   totalPages: number;
   results: AuditLearnerSummary[];
+  activityStats?: AuditActivityStats | null;
 }
 
 export async function fetchAuditLearnersPage(options: { search?: string; limit?: number; page?: number; pageSize?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnersResponse> {
@@ -248,13 +256,24 @@ export async function fetchAuditLearnersPage(options: { search?: string; limit?:
   if (options.includeActivities) params.set('includeActivities', 'true');
   if (options.activityCategory) params.set('activityCategory', options.activityCategory);
   const qs = params.toString() ? `?${params.toString()}` : '';
+  const cacheKey = `${BASE}/${qs}`;
+  const cachedRequest = learnerPageRequests.get(cacheKey);
+  if (cachedRequest) return cachedRequest;
   let res: Response;
-  try {
-    res = await fetch(`${BASE}/${qs}`);
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  return parse<AuditLearnersResponse>(res);
+  const request = (async () => {
+    try {
+      res = await fetch(cacheKey);
+    } catch {
+      throw new Error('Could not reach the server. Is the backend running on port 8000?');
+    }
+    return parse<AuditLearnersResponse>(res);
+  })();
+  learnerPageRequests.set(cacheKey, request);
+  request.then(
+    () => learnerPageRequests.delete(cacheKey),
+    () => learnerPageRequests.delete(cacheKey),
+  );
+  return request;
 }
 
 export async function fetchAuditLearners(options: { search?: string; limit?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnerSummary[]> {
@@ -299,6 +318,7 @@ export async function saveAuditSignoff(learnerId: string, payload: AuditSignoffP
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
+  learnerAuditRequests.delete(learnerId);
   return parse<AuditSignoffResponse>(res);
 }
 
