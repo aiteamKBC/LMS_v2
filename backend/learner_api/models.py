@@ -558,10 +558,23 @@ class LearnerProfile(models.Model):
         if not learner_activity_events_relation_exists(using):
             return []
 
-        entries = [
-            _progress_entry_activity(entry)
-            for entry in self.progress_entries.exclude(feed_kind="")
-        ]
+        prefetched = getattr(self, "_prefetched_objects_cache", None)
+        prefetched_progress = (
+            prefetched.get("progress_entries")
+            if isinstance(prefetched, dict)
+            else None
+        )
+        if prefetched_progress is not None:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in prefetched_progress
+                if str(getattr(entry, "feed_kind", "") or "").strip()
+            ]
+        else:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in self.progress_entries.exclude(feed_kind="")
+            ]
         entries.sort(key=lambda item: item.get("at") or "", reverse=newest_first)
         return entries
 

@@ -1074,11 +1074,16 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     ]
     if learner_activity_events_relation_exists(get_learner_db_alias()):
         prefetches.append("activity_events")
-    queryset = LearnerProfile.objects.prefetch_related(*prefetches)
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .prefetch_related(*prefetches)
+        .order_by("full_name", "id")
+    )
     rows = [
         row
-        for row in queryset.order_by("full_name", "id")
-        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
+        for row in queryset
+        if clean_text(row.username)
     ]
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
     for row in rows:
@@ -1255,19 +1260,24 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
 
 
-def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
-    refresh_caseload_learner_ksb_snapshot(row)
-    if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
-        try:
-            # Keep coach-facing caseload cards aligned with the live learner
-            # detail OTJ calculation instead of stale stored snapshot values.
-            refresh_learner_otjh_snapshot(row)
-        except Exception as exc:
-            logger.warning(
-                "Could not refresh live OTJ snapshot for learner %s: %s",
-                getattr(row, "id", None),
-                exc,
-            )
+def serialize_caseload_learner(
+    row: LearnerProfile | SimpleNamespace,
+    *,
+    refresh_live_snapshots: bool = True,
+) -> dict:
+    if refresh_live_snapshots:
+        refresh_caseload_learner_ksb_snapshot(row)
+        if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
+            try:
+                # Keep coach-facing caseload cards aligned with the live learner
+                # detail OTJ calculation instead of stale stored snapshot values.
+                refresh_learner_otjh_snapshot(row)
+            except Exception as exc:
+                logger.warning(
+                    "Could not refresh live OTJ snapshot for learner %s: %s",
+                    getattr(row, "id", None),
+                    exc,
+                )
 
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
@@ -1398,6 +1408,16 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
     }
+
+
+def request_prefers_live_caseload_snapshots(request) -> bool:
+    """Opt into expensive live KSB/OTJ recalculation when explicitly requested.
+
+    The dashboard and coach list views only need the persisted caseload
+    snapshot, so they stay fast by default. Drill-down callers can pass
+    `?live=1` when they genuinely need a fresh recomputation.
+    """
+    return clean_text(request.GET.get("live")).casefold() in {"1", "true", "yes", "on"}
 
 
 def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
@@ -4879,10 +4899,14 @@ def coach_monthly_activity(request):
 @require_GET
 def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
     try:
         rows = fetch_caseload_learner_profiles(owner_email)
-        learners = [serialize_caseload_learner(row) for row in rows]
+        learners = [
+            serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
+            for row in rows
+        ]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},

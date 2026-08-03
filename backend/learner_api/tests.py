@@ -45,6 +45,25 @@ class LearnerActivityFeedFallbackTests(SimpleTestCase):
         self.assertEqual(learner.activity_feed_entries(), [])
         relation_exists.assert_called_once()
 
+    @patch("learner_api.models._progress_entry_activity")
+    @patch("learner_api.models.learner_activity_events_relation_exists", return_value=True)
+    def test_uses_prefetched_progress_entries_when_available(self, relation_exists, project_entry):
+        learner = LearnerProfile()
+        learner._prefetched_objects_cache = {
+            "progress_entries": [
+                SimpleNamespace(feed_kind="video", feed_key="keep"),
+                SimpleNamespace(feed_kind="", feed_key="skip"),
+            ]
+        }
+        project_entry.side_effect = lambda entry: {"kind": entry.feed_key, "at": entry.feed_key}
+
+        self.assertEqual(
+            learner.activity_feed_entries(newest_first=True),
+            [{"kind": "keep", "at": "keep"}],
+        )
+        project_entry.assert_called_once()
+        relation_exists.assert_called_once()
+
 
 class ProgressActivityProjectionTests(SimpleTestCase):
     def test_projects_feed_fields_from_the_progress_entry(self):

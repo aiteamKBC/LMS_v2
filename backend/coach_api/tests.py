@@ -3,12 +3,13 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport
 from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
+    coach_caseload,
     completed_ksb_codes,
     fetch_source_schedule_rows,
     reported_minutes,
@@ -51,6 +52,53 @@ class CoachKsbEvidenceTests(SimpleTestCase):
         )
 
         self.assertEqual(completed, {"K3", "B2"})
+
+
+class CoachCaseloadViewTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_caseload_uses_cached_snapshots_by_default(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
+
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_caseload_allows_live_snapshot_refresh_when_requested(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com", "live": "1"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
 
 
 @override_settings(
