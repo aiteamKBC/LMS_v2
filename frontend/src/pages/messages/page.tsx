@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
+import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   bootstrapChatSession,
@@ -101,11 +102,19 @@ function isWithinMessageActionWindow(message: ChatMessage): boolean {
 
 export default function MessagesPage() {
   const { auth } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
-  const role = auth.roles[0]?.slug || 'learner';
+  const authenticatedRole = auth.roles[0]?.slug || 'learner';
+  const role = location.pathname.startsWith('/learner/messages')
+    ? 'learner'
+    : authenticatedRole;
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
+  const rememberedLearnerId = role === 'learner' ? getRememberedLearner()?.id : undefined;
+  const chatSessionEmail = role === 'learner' && authenticatedRole !== 'learner'
+    ? 'learner@kbc.test'
+    : auth.user?.email;
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
@@ -150,8 +159,17 @@ export default function MessagesPage() {
     try {
       // The app login is local-demo auth, so ensure the protected Django chat
       // session is ready before loading the PostgreSQL conversations.
-      if (auth.user?.email && (role === 'coach' || role === 'learner')) {
-        await bootstrapChatSession(auth.user.email);
+      if (chatSessionEmail && (role === 'coach' || role === 'learner')) {
+        try {
+          await bootstrapChatSession(chatSessionEmail, {
+            learnerSourceId: rememberedLearnerId,
+          });
+        } catch (cause) {
+          // A 404 means production demo bootstrapping is disabled and the real
+          // Django login owns the session. Other failures must stop here so a
+          // stale learner session can never display or send another learner's chat.
+          if (!(cause instanceof ChatApiError) || cause.status !== 404) throw cause;
+        }
       }
       const data = await fetchChatConversations();
       setConversations(data);
@@ -167,7 +185,7 @@ export default function MessagesPage() {
     } finally {
       setLoadingConversations(false);
     }
-  }, [auth.user?.email, role]);
+  }, [chatSessionEmail, rememberedLearnerId, role]);
 
   useEffect(() => {
     if (auth.isAuthenticated) void loadConversations();
@@ -382,7 +400,7 @@ export default function MessagesPage() {
         || (activeFilter === 'recent' && isRecent(conversation.updated_at));
       return matchesQuery && matchesFilter;
     });
-  }, [activeFilter, conversations, role, searchQuery]);
+  }, [activeFilter, conversations, isCoach, role, searchQuery]);
 
   const unreadCount = conversations.reduce((sum, item) => sum + item.unread_count, 0);
   const needReplyCount = conversations.filter(item => item.latest_message?.sender.type !== role).length;
