@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumOverview, type CurriculumSession, type CurriculumStaffProfile } from '@/lib/curriculumApi';
+import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   DEFAULT_COACH_EMAIL,
@@ -352,15 +353,6 @@ function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, inde
   };
 }
 
-async function readJson<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = typeof data.detail === 'string' ? data.detail : `Request failed with ${response.status}`;
-    throw new Error(message);
-  }
-  return data as T;
-}
-
 function getFirstName(name: string) {
   const value = displayValue(name);
   return value === EMPTY_VALUE ? 'Coach' : value.split(/\s+/)[0];
@@ -659,12 +651,12 @@ export default function CoachDashboard() {
       const warnings: string[] = [];
 
       const [caseloadResult, attendanceResult, timetableResult, absenceResult, curriculumResult, markingResult] = await Promise.allSettled([
-        fetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadApiResponse>(response)),
-        fetch(ATTENDANCE_ENDPOINT, { signal: controller.signal }).then(response => readJson<AttendanceApiResponse>(response)),
+        fetchSharedJsonGet<CaseloadApiResponse>(CASELOAD_ENDPOINT, { signal: controller.signal }),
+        fetchSharedJsonGet<AttendanceApiResponse>(ATTENDANCE_ENDPOINT, { signal: controller.signal }),
         fetchCoachCalendarEvents(controller.signal),
-        fetch(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }).then(response => readJson<AbsenceReportsResponse>(response)),
+        fetchSharedJsonGet<AbsenceReportsResponse>(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }),
         fetchCurriculumOverview(controller.signal),
-        fetch(EVIDENCE_AWAITING_REVIEW_ENDPOINT, { signal: controller.signal }).then(response => readJson<MarkingQueueResponse>(response)),
+        fetchSharedJsonGet<MarkingQueueResponse>(EVIDENCE_AWAITING_REVIEW_ENDPOINT, { signal: controller.signal }),
       ]);
 
       if (controller.signal.aborted) return;

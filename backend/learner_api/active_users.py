@@ -69,8 +69,10 @@ def _reported_minutes(value):
     match = re.search(r"\d+(?:\.\d+)?", lower_text)
     if not match:
         return 0.0
-    # The learner-facing reflection UI stores bare numeric input as HOURS.
-    return float(match.group(0)) * 60
+    value = float(match.group(0))
+    # Small bare numbers are learner-entered hours ("2" => 2h). Larger bare
+    # values usually come from component duration fields stored as minutes.
+    return value if value > 24 else value * 60
 
 
 def fmt_hours(hours):
@@ -132,14 +134,44 @@ def dedupe_otjh_progress_records(progress):
     return unique
 
 
-def completed_hours_from_progress(progress):
+def _component_expected_hours_lookup(components):
+    lookup = {}
+    if not isinstance(components, list):
+        return lookup
+
+    for item in components:
+        if not isinstance(item, dict):
+            continue
+        nested_weeks = item.get("weeks")
+        if isinstance(nested_weeks, list):
+            for week in nested_weeks:
+                for component in (week.get("components") or []) if isinstance(week, dict) else []:
+                    component_id = _s(component.get("componentId") or component.get("id"))
+                    expected = _number(component.get("expectedOtjh") or component.get("expected_otjh"))
+                    if component_id and expected is not None:
+                        lookup[component_id] = expected
+            continue
+
+        component_id = _s(item.get("componentId") or item.get("id"))
+        expected = _number(item.get("expectedOtjh") or item.get("expected_otjh"))
+        if component_id and expected is not None:
+            lookup[component_id] = expected
+    return lookup
+
+
+def completed_hours_from_progress(progress, components=None):
     if not isinstance(progress, list):
         return "0"
-    minutes = sum(
-        _reported_minutes(record.get("reportedTime"))
-        for record in dedupe_otjh_progress_records(progress)
-    )
-    return fmt_hours(minutes / 60)
+    expected_hours_by_component = _component_expected_hours_lookup(components)
+    hours = 0.0
+    for record in dedupe_otjh_progress_records(progress):
+        component_id = _s(record.get("componentId"))
+        expected_hours = expected_hours_by_component.get(component_id)
+        if expected_hours is not None:
+            hours += expected_hours
+            continue
+        hours += _reported_minutes(record.get("reportedTime")) / 60
+    return fmt_hours(hours)
 
 
 def append_activity_entry(learner, entry):

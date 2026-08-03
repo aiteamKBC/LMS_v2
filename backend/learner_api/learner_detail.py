@@ -443,7 +443,14 @@ def _cumulative_week_target(detail, learner_start_date=None, today=None):
 
 def _live_otjh_snapshot(detail, learner_profile=None):
     planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
-    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
+    completed = (
+        completed_hours_from_progress(
+            learner_profile.training_plan_progress,
+            detail.get("components"),
+        )
+        if learner_profile
+        else "0"
+    )
 
     target_num = _cumulative_week_target(
         detail,
