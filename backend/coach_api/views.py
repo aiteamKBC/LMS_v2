@@ -30,7 +30,13 @@ from learner_api.evidence_storage import (
     parse_blob_url,
     resolve_read_url,
 )
-from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.models import (
+    CommercialUser,
+    EnrolmentUser,
+    LearnerAbsence,
+    LearnerProfile,
+    learner_activity_events_relation_exists,
+)
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
@@ -1058,18 +1064,26 @@ def find_learner_absence_relation(connection) -> str | None:
 
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
-    queryset = LearnerProfile.objects.prefetch_related(
+    prefetches = [
         "assigned_ksbs",
         "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_activity_events_relation_exists(get_learner_db_alias()):
+        prefetches.append("activity_events")
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .prefetch_related(*prefetches)
+        .order_by("full_name", "id")
     )
     rows = [
         row
-        for row in queryset.order_by("full_name", "id")
-        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
+        for row in queryset
+        if clean_text(row.username)
     ]
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
     for row in rows:
@@ -1246,19 +1260,24 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
 
 
-def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
-    refresh_caseload_learner_ksb_snapshot(row)
-    if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
-        try:
-            # Keep coach-facing caseload cards aligned with the live learner
-            # detail OTJ calculation instead of stale stored snapshot values.
-            refresh_learner_otjh_snapshot(row)
-        except Exception as exc:
-            logger.warning(
-                "Could not refresh live OTJ snapshot for learner %s: %s",
-                getattr(row, "id", None),
-                exc,
-            )
+def serialize_caseload_learner(
+    row: LearnerProfile | SimpleNamespace,
+    *,
+    refresh_live_snapshots: bool = True,
+) -> dict:
+    if refresh_live_snapshots:
+        refresh_caseload_learner_ksb_snapshot(row)
+        if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
+            try:
+                # Keep coach-facing caseload cards aligned with the live learner
+                # detail OTJ calculation instead of stale stored snapshot values.
+                refresh_learner_otjh_snapshot(row)
+            except Exception as exc:
+                logger.warning(
+                    "Could not refresh live OTJ snapshot for learner %s: %s",
+                    getattr(row, "id", None),
+                    exc,
+                )
 
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
@@ -1391,6 +1410,16 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     }
 
 
+def request_prefers_live_caseload_snapshots(request) -> bool:
+    """Opt into expensive live KSB/OTJ recalculation when explicitly requested.
+
+    The dashboard and coach list views only need the persisted caseload
+    snapshot, so they stay fast by default. Drill-down callers can pass
+    `?live=1` when they genuinely need a fresh recomputation.
+    """
+    return clean_text(request.GET.get("live")).casefold() in {"1", "true", "yes", "on"}
+
+
 def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
     target_hours_value = (
         clean_text(row.target_hours)
@@ -1488,7 +1517,8 @@ def reported_minutes(value) -> float:
     match = re.search(r"\d+(?:\.\d+)?", lower_text)
     if not match:
         return 0.0
-    return float(match.group(0)) * 60
+    value = float(match.group(0))
+    return value if value > 24 else value * 60
 
 
 def format_hours_number(hours: float) -> str:
@@ -1587,8 +1617,41 @@ def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
                     "module": module_title,
                     "week": week_title,
                     "title": clean_text(component.get("componentTitle") or component.get("title")),
+                    "expectedOtjh": component.get("expectedOtjh") or component.get("expected_otjh"),
                 }
     return lookup
+
+
+def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[str, float]:
+    ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
+    if not ids:
+        return {}
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
+                [ids],
+            )
+            return {
+                component_id: float(expected)
+                for component_id, expected in cur.fetchall()
+                if expected is not None
+            }
+    except DatabaseError as exc:
+        logger.warning("Could not look up component expected_otjh for OTJH breakdown: %s", exc)
+        return {}
+
+
+def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float]) -> float | None:
+    if component_id in expected_by_id:
+        return expected_by_id[component_id]
+    expected = component_meta.get("expectedOtjh")
+    if expected in (None, ""):
+        return None
+    try:
+        return float(expected)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_otjh_completed_entries(
@@ -1614,22 +1677,29 @@ def build_otjh_completed_entries(
             activity_by_component.setdefault(component_id, activity)
 
     entries: list[dict] = []
+    expected_by_id = curriculum_expected_otjh_by_component_id([
+        clean_text(entry.get("componentId"))
+        for entry in progress_entries
+        if isinstance(entry, dict)
+    ])
     for index, entry in enumerate(dedupe_otjh_progress_records(progress_entries)):
         if not isinstance(entry, dict):
-            continue
-        minutes = reported_minutes(entry.get("reportedTime"))
-        if minutes <= 0:
             continue
 
         kind = clean_text(entry.get("kind")).lower()
         quiz_id = clean_text(entry.get("quizId"))
         component_id = clean_text(entry.get("componentId"))
+        component_meta = component_lookup.get(component_id, {})
+        expected_hours = component_expected_otjh_hours(component_id, component_meta, expected_by_id)
+        minutes = expected_hours * 60 if expected_hours is not None else reported_minutes(entry.get("reportedTime"))
+        if minutes <= 0:
+            continue
+
         activity = (
             activity_by_quiz.get(quiz_id)
             if quiz_id
             else activity_by_component.get(f"{kind}:{component_id}") or activity_by_component.get(component_id)
         )
-        component_meta = component_lookup.get(component_id, {})
         merged_entry = {
             **(activity or {}),
             **entry,
@@ -4829,10 +4899,14 @@ def coach_monthly_activity(request):
 @require_GET
 def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
     try:
         rows = fetch_caseload_learner_profiles(owner_email)
-        learners = [serialize_caseload_learner(row) for row in rows]
+        learners = [
+            serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
+            for row in rows
+        ]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},

@@ -18,8 +18,9 @@ each field pins its exact `db_column`. The schema is targeted with the
 Neon connection pooler may reject.
 """
 import json
+from functools import lru_cache
 
-from django.db import models
+from django.db import DatabaseError, connections, models, router
 from django.db.models.functions import Lower, Trim
 
 
@@ -39,6 +40,20 @@ class SafeJSONField(models.JSONField):
             return json.loads(value)
         except (TypeError, ValueError):
             return value
+
+
+LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
+
+
+@lru_cache(maxsize=None)
+def learner_activity_events_relation_exists(using: str) -> bool:
+    try:
+        with connections[using].cursor() as cursor:
+            cursor.execute("select to_regclass(%s)", [LEARNER_ACTIVITY_EVENTS_RELATION])
+            result = cursor.fetchone()
+    except DatabaseError:
+        return False
+    return bool(result and result[0])
 
 
 def _serialise_quiz_ref(value):
@@ -539,10 +554,27 @@ class LearnerProfile(models.Model):
         return self.activity_feed_entries()
 
     def activity_feed_entries(self, *, newest_first=False):
-        entries = [
-            _progress_entry_activity(entry)
-            for entry in self.progress_entries.exclude(feed_kind="")
-        ]
+        using = self._state.db or router.db_for_read(self.__class__) or "default"
+        if not learner_activity_events_relation_exists(using):
+            return []
+
+        prefetched = getattr(self, "_prefetched_objects_cache", None)
+        prefetched_progress = (
+            prefetched.get("progress_entries")
+            if isinstance(prefetched, dict)
+            else None
+        )
+        if prefetched_progress is not None:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in prefetched_progress
+                if str(getattr(entry, "feed_kind", "") or "").strip()
+            ]
+        else:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in self.progress_entries.exclude(feed_kind="")
+            ]
         entries.sort(key=lambda item: item.get("at") or "", reverse=newest_first)
         return entries
 
