@@ -321,6 +321,16 @@ Run these commands from `backend/`:
 | `python manage.py migrate` | Apply database migrations |
 | `python manage.py createsuperuser` | Create a Django administrator |
 | `python manage.py test` | Run the backend test suite |
+| `python manage.py create_calendar_busy_slots_table` | Create the learner personal-calendar busy-slot cache |
+| `python manage.py sync_calendar_busy_slots` | Refresh connected learner calendars (defaults to the next 90 days) |
+
+Run `sync_calendar_busy_slots` every 10–15 minutes in the deployment scheduler. Example cron entry:
+
+```cron
+*/15 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py sync_calendar_busy_slots
+```
+
+The cache stores only start/end times and never stores personal event titles, descriptions, attendees, or locations. Booking endpoints still perform a live provider check before confirming a session.
 
 Set `DJANGO_USE_SQLITE=true` to run backend tests against the isolated SQLite configuration.
 

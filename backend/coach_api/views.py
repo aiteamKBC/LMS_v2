@@ -38,6 +38,10 @@ from learner_api.models import (
     learner_activity_events_relation_exists,
 )
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
+from learner_api.calendar_connections import (
+    booking_conflicts as personal_calendar_booking_conflicts,
+    cached_learner_busy_slots,
+)
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
@@ -1202,6 +1206,44 @@ def resolve_caseload_source_row(
     if profile_prefers_apprenticeship_source(learner):
         return enrolment_row or commercial_row
     return commercial_row or enrolment_row
+
+
+def learner_calendar_source_identity(
+    learner: LearnerProfile | SimpleNamespace,
+    *,
+    commercial_rows: dict[int, CommercialUser] | None = None,
+    enrolment_rows: dict[int, EnrolmentUser] | None = None,
+) -> tuple[str, int] | None:
+    source = resolve_caseload_source_row(
+        learner,
+        commercial_rows=commercial_rows,
+        enrolment_rows=enrolment_rows,
+    )
+    if source is None or not getattr(source, "id", None):
+        return None
+    kind = "commercial" if clean_text(getattr(source, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    return kind, int(source.id)
+
+
+def coach_learner_personal_calendar_conflicts(
+    learner: LearnerProfile | SimpleNamespace,
+    scheduled_date: date,
+    scheduled_time: time,
+    duration_minutes: int,
+    timezone_offset_minutes: int = 0,
+) -> bool:
+    identity = learner_calendar_source_identity(learner)
+    if not identity:
+        return False
+    kind, source_id = identity
+    return personal_calendar_booking_conflicts(
+        kind,
+        source_id,
+        scheduled_date,
+        scheduled_time,
+        duration_minutes,
+        timezone_offset_minutes,
+    )
 
 
 def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
@@ -4212,6 +4254,9 @@ def coach_timetable_schedule_event(request):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
@@ -4226,6 +4271,13 @@ def coach_timetable_schedule_event(request):
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
+        learner_rows = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner_rows)
+        learner = learner_map.get(catchup_record.learner_id)
+        if learner and coach_learner_personal_calendar_conflicts(
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+        ):
+            return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.scheduled_date = scheduled_date
         catchup_record.scheduled_time = scheduled_time
@@ -4233,8 +4285,6 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-        learner = fetch_owner_active_learner_profiles(owner_email)
-        learner_map = build_learner_profile_map(learner)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -4260,6 +4310,11 @@ def coach_timetable_schedule_event(request):
         learner_rows = fetch_owner_active_learner_profiles(owner_email)
         learner_map = build_learner_profile_map(learner_rows)
         learner_id = int(catchup_template_event["learnerId"])
+        learner = learner_map.get(learner_id)
+        if learner and coach_learner_personal_calendar_conflicts(
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+        ):
+            return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         target_date = scheduled_date
 
         record, _ = CoachCalendarEvent.objects.get_or_create(
@@ -4317,6 +4372,14 @@ def coach_timetable_schedule_event(request):
         target_date = target_date.date()
     if not isinstance(target_date, date):
         return JsonResponse({"detail": "Target date is missing for this event."}, status=400)
+
+    learner_rows = fetch_owner_active_learner_profiles(owner_email)
+    learner_map = build_learner_profile_map(learner_rows)
+    base_learner = learner_map.get(int(base_event["learnerId"]))
+    if base_learner and coach_learner_personal_calendar_conflicts(
+        base_learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    ):
+        return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
 
     record, _ = CoachCalendarEvent.objects.get_or_create(
         event_key=event_key,
@@ -4377,6 +4440,9 @@ def coach_timetable_book_event(request):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except (TypeError, ValueError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
@@ -4398,6 +4464,10 @@ def coach_timetable_book_event(request):
     learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if not learner:
         return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+    if coach_learner_personal_calendar_conflicts(
+        learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    ):
+        return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
 
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
     learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
@@ -4827,6 +4897,65 @@ def coach_timetable(request):
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
         }
     )
+
+
+@require_GET
+def coach_learner_busy_slots(request, learner_id=None):
+    """Return privacy-safe cached busy blocks for learners in this coach's caseload."""
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    requested_learner_id = learner_id or parse_int(request.GET.get("learner_id"), 0)
+    start = clean_text(request.GET.get("start"))
+    end = clean_text(request.GET.get("end"))
+    if not start or not end:
+        return JsonResponse({"detail": "start and end are required ISO-8601 datetimes."}, status=400)
+
+    try:
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError:
+        return JsonResponse({"detail": "start and end must be ISO-8601 datetimes."}, status=400)
+    if end_dt <= start_dt or (end_dt - start_dt).days > 31:
+        return JsonResponse({"detail": "Busy-slot range must be between 0 and 31 days."}, status=400)
+
+    learners = fetch_owner_active_learner_profiles(owner_email)
+    if requested_learner_id:
+        learners = [row for row in learners if int(getattr(row, "id", 0) or 0) == requested_learner_id]
+        if not learners:
+            return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(learners)
+    slots = []
+    seen_slots = set()
+    try:
+        for learner in learners:
+            identity = learner_calendar_source_identity(
+                learner,
+                commercial_rows=commercial_rows,
+                enrolment_rows=enrolment_rows,
+            )
+            if not identity:
+                continue
+            kind, source_id = identity
+            for slot in cached_learner_busy_slots(kind, source_id, start, end):
+                slot_key = (str(learner.id), slot["start"], slot["end"])
+                if slot_key in seen_slots:
+                    continue
+                seen_slots.add(slot_key)
+                slots.append(
+                    {
+                        "id": slot["id"],
+                        "learnerId": str(learner.id),
+                        "learnerName": clean_text(getattr(learner, "username", "")) or "Learner",
+                        "start": slot["start"],
+                        "end": slot["end"],
+                        "status": "busy",
+                        "syncedAt": slot["syncedAt"],
+                    }
+                )
+    except Exception as exc:
+        return JsonResponse({"detail": "Unable to load learner busy slots.", "error": str(exc)}, status=503)
+
+    return JsonResponse({"busy": slots})
 
 
 @require_GET

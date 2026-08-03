@@ -18,7 +18,7 @@ import httpx
 from cryptography.fernet import Fernet, InvalidToken
 from lxml import etree
 from django.core import signing
-from django.db import connections
+from django.db import connections, transaction
 from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -28,6 +28,13 @@ from .learner_detail import SOURCE_MODELS
 PROVIDERS = {"google", "microsoft", "icloud", "caldav", "ics"}
 OAUTH_PROVIDERS = {"google", "microsoft"}
 STATE_SALT = "learner-personal-calendar-oauth"
+
+
+def _microsoft_tenant():
+    """Honour the configured audience; use the tenant id when no audience is set."""
+    tenant_id = (os.environ.get("MICROSOFT_TENANT_ID") or os.environ.get("TENANTID") or "").strip().strip('"')
+    configured = (os.environ.get("MICROSOFT_TENANT") or "").strip().strip('"')
+    return configured or tenant_id or "common"
 
 
 def _error(message, status=400):
@@ -67,7 +74,7 @@ def _learner(kind, learner_id):
 def _row(kind, learner_id, provider):
     with _db().cursor() as cursor:
         cursor.execute(
-            '''SELECT provider, account_email, status, connected_at, last_sync_at,
+            '''SELECT id, provider, account_email, status, connected_at, last_sync_at,
                       credential_ciphertext, calendar_url
                FROM "Learner"."calendar_connections"
                WHERE learner_kind = %s AND learner_id = %s AND provider = %s''',
@@ -76,12 +83,12 @@ def _row(kind, learner_id, provider):
         result = cursor.fetchone()
     if not result:
         return None
-    credentials = _decrypt(result[5])
+    credentials = _decrypt(result[6])
     return {
-        "provider": result[0], "accountEmail": result[1] or "", "status": result[2],
-        "connectedAt": result[3].isoformat() if result[3] else None,
-        "lastSyncAt": result[4].isoformat() if result[4] else None,
-        "credentials": credentials, "calendarUrl": credentials.get("_calendar_url") or result[6] or "",
+        "id": result[0], "provider": result[1], "accountEmail": result[2] or "", "status": result[3],
+        "connectedAt": result[4].isoformat() if result[4] else None,
+        "lastSyncAt": result[5].isoformat() if result[5] else None,
+        "credentials": credentials, "calendarUrl": credentials.get("_calendar_url") or result[7] or "",
     }
 
 
@@ -151,7 +158,7 @@ def oauth_start(request, kind, learner_id, provider):
     else:
         client_id = os.environ.get("MICROSOFT_CLIENT_ID", "")
         callback = os.environ.get("MICROSOFT_CALLBACK_URI", "")
-        tenant = os.environ.get("MICROSOFT_TENANT", os.environ.get("MICROSOFT_TENANT_ID", "common")) or "common"
+        tenant = _microsoft_tenant()
         if not client_id or not callback:
             return _error("Microsoft Calendar OAuth is not configured.", 503)
         query = urlencode({
@@ -189,7 +196,7 @@ def oauth_callback(request, provider):
                     "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
                     "redirect_uri": os.environ.get("GOOGLE_CALLBACK_URI"), "grant_type": "authorization_code"}
         else:
-            tenant = os.environ.get("MICROSOFT_TENANT", os.environ.get("MICROSOFT_TENANT_ID", "common")) or "common"
+            tenant = _microsoft_tenant()
             token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
             body = {"code": code, "client_id": os.environ.get("MICROSOFT_CLIENT_ID"),
                     "client_secret": os.environ.get("MICROSOFT_CLIENT_SECRET"),
@@ -351,7 +358,7 @@ def _refresh_token(provider, row):
         body = {"client_id": os.environ.get("GOOGLE_CLIENT_ID"), "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
                 "refresh_token": refresh, "grant_type": "refresh_token"}
     else:
-        tenant = os.environ.get("MICROSOFT_TENANT", os.environ.get("MICROSOFT_TENANT_ID", "common")) or "common"
+        tenant = _microsoft_tenant()
         url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
         body = {"client_id": os.environ.get("MICROSOFT_CLIENT_ID"), "client_secret": os.environ.get("MICROSOFT_CLIENT_SECRET"),
                 "refresh_token": refresh, "scope": "offline_access User.Read Calendars.ReadBasic", "grant_type": "refresh_token"}
@@ -398,6 +405,123 @@ def _provider_busy(row, start, end):
     return _ics_busy(calendar_text)
 
 
+def _as_utc(value):
+    """Parse a provider datetime and normalise it for safe database comparisons."""
+    parsed = _parse_dt(str(value or ""))
+    if not parsed:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _replace_busy_slots(connection_id, provider, range_start, range_end, busy_slots):
+    """Replace the cached free/busy result for one connection and time window."""
+    start_dt, end_dt = _as_utc(range_start), _as_utc(range_end)
+    if not start_dt or not end_dt or end_dt <= start_dt:
+        raise ValueError("Invalid busy-slot sync range.")
+
+    rows = []
+    for slot in busy_slots:
+        slot_start = _as_utc(slot.get("start"))
+        slot_end = _as_utc(slot.get("end"))
+        if not slot_start or not slot_end or slot_end <= slot_start:
+            continue
+        if slot_start >= end_dt or slot_end <= start_dt:
+            continue
+        source_hash = hashlib.sha256(
+            f"{provider}|{slot_start.isoformat()}|{slot_end.isoformat()}".encode()
+        ).hexdigest()
+        rows.append((connection_id, slot_start, slot_end, source_hash))
+
+    with transaction.atomic(using="enrolment"):
+        with _db().cursor() as cursor:
+            cursor.execute(
+                '''DELETE FROM "Learner"."calendar_busy_slots"
+                   WHERE connection_id = %s AND starts_at < %s AND ends_at > %s''',
+                [connection_id, end_dt, start_dt],
+            )
+            if rows:
+                cursor.executemany(
+                    '''INSERT INTO "Learner"."calendar_busy_slots"
+                         (connection_id, starts_at, ends_at, busy_status, source_hash, synced_at)
+                       VALUES (%s, %s, %s, 'busy', %s, NOW())
+                       ON CONFLICT (connection_id, source_hash) DO UPDATE SET
+                         starts_at = EXCLUDED.starts_at,
+                         ends_at = EXCLUDED.ends_at,
+                         busy_status = 'busy',
+                         synced_at = NOW()''',
+                    rows,
+                )
+
+
+def _sync_connection_busy(row, start, end):
+    slots = _provider_busy(row, start, end)
+    _replace_busy_slots(row["id"], row["provider"], start, end, slots)
+    with _db().cursor() as cursor:
+        cursor.execute(
+            '''UPDATE "Learner"."calendar_connections"
+               SET last_sync_at = NOW(), updated_at = NOW() WHERE id = %s''',
+            [row["id"]],
+        )
+    return slots
+
+
+def sync_learner_busy_slots(kind, learner_id, start, end):
+    """Refresh every connected provider for a learner and return privacy-safe slots."""
+    with _db().cursor() as cursor:
+        cursor.execute(
+            '''SELECT provider FROM "Learner"."calendar_connections"
+               WHERE learner_kind = %s AND learner_id = %s AND status = 'connected' ''',
+            [kind, learner_id],
+        )
+        providers = [item[0] for item in cursor.fetchall()]
+
+    busy, errors = [], []
+    for provider in providers:
+        try:
+            row = _row(kind, learner_id, provider)
+            row.update({"kind": kind, "learnerId": learner_id})
+            slots = _sync_connection_busy(row, start, end)
+            busy.extend({**slot, "provider": provider} for slot in slots)
+        except Exception as exc:
+            errors.append({"provider": provider, "message": str(exc)[:160]})
+    return busy, errors, providers
+
+
+def cached_learner_busy_slots(kind, learner_id, start, end):
+    """Read cached busy intervals without exposing private event metadata."""
+    start_dt, end_dt = _as_utc(start), _as_utc(end)
+    if not start_dt or not end_dt or end_dt <= start_dt:
+        raise ValueError("Invalid busy-slot range.")
+    with _db().cursor() as cursor:
+        cursor.execute(
+            '''SELECT slot.id, slot.starts_at, slot.ends_at, slot.busy_status,
+                      connection.provider, slot.synced_at
+               FROM "Learner"."calendar_busy_slots" slot
+               JOIN "Learner"."calendar_connections" connection
+                 ON connection.id = slot.connection_id
+               WHERE connection.learner_kind = %s
+                 AND connection.learner_id = %s
+                 AND connection.status = 'connected'
+                 AND slot.starts_at < %s AND slot.ends_at > %s
+               ORDER BY slot.starts_at, slot.ends_at''',
+            [kind, learner_id, end_dt, start_dt],
+        )
+        rows = cursor.fetchall()
+    return [
+        {
+            "id": row[0],
+            "start": row[1].isoformat(),
+            "end": row[2].isoformat(),
+            "status": row[3],
+            "provider": row[4],
+            "syncedAt": row[5].isoformat() if row[5] else None,
+        }
+        for row in rows
+    ]
+
+
 def availability(request, kind, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -409,21 +533,7 @@ def availability(request, kind, learner_id):
     max_days = int(os.environ.get("MAX_AVAILABILITY_RANGE_DAYS", "31"))
     if end_dt <= start_dt or (end_dt - start_dt).days > max_days:
         return _error(f"Availability range must be between 0 and {max_days} days.")
-    busy, errors = [], []
-    with _db().cursor() as cursor:
-        cursor.execute('''SELECT provider FROM "Learner"."calendar_connections"
-                          WHERE learner_kind = %s AND learner_id = %s AND status = 'connected' ''', [kind, learner_id])
-        providers = [row[0] for row in cursor.fetchall()]
-    for provider in providers:
-        try:
-            row = _row(kind, learner_id, provider)
-            row.update({"kind": kind, "learnerId": learner_id})
-            busy.extend({**slot, "provider": provider} for slot in _provider_busy(row, start, end))
-            with _db().cursor() as cursor:
-                cursor.execute('''UPDATE "Learner"."calendar_connections" SET last_sync_at = NOW(), updated_at = NOW()
-                                  WHERE learner_kind = %s AND learner_id = %s AND provider = %s''', [kind, learner_id, provider])
-        except Exception as exc:
-            errors.append({"provider": provider, "message": str(exc)[:160]})
+    busy, errors, providers = sync_learner_busy_slots(kind, learner_id, start, end)
     return JsonResponse({"busy": busy, "errors": errors, "connectedProviders": providers})
 
 
@@ -443,7 +553,7 @@ def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration
         try:
             row = _row(kind, learner_id, provider)
             row.update({"kind": kind, "learnerId": learner_id})
-            for slot in _provider_busy(row, start, end):
+            for slot in _sync_connection_busy(row, start, end):
                 slot_start, slot_end = _parse_dt(slot.get("start", "")), _parse_dt(slot.get("end", ""))
                 if slot_start and slot_end and start_dt < slot_end and end_dt > slot_start:
                     return True

@@ -12,6 +12,7 @@ const API_ENDPOINT = '/coach_api/coach/timetable';
 const BOOK_ENDPOINT = '/coach_api/coach/timetable/events/book';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
+const BUSY_SLOTS_ENDPOINT = '/coach_api/coach/timetable/busy-slots';
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Types
@@ -63,6 +64,17 @@ interface TimetableEvent {
   managerSignedAt?: string | null;
   managerSignedBy?: string;
   schedulerOnly?: boolean;
+  readOnlyBusy?: boolean;
+}
+
+interface CoachBusySlot {
+  id: number;
+  learnerId: string;
+  learnerName: string;
+  start: string;
+  end: string;
+  status: 'busy';
+  syncedAt?: string | null;
 }
 
 interface TimetableSummaryMetrics {
@@ -158,6 +170,17 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
+  if (event.readOnlyBusy) {
+    return {
+      label: 'Learner Busy',
+      bg: 'bg-slate-100',
+      border: 'border-slate-300',
+      text: 'text-slate-700',
+      icon: 'ri-lock-line',
+      dot: 'bg-slate-500',
+      barBg: 'bg-slate-500',
+    };
+  }
   const mcrTheme = {
     label: 'MCR',
     bg: 'bg-amber-50',
@@ -216,6 +239,54 @@ function formatTime(h: number) {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function mapCoachBusySlot(slot: CoachBusySlot): TimetableEvent | null {
+  const start = new Date(slot.start);
+  const end = new Date(slot.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null;
+  const jsDay = start.getDay();
+  return {
+    id: `learner-busy-${slot.learnerId}-${slot.id}`,
+    title: 'Busy',
+    type: 'personal',
+    source: 'learner-busy',
+    date: formatDateInputValue(start.getFullYear(), start.getMonth(), start.getDate()),
+    year: start.getFullYear(),
+    month: start.getMonth(),
+    dayOfMonth: start.getDate(),
+    dayOfWeek: (jsDay === 0 ? 6 : jsDay - 1) as TimetableEvent['dayOfWeek'],
+    startHour: start.getHours() + start.getMinutes() / 60,
+    endHour: start.getHours() + start.getMinutes() / 60 + (end.getTime() - start.getTime()) / 3_600_000,
+    timeLabel: `${formatTime(start.getHours() + start.getMinutes() / 60)} - ${formatTime(end.getHours() + end.getMinutes() / 60)}`,
+    learner: slot.learnerName,
+    learnerId: slot.learnerId,
+    location: 'Private personal calendar event',
+    platform: 'Personal Calendar',
+    priority: 'normal',
+    status: 'confirmed',
+    notes: 'The learner is unavailable during this time. Personal event details remain private.',
+    readOnlyBusy: true,
+  };
+}
+
+function overlapsLearnerBusySlot(
+  slots: CoachBusySlot[],
+  learnerId: string | undefined,
+  dateValue: string,
+  timeValue: string,
+  durationMinutes: number,
+) {
+  if (!learnerId || !dateValue || !timeValue) return false;
+  const proposedStart = new Date(`${dateValue}T${timeValue}:00`);
+  if (Number.isNaN(proposedStart.getTime())) return false;
+  const proposedEnd = new Date(proposedStart.getTime() + durationMinutes * 60_000);
+  return slots.some(slot => {
+    if (slot.learnerId !== learnerId) return false;
+    const busyStart = new Date(slot.start);
+    const busyEnd = new Date(slot.end);
+    return proposedStart < busyEnd && proposedEnd > busyStart;
+  });
 }
 
 function buildInitials(value: string) {
@@ -673,6 +744,7 @@ export default function CoachTimetablePage() {
   const [filterSource, setFilterSource] = useState<SourceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [events, setEvents] = useState<TimetableEvent[]>([]);
+  const [busySlots, setBusySlots] = useState<CoachBusySlot[]>([]);
   const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
@@ -813,6 +885,24 @@ export default function CoachTimetablePage() {
       if (cleanup) cleanup();
     };
   }, [loadTimetable]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const start = new Date(viewYear, viewMonth, 1).toISOString();
+    const end = new Date(viewYear, viewMonth + 1, 1).toISOString();
+    const params = new URLSearchParams({ start, end });
+    fetch(`${BUSY_SLOTS_ENDPOINT}?${params.toString()}`, { signal: controller.signal })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+        setBusySlots(Array.isArray(data.busy) ? data.busy : []);
+      })
+      .catch(error => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        setBusySlots([]);
+      });
+    return () => controller.abort();
+  }, [viewMonth, viewYear]);
 
   useEffect(() => {
     const nextIntent = parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent);
@@ -1037,18 +1127,23 @@ export default function CoachTimetablePage() {
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
+  const busyEvents = useMemo(
+    () => busySlots.map(mapCoachBusySlot).filter((event): event is TimetableEvent => event !== null),
+    [busySlots],
+  );
+  const calendarEvents = useMemo(() => [...events, ...busyEvents], [busyEvents, events]);
   const visibleRangeEvents = useMemo(() => {
     if (viewMode === 'day') {
-      return events.filter(event => event.dayOfMonth === selectedDay && event.month === viewMonth && event.year === viewYear);
+      return calendarEvents.filter(event => event.dayOfMonth === selectedDay && event.month === viewMonth && event.year === viewYear);
     }
 
     if (viewMode === 'week') {
       const weekKeys = new Set(weekDates.map(date => `${date.year}-${date.month}-${date.day}`));
-      return events.filter(event => weekKeys.has(`${event.year}-${event.month}-${event.dayOfMonth}`));
+      return calendarEvents.filter(event => weekKeys.has(`${event.year}-${event.month}-${event.dayOfMonth}`));
     }
 
-    return events.filter(event => event.month === viewMonth && event.year === viewYear);
-  }, [events, selectedDay, viewMode, viewMonth, viewYear, weekDates]);
+    return calendarEvents.filter(event => event.month === viewMonth && event.year === viewYear);
+  }, [calendarEvents, selectedDay, viewMode, viewMonth, viewYear, weekDates]);
 
   const normalizedSearchTerm = searchTerm.trim().toLowerCase();
   const searchedVisibleRangeEvents = useMemo(() => {
@@ -1264,6 +1359,10 @@ export default function CoachTimetablePage() {
 
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+    if (overlapsLearnerBusySlot(busySlots, selectedEvent.learnerId, scheduleDate, scheduleTime, scheduleDuration)) {
+      setEventActionError('This learner is busy at that time. Choose another time.');
+      return;
+    }
 
     setEventActionBusy(true);
     setEventActionError(null);
@@ -1278,6 +1377,7 @@ export default function CoachTimetablePage() {
           scheduledDate: scheduleDate,
           scheduledTime: scheduleTime,
           durationMinutes: scheduleDuration,
+          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       });
       const data = await response.json();
@@ -1290,10 +1390,14 @@ export default function CoachTimetablePage() {
     } finally {
       setEventActionBusy(false);
     }
-  }, [scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
+  }, [busySlots, scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
 
   const handleCreateSession = useCallback(async () => {
     if (!createSessionLearnerId || !createSessionDate || !createSessionTime) return;
+    if (overlapsLearnerBusySlot(busySlots, createSessionLearnerId, createSessionDate, createSessionTime, createSessionDuration)) {
+      setCreateSessionError('This learner is busy at that time. Choose another time.');
+      return;
+    }
 
     setCreateSessionBusy(true);
     setCreateSessionError(null);
@@ -1307,6 +1411,7 @@ export default function CoachTimetablePage() {
           scheduledDate: createSessionDate,
           scheduledTime: createSessionTime,
           durationMinutes: createSessionDuration,
+          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
           notes: createSessionNotes,
         }),
       });
@@ -1344,12 +1449,17 @@ export default function CoachTimetablePage() {
     createSessionNotes,
     createSessionTime,
     createSessionType,
+    busySlots,
     setCalendarDate,
     updateSingleEvent,
   ]);
 
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey || !selectedScheduleEvent.ownerEmail) return;
+    if (overlapsLearnerBusySlot(busySlots, selectedScheduleEvent.learnerId, scheduleModalDate, scheduleModalTime, scheduleModalDuration)) {
+      setScheduleModalError('This learner is busy at that time. Choose another time.');
+      return;
+    }
 
     setScheduleModalBusy(true);
     setScheduleModalError(null);
@@ -1364,6 +1474,7 @@ export default function CoachTimetablePage() {
           scheduledDate: scheduleModalDate,
           scheduledTime: scheduleModalTime,
           durationMinutes: scheduleModalDuration,
+          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       });
       const data = await response.json();
@@ -1383,6 +1494,7 @@ export default function CoachTimetablePage() {
       setScheduleModalBusy(false);
     }
   }, [
+    busySlots,
     scheduleModalDate,
     scheduleModalDuration,
     scheduleModalTime,
@@ -2203,7 +2315,7 @@ export default function CoachTimetablePage() {
                       {eventActionError || eventActionNotice}
                     </div>
                   )}
-                  {!['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
+                  {!selectedEvent.readOnlyBusy && !['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
@@ -2374,7 +2486,7 @@ export default function CoachTimetablePage() {
                     const tc = eventConfig(ev);
                     const sourceLabel = ev.source && isSchedulableSource(ev.source)
                       ? SOURCE_FILTER_CHIP_LABELS[ev.source]
-                      : typeConfig(ev.type).label;
+                      : tc.label;
                     return (
                       <button
                         key={ev.id}

@@ -81,6 +81,34 @@ function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarE
   };
 }
 
+function mapBusySlot(slot: CalendarBusySlot): CalendarEvent | null {
+  const start = new Date(slot.start);
+  const end = new Date(slot.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null;
+  const year = start.getFullYear();
+  const month = start.getMonth();
+  const day = start.getDate();
+  const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const time = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+  return {
+    id: `personal-busy-${slot.provider}-${slot.start}-${slot.end}`,
+    title: 'Busy',
+    date: `${day} ${MONTH_NAMES[month].slice(0, 3)}`,
+    dayName: DAYS_OF_WEEK[start.getDay() === 0 ? 6 : start.getDay() - 1],
+    time,
+    club: 'Personal',
+    clubId: '',
+    type: 'Busy',
+    format: 'Connected personal calendar',
+    location: 'Private event',
+    host: 'Personal calendar',
+    points: 0,
+    status: 'confirmed',
+    description: 'Busy time from your connected personal calendar. Event details stay private.',
+    isoDate,
+  };
+}
+
 const HOURS = Array.from({ length: 15 }, (_, i) => i + 7);
 
 const PERSONAL_EVENT_COLORS = [
@@ -138,6 +166,7 @@ function getEventColorClass(type: string, customColor?: string) {
     Assessment: 'bg-red-100 text-red-700 border-l-red-500',
     'Networking Event': 'bg-violet-100 text-violet-700 border-l-violet-500',
     Personal: 'bg-sky-100 text-sky-700 border-l-sky-500',
+    Busy: 'bg-slate-200 text-slate-700 border-l-slate-500',
   };
   return map[type] || 'bg-background-100 text-foreground-600 border-l-foreground-300';
 }
@@ -151,7 +180,7 @@ function getEventDotColor(type: string, customColor?: string) {
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
     'Study Group': 'bg-indigo-500', Coaching: 'bg-teal-500', Assessment: 'bg-red-500',
-    'Networking Event': 'bg-violet-500', Personal: 'bg-sky-500',
+    'Networking Event': 'bg-violet-500', Personal: 'bg-sky-500', Busy: 'bg-slate-500',
   };
   return map[type] || 'bg-foreground-400';
 }
@@ -312,8 +341,9 @@ export function LearnerCalendarContent() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionSubmitting, setConnectionSubmitting] = useState(false);
   const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
+  const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>();
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const today = new Date();
   const todayDay = today.getDate();
@@ -330,13 +360,20 @@ export function LearnerCalendarContent() {
       .then((result) => setCalendarConnections(result.connections));
   }, [myLearner.kind, myLearner.id]);
 
+  const personalBusyEvents = useMemo(() => {
+    const unique = new Map<string, CalendarBusySlot>();
+    visibleBusySlots.forEach((slot) => unique.set(`${slot.start}-${slot.end}`, slot));
+    return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
+  }, [visibleBusySlots]);
+  const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
-    return myEvents.filter((ev) => {
+    return displayedEvents.filter((ev) => {
       const evDate = parseEventDate(ev);
       if (!evDate) return false;
       return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === viewYear);
     });
-  }, [myEvents, viewYear]);
+  }, [displayedEvents, viewYear]);
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
@@ -364,6 +401,20 @@ export function LearnerCalendarContent() {
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, [reloadCalendarConnections]);
+
+  useEffect(() => {
+    if (calendarConnections.length === 0) {
+      setVisibleBusySlots([]);
+      return;
+    }
+    const start = new Date(viewYear, viewMonth, 1).toISOString();
+    const end = new Date(viewYear, viewMonth + 1, 1).toISOString();
+    let cancelled = false;
+    fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
+      .then((result) => { if (!cancelled) setVisibleBusySlots(result.busy); })
+      .catch(() => { if (!cancelled) setVisibleBusySlots([]); });
+    return () => { cancelled = true; };
+  }, [calendarConnections.length, viewYear, viewMonth, myLearner.kind, myLearner.id]);
 
   useEffect(() => {
     if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
@@ -893,6 +944,14 @@ export function LearnerCalendarContent() {
                         <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
                           {visibleEvents.map((ev) => {
                             const dotColor = getEventDotColor(ev.type, ev.color);
+                            if (ev.type === 'Busy') {
+                              return (
+                                <div key={ev.id} className="flex w-full items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-slate-700" title={`Busy · ${ev.time}`}>
+                                  <i className="ri-lock-line shrink-0 text-[9px]" />
+                                  <span className="truncate text-[10px] font-semibold leading-tight">Busy · {ev.time.split('–')[0]}</span>
+                                </div>
+                              );
+                            }
                             return (
                               <div key={ev.id} className="flex items-center gap-1 min-w-0" title={ev.title}>
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`}></span>
