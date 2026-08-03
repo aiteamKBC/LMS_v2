@@ -261,10 +261,7 @@ export default function SessionCalendarPage() {
 
   useEffect(() => {
     if (!apiSessions.length) return;
-    const liveSessions = apiSessions.map(normalizeApiSession);
-    setSessions(liveSessions);
-    const firstSession = liveSessions.find(session => session.date);
-    if (firstSession) setCurrentDate(new Date(firstSession.date));
+    setSessions(apiSessions.map(normalizeApiSession));
   }, [apiSessions]);
 
   useEffect(() => {
@@ -541,10 +538,6 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
           <label className={`flex items-center gap-3 rounded px-1 py-2 text-[12px] font-semibold ${holidaysAvailable ? 'text-slate-700' : 'text-slate-400'}`} title={holidaysAvailable ? 'Show or hide holidays on the calendar.' : 'No holidays found.'}>
             <input type="checkbox" checked={showUkHolidays && holidaysAvailable} disabled={!holidaysAvailable} onChange={event => onToggleUkHolidays(event.target.checked)} className="h-3.5 w-3.5 accent-primary-600 disabled:opacity-40" />
             Holidays
-          </label>
-          <label className="flex items-center gap-3 rounded px-1 py-2 text-[12px] font-semibold text-slate-400" title="Birthdays are not connected yet.">
-            <input type="checkbox" disabled className="h-3.5 w-3.5 accent-primary-600 disabled:opacity-40" />
-            Birthdays
           </label>
         </div>
       </div>

@@ -2,7 +2,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile
+from .identity import learner_profile_for_source
 from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
@@ -79,7 +79,7 @@ def learner_attendance(request, kind, learner_id):
         return _error(f'Database error: {exc}', 502)
 
     try:
-        mirror = LearnerProfile.objects.filter(pk=learner_id).only('id', 'email').first()
+        mirror = learner_profile_for_source(source, learner_id)
         email = (mirror.email if mirror else source.email) or ''
         rows = fetch_verified_teams_attendance_rows([learner_id], [email])
     except DatabaseError as exc:

@@ -228,6 +228,7 @@ const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"
 const TenantOnboardingWizard = lazy(() => import("@/pages/admin/tenant-onboarding/page"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
+const ThisWeekPage = lazy(() => import("../pages/learner/this-week/page"));
 const TutorAiMarkingPage = lazy(() => import("../pages/tutor/ai-marking/page"));
 const TutorAssignmentMarking = lazy(() => import("../pages/tutor/assignment-marking/page"));
 const TutorDashboard = lazy(() => import("../pages/workspace/tutor/page"));
@@ -402,6 +403,14 @@ const routes: RouteObject[] = [
   {
     path: "/learner/training-plan/:kind/:id",
     element: <TrainingPlanPage />,
+  },
+  {
+    path: "/learner/lms-components",
+    element: <ThisWeekPage />,
+  },
+  {
+    path: "/learner/lms-components/:kind/:id",
+    element: <ThisWeekPage />,
   },
   {
     path: "/learner/quiz/:kind/:id/:quizId",

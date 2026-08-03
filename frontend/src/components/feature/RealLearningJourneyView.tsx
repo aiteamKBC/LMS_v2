@@ -34,6 +34,16 @@ export interface ModuleStation {
   status: StationStatus;
 }
 
+interface JourneyMetricData {
+  icon: string;
+  label: string;
+  value: string;
+  detail: string;
+  description: string;
+  progress: number;
+  rows: Array<{ label: string; value: string }>;
+}
+
 function isVideoComponent(c: JourneyModule['weeks'][number]['components'][number]): boolean {
   return Boolean(c.videoUrl) || (c.type || '').toLowerCase() === 'video';
 }
@@ -430,8 +440,8 @@ function ModuleActivityModal({ station, real, onClose }: { station: ModuleStatio
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white/80">
             <i className="ri-book-open-line" />Module {station.index + 1}
           </span>
-          <h2 id="module-activity-title" className="mt-3 pr-10 text-xl font-heading font-bold">{station.module.module}</h2>
-          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-white/65">
+          <h2 id="module-activity-title" className="mt-3 pr-10 text-xl font-heading font-bold !text-white">{station.module.module}</h2>
+          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs !text-white">
             <span><i className="ri-checkbox-circle-line mr-1.5" />{completedActivities.length} activities completed</span>
             <span><i className="ri-history-line mr-1.5" />{activityRecords.length} recorded actions</span>
             <span><i className="ri-stack-line mr-1.5" />{station.componentCount} total activities</span>
@@ -1256,6 +1266,7 @@ export function RealLearningJourneyView({
 
   const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
+  const [selectedMetric, setSelectedMetric] = useState<JourneyMetricData | null>(null);
 
   useEffect(() => {
     if (!learnerKind || !learnerId) return;
@@ -1273,6 +1284,69 @@ export function RealLearningJourneyView({
     .map((part) => part[0]?.toUpperCase())
     .join('');
   const completedModules = stations.filter((station) => station.status === 'completed').length;
+  const completedActivities = stations.reduce((total, station) => total + station.trackableDone, 0);
+  const totalActivities = stations.reduce((total, station) => total + station.trackableTotal, 0);
+  const ksbTotal = real?.ksbs.length || 0;
+  const ksbProgress = ksbTotal ? Math.round((evidencedKsbCodes.length / ksbTotal) * 100) : 0;
+  const evidencedKsbSet = new Set(evidencedKsbCodes.map((code) => code.trim().toUpperCase()));
+  const ksbGroupValue = (type: 'K' | 'S' | 'B') => {
+    const items = (real?.ksbs || []).filter((ksb) => (ksb.type || ksb.code || '').trim().toUpperCase().startsWith(type));
+    const evidenced = items.filter((ksb) => evidencedKsbSet.has(ksb.code.trim().toUpperCase())).length;
+    return `${evidenced} / ${items.length}`;
+  };
+  const metrics: JourneyMetricData[] = [
+    {
+      icon: 'ri-pie-chart-line', label: 'Overall Progress', value: `${overallPct}%`, detail: 'Programme completion',
+      description: 'Your completion across all trackable learning activities in the programme.', progress: overallPct,
+      rows: [
+        { label: 'Activities completed', value: `${completedActivities} / ${totalActivities}` },
+        { label: 'Activities remaining', value: String(Math.max(0, totalActivities - completedActivities)) },
+        { label: 'Current module', value: currentStation ? `Module ${currentStation.index + 1}` : 'All complete' },
+      ],
+    },
+    {
+      icon: 'ri-stack-line', label: 'Modules Completed', value: `${completedModules} / ${stations.length}`,
+      detail: currentStation ? `Module ${currentStation.index + 1} current` : 'All complete',
+      description: 'A breakdown of completed, current, and upcoming programme modules.',
+      progress: stations.length ? Math.round((completedModules / stations.length) * 100) : 0,
+      rows: [
+        { label: 'Completed', value: String(completedModules) },
+        { label: 'In progress', value: currentStation ? '1' : '0' },
+        { label: 'Upcoming', value: String(Math.max(0, stations.length - completedModules - (currentStation ? 1 : 0))) },
+      ],
+    },
+    {
+      icon: 'ri-briefcase-4-line', label: 'OTJ Hours', value: formatHoursMinutes(completedHours),
+      detail: plannedHours ? `Target: ${plannedHours}h` : 'Logged hours',
+      description: 'Off-the-job training hours logged against your programme target.',
+      progress: plannedHours ? Math.min(100, Math.round((completedHours / plannedHours) * 100)) : 0,
+      rows: [
+        { label: 'Hours logged', value: formatHoursMinutes(completedHours) },
+        { label: 'Programme target', value: plannedHours ? `${plannedHours}h` : 'Not set' },
+        { label: 'Hours remaining', value: plannedHours ? formatHoursMinutes(Math.max(0, plannedHours - completedHours)) : '—' },
+      ],
+    },
+    {
+      icon: 'ri-calendar-check-line', label: 'Attendance', value: attendance ? `${attendance.attendanceRate}%` : '—',
+      detail: attendance ? `${attendance.present}/${attendance.sessions} sessions` : 'No record',
+      description: 'Your attendance record across all scheduled learning sessions.', progress: attendance?.attendanceRate || 0,
+      rows: [
+        { label: 'Present', value: attendance ? String(attendance.present) : '—' },
+        { label: 'Absent', value: attendance ? String(attendance.absent) : '—' },
+        { label: 'Late', value: attendance ? String(attendance.late) : '—' },
+        { label: 'Catch-up sessions', value: attendance ? String(attendance.catchup) : '—' },
+      ],
+    },
+    {
+      icon: 'ri-award-line', label: 'KSBs Evidenced', value: `${evidencedKsbCodes.length} / ${ksbTotal}`,
+      detail: `${ksbProgress}% evidenced`, description: 'Knowledge, skills, and behaviours evidenced by your completed learning.', progress: ksbProgress,
+      rows: [
+        { label: 'Knowledge', value: ksbGroupValue('K') },
+        { label: 'Skills', value: ksbGroupValue('S') },
+        { label: 'Behaviours', value: ksbGroupValue('B') },
+      ],
+    },
+  ];
 
   return (
     <WorkspaceShell
@@ -1318,11 +1392,7 @@ export function RealLearningJourneyView({
             </div>
 
             <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-              <JourneyMetric icon="ri-pie-chart-line" label="Overall Progress" value={`${overallPct}%`} detail="Programme completion" />
-              <JourneyMetric icon="ri-stack-line" label="Modules Completed" value={`${completedModules} / ${stations.length}`} detail={currentStation ? `Module ${currentStation.index + 1} current` : 'All complete'} />
-              <JourneyMetric icon="ri-briefcase-4-line" label="OTJ Hours" value={formatHoursMinutes(completedHours)} detail={plannedHours ? `Target: ${plannedHours}h` : 'Logged hours'} />
-              <JourneyMetric icon="ri-calendar-check-line" label="Attendance" value={attendance ? `${attendance.attendanceRate}%` : '—'} detail={attendance ? `${attendance.present}/${attendance.sessions} sessions` : 'No record'} />
-              <JourneyMetric icon="ri-award-line" label="KSBs Evidenced" value={`${evidencedKsbCodes.length} / ${real?.ksbs.length || 0}`} detail={`${real?.ksbs.length ? Math.round((evidencedKsbCodes.length / real.ksbs.length) * 100) : 0}% evidenced`} />
+              {metrics.map((metric) => <JourneyMetric key={metric.label} metric={metric} onClick={() => setSelectedMetric(metric)} />)}
             </div>
           </div>
         </section>
@@ -1346,6 +1416,7 @@ export function RealLearningJourneyView({
         )}
 
       </div>
+      {selectedMetric && <JourneyMetricModal metric={selectedMetric} onClose={() => setSelectedMetric(null)} />}
     </WorkspaceShell>
   );
 }
@@ -1369,14 +1440,48 @@ function ProfileInfo({ icon, label, value, tone }: { icon: string; label: string
   );
 }
 
-function JourneyMetric({ icon, label, value, detail }: { icon: string; label: string; value: string; detail: string }) {
+function JourneyMetric({ metric, onClick }: { metric: JourneyMetricData; onClick: () => void }) {
+  const { icon, label, value, detail } = metric;
   return (
-    <div className="group relative flex min-h-[145px] flex-col overflow-hidden rounded-2xl border border-white/80 bg-white/90 p-4 shadow-[0_6px_20px_rgba(31,19,57,0.04)] backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-primary-200 hover:shadow-[0_14px_30px_rgba(86,52,177,0.11)]">
+    <button type="button" onClick={onClick} aria-label={`View ${label} details`} className="group relative flex min-h-[145px] flex-col overflow-hidden rounded-2xl border border-white/80 bg-white/90 p-4 text-left shadow-[0_6px_20px_rgba(31,19,57,0.04)] backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-primary-200 hover:shadow-[0_14px_30px_rgba(86,52,177,0.11)] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2">
       <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-primary-400 via-secondary-400 to-emerald-400 opacity-0 transition-opacity group-hover:opacity-100" />
       <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-100 to-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100"><i className={`${icon} text-base`} /></span>
       <p className="mt-3 text-[10px] font-medium uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
       <p className="mt-auto flex items-center gap-1 pt-2 text-[10px] font-medium text-emerald-600"><i className="ri-pulse-line" />{detail}</p>
+    </button>
+  );
+}
+
+function JourneyMetricModal({ metric, onClose }: { metric: JourneyMetricData; onClose: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-primary-950/45 p-4 backdrop-blur-sm" onMouseDown={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="journey-metric-title" className="w-full max-w-md overflow-hidden rounded-3xl border border-white/70 bg-background-50 shadow-[0_30px_100px_rgba(20,8,45,0.35)]" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 px-6 py-6 text-white">
+          <div className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
+          <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition hover:bg-white/20"><i className="ri-close-line text-lg" /></button>
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-xl ring-1 ring-inset ring-white/20"><i className={metric.icon} /></span>
+          <p className="mt-4 text-[10px] font-semibold uppercase tracking-widest !text-white/70">{metric.label}</p>
+          <h2 id="journey-metric-title" className="mt-1 text-3xl font-heading font-bold !text-white">{metric.value}</h2>
+          <p className="mt-2 pr-8 text-sm !text-white/75">{metric.description}</p>
+          <div className="mt-5 h-2 overflow-hidden rounded-full bg-white/20"><div className="h-full rounded-full bg-gradient-to-r from-emerald-300 to-white transition-all" style={{ width: `${Math.max(0, Math.min(100, metric.progress))}%` }} /></div>
+          <p className="mt-2 text-right text-[10px] font-semibold !text-white/70">{metric.progress}%</p>
+        </div>
+        <div className="space-y-2 p-5">
+          {metric.rows.map((row) => (
+            <div key={row.label} className="flex items-center justify-between rounded-2xl border border-foreground-100 bg-white px-4 py-3">
+              <span className="text-xs text-foreground-500">{row.label}</span>
+              <span className="text-sm font-bold text-foreground-900">{row.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, type NavigateFunction } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import { fetchLmsSchema, type LmsCourse, type LmsMaterial, type LmsSection, type LmsStudent } from '@/api/lmsSchema';
 import {
   buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
@@ -104,6 +105,8 @@ export function RealThisWeekView({
         </div>
 
         {/* ═══════════ MODULE → WEEK → COMPONENTS ═══════════ */}
+        <LmsSourceLibrary real={real} />
+
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
         ) : loadError ? (
@@ -168,6 +171,273 @@ function SnapshotCard({ icon, label, value, detail, color }: {
 /* ═══════════════════════════════════════════════════════
    MODULE SECTION — collapsible group of weeks
    ═══════════════════════════════════════════════════════ */
+interface FlatLmsMaterial {
+  course: LmsCourse;
+  section: LmsSection;
+  material: LmsMaterial;
+}
+
+const LMS_TYPE_META: Record<string, { icon: string; bg: string; text: string }> = {
+  video: { icon: 'ri-play-circle-line', bg: 'bg-red-50', text: 'text-red-600' },
+  recording: { icon: 'ri-record-circle-line', bg: 'bg-rose-50', text: 'text-rose-600' },
+  audio: { icon: 'ri-headphone-line', bg: 'bg-violet-50', text: 'text-violet-600' },
+  pdf: { icon: 'ri-file-pdf-2-line', bg: 'bg-red-50', text: 'text-red-600' },
+  word: { icon: 'ri-file-word-line', bg: 'bg-blue-50', text: 'text-blue-600' },
+  ppt: { icon: 'ri-slideshow-line', bg: 'bg-orange-50', text: 'text-orange-600' },
+  quiz: { icon: 'ri-questionnaire-line', bg: 'bg-amber-50', text: 'text-amber-600' },
+  text: { icon: 'ri-article-line', bg: 'bg-emerald-50', text: 'text-emerald-600' },
+  assignment: { icon: 'ri-file-add-line', bg: 'bg-primary-50', text: 'text-primary-600' },
+};
+
+function lmsMeta(contentType?: string | null) {
+  return LMS_TYPE_META[(contentType || '').toLowerCase()] || { icon: 'ri-checkbox-circle-line', bg: 'bg-background-100', text: 'text-foreground-500' };
+}
+
+function flattenCourse(course: LmsCourse): FlatLmsMaterial[] {
+  return (course.sections || []).flatMap((section) => (section.materials || []).map((material) => ({ course, section, material })));
+}
+
+function bestMaterialUrl(material: LmsMaterial) {
+  const source = material.source || {};
+  const attachment = source.attachments?.[0];
+  return {
+    embed: source.embed_url || attachment?.embed_url || null,
+    file: source.file_url || attachment?.file_url || null,
+    open: source.open_url || attachment?.open_url || source.lms_url || null,
+  };
+}
+
+function isDirectVideo(url: string) {
+  return /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(url);
+}
+
+function isDirectAudio(url: string) {
+  return /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i.test(url);
+}
+
+function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
+  const [student, setStudent] = useState<LmsStudent | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<FlatLmsMaterial | null>(null);
+
+  useEffect(() => {
+    if (!real?.email) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    // Request only this learner. Loading the all-students schema made a normal
+    // client-side route change look like a full page reload.
+    fetchLmsSchema({ email: real.email, perPage: 1 })
+      .then((schema) => {
+        if (cancelled) return;
+        const email = real.email.trim().toLowerCase();
+        const match = schema.students.find((item) =>
+          String(item.email_normalized || item.email || '').trim().toLowerCase() === email,
+        ) || null;
+        setStudent(match);
+        setSelectedCourseId(match?.courses?.[0]?.course_id ?? null);
+      })
+      .catch((reason) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load LMS components.');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [real?.email]);
+
+  if (!real) return null;
+
+  const courses = student?.courses || [];
+  const selectedCourse = courses.find((course) => course.course_id === selectedCourseId) || courses[0] || null;
+  const rows = selectedCourse ? flattenCourse(selectedCourse) : [];
+  const term = query.trim().toLowerCase();
+  const filteredRows = term
+    ? rows.filter(({ material, section }) =>
+        `${material.material_title} ${material.content_type || ''} ${material.material_format || ''} ${section.section_title}`.toLowerCase().includes(term),
+      )
+    : rows;
+  const visibleRows = filteredRows.slice(0, 120);
+
+  return (
+    <section className="rounded-2xl border border-foreground-200/60 bg-background-50 overflow-hidden">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-5 py-4 border-b border-foreground-200/60">
+        <div className="min-w-0">
+          <h2 className="text-base font-heading font-semibold text-foreground-900">LMS Source Components</h2>
+          <p className="text-sm text-foreground-400 mt-1">
+            {student ? `${student.display_name || student.email} · ${courses.length} course${courses.length === 1 ? '' : 's'}` : 'Live materials from Kent Business College LMS'}
+          </p>
+        </div>
+        <div className="relative">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search materials"
+            className="h-9 w-56 rounded-lg border border-foreground-200 bg-white pl-9 pr-3 text-sm text-foreground-700 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="p-6"><EmptyState text="Loading LMS components..." /></div>
+      ) : error ? (
+        <div className="p-6"><EmptyState text={error} /></div>
+      ) : !student ? (
+        <div className="p-6"><EmptyState text={`No LMS learner matched ${real.email}.`} /></div>
+      ) : (
+        <div className="grid lg:grid-cols-[260px_minmax(0,1fr)] min-h-[360px]">
+          <aside className="border-b lg:border-b-0 lg:border-r border-foreground-200/60 bg-background-100/35 p-3">
+            <div className="space-y-2">
+              {courses.map((course) => (
+                <button
+                  key={course.course_id}
+                  type="button"
+                  onClick={() => setSelectedCourseId(course.course_id)}
+                  className={`w-full rounded-xl border p-3 text-left transition-colors ${
+                    (selectedCourse?.course_id === course.course_id) ? 'border-primary-200 bg-white shadow-sm' : 'border-transparent hover:bg-white'
+                  }`}
+                >
+                  <p className="text-xs font-semibold text-foreground-900 leading-snug">{course.course_name}</p>
+                  <div className="mt-2 flex items-center justify-between text-[11px] text-foreground-400">
+                    <span>{flattenCourse(course).length} materials</span>
+                    {course.progress_percent != null && <span>{course.progress_percent}%</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <div className="min-w-0">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-foreground-200/60">
+              <p className="text-xs font-semibold text-foreground-500">{filteredRows.length} matching component{filteredRows.length === 1 ? '' : 's'}</p>
+              {filteredRows.length > visibleRows.length && <p className="text-[11px] text-foreground-400">Showing first {visibleRows.length}. Use search to narrow it down.</p>}
+            </div>
+            <div className="max-h-[520px] overflow-y-auto divide-y divide-foreground-100">
+              {visibleRows.length === 0 ? (
+                <div className="p-6"><EmptyState text="No materials match your search." /></div>
+              ) : visibleRows.map((row) => (
+                <LmsMaterialRow key={`${row.section.section_id}-${row.material.curriculum_material_record_id}`} row={row} onOpen={() => setSelected(row)} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <LmsMaterialModal item={selected} onClose={() => setSelected(null)} />
+    </section>
+  );
+}
+
+function LmsMaterialRow({ row, onOpen }: { row: FlatLmsMaterial; onOpen: () => void }) {
+  const { material, section } = row;
+  const meta = lmsMeta(material.content_type);
+  const status = String(material.student_activity?.status || section.section_status || 'not started').replace(/_/g, ' ');
+  const duration = material.content_duration?.formatted || material.content_duration?.raw || null;
+  const done = status.toLowerCase().includes('complete');
+  const started = status.toLowerCase().includes('progress') || status.toLowerCase().includes('started');
+
+  return (
+    <button type="button" onClick={onOpen} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-background-100/60 transition-colors">
+      <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
+        <i className={`${meta.icon} ${meta.text} text-sm`} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{section.section_title}</span>
+        <span className="block text-sm font-semibold text-foreground-900 truncate">{material.material_title}</span>
+        <span className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-foreground-400">
+          <span>{material.material_format || material.content_type || 'Material'}</span>
+          {duration && <span>{duration}</span>}
+          {material.source?.requires_lms_login && <span className="text-amber-600">LMS login</span>}
+        </span>
+      </span>
+      <span className={`hidden sm:inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+        done ? 'bg-emerald-100 text-emerald-700' : started ? 'bg-accent-100 text-accent-700' : 'bg-background-100 text-foreground-500'
+      }`}>{status}</span>
+      <span className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white">
+        <i className="ri-window-line text-[10px]" /> Open
+      </span>
+    </button>
+  );
+}
+
+function LmsMaterialModal({ item, onClose }: { item: FlatLmsMaterial | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!item) return;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, [item]);
+
+  if (!item) return null;
+
+  const { material, section, course } = item;
+  const meta = lmsMeta(material.content_type);
+  const urls = bestMaterialUrl(material);
+  const contentType = (material.content_type || '').toLowerCase();
+  const playableUrl = urls.file || urls.embed || urls.open || '';
+  const iframeUrl = urls.embed || urls.open || urls.file;
+  const directVideo = playableUrl && (contentType === 'video' || contentType === 'recording') && isDirectVideo(playableUrl);
+  const directAudio = playableUrl && contentType === 'audio' && isDirectAudio(playableUrl);
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 md:p-6">
+      <button type="button" aria-label="Close viewer" className="absolute inset-0 bg-foreground-950/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-[71] flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-foreground-200 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
+              <i className={`${meta.icon} ${meta.text} text-sm`} />
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground-900">{material.material_title}</p>
+              <p className="truncate text-xs text-foreground-400">{course.course_name} · {section.section_title}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {(urls.open || urls.file) && (
+              <a href={urls.open || urls.file || undefined} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 px-3 text-xs font-semibold text-foreground-600 hover:bg-background-100">
+                <i className="ri-external-link-line" /> New tab
+              </a>
+            )}
+            <button type="button" onClick={onClose} className="h-9 w-9 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
+              <i className="ri-close-line text-lg" />
+            </button>
+          </div>
+        </div>
+
+        {(material.source?.requires_lms_login || material.source?.can_embed === false) && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-800">
+            This LMS item may require WordPress login or may block iframe embedding. The in-window viewer will try first; the new-tab button is available as backup.
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 bg-foreground-950">
+          {directVideo ? (
+            <video src={playableUrl} controls autoPlay className="h-full max-h-[78vh] w-full bg-black" />
+          ) : directAudio ? (
+            <div className="grid min-h-[360px] place-items-center bg-gradient-to-br from-violet-950 to-foreground-950 p-8">
+              <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-white/10 p-6">
+                <p className="mb-4 text-sm font-semibold text-white">{material.material_title}</p>
+                <audio src={playableUrl} controls autoPlay className="w-full" />
+              </div>
+            </div>
+          ) : iframeUrl ? (
+            <iframe title={material.material_title} src={iframeUrl} className="h-[78vh] w-full bg-white" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />
+          ) : (
+            <div className="grid min-h-[360px] place-items-center p-8 text-center text-white">
+              <div>
+                <i className="ri-link-unlink-m text-3xl text-white/40" />
+                <p className="mt-3 text-sm font-semibold">No embeddable source is available for this component.</p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModuleSection({ module, defaultOpen, kind, learnerId, navigate, completedIds }: {
   module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string; navigate: NavigateFunction; completedIds: Set<string>;
 }) {

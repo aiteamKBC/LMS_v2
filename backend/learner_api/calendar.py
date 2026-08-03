@@ -19,8 +19,8 @@ from django.views.decorators.csrf import csrf_exempt
 from coach_api.models import CoachCalendarEvent
 
 from .learner_detail import SOURCE_MODELS
+from .identity import learner_profile_for_source
 from .mappers import _s
-from .models import LearnerProfile
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ def learner_calendar(request, kind, pk):
         # The Active_users mirror carries the source row's id (see
         # active_users.sync_active_user), and coach events store that mirror's
         # id + email — so the mirror email is the authoritative one here.
-        mirror = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        mirror = learner_profile_for_source(learner, pk, active_only=True)
     except DatabaseError as exc:
         logger.exception("learner_calendar: mirror lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -233,7 +233,7 @@ def learner_calendar_book(request, kind, pk):
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
         learner = model.all_learners.filter(pk=pk).first()
-        mirror = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        mirror = learner_profile_for_source(learner, pk, active_only=True)
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
