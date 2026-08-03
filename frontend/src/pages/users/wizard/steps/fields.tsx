@@ -121,7 +121,7 @@ export function SignatureField({ label = 'User signature', value, onChange }: { 
 export function StepHeading({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <div className="mb-5">
-      <h2 className="text-[20px] font-heading font-semibold text-foreground-900 tracking-tight">{title}</h2>
+      <h2 className="font-heading text-lg font-semibold tracking-tight text-foreground-900 sm:text-[20px]">{title}</h2>
       {subtitle && <p className="text-[14px] font-medium text-primary-600 mt-1">{subtitle}</p>}
     </div>
   );

@@ -835,7 +835,7 @@ export function LearnerCalendarContent() {
         </div>
       )}
 
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <div className="space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6">
 
         {calendarError && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
@@ -851,22 +851,22 @@ export function LearnerCalendarContent() {
         )}
 
         {/* ═══════════ HERO BANNER ═══════════ */}
-        <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="relative overflow-hidden rounded-2xl animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative flex flex-col lg:flex-row items-stretch min-h-[160px]">
-            <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
+          <div className="relative flex min-h-[190px] flex-row items-center md:min-h-[160px] lg:items-stretch">
+            <div className="flex min-w-0 flex-1 flex-col justify-center px-5 py-6 md:px-7 md:py-6">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">{p.programme} &middot; Level {p.programmeLevel}</span>
+                <span className="max-w-full truncate rounded-md border border-accent-400/15 bg-accent-400/10 px-2.5 py-1 font-label text-[10px] font-semibold uppercase tracking-wider text-accent-300/80 sm:text-xs">{p.programme} &middot; Level {p.programmeLevel}</span>
               </div>
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">My Calendar</h1>
-              <p className="text-sm text-white/40 max-w-lg">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
+              <h1 className="mb-1.5 font-heading text-xl font-bold tracking-tight text-white md:text-xl">My Calendar</h1>
+              <p className="max-w-lg text-xs leading-relaxed text-white/55 sm:text-sm">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
             </div>
-            <div className="flex shrink-0 items-center justify-center px-5 py-5 md:px-7 md:py-6 lg:w-[380px]">
-              <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
-                <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
+            <div className="flex w-[130px] shrink-0 items-center justify-center px-3 py-4 sm:w-[155px] md:px-5 md:py-5 lg:w-[380px] lg:px-7 lg:py-6">
+              <div className="rounded-[22px] border border-white/10 bg-white/10 p-2 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md sm:rounded-[28px] sm:p-3">
+                <div className="relative w-[96px] overflow-hidden rounded-[18px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] sm:w-[120px] sm:rounded-[22px] md:w-[150px] md:rounded-[24px] lg:w-[168px]">
                   <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
                     <div className="flex items-center justify-between">
                       {[0, 1, 2, 3, 4, 5].map((index) => (
@@ -877,12 +877,12 @@ export function LearnerCalendarContent() {
                       ))}
                     </div>
                   </div>
-                  <div className="px-4 pb-4 pt-3 text-center">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
-                    <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
+                  <div className="px-2 pb-3 pt-2 text-center sm:px-4 sm:pb-4 sm:pt-3">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:text-[11px] sm:tracking-[0.34em]">{todayMonthLabel}</p>
+                    <p className="mt-1 font-heading text-3xl font-bold leading-none text-foreground-950 sm:mt-2 sm:text-5xl md:text-6xl">
                       {String(todayDay).padStart(2, '0')}
                     </p>
-                    <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
+                    <p className="mt-2 text-[8px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:mt-2.5 sm:text-[10px] sm:tracking-[0.34em]">{todayWeekdayLabel}</p>
                   </div>
                   <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95" />
                 </div>
@@ -892,10 +892,10 @@ export function LearnerCalendarContent() {
         </section>
 
         {/* ═══════════ TOP BAR: VIEW TOGGLE + NAV ═══════════ */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
+        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="grid w-full grid-cols-3 items-center gap-1 rounded-xl bg-background-100 p-1 sm:flex sm:w-auto">
             {([{ key: 'monthly' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },{ key: 'weekly' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },{ key: 'daily' as ViewMode, label: 'Day', icon: 'ri-calendar-line' }]).map((v) => (
-              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><i className={`${v.icon} text-sm`}></i>{v.label}</button>
+              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer sm:px-4 ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><i className={`${v.icon} text-sm`}></i>{v.label}</button>
             ))}
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
@@ -916,19 +916,19 @@ export function LearnerCalendarContent() {
 
             {/* MONTHLY VIEW */}
             {viewMode === 'monthly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 overflow-hidden">
+              <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 sm:border-2">
                 {/* Day headers */}
                 <div className="grid grid-cols-7 border-b-2 border-background-300">
                   {DAYS_OF_WEEK.map((day, i) => (
-                    <div key={day} className={`px-2 py-3 text-center ${i >= 5 ? 'bg-background-100/60' : 'bg-background-100/30'}`}>
-                      <span className="text-xs font-semibold text-foreground-400 uppercase tracking-wider">{day}</span>
+                    <div key={day} className={`px-1 py-3 text-center sm:px-2 ${i >= 5 ? 'bg-background-100/60' : 'bg-background-100/30'}`}>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-500 sm:text-xs sm:tracking-wider">{day}</span>
                     </div>
                   ))}
                 </div>
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-[4/3] bg-background-50/40 border-b-2 border-r-2 border-background-300" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-background-300 bg-background-50/40 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -938,9 +938,9 @@ export function LearnerCalendarContent() {
                       <button
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); }}
-                        className={`aspect-[4/3] border-b-2 border-r-2 border-background-300 p-1.5 flex flex-col text-left cursor-pointer transition-all duration-150 hover:bg-primary-50/20 hover:z-10 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
+                        className={`flex aspect-square cursor-pointer flex-col border-b border-r border-background-300 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2 sm:p-1.5 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
                       >
-                        <span className={`text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full mb-1 shrink-0 ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
+                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
                         <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
                           {visibleEvents.map((ev) => {
                             const dotColor = getEventDotColor(ev.type, ev.color);
@@ -970,9 +970,9 @@ export function LearnerCalendarContent() {
 
             {/* WEEKLY VIEW */}
             {viewMode === 'weekly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 overflow-hidden">
+              <div className="overflow-x-auto rounded-2xl border border-background-300 bg-background-50 sm:border-2">
                 {/* Week day headers */}
-                <div className="grid grid-cols-8 border-b-2 border-background-300">
+                <div className="grid min-w-[760px] grid-cols-8 border-b-2 border-background-300">
                   <div className="px-2 py-3 bg-background-100/30"></div>
                   {weekDates.map((wd, idx) => {
                     const isTdy = isToday(wd.day, wd.month, viewYear);
@@ -991,7 +991,7 @@ export function LearnerCalendarContent() {
                   {HOURS.map((hour) => {
                     const isCurrentHourRow = viewMode === 'weekly' && currentHour === hour;
                     return (
-                      <div key={`h-${hour}`} className={`grid grid-cols-8 border-b-2 border-background-300 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
+                      <div key={`h-${hour}`} className={`grid min-w-[760px] grid-cols-8 border-b-2 border-background-300 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
                         <div className="px-3 py-3 text-right border-r-2 border-background-300">
                           <span className="text-xs font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
@@ -1084,8 +1084,8 @@ export function LearnerCalendarContent() {
 
             {/* Selected day events list (monthly mode only) */}
             {viewMode === 'monthly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
-                <div className="flex items-center justify-between mb-4">
+              <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-sm font-heading font-bold text-foreground-900 flex items-center gap-2">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600'}`}>{selectedDay}</span>
                     {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}
@@ -1126,16 +1126,16 @@ export function LearnerCalendarContent() {
           <div className="space-y-4">
 
             {/* Quick Actions */}
-            <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
+            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-flashlight-line text-accent-500"></i>Quick Actions</h3>
               <div className="space-y-2">
                 <button onClick={() => setShowBookModal(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-accent-500 text-white hover:bg-accent-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
+                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-accent-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-accent-600 active:scale-[0.99] sm:px-4">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-user-star-line text-white"></i></span>
                   <div className="text-left"><p className="text-sm font-semibold">Book Coach Session</p><p className="text-xs text-white/80">{coach ? `Catch-up or support with ${coach.name}` : 'Catch-up or student support'}</p></div>
                 </button>
                 <button onClick={() => setShowCreateModal(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-500 text-white hover:bg-primary-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
+                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-primary-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-primary-600 active:scale-[0.99] sm:px-4">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-add-line text-white"></i></span>
                   <div className="text-left"><p className="text-sm font-semibold">Create Event</p><p className="text-xs text-white/80">Add a custom personal event</p></div>
                 </button>
@@ -1163,7 +1163,7 @@ export function LearnerCalendarContent() {
             </div>
 
             {/* Upcoming Events */}
-            <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
+            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-calendar-todo-line text-primary-500"></i>Upcoming</h3>
               <div className="space-y-2">
                 {myEvents.filter((ev) => {
