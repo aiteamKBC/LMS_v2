@@ -91,6 +91,7 @@ export interface BookSessionInput {
   scheduledTime: string; // HH:MM
   durationMinutes: number;
   notes?: string;
+  timezoneOffsetMinutes?: number;
 }
 
 export interface BookSessionResponse {
@@ -130,4 +131,61 @@ export async function bookLearnerCalendarSession(
 
 export function fetchLearnerCoach(id: string): Promise<{ coachName: string; coachEmail: string }> {
   return request<{ coachName: string; coachEmail: string }>(`/learner_api/learners/${id}/coach/`);
+}
+
+export type PersonalCalendarProvider = 'google' | 'microsoft' | 'icloud' | 'caldav' | 'ics';
+
+export interface PersonalCalendarConnection {
+  provider: PersonalCalendarProvider;
+  accountEmail: string;
+  status: string;
+  connectedAt: string | null;
+  lastSyncAt: string | null;
+}
+
+export interface CalendarBusySlot {
+  start: string;
+  end: string;
+  provider: PersonalCalendarProvider;
+}
+
+async function calendarConnectionRequest<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } });
+  } catch {
+    throw new Error('Could not reach the calendar connection service.');
+  }
+  const data = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(data?.error || `Calendar request failed (${response.status}).`);
+  return data as T;
+}
+
+export function fetchCalendarConnections(kind: LearnerKind, id: string): Promise<{ connections: PersonalCalendarConnection[] }> {
+  return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/`);
+}
+
+export async function startCalendarOAuth(kind: LearnerKind, id: string, provider: 'google' | 'microsoft'): Promise<void> {
+  const result = await calendarConnectionRequest<{ authorizationUrl: string }>(`/learner_api/calendar-connections/${kind}/${id}/${provider}/oauth/`);
+  window.location.assign(result.authorizationUrl);
+}
+
+export function connectCredentialCalendar(
+  kind: LearnerKind,
+  id: string,
+  provider: 'icloud' | 'caldav' | 'ics',
+  input: { url: string; username?: string; password?: string },
+): Promise<{ connection: PersonalCalendarConnection }> {
+  return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/${provider}/connect/`, {
+    method: 'POST', body: JSON.stringify(input),
+  });
+}
+
+export function disconnectPersonalCalendar(kind: LearnerKind, id: string, provider: PersonalCalendarProvider): Promise<{ disconnected: boolean }> {
+  return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/${provider}/disconnect/`, { method: 'POST' });
+}
+
+export function fetchPersonalCalendarAvailability(kind: LearnerKind, id: string, start: string, end: string): Promise<{ busy: CalendarBusySlot[]; errors: Array<{ provider: string; message: string }>; connectedProviders: PersonalCalendarProvider[] }> {
+  const query = new URLSearchParams({ start, end });
+  return calendarConnectionRequest(`/learner_api/calendar-connections/${kind}/${id}/availability/?${query}`);
 }

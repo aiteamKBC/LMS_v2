@@ -260,6 +260,9 @@ def learner_calendar_book(request, kind, pk):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or 60)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except ValueError as exc:
         return _error(str(exc), 400)
     if isinstance(scheduled_date, datetime):
@@ -268,6 +271,10 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+
+    from .calendar_connections import booking_conflicts
+    if booking_conflicts(kind, pk, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+        return _error("That time overlaps an event in your connected personal calendar. Please choose another time.", 409)
 
     notes = _s(payload.get("notes"))[:500]
     learner_name = _s(mirror.username) or _s(learner.username)

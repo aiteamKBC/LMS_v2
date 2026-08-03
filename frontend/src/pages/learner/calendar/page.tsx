@@ -6,7 +6,13 @@ import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useMyLearner } from '@/hooks/useMyLearner';
-import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import {
+  fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach,
+  fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
+  disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
+  type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
+  type PersonalCalendarProvider, type CalendarBusySlot,
+} from '@/api/learnerCalendar';
 
 const learnerNav = roleNavMap.learner;
 const p = LEARNER_PROFILE;
@@ -15,6 +21,12 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
+  { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
+  { provider: 'microsoft', title: 'Continue with Microsoft', subtitle: 'Outlook or Microsoft 365 calendar', icon: 'ri-microsoft-fill' },
+  { provider: 'ics', title: 'Connect ICS Calendar', subtitle: 'Private iCal feed URL', icon: 'ri-links-line' },
+];
 
 /** Resolve an event's calendar day — prefers the exact isoDate carried by DB-backed
  * events, falls back to parsing the "13 Jun" display date (year unknown → null). */
@@ -291,6 +303,16 @@ export function LearnerCalendarContent() {
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
+  const [showCalendarConnect, setShowCalendarConnect] = useState(false);
+  const [calendarConnections, setCalendarConnections] = useState<PersonalCalendarConnection[]>([]);
+  const [connectionProvider, setConnectionProvider] = useState<'icloud' | 'caldav' | 'ics' | null>(null);
+  const [connectionUrl, setConnectionUrl] = useState('');
+  const [connectionUsername, setConnectionUsername] = useState('');
+  const [connectionPassword, setConnectionPassword] = useState('');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionSubmitting, setConnectionSubmitting] = useState(false);
+  const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>();
 
   const today = new Date();
@@ -302,6 +324,11 @@ export function LearnerCalendarContent() {
   const isToday = useCallback((day: number, month: number, year: number) => {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
+
+  const reloadCalendarConnections = useCallback(() => {
+    return fetchCalendarConnections(myLearner.kind, myLearner.id)
+      .then((result) => setCalendarConnections(result.connections));
+  }, [myLearner.kind, myLearner.id]);
 
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
     return myEvents.filter((ev) => {
@@ -321,6 +348,38 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
+
+  useEffect(() => {
+    reloadCalendarConnections().catch(() => setCalendarConnections([]));
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('calendar_connected');
+    const oauthError = params.get('calendar_error');
+    if (connected) {
+      setAddToCalendarToast(`${connected === 'google' ? 'Google' : 'Microsoft'} Calendar connected successfully.`);
+      setShowCalendarConnect(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (oauthError) {
+      setConnectionError(oauthError);
+      setShowCalendarConnect(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [reloadCalendarConnections]);
+
+  useEffect(() => {
+    if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
+      setBusySlots([]);
+      return;
+    }
+    const start = new Date(`${bookDate}T00:00:00`).toISOString();
+    const end = new Date(`${bookDate}T23:59:59`).toISOString();
+    let cancelled = false;
+    setAvailabilityLoading(true);
+    fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
+      .then((result) => { if (!cancelled) setBusySlots(result.busy); })
+      .catch(() => { if (!cancelled) setBusySlots([]); })
+      .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
+    return () => { cancelled = true; };
+  }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
   // Load the learner's coaching sessions from Coach.coach_calendar_event.
   useEffect(() => {
@@ -345,8 +404,46 @@ export function LearnerCalendarContent() {
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id]);
 
+  const selectedSlotConflicts = useMemo(() => {
+    if (!bookDate || !bookTime) return false;
+    const start = new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const end = start + parseInt(bookDuration || '60') * 60_000;
+    return busySlots.some((slot) => start < new Date(slot.end).getTime() && end > new Date(slot.start).getTime());
+  }, [bookDate, bookTime, bookDuration, busySlots]);
+
+  const handleCredentialConnect = async () => {
+    if (!connectionProvider || connectionSubmitting) return;
+    setConnectionSubmitting(true);
+    setConnectionError(null);
+    try {
+      await connectCredentialCalendar(myLearner.kind, myLearner.id, connectionProvider, {
+        url: connectionUrl.trim(), username: connectionUsername.trim(), password: connectionPassword,
+      });
+      await reloadCalendarConnections();
+      setConnectionProvider(null); setConnectionUrl(''); setConnectionUsername(''); setConnectionPassword('');
+      setAddToCalendarToast('Personal calendar connected successfully.');
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Calendar connection failed.');
+    } finally {
+      setConnectionSubmitting(false);
+    }
+  };
+
+  const handleDisconnectCalendar = async (provider: PersonalCalendarProvider) => {
+    try {
+      await disconnectPersonalCalendar(myLearner.kind, myLearner.id, provider);
+      await reloadCalendarConnections();
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Could not disconnect calendar.');
+    }
+  };
+
   const handleBookSession = async () => {
     if (bookSubmitting) return;
+    if (selectedSlotConflicts) {
+      setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
+      return;
+    }
     setBookSubmitting(true);
     setBookError(null);
     try {
@@ -356,6 +453,7 @@ export function LearnerCalendarContent() {
         scheduledTime: bookTime,
         durationMinutes: parseInt(bookDuration),
         notes: bookNotes.trim() || undefined,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
       });
       const mapped = mapCoachEvent(res.event, p.fullName);
       if (mapped) setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
@@ -479,6 +577,56 @@ export function LearnerCalendarContent() {
       )}
 
       {/* ═══════════ BOOK COACH SESSION MODAL ═══════════ */}
+      {showCalendarConnect && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setShowCalendarConnect(false)}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-background-50 p-6 shadow-xl animate-in zoom-in-95 duration-200" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600">Calendar source</p>
+                <h3 className="mt-1 text-xl font-heading font-bold text-foreground-900">Connect personal calendar</h3>
+                <p className="mt-1 text-xs text-foreground-400">We only read free/busy times to prevent booking conflicts.</p>
+              </div>
+              <button type="button" onClick={() => setShowCalendarConnect(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><i className="ri-close-line" /></button>
+            </div>
+            <div className="space-y-2.5">
+              {CALENDAR_PROVIDERS.map((item) => {
+                const connected = calendarConnections.find((connection) => connection.provider === item.provider);
+                return (
+                  <div key={item.provider} className={`rounded-xl border p-1 transition ${connected ? 'border-emerald-200 bg-emerald-50/30' : 'border-background-300'}`}>
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${connected ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-50 text-primary-600'}`}><i className={connected ? 'ri-check-line' : item.icon} /></span>
+                      <button type="button" disabled={Boolean(connected)} onClick={async () => {
+                        setConnectionError(null);
+                        if (item.provider === 'google' || item.provider === 'microsoft') {
+                          try { await startCalendarOAuth(myLearner.kind, myLearner.id, item.provider); }
+                          catch (error) { setConnectionError(error instanceof Error ? error.message : 'Could not start calendar connection.'); }
+                        } else {
+                          setConnectionProvider(item.provider);
+                          setConnectionUrl(item.provider === 'icloud' ? 'https://caldav.icloud.com' : '');
+                        }
+                      }} className="min-w-0 flex-1 text-left disabled:cursor-default">
+                        <p className="text-sm font-semibold text-foreground-900">{connected ? `${item.title.replace('Continue with ', '').replace('Connect ', '')} connected` : item.title}</p>
+                        <p className="truncate text-xs text-foreground-400">{connected?.accountEmail || item.subtitle}</p>
+                      </button>
+                      {connected && <button type="button" onClick={() => handleDisconnectCalendar(item.provider)} className="rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-red-600 hover:bg-red-50">Disconnect</button>}
+                    </div>
+                    {connectionProvider === item.provider && !connected && (
+                      <div className="space-y-3 border-t border-background-200 px-3 pb-3 pt-3">
+                        <div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">{item.provider === 'ics' ? 'Private ICS feed URL' : 'Calendar server URL'}</label><input type="url" value={connectionUrl} onChange={(event) => setConnectionUrl(event.target.value)} placeholder="https://..." className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div>
+                        {item.provider !== 'ics' && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">Calendar username</label><input value={connectionUsername} onChange={(event) => setConnectionUsername(event.target.value)} autoComplete="username" className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div><div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">App-specific password</label><input type="password" value={connectionPassword} onChange={(event) => setConnectionPassword(event.target.value)} autoComplete="new-password" className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div></div>}
+                        <div className="flex gap-2"><button type="button" onClick={() => setConnectionProvider(null)} className="flex-1 rounded-lg border border-background-300 px-3 py-2 text-xs font-semibold text-foreground-600">Cancel</button><button type="button" onClick={handleCredentialConnect} disabled={connectionSubmitting || !connectionUrl || (item.provider !== 'ics' && (!connectionUsername || !connectionPassword))} className="flex-1 rounded-lg bg-primary-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{connectionSubmitting ? 'Connecting…' : 'Connect'}</button></div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {connectionError && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><i className="ri-error-warning-line mt-0.5" /><span>{connectionError}</span></div>}
+            <p className="mt-4 flex items-start gap-2 text-[10px] leading-relaxed text-foreground-400"><i className="ri-shield-keyhole-line mt-0.5 text-emerald-500" />OAuth tokens and calendar passwords are encrypted on the server and are never sent back to the browser.</p>
+          </div>
+        </div>
+      )}
+
       {showBookModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -512,6 +660,14 @@ export function LearnerCalendarContent() {
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={todayISO()} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
+              {calendarConnections.length > 0 ? (
+                <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                  <i className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
+                  <div><p className="text-xs font-semibold">{availabilityLoading ? 'Checking your personal calendar…' : selectedSlotConflicts ? 'This time is busy' : 'This time is available'}</p><p className="mt-0.5 text-[10px] opacity-75">Checked against {calendarConnections.length} connected calendar{calendarConnections.length === 1 ? '' : 's'}.</p></div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => { setShowBookModal(false); setShowCalendarConnect(true); }} className="flex w-full items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left text-xs font-semibold text-primary-700"><i className="ri-calendar-2-line" />Connect your personal calendar to prevent booking conflicts</button>
+              )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
                 <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
@@ -534,7 +690,7 @@ export function LearnerCalendarContent() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><i className="ri-loader-4-line animate-spin mr-1"></i>Booking...</> : <><i className="ri-calendar-check-line mr-1"></i>Book Session</>}
               </button>
             </div>
@@ -923,6 +1079,11 @@ export function LearnerCalendarContent() {
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-500 text-white hover:bg-primary-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-add-line text-white"></i></span>
                   <div className="text-left"><p className="text-sm font-semibold">Create Event</p><p className="text-xs text-white/80">Add a custom personal event</p></div>
+                </button>
+                <button onClick={() => { setConnectionError(null); setShowCalendarConnect(true); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
+                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${calendarConnections.length ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-100 text-primary-600'}`}><i className={calendarConnections.length ? 'ri-calendar-check-line' : 'ri-calendar-2-line'}></i></span>
+                  <div className="min-w-0 text-left"><p className="text-sm font-semibold text-foreground-900">Connect Your Personal Calendar</p><p className="truncate text-xs text-foreground-400">{calendarConnections.length ? `${calendarConnections.length} calendar${calendarConnections.length === 1 ? '' : 's'} connected` : 'Connect Google, Microsoft, Apple or ICS'}</p></div>
                 </button>
                 <button onClick={() => setShowShareCalendar(true)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
