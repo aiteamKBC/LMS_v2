@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from datetime import date, datetime, time, timedelta
@@ -30,6 +31,8 @@ from learner_api.evidence_storage import (
     resolve_read_url,
 )
 from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
+from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
@@ -57,6 +60,7 @@ from curriculum_api.views import (
 
 
 DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
+logger = logging.getLogger(__name__)
 PROGRESS_REVIEW_RESPONSE_IDS = {
     "attendance_issues",
     "workplace_training_since_review",
@@ -752,13 +756,28 @@ def activity_completion_key(item: dict, index: int) -> str:
     return compact or f"item:{index}"
 
 
+KSB_PARENT_CODE_RE = re.compile(r"^([KSB])(\d+)(?:\.\d+)?$")
+
+
+def normalize_ksb_parent_code(value: str) -> str:
+    code = clean_text(value).upper()
+    if not code:
+        return ""
+    match = KSB_PARENT_CODE_RE.match(code)
+    if match:
+        return f"{match.group(1)}{match.group(2)}"
+    return code
+
+
 def extract_ksb_codes(values) -> set[str]:
     codes: set[str] = set()
     for value in list_or_empty(values):
         if isinstance(value, str):
-            code = value.strip().upper()
+            code = normalize_ksb_parent_code(value)
         elif isinstance(value, dict):
-            code = clean_text(value.get("code") or value.get("Code") or value.get("id")).upper()
+            code = normalize_ksb_parent_code(
+                value.get("code") or value.get("Code") or value.get("id")
+            )
         else:
             code = ""
         if code:
@@ -785,6 +804,59 @@ def summarize_ksb_breakdown(target_codes: set[str], completed_codes: set[str]) -
     return breakdown
 
 
+def ksb_sort_key(code: str) -> tuple[int, int, str]:
+    normalized = normalize_ksb_parent_code(code)
+    match = re.match(r"^([KSB])(\d+)$", normalized)
+    if not match:
+        return (9, 0, normalized)
+    prefix_order = {"K": 0, "S": 1, "B": 2}
+    return (prefix_order.get(match.group(1), 9), int(match.group(2)), normalized)
+
+
+def ksb_type_label(code: str, explicit_type: str = "") -> str:
+    value = clean_text(explicit_type).lower()
+    if value.startswith("knowledge") or value == "k":
+        return "Knowledge"
+    if value.startswith("skill") or value == "s":
+        return "Skills"
+    if value.startswith("behaviour") or value.startswith("behavior") or value == "b":
+        return "Behaviours"
+
+    normalized = normalize_ksb_parent_code(code)
+    if normalized.startswith("K"):
+        return "Knowledge"
+    if normalized.startswith("S"):
+        return "Skills"
+    if normalized.startswith("B"):
+        return "Behaviours"
+    return clean_text(explicit_type) or "KSB"
+
+
+def ksb_target_lookup(values) -> dict[str, dict[str, str]]:
+    lookup: dict[str, dict[str, str]] = {}
+    for value in list_or_empty(values):
+        if isinstance(value, str):
+            code = normalize_ksb_parent_code(value)
+            explicit_type = ""
+            description = ""
+        elif isinstance(value, dict):
+            code = normalize_ksb_parent_code(
+                value.get("code") or value.get("Code") or value.get("id") or value.get("number")
+            )
+            explicit_type = clean_text(value.get("type") or value.get("ksb_type") or value.get("category"))
+            description = clean_text(value.get("description") or value.get("label") or value.get("title") or value.get("name"))
+        else:
+            continue
+        if not code:
+            continue
+        lookup.setdefault(code, {
+            "code": code,
+            "type": ksb_type_label(code, explicit_type),
+            "description": description,
+        })
+    return lookup
+
+
 def count_completed_components(progress_entries: list[dict]) -> int:
     seen: set[str] = set()
     for entry in progress_entries:
@@ -798,6 +870,12 @@ def completed_ksb_codes(progress_entries: list[dict], activity_entries: list[dic
     completed: set[str] = set()
     for entry in [*progress_entries, *activity_entries]:
         if not isinstance(entry, dict):
+            continue
+        # A failed quiz is an attempt, not KSB evidence.  Legacy failed
+        # attempts can carry an entire profile's codes, which previously made
+        # coach totals jump to almost 100% while the learner page correctly
+        # showed only KSBs evidenced by completed activities.
+        if clean_text(entry.get("kind")).lower() == "quiz" and entry.get("passed") is not True:
             continue
         completed.update(extract_ksb_codes(entry.get("ksbs")))
     return completed
@@ -982,17 +1060,28 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.prefetch_related(
         "assigned_ksbs",
+        "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
-        "activity_events",
     )
     rows = [
         row
         for row in queryset.order_by("full_name", "id")
         if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
     ]
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
+    for row in rows:
+        setattr(
+            row,
+            "_caseload_source",
+            resolve_caseload_source_row(
+                row,
+                commercial_rows=commercial_rows,
+                enrolment_rows=enrolment_rows,
+            ),
+        )
     return rows
 
 
@@ -1039,28 +1128,85 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
     return rows
 
 
-def fetch_source_schedule_rows(learner_ids: list[int]) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
-    if not learner_ids:
+def fetch_source_schedule_rows(
+    learners: list[LearnerProfile | SimpleNamespace],
+) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
+    """Map profile ids to Created_users source rows using email identity."""
+    if not learners:
         return {}, {}
 
-    # These are legacy source schemas and are not present in every deployment.
-    # LearnerProfile carries the canonical start/end dates, so a missing source
-    # table must not take down the entire coach calendar.
+    profile_ids_by_email = {
+        normalize_email(getattr(learner, "email", "")): int(learner.id)
+        for learner in learners
+        if getattr(learner, "id", None) is not None
+        and normalize_email(getattr(learner, "email", ""))
+    }
+    if not profile_ids_by_email:
+        return {}, {}
+
     try:
-        commercial_rows = {
-            row.id: row
-            for row in CommercialUser.objects.filter(id__in=learner_ids)
-        }
+        source_rows = EnrolmentUser.all_learners.annotate(
+            source_email_key=Lower(Trim("email"))
+        ).filter(source_email_key__in=profile_ids_by_email)
     except DatabaseError:
-        commercial_rows = {}
-    try:
-        enrolment_rows = {
-            row.id: row
-            for row in EnrolmentUser.objects.filter(id__in=learner_ids)
-        }
-    except DatabaseError:
-        enrolment_rows = {}
+        return {}, {}
+
+    commercial_rows = {}
+    enrolment_rows = {}
+    for row in source_rows:
+        profile_id = profile_ids_by_email.get(normalize_email(row.email))
+        if profile_id is None:
+            continue
+        if clean_text(row.learner_type).casefold() == "commercial":
+            commercial_rows[profile_id] = row
+        else:
+            enrolment_rows[profile_id] = row
     return commercial_rows, enrolment_rows
+
+
+def profile_prefers_apprenticeship_source(profile: LearnerProfile | SimpleNamespace) -> bool:
+    programme = clean_text(getattr(profile, "programme", "")).casefold()
+    lifecycle = clean_text(getattr(profile, "lifecycle_status", "")).casefold()
+    return "apprentice" in programme or programme.startswith("apm") or lifecycle == "onboarding"
+
+
+def resolve_caseload_source_row(
+    learner: LearnerProfile | SimpleNamespace,
+    *,
+    commercial_rows: dict[int, CommercialUser] | None = None,
+    enrolment_rows: dict[int, EnrolmentUser] | None = None,
+) -> CommercialUser | EnrolmentUser | None:
+    learner_id = getattr(learner, "id", None)
+    if learner_id is None:
+        return None
+    if commercial_rows is None and enrolment_rows is None:
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
+    commercial_rows = commercial_rows or {}
+    enrolment_rows = enrolment_rows or {}
+    commercial_row = commercial_rows.get(learner_id)
+    enrolment_row = enrolment_rows.get(learner_id)
+    if profile_prefers_apprenticeship_source(learner):
+        return enrolment_row or commercial_row
+    return commercial_row or enrolment_row
+
+
+def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
+    if not callable(getattr(row, "save", None)):
+        return
+    source = getattr(row, "_caseload_source", None) or resolve_caseload_source_row(row)
+    if source is None:
+        return
+    try:
+        refresh_learner_ksb_snapshot(row, source, training_plan=getattr(row, "training_plan", None))
+        prefetched = getattr(row, "_prefetched_objects_cache", None)
+        if isinstance(prefetched, dict):
+            prefetched.pop("assigned_ksbs", None)
+    except Exception as exc:
+        logger.warning(
+            "Could not refresh live KSB snapshot for learner %s: %s",
+            getattr(row, "id", None),
+            exc,
+        )
 
 
 def resolve_schedule_window(
@@ -1101,8 +1247,22 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
 
 
 def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+    refresh_caseload_learner_ksb_snapshot(row)
+    if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
+        try:
+            # Keep coach-facing caseload cards aligned with the live learner
+            # detail OTJ calculation instead of stale stored snapshot values.
+            refresh_learner_otjh_snapshot(row)
+        except Exception as exc:
+            logger.warning(
+                "Could not refresh live OTJ snapshot for learner %s: %s",
+                getattr(row, "id", None),
+                exc,
+            )
+
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
+    otjh_completed_entries = build_otjh_completed_entries(progress_entries, activity_entries, row.training_plan)
     planned_components = count_planned_components(row.training_plan)
     completed_components = count_completed_components(progress_entries)
     component_available = planned_components > 0
@@ -1116,10 +1276,19 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
     hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
 
-    target_ksb_codes = extract_ksb_codes(row.ksbs)
+    target_ksb_lookup = ksb_target_lookup(row.ksbs)
+    target_ksb_codes = set(target_ksb_lookup)
     completed_codes = completed_ksb_codes(progress_entries, activity_entries)
+    ksb_completed_details = build_ksb_completed_details(
+        row.ksbs,
+        completed_codes,
+        progress_entries,
+        activity_entries,
+        row.training_plan,
+    )
     ksb_available = bool(target_ksb_codes)
-    ksb_completed = len(completed_codes) if ksb_available else None
+    completed_target_codes = completed_codes & target_ksb_codes
+    ksb_completed = len(completed_target_codes) if ksb_available else None
     ksb_target = len(target_ksb_codes) if ksb_available else None
     ksb_progress = percentage(ksb_completed, ksb_target) if ksb_available else 0
     ksb_status = derive_ksb_status(ksb_completed, ksb_target)
@@ -1176,6 +1345,8 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
         "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
         "otjhMinimum": to_number(row.minimum_hours),
         "otjhPlanned": to_number(row.planned_hours),
+        "otjhCompletedEntries": otjh_completed_entries,
+        "otjhCompletedEntryCount": len(otjh_completed_entries),
         "otjhProgressHours": clean_text(row.progress_hours) or "--",
         "otjhStatus": otjh_status,
         "ksbCompleted": ksb_completed,
@@ -1183,6 +1354,8 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
         "ksbStatus": ksb_status,
         "ksbProgress": ksb_progress,
         "ksbProgressAvailable": ksb_available,
+        "ksbCompletedDetails": ksb_completed_details,
+        "ksbCompletedDetailCount": len(ksb_completed_details),
         "knowledgeCompleted": ksb_breakdown["knowledge"]["completed"],
         "knowledgeTarget": ksb_breakdown["knowledge"]["target"],
         "knowledgeProgress": ksb_breakdown["knowledge"]["progress"],
@@ -1306,12 +1479,16 @@ def reported_minutes(value) -> float:
         except (ValueError, IndexError):
             return 0.0
 
-    match = re.search(r"\d+(?:\.\d+)?", text)
+    lower_text = text.lower()
+    hour_matches = [float(amount) for amount in re.findall(r"(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|h)\b", lower_text)]
+    minute_matches = [float(amount) for amount in re.findall(r"(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|m)\b", lower_text)]
+    if hour_matches or minute_matches:
+        return sum(hour_matches) * 60 + sum(minute_matches)
+
+    match = re.search(r"\d+(?:\.\d+)?", lower_text)
     if not match:
         return 0.0
-    amount = float(match.group(0))
-    lower_text = text.lower()
-    return amount * 60 if "hour" in lower_text or "hr" in lower_text else amount
+    return float(match.group(0)) * 60
 
 
 def format_hours_number(hours: float) -> str:
@@ -1388,6 +1565,252 @@ def monthly_learning_detail(entry: dict) -> str:
     if reported_time:
         return reported_time
     return clean_text(entry.get("module") or entry.get("week")) or "--"
+
+
+def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
+    lookup: dict[str, dict[str, str]] = {}
+    for module in list_or_empty(training_plan):
+        if not isinstance(module, dict):
+            continue
+        module_title = clean_text(module.get("moduleTitle") or module.get("module"))
+        for week in list_or_empty(module.get("weeks")):
+            if not isinstance(week, dict):
+                continue
+            week_title = clean_text(week.get("weekTitle") or week.get("week"))
+            for component in list_or_empty(week.get("components")):
+                if not isinstance(component, dict):
+                    continue
+                component_id = clean_text(component.get("componentId"))
+                if not component_id:
+                    continue
+                lookup[component_id] = {
+                    "module": module_title,
+                    "week": week_title,
+                    "title": clean_text(component.get("componentTitle") or component.get("title")),
+                }
+    return lookup
+
+
+def build_otjh_completed_entries(
+    progress_entries: list[dict],
+    activity_entries: list[dict],
+    training_plan,
+) -> list[dict]:
+    component_lookup = training_plan_component_lookup(training_plan)
+    activity_by_quiz: dict[str, dict] = {}
+    activity_by_component: dict[str, dict] = {}
+
+    for activity in activity_entries:
+        if not isinstance(activity, dict):
+            continue
+        quiz_id = clean_text(activity.get("quizId"))
+        component_id = clean_text(activity.get("componentId"))
+        kind = clean_text(activity.get("kind")).lower()
+        if quiz_id and quiz_id not in activity_by_quiz:
+            activity_by_quiz[quiz_id] = activity
+        if component_id:
+            keyed_component = f"{kind}:{component_id}" if kind else component_id
+            activity_by_component.setdefault(keyed_component, activity)
+            activity_by_component.setdefault(component_id, activity)
+
+    entries: list[dict] = []
+    for index, entry in enumerate(dedupe_otjh_progress_records(progress_entries)):
+        if not isinstance(entry, dict):
+            continue
+        minutes = reported_minutes(entry.get("reportedTime"))
+        if minutes <= 0:
+            continue
+
+        kind = clean_text(entry.get("kind")).lower()
+        quiz_id = clean_text(entry.get("quizId"))
+        component_id = clean_text(entry.get("componentId"))
+        activity = (
+            activity_by_quiz.get(quiz_id)
+            if quiz_id
+            else activity_by_component.get(f"{kind}:{component_id}") or activity_by_component.get(component_id)
+        )
+        component_meta = component_lookup.get(component_id, {})
+        merged_entry = {
+            **(activity or {}),
+            **entry,
+            "title": (
+                clean_text(entry.get("title"))
+                or clean_text(entry.get("quizName"))
+                or clean_text(entry.get("componentTitle"))
+                or clean_text((activity or {}).get("title"))
+                or clean_text(component_meta.get("title"))
+            ),
+            "module": (
+                clean_text(entry.get("moduleTitle") or entry.get("module"))
+                or clean_text((activity or {}).get("module"))
+                or clean_text(component_meta.get("module"))
+            ),
+            "week": (
+                clean_text(entry.get("weekTitle") or entry.get("week"))
+                or clean_text((activity or {}).get("week"))
+                or clean_text(component_meta.get("week"))
+            ),
+        }
+        recorded_at = (
+            clean_text(entry.get("submittedAt"))
+            or clean_text((activity or {}).get("at"))
+            or clean_text(entry.get("startedAt"))
+        )
+        entries.append({
+            "id": f'{monthly_activity_identity(merged_entry, index)}:{index}',
+            "title": monthly_learning_title(merged_entry),
+            "typeLabel": monthly_learning_type(merged_entry),
+            "kind": kind or "activity",
+            "module": clean_text(merged_entry.get("module")) or "--",
+            "week": clean_text(merged_entry.get("week")) or "--",
+            "reportedTime": clean_text(entry.get("reportedTime")) or "--",
+            "hours": round(minutes / 60, 2),
+            "completedAt": recorded_at or "",
+            "completedDate": format_date(recorded_at or entry_activity_date(entry)),
+            "detail": monthly_learning_detail(merged_entry),
+            "ksbs": sorted(extract_ksb_codes(entry.get("ksbs"))),
+        })
+
+    entries.sort(
+        key=lambda item: (
+            clean_text(item.get("completedAt")),
+            clean_text(item.get("title")),
+        ),
+        reverse=True,
+    )
+    return entries
+
+
+def build_ksb_completed_details(
+    target_ksbs,
+    completed_codes: set[str],
+    progress_entries: list[dict],
+    activity_entries: list[dict],
+    training_plan,
+) -> list[dict]:
+    target_lookup = ksb_target_lookup(target_ksbs)
+    if not target_lookup:
+        return []
+
+    completed_in_target = completed_codes & set(target_lookup)
+    details_by_code = {
+        code: {
+            **target_lookup[code],
+            "sources": [],
+        }
+        for code in completed_in_target
+    }
+    seen_sources_by_code = {code: set() for code in completed_in_target}
+
+    component_lookup = training_plan_component_lookup(training_plan)
+    activity_by_quiz: dict[str, dict] = {}
+    activity_by_component: dict[str, dict] = {}
+
+    for activity in activity_entries:
+        if not isinstance(activity, dict):
+            continue
+        quiz_id = clean_text(activity.get("quizId"))
+        component_id = clean_text(activity.get("componentId"))
+        kind = clean_text(activity.get("kind")).lower()
+        if quiz_id and quiz_id not in activity_by_quiz:
+            activity_by_quiz[quiz_id] = activity
+        if component_id:
+            keyed_component = f"{kind}:{component_id}" if kind else component_id
+            activity_by_component.setdefault(keyed_component, activity)
+            activity_by_component.setdefault(component_id, activity)
+
+    source_entries = [
+        ("progress", entry)
+        for entry in dedupe_otjh_progress_records(progress_entries)
+        if isinstance(entry, dict)
+        and not (
+            clean_text(entry.get("kind")).lower() == "quiz"
+            and entry.get("passed") is not True
+        )
+    ]
+    source_entries.extend(
+        ("activity", entry)
+        for entry in activity_entries
+        if isinstance(entry, dict)
+    )
+
+    for index, (source_kind, entry) in enumerate(source_entries):
+        entry_codes = extract_ksb_codes(entry.get("ksbs")) & completed_in_target
+        if not entry_codes:
+            continue
+
+        kind = clean_text(entry.get("kind")).lower()
+        quiz_id = clean_text(entry.get("quizId"))
+        component_id = clean_text(entry.get("componentId"))
+        activity = (
+            activity_by_quiz.get(quiz_id)
+            if quiz_id
+            else activity_by_component.get(f"{kind}:{component_id}") or activity_by_component.get(component_id)
+        )
+        if source_kind == "activity":
+            activity = None
+
+        component_meta = component_lookup.get(component_id, {})
+        merged_entry = {
+            **(activity or {}),
+            **entry,
+            "title": (
+                clean_text(entry.get("title"))
+                or clean_text(entry.get("quizName"))
+                or clean_text(entry.get("componentTitle"))
+                or clean_text((activity or {}).get("title"))
+                or clean_text(component_meta.get("title"))
+            ),
+            "module": (
+                clean_text(entry.get("moduleTitle") or entry.get("module"))
+                or clean_text((activity or {}).get("module"))
+                or clean_text(component_meta.get("module"))
+            ),
+            "week": (
+                clean_text(entry.get("weekTitle") or entry.get("week"))
+                or clean_text((activity or {}).get("week"))
+                or clean_text(component_meta.get("week"))
+            ),
+        }
+        recorded_at = (
+            clean_text(entry.get("submittedAt"))
+            or clean_text((activity or {}).get("at"))
+            or clean_text(entry.get("startedAt"))
+            or clean_text(entry.get("at"))
+        )
+        minutes = reported_minutes(entry.get("reportedTime"))
+        source_key = activity_completion_key(merged_entry, index)
+        source = {
+            "id": source_key,
+            "title": monthly_learning_title(merged_entry),
+            "typeLabel": monthly_learning_type(merged_entry),
+            "kind": kind or "activity",
+            "module": clean_text(merged_entry.get("module")) or "--",
+            "week": clean_text(merged_entry.get("week")) or "--",
+            "reportedTime": clean_text(entry.get("reportedTime")) or "--",
+            "hours": round(minutes / 60, 2) if minutes > 0 else None,
+            "completedAt": recorded_at or "",
+            "completedDate": format_date(recorded_at or entry_activity_date(entry)),
+            "detail": monthly_learning_detail(merged_entry),
+        }
+
+        for code in entry_codes:
+            seen_sources = seen_sources_by_code[code]
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            details_by_code[code]["sources"].append(source)
+
+    details = sorted(details_by_code.values(), key=lambda item: ksb_sort_key(item["code"]))
+    for item in details:
+        item["sources"].sort(
+            key=lambda source: (
+                clean_text(source.get("completedAt")),
+                clean_text(source.get("title")),
+            ),
+            reverse=True,
+        )
+    return details
 
 
 def monthly_learning_tone(entry: dict) -> str:
@@ -1491,17 +1914,18 @@ def build_monthly_activity_learner(
         if monthly_event_matches_learner(event, learner)
     ]
 
-    monthly_hours = round(sum(reported_minutes(entry.get("reportedTime")) for entry in monthly_progress) / 60, 1)
-    quizzes = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "quiz")
-    videos = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "video")
-    components = sum(1 for entry in monthly_progress if clean_text(entry.get("kind")).lower() == "component")
-    reflections = sum(1 for entry in monthly_progress if clean_text(entry.get("feedback")))
+    deduped_monthly_progress = dedupe_otjh_progress_records(monthly_progress)
+    monthly_hours = round(sum(reported_minutes(entry.get("reportedTime")) for entry in deduped_monthly_progress) / 60, 1)
+    quizzes = sum(1 for entry in deduped_monthly_progress if clean_text(entry.get("kind")).lower() == "quiz")
+    videos = sum(1 for entry in deduped_monthly_progress if clean_text(entry.get("kind")).lower() == "video")
+    components = sum(1 for entry in deduped_monthly_progress if clean_text(entry.get("kind")).lower() == "component")
+    reflections = sum(1 for entry in deduped_monthly_progress if clean_text(entry.get("feedback")))
     evidence_keys = {
         monthly_activity_dedupe_identity(entry, index)
         for index, entry in enumerate([*monthly_progress, *monthly_feed])
         if is_evidence_entry(entry)
     }
-    monthly_ksb_codes = completed_ksb_codes(monthly_progress, [])
+    monthly_ksb_codes = completed_ksb_codes(deduped_monthly_progress, [])
 
     active_learner_events = [
         event
@@ -3535,7 +3959,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
     )
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in active_rows])
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
     live_session_events = collect_live_session_events(
         owner_email, owner_name, start_date=start_date, end_date=end_date
     )

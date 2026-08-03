@@ -1,223 +1,252 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useWizard } from '../WizardContext';
-import { PCP_KSBS, PCP_STANDARD, RAG_LEVELS } from '@/mocks/enrolment-console';
+import { PCP_KSBS, PCP_STANDARD, COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
 import type { KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
-import { FileList, inputClass, btnPrimary, btnDestructive, btnSecondary } from '../../components/ui';
+import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
 
-const ACTION_OPTIONS = ['Attend training', 'Shadow colleague', 'Complete e-learning', 'Work-based project'];
-const GOAL_OPTIONS = ['Achieve competence', 'Build confidence', 'Gather evidence'];
+/**
+ * Skills Radar — a sequential self-assessment questionnaire.
+ *
+ * One KSB at a time ("Question N of M") on an 8-point scale, with an optional
+ * note and evidence upload per question. The learner answers it; the enrolment
+ * team sees the same list read-only (`readOnly` via the wizard's mode), because
+ * this is the learner's own self-assessment and staff editing it would falsify
+ * the record they are meant to review.
+ */
 
-interface WorkingAssessment {
+interface WorkingAnswer {
   level: RagLevel | null;
-  evidenceFiles: string[];
-  planText: string;
-  action: string;
-  enterAction: string;
-  goal: string;
-  dueDate: string;
   note: string;
+  evidenceFiles: string[];
 }
 
-function emptyWorking(existing?: KsbAssessment): WorkingAssessment {
+function workingFrom(existing?: KsbAssessment): WorkingAnswer {
   return {
     level: existing?.level ?? null,
-    evidenceFiles: existing?.evidenceFiles ?? [],
-    planText: existing?.actionPlan?.text ?? '',
-    action: existing?.actionPlan?.action ?? '',
-    enterAction: '',
-    goal: existing?.actionPlan?.goal ?? '',
-    dueDate: existing?.actionPlan?.dueDate ?? '',
     note: existing?.note ?? '',
+    evidenceFiles: existing?.evidenceFiles ?? [],
   };
 }
 
 export default function SkillsRadar() {
-  const { draft, setSection } = useWizard();
+  const { draft, setSection, readOnly } = useWizard();
   const sr = draft.skillsRadar;
-  const [assessingId, setAssessingId] = useState<string | null>(null);
-  const [work, setWork] = useState<WorkingAssessment>(emptyWorking());
+  const ksbs = PCP_KSBS;
 
-  const ksbs = PCP_KSBS; // single standard shipped
-  const assessedLevel = (ksbId: string) => sr.assessments[ksbId]?.level ?? null;
+  // Index of the question open in the modal; null when closed.
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [work, setWork] = useState<WorkingAnswer>(workingFrom());
 
-  const openAssess = (ksbId: string) => {
-    setWork(emptyWorking(sr.assessments[ksbId]));
-    setAssessingId(ksbId);
+  const answeredCount = useMemo(
+    () => ksbs.filter((k) => sr.assessments[k.id]?.level).length,
+    [ksbs, sr.assessments]
+  );
+
+  const open = (index: number) => {
+    const ksb = ksbs[index];
+    setWork(workingFrom(sr.assessments[ksb.id]));
+    setOpenIndex(index);
   };
-  const closeAssess = () => setAssessingId(null);
+
+  /** Persist the open question, then advance. Returns the next index (or null). */
+  const commit = (index: number): void => {
+    const ksb = ksbs[index];
+    const existing = sr.assessments[ksb.id];
+    const next: KsbAssessment = {
+      ksbId: ksb.id,
+      level: work.level,
+      note: work.note,
+      evidenceFiles: work.evidenceFiles,
+      // The questionnaire doesn't capture an action plan; keep any plan the
+      // enrolment team previously attached rather than dropping it.
+      actionPlan: existing?.actionPlan ?? null,
+    };
+    setSection('skillsRadar', { ...sr, assessments: { ...sr.assessments, [ksb.id]: next } });
+  };
 
   const confirm = () => {
-    if (!assessingId) return;
-    const next: KsbAssessment = {
-      ksbId: assessingId,
-      level: work.level,
-      evidenceFiles: work.evidenceFiles,
-      actionPlan: work.planText || work.action || work.goal || work.dueDate
-        ? { text: work.planText, action: work.action || work.enterAction, goal: work.goal, dueDate: work.dueDate }
-        : null,
-      note: work.note,
-    };
-    setSection('skillsRadar', { ...sr, assessments: { ...sr.assessments, [assessingId]: next } });
-    setAssessingId(null);
+    if (openIndex == null) return;
+    commit(openIndex);
+    // Walk straight into the next unanswered question so the learner can work
+    // through all of them without reopening the list each time.
+    const nextIndex = openIndex + 1;
+    if (nextIndex < ksbs.length) {
+      open(nextIndex);
+    } else {
+      setOpenIndex(null);
+    }
   };
 
-  const addToPlan = () => {
-    const act = work.enterAction || work.action;
-    if (!act && !work.goal && !work.dueDate) return;
-    const line = `• ${act || 'Action'}${work.goal ? ` — goal: ${work.goal}` : ''}${work.dueDate ? ` (due ${work.dueDate})` : ''}`;
-    setWork((w) => ({ ...w, planText: w.planText ? `${w.planText}\n${line}` : line, action: '', enterAction: '', goal: '', dueDate: '' }));
-  };
-
-  const assessingKsb = ksbs.find((k) => k.id === assessingId) ?? null;
-  const assessingTitle = assessingKsb
-    ? `${assessingKsb.theme} (${assessingKsb.kind}) - ${assessingKsb.codes.join(', ')}: ${assessingKsb.title}`
-    : '';
+  const openKsb = openIndex != null ? ksbs[openIndex] : null;
 
   return (
     <div>
-      <StepHeading title="Skills Radar" />
+      <StepHeading
+        title="Skills Radar"
+        subtitle={`${PCP_STANDARD.label} [${ksbs.length}]`}
+      />
 
-      {/* Standard selector */}
-      <div className="mb-5 max-w-sm">
-        <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Standard</label>
-        <select value={sr.standardId} onChange={(e) => setSection('skillsRadar', { ...sr, standardId: e.target.value })} className={`${inputClass} cursor-pointer`}>
-          <option value={PCP_STANDARD.id}>{PCP_STANDARD.label}</option>
-        </select>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <p className="text-[12px] text-foreground-500">
+          {readOnly
+            ? 'The learner’s self-assessment. Read-only here — only the learner can change their own answers.'
+            : 'Rate yourself on each item. You can revisit any answer before submitting.'}
+        </p>
+        <span className="text-[12px] font-semibold text-foreground-600 shrink-0">{answeredCount} of {ksbs.length} answered</span>
       </div>
 
-      {/* KSB grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        {ksbs.map((ksb) => {
-          const level = assessedLevel(ksb.id);
+      {/* Progress */}
+      <div className="h-1.5 bg-background-200 rounded-full overflow-hidden mb-5">
+        <div className="h-full bg-primary-500 rounded-full transition-all duration-300" style={{ width: `${(answeredCount / ksbs.length) * 100}%` }} />
+      </div>
+
+      {!readOnly && answeredCount < ksbs.length && (
+        <button
+          className={`${btnPrimary} mb-4`}
+          onClick={() => open(ksbs.findIndex((k) => !sr.assessments[k.id]?.level))}
+        >
+          <i className="ri-play-line" />{answeredCount === 0 ? 'Start assessment' : 'Continue assessment'}
+        </button>
+      )}
+
+      {/* Question list — numbered, showing each answer's score */}
+      <div className="border border-foreground-200/70 rounded-xl divide-y divide-foreground-100 overflow-hidden">
+        <div className="flex items-center gap-3 px-3 py-2 bg-background-100/60">
+          <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex-1">Skill description</span>
+          <span className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Answer</span>
+        </div>
+        {ksbs.map((ksb, i) => {
+          const level = sr.assessments[ksb.id]?.level ?? null;
+          const meta = competenceMeta(level);
+          const score = competenceScore(level);
           return (
-            <div key={ksb.id} className="flex flex-col">
-              {/* Radar bar (Always -> Never, top to bottom) */}
-              <div className="border border-foreground-200/70 rounded-t-lg overflow-hidden">
-                {RAG_LEVELS.map((lvl) => {
-                  const filled = level === lvl.level;
-                  return (
-                    <div
-                      key={lvl.level}
-                      title={lvl.label}
-                      aria-label={filled ? `${lvl.label} (selected)` : lvl.label}
-                      className={`relative h-6 border-b border-foreground-100 last:border-0 ${filled ? lvl.cellFill : 'bg-background-50'}`}
-                    >
-                      <span className={`absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full ${lvl.dot}`} />
-                      {filled && <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[9px] font-semibold text-white">{lvl.label}</span>}
-                    </div>
-                  );
-                })}
-              </div>
-              {/* KSB card */}
-              <div className="border border-t-0 border-foreground-200/70 rounded-b-lg p-3 flex-1 flex flex-col">
-                <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider mb-1">{ksb.codes.join(', ')} · {ksb.kind}</p>
-                <p className="text-[12px] text-foreground-700 leading-snug flex-1">{ksb.title}</p>
-                <button onClick={() => openAssess(ksb.id)} className={`${level ? btnSecondary : btnPrimary} w-full justify-center mt-3 !py-1.5`}>
-                  <i className={level ? 'ri-edit-line' : 'ri-focus-3-line'} />{level ? 'Reassess' : 'Assess'}
-                </button>
-              </div>
+            <div key={ksb.id} className="flex items-center gap-3 px-3 py-2.5">
+              <span className="text-[12px] font-semibold text-foreground-400 w-7 shrink-0 text-right">{i + 1}.</span>
+              <span className="flex-1 min-w-0">
+                <span className="text-[13px] text-foreground-800">{ksb.codes.join(', ')} {ksb.title}</span>
+                <span className="block text-[11px] text-foreground-400 mt-0.5">{ksb.theme} · {ksb.kind}</span>
+              </span>
+              {score != null && meta ? (
+                <span className={`text-[11px] font-bold w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${meta.tintBg} ${meta.tintText}`} title={meta.label}>
+                  {score}
+                </span>
+              ) : (
+                <span className="text-[11px] text-foreground-300 shrink-0">—</span>
+              )}
+              <button
+                onClick={() => open(i)}
+                className={`${btnSecondary} !py-1 !px-3 !text-[11px] shrink-0`}
+              >
+                <i className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
+              </button>
             </div>
           );
         })}
       </div>
 
-      {/* Assess modal */}
-      {assessingId && (
+      {/* Question modal */}
+      {openIndex != null && openKsb && (
         <Modal
-          title={assessingTitle}
-          onClose={closeAssess}
-          size="max-w-4xl"
+          title={`Question ${openIndex + 1} of ${ksbs.length}`}
+          onClose={() => setOpenIndex(null)}
+          size="max-w-3xl"
+          /* Each question starts at the top rather than inheriting the last scroll. */
+          scrollResetKey={openIndex}
           footer={
-            <>
-              <button className={btnDestructive} onClick={closeAssess}><i className="ri-close-line" />Cancel</button>
-              <button className={btnPrimary} onClick={confirm}><i className="ri-check-line" />Confirm</button>
-            </>
+            readOnly ? (
+              <button className={btnSecondary} onClick={() => setOpenIndex(null)}>Close</button>
+            ) : (
+              <>
+                <button className={btnSecondary} onClick={() => setOpenIndex(null)}>Cancel</button>
+                <button className={btnPrimary} onClick={confirm} disabled={!work.level}>
+                  <i className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
+                </button>
+              </>
+            )
           }
         >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Left — rating options */}
-            <div>
-              <p className="text-[12px] font-semibold text-foreground-700 mb-2">How competent are you?</p>
-              <div className="space-y-2">
-                {RAG_LEVELS.map((lvl) => {
-                  const selected = work.level === lvl.level;
-                  return (
-                    <label
-                      key={lvl.level}
-                      className={`flex items-start gap-2 p-3 rounded-lg border cursor-pointer transition-smooth ${selected ? `${lvl.tintBg} ${lvl.tintBorder}` : 'bg-background-50 border-foreground-200/70 hover:border-foreground-300'}`}
-                    >
-                      <input type="radio" name="rag" checked={selected} onChange={() => setWork((w) => ({ ...w, level: lvl.level }))} className="accent-primary-500 mt-0.5" />
-                      <span className="flex-1">
-                        <span className={`text-[13px] font-semibold ${selected ? lvl.tintText : 'text-foreground-800'}`}>{lvl.label}</span>
-                        <span className="block text-[11px] text-foreground-500 mt-0.5">{lvl.help}</span>
-                      </span>
-                      <span title={lvl.help} className="text-foreground-300 shrink-0"><i className="ri-question-line" /></span>
-                    </label>
-                  );
-                })}
-              </div>
-              <div className="mt-4">
-                <p className="text-[12px] font-medium text-foreground-700 mb-1">Evidence discussed</p>
-                <label className="inline-flex items-center gap-2 px-3 py-2 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-                  <i className="ri-folder-open-line" />Browse
-                  <input
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const names = Array.from(e.target.files ?? []).map((f) => f.name);
-                      setWork((w) => ({ ...w, evidenceFiles: [...w.evidenceFiles, ...names] }));
-                    }}
-                  />
-                </label>
-                <div className="mt-2">
-                  <FileList
-                    files={work.evidenceFiles.map((n, i) => ({ id: `${n}-${i}`, name: n }))}
-                    onDelete={(id) => setWork((w) => ({ ...w, evidenceFiles: w.evidenceFiles.filter((_, i) => `${w.evidenceFiles[i]}-${i}` !== id) }))}
-                    emptyText="No evidence attached"
-                  />
-                </div>
-              </div>
-            </div>
+          {/* Position within the questionnaire */}
+          <div className="h-1.5 bg-background-200 rounded-full overflow-hidden mb-4">
+            <div className="h-full bg-primary-500 rounded-full transition-all duration-300" style={{ width: `${((openIndex + 1) / ksbs.length) * 100}%` }} />
+          </div>
 
-            {/* Right — action plan */}
-            <div>
-              <p className="text-[12px] font-semibold text-foreground-700 mb-2">Action plan</p>
-              <textarea rows={5} value={work.planText} onChange={(e) => setWork((w) => ({ ...w, planText: e.target.value }))} className={inputClass} placeholder="Describe the plan…" />
-              <div className="grid grid-cols-1 gap-2 mt-3">
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Select action</label>
-                  <select value={work.action} onChange={(e) => setWork((w) => ({ ...w, action: e.target.value }))} className={`${inputClass} cursor-pointer`}>
-                    <option value="">-none-</option>
-                    {ACTION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Enter action</label>
-                  <input value={work.enterAction} onChange={(e) => setWork((w) => ({ ...w, enterAction: e.target.value }))} className={inputClass} placeholder="Free-text action" />
-                </div>
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Select goal</label>
-                  <select value={work.goal} onChange={(e) => setWork((w) => ({ ...w, goal: e.target.value }))} className={`${inputClass} cursor-pointer`}>
-                    <option value="">-none-</option>
-                    {GOAL_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Date to complete</label>
-                  <input type="date" value={work.dueDate} onChange={(e) => setWork((w) => ({ ...w, dueDate: e.target.value }))} className={inputClass} />
-                </div>
-                <div><button onClick={addToPlan} className={`${btnSecondary} w-full justify-center`}><i className="ri-add-line" />Add</button></div>
-              </div>
+          <p className="text-[14px] text-foreground-900 mb-4">
+            <span className="font-semibold mr-1.5">{openIndex + 1}.</span>
+            {openKsb.codes.join(', ')} {openKsb.title}
+          </p>
+
+          <div className="border border-foreground-200/70 rounded-lg overflow-hidden mb-4">
+            <p className="text-[12px] font-medium text-foreground-700 px-3 py-2 bg-background-100/60 border-b border-foreground-100">
+              Choose one answer that most applies to you:
+            </p>
+            <div className="divide-y divide-foreground-100">
+              {COMPETENCE_LEVELS.map((lvl) => {
+                const selected = work.level === lvl.level;
+                return (
+                  <label
+                    key={lvl.level}
+                    className={`flex items-center gap-3 px-3 py-2.5 transition-smooth ${readOnly ? '' : 'cursor-pointer hover:bg-background-50'} ${selected ? lvl.tintBg : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name={`competence-${openKsb.id}`}
+                      checked={selected}
+                      disabled={readOnly}
+                      onChange={() => setWork((w) => ({ ...w, level: lvl.level }))}
+                      className="accent-primary-500 shrink-0"
+                    />
+                    <span className="flex-1 text-[12px] text-foreground-700">
+                      <span className={`font-semibold ${selected ? lvl.tintText : 'text-foreground-800'}`}>{lvl.label}</span>
+                      {' – '}{lvl.help}
+                    </span>
+                    <span className={`text-[11px] font-bold w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${lvl.tintBg} ${lvl.tintText}`}>
+                      {lvl.score}
+                    </span>
+                  </label>
+                );
+              })}
             </div>
           </div>
 
-          {/* Note (full width) */}
-          <div className="mt-5 pt-4 border-t border-foreground-100">
-            <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">Note</label>
-            <input value={work.note} onChange={(e) => setWork((w) => ({ ...w, note: e.target.value }))} className={inputClass} />
+          <div className="mb-4">
+            <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Add a note:</label>
+            <textarea
+              rows={3}
+              value={work.note}
+              readOnly={readOnly}
+              onChange={(e) => setWork((w) => ({ ...w, note: e.target.value }))}
+              className={inputClass}
+            />
+          </div>
+
+          <div>
+            <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Upload evidence:</label>
+            {!readOnly && (
+              <label className="inline-flex items-center gap-2 px-3 py-2 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer mb-2">
+                <i className="ri-folder-open-line" />Select file…
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const names = Array.from(e.target.files ?? []).map((f) => f.name);
+                    setWork((w) => ({ ...w, evidenceFiles: [...w.evidenceFiles, ...names] }));
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            )}
+            {readOnly && work.evidenceFiles.length === 0 ? (
+              <EmptyState text="No evidence uploaded" />
+            ) : (
+              <FileList
+                files={work.evidenceFiles.map((n, i) => ({ id: `${n}-${i}`, name: n }))}
+                onDelete={readOnly ? undefined : (id) => setWork((w) => ({ ...w, evidenceFiles: w.evidenceFiles.filter((_, i) => `${w.evidenceFiles[i]}-${i}` !== id) }))}
+                emptyText="No evidence uploaded"
+              />
+            )}
           </div>
         </Modal>
       )}

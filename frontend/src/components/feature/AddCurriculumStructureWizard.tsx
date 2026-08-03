@@ -37,6 +37,7 @@ import {
   type CurriculumKsbSet,
   type CurriculumModule,
   type CurriculumModuleAttachmentInput,
+  type CurriculumModuleInput,
   type CurriculumProgramme,
   type CurriculumProgrammeDetail,
   type CurriculumSession,
@@ -54,17 +55,20 @@ import {
   loadModuleStructure,
   loadModuleStructuresBatch,
   loadTeamsMeetingConfiguration,
+  loadTeamsMeetingArtifacts,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
   saveModuleStructure,
   syncTeamsMeetingArtifacts,
+  updateTeamsMeetingSchedule,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
   type TeamsMeetingInput,
+  type TeamsMeetingOccurrence,
   type TeamsMeetingResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
-import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { closeCurriculumLoading, showCurriculumAlert, showCurriculumConfirm, showCurriculumLoading } from '@/components/feature/CurriculumSweetAlert';
 
 type WizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
 type ModuleMode = 'existing' | 'new';
@@ -325,6 +329,12 @@ function generatedCurriculumId(prefix: 'COHORT' | 'GROUP') {
   const timestamp = new Date().toISOString().replace(/\D/g, '');
   const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
   return `${prefix}-${timestamp}${suffix}`;
+}
+
+function generatedModuleBuilderId() {
+  const timestamp = new Date().toISOString().replace(/\D/g, '');
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `MOD-${timestamp}${suffix}`;
 }
 
 // A draft represents an existing entity when it carries a stored canonical id
@@ -1149,13 +1159,13 @@ function uniqueModulesByName(modules: CurriculumModule[]) {
 }
 
 function nestedGroupsForCohort(cohort: CurriculumCohort) {
-  const nestedGroups = (cohort as CurriculumCohort & { groups?: unknown[] }).groups;
+  const nestedGroups = (cohort as unknown as { groups?: unknown[] }).groups;
   if (!Array.isArray(nestedGroups)) return [];
   return nestedGroups.filter((group): group is CurriculumGroup & { modules?: CurriculumModule[] } => Boolean(group && typeof group === 'object'));
 }
 
 function nestedModulesForGroup(group: CurriculumGroup) {
-  const nestedModules = (group as CurriculumGroup & { modules?: unknown[] }).modules;
+  const nestedModules = (group as unknown as { modules?: unknown[] }).modules;
   if (!Array.isArray(nestedModules)) return [];
   return nestedModules.filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object'));
 }
@@ -1187,6 +1197,9 @@ function isPlaceholderCurriculumComponent(component: CurriculumComponent) {
 
 function actualWeekStructureForModule(module: CurriculumModule) {
   return (module.weekStructure || []).map(week => ({
+    moduleId: moduleBuilderStructureId(module),
+    summary: '',
+    learningOutcomes: [],
     ...week,
     components: (week.components || []).filter(component => !isPlaceholderCurriculumComponent(component)),
   }));
@@ -1217,10 +1230,10 @@ function actualModuleCatalogueStructure(module: CurriculumModule): ModuleCatalog
   const moduleKsbMappings = moduleKsbMappingsFromCurriculumModule(module);
   return {
     ...catalogue,
-    sessionsNumber: String(moduleSessionCount(module)),
+    sessionsNumber: moduleSessionCount(module),
     moduleKsbMappings: moduleKsbMappings.length ? moduleKsbMappings : catalogue.moduleKsbMappings,
     ksbCount: Math.max(catalogue.ksbCount || 0, moduleKsbMappings.length),
-    weekStructure: actualWeekStructureForModule(module),
+    weekStructure: actualWeekStructureForModule(module) as unknown as ModuleCatalogueItem['weekStructure'],
   };
 }
 
@@ -3452,12 +3465,12 @@ export function AddCurriculumStructureWizard({
     const detailCohorts = programmeDetail?.cohorts || [];
     const detailFlat = programmeDetail?.flat;
     const sourceCohorts = detailCohorts.length ? detailCohorts : (detailFlat?.cohorts || data.cohorts || []);
-    const sourceGroups = detailCohorts.length
+    const sourceGroups: CurriculumGroup[] = detailCohorts.length
       ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort))
-      : (detailFlat?.groups || data.groups || []);
-    const sourceModules = detailCohorts.length
+      : ((detailFlat?.groups || data.groups || []).filter((group): group is CurriculumGroup => Boolean(group && typeof group === 'object')));
+    const sourceModules: CurriculumModule[] = detailCohorts.length
       ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort).flatMap(group => nestedModulesForGroup(group)))
-      : (detailFlat?.modules || modules);
+      : ((detailFlat?.modules || modules).filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object')));
     const detailComponents = detailFlat?.components || [];
     const existingDrafts = buildExistingProgrammeDrafts(
       programmeDetail?.programme || selectedProgramme,
@@ -3840,6 +3853,56 @@ export function AddCurriculumStructureWizard({
     }));
   };
 
+  const persistTeamsMeetingForModuleDraft = async (draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string): Promise<Partial<ModuleDraft> | void> => {
+    if (isFreeProgramme) return;
+    const nextDraft = reconcileModuleDraft({
+      ...draft,
+      teamsMeeting: meeting,
+      weeks: attachTeamsMeetingToWeeks(draft, meeting, details),
+    }, groupForm.deliveryDay, groupForm.startTime, activeHolidays);
+    const sourceModule = findModuleOption(moduleOptions, draft.catalogueId) || findModuleOption(modules, draft.catalogueId);
+    const moduleId = isCanonicalModuleBuilderId(draft.catalogueId)
+      ? draft.catalogueId
+      : sourceModule
+      ? moduleOptionId(sourceModule)
+      : generatedModuleBuilderId();
+    const currentStructure = sourceModule ? getDefaultStructure(curriculumModuleToCatalogue(sourceModule)) : null;
+    const programmeId = selectedProgramme?.sourceId || selectedProgramme?.id || activeProgrammeSourceId;
+    const moduleName = sourceModule?.name || draft.name || draft.catalogueId || 'Module';
+    const authored = moduleDraftAuthoringPayload(nextDraft, moduleId, moduleName, {
+      programmeId,
+      programmeName: selectedProgramme?.name || programmeForm.name,
+      cohortId: String(activeCohort.sourceId || ''),
+      cohortName: activeCohort.name,
+      groupId: String(activeGroup.sourceId || ''),
+      groupName: activeGroup.name,
+      tutor: nextDraft.tutor,
+      coach: activeGroup.coach,
+      weekDays: groupForm.deliveryDay,
+      startTime: groupForm.startTime,
+      endTime: groupForm.endTime || addHoursToTime(groupForm.startTime, 2),
+    }, currentStructure);
+    const result = sourceModule || isCanonicalModuleBuilderId(draft.catalogueId)
+      ? await updateCurriculumModule(moduleId, authored as unknown as CurriculumModuleInput)
+      : await createCurriculumModule({
+        ...(authored as unknown as CurriculumModuleInput),
+        moduleType: 'authoring',
+        catalogueId: moduleId,
+        moduleCatalogueId: moduleId,
+      } as CurriculumModuleInput & { moduleType: string; catalogueId: string; moduleCatalogueId: string });
+    await reload();
+    const savedId = String(result.module?.moduleCatalogueId || result.module?.catalogueId || result.module?.structureId || moduleId);
+    return {
+      mode: 'existing',
+      catalogueId: savedId,
+      existingCatalogueId: savedId,
+      existingName: moduleName,
+      name: moduleName,
+      teamsMeeting: meeting,
+      weeks: nextDraft.weeks,
+    };
+  };
+
   const selectExistingModule = async (draft: ModuleDraft, catalogueId: string) => {
     if (isFreeProgramme) return;
     userEditedWizardRef.current = true;
@@ -3877,7 +3940,7 @@ export function AddCurriculumStructureWizard({
       const structure = savedStructure
         ? {
           ...savedStructure,
-          sessionsNumber: String(moduleSessionCount(module)),
+          sessionsNumber: moduleSessionCount(module),
           weekStructure: (savedStructure.weekStructure || []).map(week => ({
             ...week,
             components: (week.components || []).filter(component => isDisplayableModuleBuilderComponent(component, week.title)),
@@ -4133,6 +4196,17 @@ export function AddCurriculumStructureWizard({
               startTime: group.startTime,
               endTime: group.endTime || addHoursToTime(group.startTime, 2),
             });
+            if (draft.teamsMeeting) {
+              const teamsScheduleInput = teamsScheduleInputFromDraft(
+                draft,
+                moduleName,
+                group.startTime,
+                group.endTime || addHoursToTime(group.startTime, 2),
+              );
+              if (teamsScheduleInput) {
+                await updateTeamsMeetingSchedule(draft.teamsMeeting.liveSessionId, teamsScheduleInput);
+              }
+            }
 
             modulesForSave.push({
               moduleName,
@@ -4722,6 +4796,7 @@ export function AddCurriculumStructureWizard({
                     onRemoveModule={removeModuleDraft}
                     onChangeModule={updateModuleDraft}
                     onSelectExistingModule={selectExistingModule}
+                    onPersistTeamsMeeting={persistTeamsMeetingForModuleDraft}
                     onResolveTutorConflict={resolveTutorConflict}
                   />
                 </StepPanel>
@@ -6236,6 +6311,7 @@ function ModulesStepWorkspace({
   onRemoveModule,
   onChangeModule,
   onSelectExistingModule,
+  onPersistTeamsMeeting,
   onResolveTutorConflict,
 }: {
   freeMode?: boolean;
@@ -6261,6 +6337,7 @@ function ModulesStepWorkspace({
   onRemoveModule: (id: string) => void | Promise<void>;
   onChangeModule: (localId: string, patch: Partial<ModuleDraft>) => void;
   onSelectExistingModule: (draft: ModuleDraft, catalogueId: string) => void;
+  onPersistTeamsMeeting?: (draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string) => Promise<Partial<ModuleDraft> | void>;
   onResolveTutorConflict: (conflict: TutorScheduleConflict) => void;
 }) {
   const activeModuleIndex = activeModule ? Math.max(0, moduleDrafts.findIndex(draft => draft.localId === activeModule.localId)) : -1;
@@ -6423,6 +6500,7 @@ function ModulesStepWorkspace({
               onRemove={() => onRemoveModule(activeModule.localId)}
               onChange={patch => onChangeModule(activeModule.localId, patch)}
               onSelectExisting={catalogueId => onSelectExistingModule(activeModule, catalogueId)}
+              onPersistTeamsMeeting={onPersistTeamsMeeting}
             />
           ) : (
             <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-dashed border-background-300 bg-background-50">
@@ -6634,6 +6712,33 @@ function attachTeamsMeetingToWeeks(draft: ModuleDraft, meeting: TeamsMeetingDraf
   });
 }
 
+function teamsScheduleInputFromDraft(draft: ModuleDraft, moduleTitle: string, groupTime: string, groupEndTime: string) {
+  const meeting = draft.teamsMeeting;
+  if (!meeting) return null;
+  const durationMinutes = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || meeting.durationMinutes || 60);
+  const scheduledOccurrences = draft.weeks.map((week, index) => {
+    const localDateTime = `${week.date || draft.startDate || todayIso()}T${week.startTime || groupTime || '09:30'}`;
+    return {
+      sessionNumber: week.sessionNumber || index + 1,
+      startDateTimeUtc: new Date(localDateTime).toISOString(),
+      durationMinutes,
+    };
+  });
+  const first = scheduledOccurrences[0];
+  if (!first) return null;
+  return {
+    title: moduleTitle || draft.name || 'Live session',
+    organizerEmail: meeting.organizerEmail,
+    eventId: meeting.eventId,
+    localStartDateTime: `${draft.weeks[0]?.date || draft.startDate || todayIso()}T${draft.weeks[0]?.startTime || groupTime || '09:30'}`,
+    startDateTimeUtc: first.startDateTimeUtc,
+    durationMinutes,
+    repeat: scheduledOccurrences.length > 1 ? 'weekly' as const : 'none' as const,
+    repeatOccurrences: scheduledOccurrences.length,
+    scheduledOccurrences,
+  };
+}
+
 function ModulePlanningPanel({
   freeMode = false,
   draft,
@@ -6652,6 +6757,7 @@ function ModulePlanningPanel({
   onRemove,
   onChange,
   onSelectExisting,
+  onPersistTeamsMeeting,
 }: {
   freeMode?: boolean;
   draft: ModuleDraft;
@@ -6670,11 +6776,19 @@ function ModulePlanningPanel({
   onRemove: () => void;
   onChange: (patch: Partial<ModuleDraft>) => void;
   onSelectExisting: (catalogueId: string) => void;
+  onPersistTeamsMeeting?: (draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string) => Promise<Partial<ModuleDraft> | void>;
 }) {
   const [startDateTouched, setStartDateTouched] = useState(false);
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
   const [teamsSyncing, setTeamsSyncing] = useState(false);
   const [teamsSyncMessage, setTeamsSyncMessage] = useState('');
+  const [teamsPersisting, setTeamsPersisting] = useState(false);
+  const [teamsPersistMessage, setTeamsPersistMessage] = useState('');
+  const [teamsScheduleSyncing, setTeamsScheduleSyncing] = useState(false);
+  const [teamsSessionsLoading, setTeamsSessionsLoading] = useState(false);
+  const [teamsSessionsOpen, setTeamsSessionsOpen] = useState(false);
+  const [teamsSessionsError, setTeamsSessionsError] = useState('');
+  const [teamsSessions, setTeamsSessions] = useState<TeamsMeetingOccurrence[]>([]);
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   const selectedModuleId = selectedModule ? moduleOptionId(selectedModule) : draft.catalogueId;
   const moduleTitle = draft.name || selectedModule?.name || `Module ${index + 1}`;
@@ -6870,6 +6984,72 @@ function ModulePlanningPanel({
                     {teamsSyncing ? 'Syncing...' : 'Sync results'}
                   </button>
                 ) : null}
+                {draft.teamsMeeting ? (
+                  <button
+                    type="button"
+                    disabled={teamsScheduleSyncing}
+                    onClick={async () => {
+                      const input = teamsScheduleInputFromDraft(draft, moduleTitle, groupTime, groupEndTime);
+                      if (!input) {
+                        setTeamsSyncMessage('No Teams meeting schedule is available for this module.');
+                        return;
+                      }
+                      setTeamsScheduleSyncing(true);
+                      setTeamsSyncMessage('');
+                      try {
+                        const result = await updateTeamsMeetingSchedule(draft.teamsMeeting!.liveSessionId, input);
+                        const updatedMeeting: TeamsMeetingDraft = {
+                          ...draft.teamsMeeting!,
+                          ...result.meeting,
+                          liveSessionId: draft.teamsMeeting!.liveSessionId,
+                          joinUrl: result.meeting.joinUrl || draft.teamsMeeting!.joinUrl,
+                        };
+                        onChange({
+                          teamsMeeting: updatedMeeting,
+                          weeks: attachTeamsMeetingToWeeks(draft, updatedMeeting, draft.notes),
+                        });
+                        if (teamsSessionsOpen) {
+                          const refreshed = await loadTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
+                          setTeamsSessions(refreshed.occurrences);
+                          setTeamsSessionsError('');
+                        }
+                        setTeamsSyncMessage(`Teams schedule updated for ${result.meeting.trackedOccurrences || input.repeatOccurrences} actual sessions.`);
+                      } catch (err) {
+                        setTeamsSyncMessage(err instanceof Error ? err.message : 'Unable to update Teams schedule.');
+                      } finally {
+                        setTeamsScheduleSyncing(false);
+                      }
+                    }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
+                  >
+                    <i className={`${teamsScheduleSyncing ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}`}></i>
+                    {teamsScheduleSyncing ? 'Updating...' : 'Sync schedule'}
+                  </button>
+                ) : null}
+                {draft.teamsMeeting ? (
+                  <button
+                    type="button"
+                    disabled={teamsSessionsLoading}
+                    onClick={async () => {
+                      setTeamsSessionsLoading(true);
+                      setTeamsSessionsError('');
+                      try {
+                        const result = await loadTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
+                        setTeamsSessions(result.occurrences);
+                        setTeamsSessionsOpen(true);
+                      } catch (err) {
+                        setTeamsSessionsError(err instanceof Error ? err.message : 'The Teams sessions could not be loaded.');
+                        setTeamsSessionsOpen(true);
+                      } finally {
+                        setTeamsSessionsLoading(false);
+                      }
+                    }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
+                  >
+                    <i className={`${teamsSessionsLoading ? 'ri-loader-4-line animate-spin' : 'ri-list-check-2'}`}></i>
+                    Actual sessions
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onPointerDown={event => event.stopPropagation()}
@@ -6886,6 +7066,50 @@ function ModulePlanningPanel({
               </div>
             </div>
             {teamsSyncMessage ? <p className="mt-2 text-[10px] font-semibold text-foreground-600">{teamsSyncMessage}</p> : null}
+            {teamsPersistMessage ? <p className={`mt-2 text-[10px] font-semibold ${teamsPersistMessage.startsWith('Saved') ? 'text-emerald-700' : 'text-amber-700'}`}>{teamsPersistMessage}</p> : null}
+            {teamsSessionsOpen ? (
+              <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-background-50 shadow-sm">
+                <div className="flex items-center justify-between gap-3 border-b border-background-200 bg-primary-50/60 px-3 py-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Actual Teams sessions</p>
+                    <p className="text-[10px] font-semibold text-foreground-500">{teamsSessions.length ? `${teamsSessions.length} tracked sessions` : 'No tracked sessions loaded'}</p>
+                  </div>
+                  <button type="button" onClick={() => setTeamsSessionsOpen(false)} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label="Close actual sessions">
+                    <i className="ri-close-line"></i>
+                  </button>
+                </div>
+                {teamsSessionsError ? (
+                  <p className="px-3 py-3 text-[11px] font-semibold text-red-700">{teamsSessionsError}</p>
+                ) : teamsSessions.length ? (
+                  <div className="max-h-56 overflow-auto">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="sticky top-0 bg-background-100 text-[9px] uppercase text-foreground-400">
+                        <tr>
+                          <th className="px-3 py-2 font-bold">Session</th>
+                          <th className="px-3 py-2 font-bold">Scheduled</th>
+                          <th className="px-3 py-2 font-bold">Actual</th>
+                          <th className="px-3 py-2 font-bold">Attendance</th>
+                          <th className="px-3 py-2 font-bold">Artifacts</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-background-200">
+                        {teamsSessions.map(occurrence => (
+                          <tr key={occurrence.id}>
+                            <td className="px-3 py-2 font-bold text-foreground-900">Session {occurrence.session_number}</td>
+                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.scheduled_start ? new Date(occurrence.scheduled_start).toLocaleString('en-GB') : '-'}</td>
+                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.actual_start ? new Date(occurrence.actual_start).toLocaleString('en-GB') : 'Not attended yet'}</td>
+                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.participant_count || occurrence.attendance?.length || 0}</td>
+                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.artifacts?.length || 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="px-3 py-3 text-[11px] font-semibold text-foreground-500">No Teams sessions are tracked yet.</p>
+                )}
+              </div>
+            ) : null}
             {tutorConflict ? (
               <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
                 <div className="flex items-start gap-2">
@@ -6911,11 +7135,55 @@ function ModulePlanningPanel({
             groupEndTime={groupEndTime}
             tutorEmail={String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '')}
             onClose={() => setTeamsMeetingOpen(false)}
-            onCreated={(meeting, details) => {
+            persistLabel={teamsPersisting ? 'Saving Teams link to module...' : ''}
+            onCreated={async (meeting, details) => {
+              setTeamsPersistMessage('');
               onChange({
                 teamsMeeting: meeting,
                 weeks: attachTeamsMeetingToWeeks(draft, meeting, details),
               });
+              if (!onPersistTeamsMeeting) {
+                setTeamsPersistMessage('Teams link is attached to this draft. Press Update to save it.');
+                await showCurriculumAlert({
+                  title: 'Teams link attached',
+                  text: 'Press Update to save the Teams link and live-session components to this module.',
+                  icon: 'info',
+                  confirmButtonText: 'OK',
+                });
+                return;
+              }
+              setTeamsPersisting(true);
+              showCurriculumLoading({
+                title: 'Saving Teams live sessions',
+                text: 'The Teams link and live-session components are being saved to this module.',
+              });
+              try {
+                const persistedPatch = await onPersistTeamsMeeting(draft, meeting, details);
+                if (persistedPatch) {
+                  onChange(persistedPatch);
+                }
+                setTeamsPersistMessage('Saved Teams link and live-session components to this module.');
+                closeCurriculumLoading();
+                await showCurriculumAlert({
+                  title: 'Teams sessions saved',
+                  text: 'The Teams link and live-session components are now saved to the module.',
+                  icon: 'success',
+                  timer: 1800,
+                  confirmButtonText: 'Done',
+                });
+              } catch (err) {
+                const detail = err instanceof Error ? err.message : 'Teams link created, but module save failed. Press Update to retry.';
+                closeCurriculumLoading();
+                setTeamsPersistMessage(`Teams link created, but module save failed: ${detail}`);
+                await showCurriculumAlert({
+                  title: 'Module save failed',
+                  text: detail,
+                  icon: 'error',
+                  confirmButtonText: 'Close',
+                });
+              } finally {
+                setTeamsPersisting(false);
+              }
             }}
           />
         )}
@@ -6930,6 +7198,7 @@ function WizardTeamsMeetingModal({
   groupTime,
   groupEndTime,
   tutorEmail,
+  persistLabel,
   onClose,
   onCreated,
 }: {
@@ -6938,12 +7207,14 @@ function WizardTeamsMeetingModal({
   groupTime: string;
   groupEndTime: string;
   tutorEmail: string;
+  persistLabel?: string;
   onClose: () => void;
-  onCreated: (meeting: TeamsMeetingDraft, details: string) => void;
+  onCreated: (meeting: TeamsMeetingDraft, details: string) => void | Promise<void>;
 }) {
   const existing = draft.teamsMeeting;
-  const sessionCount = Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1);
-  const firstSessionDate = draft.startDate || draft.weeks[0]?.date || todayIso();
+  const plannedWeeks = draft.weeks;
+  const sessionCount = Math.max(1, plannedWeeks.length || Number(draft.sessionsNumber) || 1);
+  const firstSessionDate = plannedWeeks[0]?.date || draft.startDate || todayIso();
   const defaultDuration = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || 60);
   const [title, setTitle] = useState(moduleTitle || 'Live session');
   const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || tutorEmail);
@@ -6994,17 +7265,9 @@ function WizardTeamsMeetingModal({
     if (!organizerEmail.trim()) return setError('Enter the Microsoft 365 organizer email.');
     const start = new Date(startDateTime);
     if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
-    const scheduleStart = dateFromInput(draft.startDate || firstSessionDate) || new Date();
-    const scheduledWeeks = Array.from({ length: sessionCount }, (_, index) => {
-      const sessionDate = new Date(scheduleStart);
-      sessionDate.setDate(scheduleStart.getDate() + index * 7);
-      return {
-        sessionNumber: index + 1,
-        date: toDateInput(sessionDate),
-      };
-    });
+    const scheduledWeeks = plannedWeeks.length ? plannedWeeks : [{ sessionNumber: 1, date: firstSessionDate, startTime: groupTime || '09:30' }];
     const scheduledOccurrences = scheduledWeeks.map((week, index) => {
-      const scheduledStart = new Date(`${week.date || firstSessionDate}T${groupTime || '09:30'}`);
+      const scheduledStart = new Date(`${week.date || firstSessionDate}T${week.startTime || groupTime || '09:30'}`);
       return {
         sessionNumber: week.sessionNumber || index + 1,
         startDateTimeUtc: scheduledStart.toISOString(),
@@ -7017,7 +7280,7 @@ function WizardTeamsMeetingModal({
       organizerEmail: organizerEmail.trim(),
       attendees: attendees.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
       presenters: presenters.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
-      localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${groupTime || '09:30'}`,
+      localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${scheduledWeeks[0]?.startTime || groupTime || '09:30'}`,
       startDateTimeUtc: authoritativeStart,
       durationMinutes: defaultDuration,
       repeat: scheduledOccurrences.length > 1 ? 'weekly' : 'none',
@@ -7052,7 +7315,7 @@ function WizardTeamsMeetingModal({
         hideAttendees,
       };
       setCreated(result);
-      onCreated(meeting, details);
+      await onCreated(meeting, details);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
     } finally {
@@ -7061,7 +7324,7 @@ function WizardTeamsMeetingModal({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-[10150] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5" onClick={submitting ? undefined : onClose}>
+    <div className="fixed inset-0 z-[10150] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5">
       <div role="dialog" aria-modal="true" aria-labelledby="wizard-teams-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
         <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
           <div className="flex min-w-0 items-start gap-3">
@@ -7141,7 +7404,7 @@ function WizardTeamsMeetingModal({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-background-200 bg-background-50 px-5 py-4">
-          <p className="text-[10px] font-semibold text-foreground-400">The meeting is attached to this module draft after creation.</p>
+          <p className="text-[10px] font-semibold text-foreground-400">{persistLabel || 'The meeting is attached to this module draft after creation.'}</p>
           <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
             {!created && <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[180px] items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>{submitting ? 'Creating meeting...' : 'Create with these options'}</button>}

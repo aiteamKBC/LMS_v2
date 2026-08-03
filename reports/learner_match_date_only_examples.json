@@ -1,0 +1,472 @@
+[
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "October 2025",
+    "date": "2025-10-01",
+    "week": "L25: Resources Management 31/10/25",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 83508,
+        "title": "Project Resources Management 31/10/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 83246,
+        "title": "Project Resources Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 83171,
+        "title": "Reading 1: Resource Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 83132,
+        "title": "Project Resources Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "text"
+      },
+      {
+        "componentId": 83138,
+        "title": "Resources Optimisation UK Case Studies",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "video"
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "November 2025",
+    "date": "2025-11-01",
+    "week": "L26: Procurement Management 07/11/25",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 85557,
+        "title": "R1:Procurement Concepts and Contract Types 7/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 85199,
+        "title": "Procurement Concepts and Contract Types",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 85175,
+        "title": "Reading 1: Chapter 2: Procurement Management and Success",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 85079,
+        "title": "Quiz 1: Procurement Concepts and Contract Types",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 4,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      },
+      {
+        "componentId": 85560,
+        "title": "Procurement Planning, Risk, and Strategy 7//2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "video"
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "November 2025",
+    "date": "2025-11-01",
+    "week": "L27: Conduct Procurements​ 14/11/25",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 90286,
+        "title": "R1:Procurement Conduct 14/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 89854,
+        "title": "Powerpoint 1: Procurement Conduct",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 90291,
+        "title": "R2:Procurement and Bidder conferences 14/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 89856,
+        "title": "Powerpoint 2: Procurement and Bidder conferences",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 90294,
+        "title": "R3:Proposal Evaluation 14/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "video"
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "November 2025",
+    "date": "2025-11-01",
+    "week": "L28: Indentifying Risk 21/11/25",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 92892,
+        "title": "R1:Risk Versus Assumptions 21/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 93346,
+        "title": "Powerpoint 1: Risk Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 94776,
+        "title": "R2:Risk Management - Quality Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 93348,
+        "title": "Powerpoint 2: Risk versus Assumptions/Issues",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 92389,
+        "title": "Q3: Plan Risk Management",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 5,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "November 2025",
+    "date": "2025-11-01",
+    "week": "L29: Qualitative Risk Identification 28/11/25",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 96145,
+        "title": "R1:Recap on Risk and overview of PMP exam 28/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 95540,
+        "title": "Powerpoint 1: Recap on Risk and overview of PMP exam",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 95558,
+        "title": "Q4: Qualitative Risk Analysis Fundamentals",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 3,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      },
+      {
+        "componentId": 96146,
+        "title": "R2-Qualitative Risk Analysis 28/11/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 95542,
+        "title": "Powerpoint 2: Qualitative Risk Analysis",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "pdf"
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "December 2025",
+    "date": "2025-12-01",
+    "week": "L30: Perform Quantitative Risk Analysis  5/12/2025",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 97804,
+        "title": "R1:Intro to Quantitative Risk Analysis 5/12/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 97319,
+        "title": "Intro to Quantitative Risk Analysis",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 97348,
+        "title": "YoutTube: Quantitative #Risk Analaysis",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 97263,
+        "title": "Quiz 1: Intro to Quantitative Risk Analysis",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 4,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      },
+      {
+        "componentId": 97806,
+        "title": "R2:Quantitative risk in relation to EMV, Decision Trees and Prioritization 5/12/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "video"
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "December 2025",
+    "date": "2025-12-01",
+    "week": "L31: Risk Response 12/12/2025",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 99444,
+        "title": "YouTube: #Risk #Response #Strategies",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 99446,
+        "title": "YouTube: #Implement #Risk #Response #Plans",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 100096,
+        "title": "R1:Plan and Implement the Risk Response 12/12/2025",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 3,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 99388,
+        "title": "Plan and Implement the Risk Response",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 99394,
+        "title": "Q1: Plan and Impalement the Risk Responses",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 5,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      }
+    ]
+  },
+  {
+    "aptem_id": 31,
+    "learner_name": "L6 PCP TEST",
+    "lms_id": 471,
+    "programme": "Level 6 Project Controls Professional",
+    "month": "January 2026",
+    "date": "2026-01-01",
+    "week": "L32: Quality Management Frameworks 2/1/2026",
+    "courseId": 60699,
+    "course": "Dr.Amgad - Project Management Professional (Apprenticeship) - May25",
+    "components": [
+      {
+        "componentId": 107644,
+        "title": "R1:Foundations of Quality Management  5/1/2026",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 1,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 106972,
+        "title": "Foundations of Quality Management",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 2,
+        "completed": false,
+        "materialType": "pdf"
+      },
+      {
+        "componentId": 106983,
+        "title": "Q1 - Foundations of Quality Management",
+        "kind": "quiz",
+        "postType": "stm-quizzes",
+        "order": 3,
+        "completed": false,
+        "attempted": false,
+        "passed": false
+      },
+      {
+        "componentId": 107650,
+        "title": "R2:Principles and Concepts",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 4,
+        "completed": false,
+        "materialType": "video"
+      },
+      {
+        "componentId": 106974,
+        "title": "Principles and Concepts",
+        "kind": "lesson",
+        "postType": "stm-lessons",
+        "order": 5,
+        "completed": false,
+        "materialType": "pdf"
+      }
+    ]
+  }
+]

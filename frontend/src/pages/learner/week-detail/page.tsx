@@ -682,6 +682,7 @@ export default function WeekDetailPage() {
           ksbCodes={readingComp.ksbCodes}
           ksbLabels={readingComp.ksbLabels}
           onComplete={handleReadingPodcastComplete}
+          onSaveProgress={() => setReadingComp(null)}
         />
       )}
 
@@ -699,6 +700,7 @@ export default function WeekDetailPage() {
           ksbCodes={podcastComp.ksbCodes}
           ksbLabels={podcastComp.ksbLabels}
           onComplete={handleReadingPodcastComplete}
+          onSaveProgress={() => setPodcastComp(null)}
         />
       )}
 

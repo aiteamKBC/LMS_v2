@@ -1,14 +1,18 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, quizzes, reflection_ai, reflection_submissions, videos, views
+from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, lms_schema, quizzes, reflection_ai, reflection_submissions, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
+    path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
     path("commercial-users/", views.commercial_users, name="commercial-users"),
     path("commercial-users/<int:pk>/", views.commercial_user_detail, name="commercial-user-detail"),
+    path("staff-users/", views.staff_users, name="staff-users"),
+    path("staff-users/<int:pk>/", views.staff_user_detail, name="staff-user-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
+    path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder

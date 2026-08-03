@@ -10,18 +10,24 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunSQL(
             sql="""
-                UPDATE "Coach"."coach_absence_report"
-                SET status = CASE
-                    WHEN lower(trim(coalesce(status, ''))) IN ('pending', 'approved', 'declined')
-                        THEN lower(trim(status))
-                    ELSE 'pending'
+                DO $migration$
+                BEGIN
+                    IF to_regclass('"Coach"."coach_absence_report"') IS NOT NULL THEN
+                        UPDATE "Coach"."coach_absence_report"
+                        SET status = CASE
+                            WHEN lower(trim(coalesce(status, ''))) IN ('pending', 'approved', 'declined')
+                                THEN lower(trim(status))
+                            ELSE 'pending'
+                        END
+                        WHERE status IS NULL
+                           OR status <> CASE
+                                WHEN lower(trim(coalesce(status, ''))) IN ('pending', 'approved', 'declined')
+                                    THEN lower(trim(status))
+                                ELSE 'pending'
+                            END;
+                    END IF;
                 END
-                WHERE status IS NULL
-                   OR status <> CASE
-                        WHEN lower(trim(coalesce(status, ''))) IN ('pending', 'approved', 'declined')
-                            THEN lower(trim(status))
-                        ELSE 'pending'
-                    END;
+                $migration$;
             """,
             reverse_sql=migrations.RunSQL.noop,
         ),

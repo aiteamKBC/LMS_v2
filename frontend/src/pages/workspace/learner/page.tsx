@@ -6,12 +6,13 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
@@ -336,6 +337,7 @@ function isoOf(d: Date): string {
 }
 
 function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
+  const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const now = useMemo(() => new Date(), []);
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -356,15 +358,15 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   const [toast, setToast] = useState<string | null>(null);
 
   const loadEvents = useCallback(() => {
-    if (!kind || !id) { setLoading(false); return () => {}; }
+    if (!learnerKind || !id) { setLoading(false); return () => {}; }
     let cancelled = false;
     setLoading(true);
-    fetchLearnerCalendarEvents(kind, id)
+    fetchLearnerCalendarEvents(learnerKind, id)
       .then((res) => { if (!cancelled) { setEvents(res.events.filter((e) => e.status !== 'cancelled')); setErr(null); } })
       .catch((e: Error) => { if (!cancelled) setErr(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [kind, id]);
+  }, [learnerKind, id]);
 
   useEffect(() => loadEvents(), [loadEvents]);
 
@@ -379,11 +381,11 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   }, [id]);
 
   const submitBooking = async () => {
-    if (!kind || !id || submitting) return;
+    if (!learnerKind || !id || submitting) return;
     setSubmitting(true);
     setBookErr(null);
     try {
-      const res = await bookLearnerCalendarSession(kind, id, {
+      const res = await bookLearnerCalendarSession(learnerKind, id, {
         sessionType: bookType,
         scheduledDate: bookDate,
         scheduledTime: bookTime,
@@ -850,6 +852,10 @@ export default function LearnerOverview() {
     return { total: evidence.length, approved, pending, rejected, progress };
   }, [evidence]);
 
+  /* ── Onboarding learners land on their enrolment wizard, not the overview ──
+     Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
+  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading);
+
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
   const heroProgramme = isRealMode ? (real?.programme || '') : p.programme;
@@ -874,8 +880,7 @@ export default function LearnerOverview() {
     }
     return null;
   }, [journey]);
-  // Weekly_Quizzes rollup: each quiz's best attempt -> summed chosen time + union of KSBs.
-  const quizStats = useMemo(() => quizAggregateStats(real), [real]);
+  const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
 
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
@@ -962,6 +967,15 @@ export default function LearnerOverview() {
     { icon: 'ri-check-double-line', label: `${p.evidenceValidated} Approved`, color: 'emerald' as const },
     { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
   ];
+
+  // Redirect is in flight — don't flash the overview on the way to the wizard.
+  if (redirectingToOnboarding) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
+        <i className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+      </div>
+    );
+  }
 
   return (
     <WorkspaceShell
@@ -1096,16 +1110,16 @@ export default function LearnerOverview() {
                       ragStatus={otj.status ?? undefined}
                     />
                   )}
-                  {quizStats.quizzesTaken > 0 ? (
+                  {evidencedKsbCodes.size > 0 ? (
                     <HealthCard
                       icon="ri-bar-chart-2-line"
                       label="KSB Progress"
-                      value={`${quizStats.ksbCount} evidenced`}
-                      detail={`Via quizzes · ${real?.ksbs.length || 0} defined`}
+                      value={`${evidencedKsbCodes.size} evidenced`}
+                      detail={`Via completed activities · ${real?.ksbs.length || 0} defined`}
                       status="emerald"
-                      progress={real?.ksbs.length ? Math.round((quizStats.ksbCount / real.ksbs.length) * 100) : 0}
+                      progress={real?.ksbs.length ? Math.round((evidencedKsbCodes.size / real.ksbs.length) * 100) : 0}
                       showBar
-                      badgeLabel="From quizzes"
+                      badgeLabel="From activities"
                     />
                   ) : (
                     <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="emerald" progress={0} badgeLabel="Defined" />
@@ -1288,7 +1302,7 @@ export default function LearnerOverview() {
                           key={comp.id}
                           component={comp}
                           status={effectiveStatus}
-                          canMarkComplete={comp.status !== 'completed' && !userCompletions[i]}
+                          canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
                           onMarkComplete={() => handleMarkComplete(i)}
                         />
                       );

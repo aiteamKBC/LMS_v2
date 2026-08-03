@@ -8,7 +8,13 @@ And two inbound helpers:
   * write_fields -> validates + returns kwargs for create/update (flat columns)
   * validate_choices -> enforces the canonical option lists
 """
-from .constants import STATUS_CHOICES, TYPE_CHOICES, PROGRAMME_STATUS_CHOICES
+from .constants import (
+    STATUS_CHOICES,
+    TYPE_CHOICES,
+    PROGRAMME_STATUS_CHOICES,
+    POSITION_CHOICES,
+    LEARNER_TYPE_CHOICES,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +76,12 @@ def to_list_row(u):
         "notesCount": 0,
         "hasTasks": utype == "User",
         "reference": _s(u.organization),
+        # Which kind of learner this is. Rows predating the Commercial_users merge
+        # have no value and are apprenticeship.
+        "learnerType": _s(getattr(u, "learner_type", "")) or "apprenticeship",
+        # Kept so the directory's existing source-based row routing keeps working
+        # while both kinds share one table.
+        "source": "commercial" if _s(getattr(u, "learner_type", "")) == "commercial" else "apprenticeship",
     }
 
 
@@ -145,7 +157,11 @@ def to_board(u):
             "id": str(u.id),
             "name": _s(u.username),
             "reference": _s(u.organization),
-            "owner": enrolled_by or _s(u.line_manager),
+            # The case owner is chosen on the create form (picked from the
+            # Caseowner/Admin staff in Staff_users) and is this learner's owner
+            # and coach. Falls back to whoever enrolled them, then the line
+            # manager, for rows created before that field existed.
+            "owner": _s(u.case_owner) or enrolled_by or _s(u.line_manager),
         },
         "contact": {
             "email": _s(u.email),
@@ -206,6 +222,53 @@ def to_board(u):
 # --------------------------------------------------------------------------- #
 # inbound: create / update                                                     #
 # --------------------------------------------------------------------------- #
+# The Aptem "Add user" fields, shared by both learner tables (the create form is
+# the same for apprenticeship and commercial learners). Text columns only; the
+# four boolean access flags are handled separately by APTEM_BOOL_FIELDS.
+APTEM_TEXT_FIELDS = {
+    "title": "title",
+    "preferredName": "preferred_name",
+    "gender": "gender",
+    "referrer": "referrer",
+    "referrerAddress": "referrer_address",
+    "referrerContact": "referrer_contact",
+    "country": "country",
+    "caseOwner": "case_owner",
+    "learningProvider": "learning_provider",
+    "mentor": "mentor",
+    "referenceNumber": "reference_number",
+    "extendedBreak": "extended_break",
+    "employerAddress": "employer_address",
+    "targetProgramme": "target_programme",
+    "legalSex": "legal_sex",
+    "age": "age",
+    "address": "address",
+    "postcode": "current_postcode",
+    "addressLine1": "address_line_1",
+    "addressLine2": "address_line_2",
+    "townCity": "address_line_3",
+    "county": "address_line_4",
+    "niNumber": "national_insurance_number",
+}
+
+# Checkbox / radio fields stored as real booleans.
+APTEM_BOOL_FIELDS = {
+    "inviteToPlatform": "invite_to_platform",
+    "allowCheckpoint": "allow_access_to_checkpoint",
+    "allowConsole": "allow_access_to_console",
+    "allowClassic": "allow_access_to_classic",
+}
+
+
+def _bool_or_none(value):
+    """Coerce a JSON checkbox value to a real bool, or None to clear it."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
+
+
 # payload key -> model attribute (flat text columns only)
 WRITABLE_FIELDS = {
     "username": "username",
@@ -224,6 +287,10 @@ WRITABLE_FIELDS = {
     "lineManager": "line_manager",
     "onboardingStatus": "onboarding_status",
     "onboardingCompleted": "onboarding_completed",
+    # Which kind of learner the row is. Both kinds share one table, so this is
+    # what the create form's learner-type switch writes.
+    "learnerType": "learner_type",
+    **APTEM_TEXT_FIELDS,
 }
 
 
@@ -353,6 +420,7 @@ def validate_choices(payload):
         ("status", STATUS_CHOICES),
         ("type", TYPE_CHOICES),
         ("programmeStatus", PROGRAMME_STATUS_CHOICES),
+        ("learnerType", LEARNER_TYPE_CHOICES),
     )
     for key, allowed in checks:
         val = payload.get(key)
@@ -371,17 +439,24 @@ def write_fields(payload, *, require_create=False):
         if not _s(payload.get("email")):
             raise ValidationError("email is required.")
     fields = {}
+    if require_create and not _s(payload.get("learnerType")):
+        # Never leave a new row untagged: an untyped learner would be invisible
+        # to the commercial manager and only reachable via all_learners.
+        fields["learner_type"] = "apprenticeship"
     for key, attr in WRITABLE_FIELDS.items():
         if key in payload:
             val = payload[key]
             fields[attr] = None if val is None else str(val).strip()
+    for key, attr in APTEM_BOOL_FIELDS.items():
+        if key in payload:
+            fields[attr] = _bool_or_none(payload[key])
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     return fields
 
 
 # --------------------------------------------------------------------------- #
-# delivery (enrolment."Commercial_users")                         #
+# delivery (commercial rows of enrolment."Created_users")                      #
 # --------------------------------------------------------------------------- #
 # payload key -> model attribute
 COMMERCIAL_WRITABLE_FIELDS = {
@@ -398,6 +473,13 @@ COMMERCIAL_WRITABLE_FIELDS = {
     "modules": "modules",
     "weeks": "weeks",
     "components": "components",
+    # Same Aptem create form backs this table, so it takes the same fields.
+    # `dob`/`type`/`status` are listed explicitly because the apprenticeship map
+    # above reaches them through columns this table only gained recently.
+    "dob": "date_of_birth",
+    "type": "type",
+    "status": "status",
+    **APTEM_TEXT_FIELDS,
 }
 
 
@@ -418,11 +500,18 @@ def to_commercial_row(u):
         "weeks": _s(u.weeks),
         "components": _s(u.components),
         "trainingPlan": _as_list(u.training_plan),
+        # Aptem create-form fields — the directory reads type/status from these,
+        # and the edit modal round-trips the rest.
+        "type": _s(u.type) or "User",
+        "status": _s(u.status),
+        "dob": _s(u.date_of_birth),
+        **{key: _s(getattr(u, attr)) for key, attr in APTEM_TEXT_FIELDS.items()},
+        **{key: getattr(u, attr) for key, attr in APTEM_BOOL_FIELDS.items()},
     }
 
 
 def write_commercial_fields(payload, *, require_create=False):
-    """Validate a payload and return {model_attr: value} for Commercial_users columns."""
+    """Validate a payload and return {model_attr: value} for a commercial learner."""
     if not isinstance(payload, dict):
         raise ValidationError("Request body must be a JSON object.")
     if require_create:
@@ -430,18 +519,99 @@ def write_commercial_fields(payload, *, require_create=False):
             raise ValidationError("username is required.")
         if not _s(payload.get("email")):
             raise ValidationError("email is required.")
-    ps = payload.get("programmeStatus")
-    if ps not in (None, "") and ps not in PROGRAMME_STATUS_CHOICES:
-        raise ValidationError(
-            f"Invalid programmeStatus: {ps!r}. Allowed: {', '.join(PROGRAMME_STATUS_CHOICES)}"
-        )
+    # This table now holds Type/Status too, so it validates the same three lists
+    # as the apprenticeship table rather than programmeStatus alone.
+    validate_choices(payload)
     fields = {}
     for key, attr in COMMERCIAL_WRITABLE_FIELDS.items():
         if key in payload:
             val = payload[key]
             fields[attr] = None if val is None else str(val).strip()
+    for key, attr in APTEM_BOOL_FIELDS.items():
+        if key in payload:
+            fields[attr] = _bool_or_none(payload[key])
     if "trainingPlan" in payload:
         fields["training_plan"] = _normalize_training_plan(payload["trainingPlan"])
+    return fields
+
+
+# --------------------------------------------------------------------------- #
+# staff / admin accounts (enrolment."Staff_users")                             #
+# --------------------------------------------------------------------------- #
+# payload key -> model attribute
+STAFF_WRITABLE_FIELDS = {
+    "username": "username",
+    "email": "email",
+    "phone": "phone_number",
+    "dob": "date_of_birth",
+    "type": "type",
+    "status": "status",
+    "position": "position",
+    "title": "title",
+    "preferredName": "preferred_name",
+    "gender": "gender",
+    "organization": "organization",
+    "caseOwner": "case_owner",
+    "learningProvider": "learning_provider",
+    "referenceNumber": "reference_number",
+}
+
+
+def to_staff_row(u):
+    """A staff account, shaped like a UserListRow so the directory can list
+    learners and staff in one table."""
+    status = _s(u.status)
+    return {
+        "id": str(u.id),
+        "name": _s(u.username),
+        # The directory's Type column shows the staff position (Admin,
+        # Caseowner, ...) — that's the meaningful role for a non-learner.
+        "type": _s(u.position) or _s(u.type) or "Admin",
+        "email": _s(u.email),
+        "group": _s(u.organization),
+        "subscriptionStatus": status,
+        "subscriptionVerified": status.lower() == "fulluser",
+        # Staff have no training plan or programme.
+        "learningPlan": False,
+        "programmeStatus": "",
+        "position": _s(u.position),
+        "phone": _s(u.phone_number),
+        "title": _s(u.title),
+        "preferredName": _s(u.preferred_name),
+        "gender": _s(u.gender),
+        "dob": _s(u.date_of_birth),
+        "organization": _s(u.organization),
+        "caseOwner": _s(u.case_owner),
+        "learningProvider": _s(u.learning_provider),
+        "referenceNumber": _s(u.reference_number),
+        **{key: getattr(u, attr) for key, attr in APTEM_BOOL_FIELDS.items()},
+    }
+
+
+def write_staff_fields(payload, *, require_create=False):
+    """Validate a payload and return {model_attr: value} for Staff_users columns."""
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    if require_create:
+        if not _s(payload.get("username")):
+            raise ValidationError("username is required.")
+        if not _s(payload.get("email")):
+            raise ValidationError("email is required.")
+        if not _s(payload.get("position")):
+            raise ValidationError("position is required.")
+    # Staff rows carry a position instead of a programme status.
+    for key, allowed in (("status", STATUS_CHOICES), ("type", TYPE_CHOICES), ("position", POSITION_CHOICES)):
+        val = payload.get(key)
+        if val not in (None, "") and val not in allowed:
+            raise ValidationError(f"Invalid {key}: {val!r}. Allowed: {', '.join(allowed)}")
+    fields = {}
+    for key, attr in STAFF_WRITABLE_FIELDS.items():
+        if key in payload:
+            val = payload[key]
+            fields[attr] = None if val is None else str(val).strip()
+    for key, attr in APTEM_BOOL_FIELDS.items():
+        if key in payload:
+            fields[attr] = _bool_or_none(payload[key])
     return fields
 
 
@@ -466,7 +636,14 @@ def to_learner_detail(source, learner_profile):
     # Generic non-quiz component completions (podcast/reading/slides/reflection/…),
     # written by learner_api.components.submit_component_progress.
     component_progress = [r for r in progress if r.get("kind") == "component"]
-    # Activity feed source of truth: Learner.learner_activity_events, newest first.
+    progress_ksb_codes = sorted({
+        _s(code).upper()
+        for row in progress
+        if isinstance(row, dict)
+        for code in _as_list(row.get("ksbs"))
+        if _s(code)
+    })
+    # Activity Feed is projected from the same normalized progress rows.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
 
     return {
@@ -485,6 +662,7 @@ def to_learner_detail(source, learner_profile):
         "week": week,
         "components": components,
         "ksbs": _as_list(learner_profile.ksbs) if learner_profile else [],
+        "progressKsbCodes": progress_ksb_codes,
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
         "componentProgress": component_progress,

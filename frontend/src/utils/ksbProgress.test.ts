@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildKsbProgress, completedComponentIds, ksbParentCode } from './learnerJourney';
+import { buildKsbProgress, completedComponentIds, ksbParentCode, ksbTypeCode, recordedKsbEvidenceCodes } from './learnerJourney';
 import fixture from './ksbProgress.fixture.json';
 
 /* Real learner payload (commercial/2): 62 programme KSBs (31 K / 26 S / 5 B),
@@ -28,6 +28,30 @@ describe('ksbParentCode', () => {
   it('leaves plain codes untouched and normalises case/space', () => {
     expect(ksbParentCode('K3')).toBe('K3');
     expect(ksbParentCode(' s11 ')).toBe('S11');
+  });
+});
+
+describe('ksbTypeCode', () => {
+  it('normalises full API labels to the category keys used by the UI', () => {
+    expect(ksbTypeCode('Knowledge')).toBe('K');
+    expect(ksbTypeCode('Skills')).toBe('S');
+    expect(ksbTypeCode('Behaviours')).toBe('B');
+    expect(ksbTypeCode('', 'K12')).toBe('K');
+  });
+});
+
+describe('recordedKsbEvidenceCodes', () => {
+  it('keeps completed activity evidence and ignores failed quiz KSBs', () => {
+    const codes = recordedKsbEvidenceCodes({
+      quizAttempts: [
+        { passed: false, ksbs: ['K1'] },
+        { passed: true, ksbs: ['K2'] },
+      ],
+      videoProgress: [{ componentId: 'video-1', ksbs: ['S1.2'] }],
+      componentProgress: [{ componentId: 'component-1', ksbs: ['B3.1'] }],
+    } as never);
+
+    expect(Array.from(codes).sort()).toEqual(['B3', 'K2', 'S1']);
   });
 });
 
@@ -131,5 +155,19 @@ describe('buildKsbProgress against the real learner payload', () => {
 
   it('never lets earned weight exceed available weight', () => {
     for (const k of progress) expect(k.earnedWeight).toBeLessThanOrEqual(k.availableWeight);
+  });
+
+  it('preserves recorded KSB evidence when curriculum component ids have drifted', () => {
+    const [recorded] = buildKsbProgress({
+      ksbs: [{ code: 'K1' }],
+      components: [{ componentId: 'new-component', ksbMappings: [{ code: 'K1', weight: 40 }] }],
+      completedComponentIds: ['old-component'],
+      evidencedKsbCodes: ['K1'],
+    });
+
+    expect(recorded.status).toBe('complete');
+    expect(recorded.earnedWeight).toBe(40);
+    expect(recorded.availableWeight).toBe(40);
+    expect(recorded.pct).toBe(100);
   });
 });

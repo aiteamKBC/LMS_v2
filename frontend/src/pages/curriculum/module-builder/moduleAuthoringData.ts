@@ -798,6 +798,14 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
   });
 }
 
+export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string }) {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting'] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+    timeoutMs: 45000,
+  });
+}
+
 export interface TeamsArtifactSyncResult {
   synced: {
     attendanceReports: number;

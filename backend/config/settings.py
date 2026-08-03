@@ -82,12 +82,21 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
+    "CHAT_DEMO_BOOTSTRAP_ENABLED",
+    "true" if DEBUG else "false",
+).lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_TRANSCRIPTION_MODEL = os.environ.get("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini")
 OPENAI_MODERATION_MODEL = os.environ.get("OPENAI_MODERATION_MODEL", "omni-moderation-latest")
+KBC_LMS_SCHEMA_URL = os.environ.get(
+    "KBC_LMS_SCHEMA_URL",
+    "https://kentbusinesscollege.org/wp-json/kbc-lms/v1/all-students-schema",
+)
+KBC_LMS_API_KEY = os.environ.get("KBC_LMS_API_KEY", "")
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -113,6 +122,7 @@ INSTALLED_APPS = [
     'audit_api',
     'curriculum_api',
     'engagement_api',
+    'enrolment_api',
     'chat',
 ]
 
@@ -285,6 +295,12 @@ AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evide
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+
+# Generated/signed enrolment paperwork (ILR and the other compliance documents)
+# — see enrolment_api/documents.py. Separate from the evidence containers: these
+# are produced by the platform, not uploaded by learners, so they need no
+# quarantine/scan step and are written straight to their own container.
+AZURE_ENROLMENT_DOCS_CONTAINER = os.environ.get("AZURE_Enrolment_Docs_CONTAINER", "enrolment-docs")
 
 LOGGING = {
     'version': 1,

@@ -36,6 +36,7 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', views.curriculum_teams_meeting, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/content/', views.curriculum_teams_meeting_artifact_content, name='curriculum-teams-meeting-artifact-content'),
     path('curriculum/uploads/<path:path>', views.curriculum_uploaded_file, name='curriculum-uploaded-file'),

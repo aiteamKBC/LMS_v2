@@ -39,6 +39,20 @@ interface CaseloadApiLearner {
   ksbProgress?: number;
   evidenceCount?: number;
   overallProgress?: number;
+  otjhCompletedEntries?: Array<{
+    id?: string;
+    title?: string;
+    typeLabel?: string;
+    kind?: string;
+    module?: string;
+    week?: string;
+    reportedTime?: string;
+    hours?: number;
+    completedAt?: string;
+    completedDate?: string;
+    detail?: string;
+    ksbs?: string[];
+  }>;
 }
 
 interface CaseloadApiResponse {
@@ -81,6 +95,20 @@ interface OtjhRow {
   status: OtjhRowStatus;
   statusLabel: string;
   risk: RiskTone;
+  completedEntries: Array<{
+    id: string;
+    title: string;
+    typeLabel: string;
+    kind: string;
+    module: string;
+    week: string;
+    reportedTime: string;
+    hours: number;
+    completedAt: string;
+    completedDate: string;
+    detail: string;
+    ksbs: string[];
+  }>;
 }
 
 function toNumber(value: unknown): number {
@@ -157,6 +185,22 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   const statusFromDb = normalizeOtjhStatus(learner.otjhStatus);
   const status = statusFromDb === 'unknown' && denominator > 0 && completed > denominator ? 'ahead' : statusFromDb;
   const pace = denominator > 0 ? Math.round((completed / denominator) * 100) : 0;
+  const completedEntries = Array.isArray(learner.otjhCompletedEntries)
+    ? learner.otjhCompletedEntries.map((entry, index) => ({
+        id: String(entry.id || `completed-entry-${learner.id}-${index}`),
+        title: displayText(entry.title),
+        typeLabel: displayText(entry.typeLabel || entry.kind),
+        kind: displayText(entry.kind),
+        module: displayText(entry.module),
+        week: displayText(entry.week),
+        reportedTime: displayText(entry.reportedTime),
+        hours: Math.max(toNumber(entry.hours), 0),
+        completedAt: displayText(entry.completedAt),
+        completedDate: displayText(entry.completedDate),
+        detail: displayText(entry.detail),
+        ksbs: Array.isArray(entry.ksbs) ? entry.ksbs.map(code => displayText(code)).filter(code => code !== '--') : [],
+      }))
+    : [];
 
   return {
     id: learner.id,
@@ -190,6 +234,7 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
     status,
     statusLabel: getStatusLabel(status),
     risk: getRiskTone(status),
+    completedEntries,
   };
 }
 
@@ -582,6 +627,56 @@ export default function CoachOtjhReports() {
                   <span className={`font-semibold px-2 py-0.5 rounded-full border ${getBadgeStyle(selectedRow.risk)}`}>{selectedRow.statusLabel}</span>
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-heading font-semibold text-foreground-900">Completed OTJH Breakdown</h4>
+                  <p className="mt-1 text-[10px] text-foreground-400">Each saved progress entry contributing to the completed hours total.</p>
+                </div>
+                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">
+                  {selectedRow.completedEntries.length} entries
+                </span>
+              </div>
+
+              {selectedRow.completedEntries.length > 0 ? (
+                <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1">
+                  {selectedRow.completedEntries.map(entry => (
+                    <div key={entry.id} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-[11px] font-bold text-foreground-900">{entry.title}</p>
+                            <span className="rounded-full border border-foreground-200/70 bg-white px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-foreground-500">
+                              {entry.typeLabel}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] text-foreground-500">
+                            {entry.module !== '--' || entry.week !== '--'
+                              ? `${entry.module} / ${entry.week}`
+                              : entry.detail}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-bold text-primary-600">{formatHours(entry.hours)}h</p>
+                          <p className="mt-1 text-[9px] text-foreground-400">{entry.completedDate}</p>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-foreground-500">
+                        <span className="rounded-full bg-white px-2 py-1">Reported {entry.reportedTime}</span>
+                        {entry.ksbs.length > 0 && (
+                          <span className="rounded-full bg-white px-2 py-1">KSBs {entry.ksbs.join(', ')}</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-foreground-200/70 bg-background-100/40 px-4 py-6 text-center text-[11px] text-foreground-500">
+                  No completed OTJH entries are available for this learner yet.
+                </div>
+              )}
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">

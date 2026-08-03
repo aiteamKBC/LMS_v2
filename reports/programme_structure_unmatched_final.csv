@@ -1,0 +1,124 @@
+﻿aptem_id,learner_name,learner_email,lms_id,programme,months,lms_weeks,lms_components,aptem_weeks,aptem_components,lms_courses_for_user,programme_matching_courses,reason
+481,Adrian Johnson,adrian@55plus.co.uk,191,Level 4 Market Research Executive,20,0,0,0,0,6,,LMS records exist but no course matches programme
+652,Emma Ford,Emma.ford@rustymonkey.com,186,Level 4 Marketing Executive,18,0,0,0,0,6,60737|63672|80901|101477,No LMS section_title date matched Aptem month dates
+654,Kayleigh Hooker,Hkayleigh@hotmail.com,728,Level 4 Marketing Executive - May 25,15,0,0,0,0,1,60198,No LMS section_title date matched Aptem month dates
+994,Rebecca Barrett,Rebecca.barrett6@btinternet.com,306,Level 4 Marketing Executive - May 25,15,0,0,0,0,2,60198|78778,No LMS section_title date matched Aptem month dates
+1051,Amy Sheppard,amy.sheppard@wates.co.uk,374,Level 4 Marketing Executive - May 25,15,0,0,0,0,1,60390,No LMS section_title date matched Aptem month dates
+1351,Lauren Young,laurenclaudiayoung1@gmail.com,339,Level 4 Marketing Executive - May 25,15,0,0,0,0,5,60210|78779,No LMS section_title date matched Aptem month dates
+1397,Owen Kimm,owenkimm@creativefolkestone.org.uk,371,July 2025- Level 6 Marketing Manager,21,0,0,0,0,5,80322,No LMS section_title date matched Aptem month dates
+1423,Joshua Bowers,joshuab@sarginsons.co.uk,450,Project Controls Professional Level 6 - June 2026,23,0,0,0,0,2,,LMS records exist but no course matches programme
+1452,Jemima Stone,jemima@willcreatemedia.co.uk,322,Level 4 Marketing Executive - May 25,15,0,0,0,0,2,60198|78778,No LMS section_title date matched Aptem month dates
+1455,Jennifer Caine,Jennifer.Caine@kentbusinesscollege.com,296,July 2025- Level 6 Marketing Manager,18,0,0,0,0,7,80322,No LMS section_title date matched Aptem month dates
+1513,Millie Wood,millie@yallahcoffee.co.uk,309,Level 4 Marketing Executive - May 25,15,0,0,0,0,2,60212,No LMS section_title date matched Aptem month dates
+1696,Nick Barnwell,nickbarnwell15@gmail.com,1025,Level 6 Project Controls Professional PCP - May 25,25,0,0,0,0,1,,LMS records exist but no course matches programme
+1797,Kelly Davies,kelly@aestheticsource.com,321,Level 4 Marketing Executive - May 25,15,0,0,0,0,1,60212,No LMS section_title date matched Aptem month dates
+2415,Daisy Treloar,daisy.treloar@fireshinegames.co.uk,968,Marketing Executive Level 4 - Feb 2026,15,0,0,0,0,2,101477,No LMS section_title date matched Aptem month dates
+2429,Stephen Burns,stephen@thefamilyburns.com,451,Level 6 Project Controls Professional PCP - May 25,21,0,0,0,0,2,,LMS records exist but no course matches programme
+2778,Graham Jones,graham.jones@gurusystems.com,594,Level 4 Marketing Executive - May 25,15,0,0,0,0,1,60390,No LMS section_title date matched Aptem month dates
+3021,Student Name_ME,kentstudentme@gmail.com,,Project Controls Professional Level 6 - Feb 2026,15,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+3215,Oliver Osborn,Oliver.Osborn@frptech.co.uk,1230,NEW Level 6 Project Controls Professional PCP July 25,27,0,0,0,0,1,136481,No LMS section_title date matched Aptem month dates
+3895,Aptem Test,claire.aptem+kenttest2@gmail.com,,NEW Level 6 Project Controls Professional PCP July 25,26,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+3970,Adam Hassan (TEST),01hsh7@gmail.com,,Marketing Manager Level 6 - Feb 2026,15,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+3976,Jamie H (Test),bo0oh1000@gmail.com,,Master Test Delivery Programme,4,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+3977,H Jamie Test,gamy13.ahmed@gmail.com,,Level 4 Marketing Executive - May 25,18,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+4609,Aaron Chesworth,aaron.chesworth@imperativetraining.com,1214,Marketing Executive Level 4 - June 2026,19,0,0,0,0,2,101477,No LMS section_title date matched Aptem month dates
+4691,Chloe Howell,chloe.howell@dwellant.com,734,Level 4 Associate Project Manager Oct.25,14,0,0,0,0,4,105908,No LMS section_title date matched Aptem month dates
+5424,Robert Webb,robert.webb@turnerschools.com,769,Level 4 Associate Project Manager Oct.25,15,0,0,0,0,3,,LMS records exist but no course matches programme
+5507,Adam Edmondson,adam.edmondson@scorpionauto.com,773,Associate Project Manager Level 4 - Feb 2026,15,0,0,0,0,5,105908,No LMS section_title date matched Aptem month dates
+6042,Test TEST,claire.aptem+kentonb1@gmail.com,,Project Controls Professional Level 6 - Oct 2026,25,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+6087,Martha Clayton,martha.clayton@bljsolicitors.co.uk,,Marketing Executive Level 4 Onboarding v1.1,1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+6105,Eleanor Cross,eleanor.cross@barnetcarers.org,986,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,3,105908,No LMS section_title date matched Aptem month dates
+6121,Dillon Hodgkinson,dillon@kinverbusiness.co.uk,929,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,4,105908,No LMS section_title date matched Aptem month dates
+6202,Jonathan Bond,jbond@maqleurope.com,933,Marketing Manager Level 6 - Feb 2026,19,0,0,0,0,2,102420,No LMS section_title date matched Aptem month dates
+6288,Camila Leme Nelson,camila@radio.co,925,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,4,105908,No LMS section_title date matched Aptem month dates
+6381,Emmanuel Gyan,emmanuel.gyan2@networkrail.co.uk,,Project Controls Professional Level 6 Onboarding v1.1,1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+6409,Francesca Sinclair Reid,francesca.sinclair-reid@waythrough.org.uk,1159,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+6423,Jolene Slack,jolene.slack@dudley.gov.uk,,Project Controls Professional Level 6 Onboarding v1.1,1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+6450,Amber Deacon,amber@communityconnexions.org.uk,888,Marketing Manager Level 6 - Feb 2026,19,0,0,0,0,2,102420,No LMS section_title date matched Aptem month dates
+6481,Craig Norris,craig.norris@stagsevenoaks.co.uk,,Marketing Executive Level 4 - Feb 2026,15,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+6500,Richard Walford,richard.walford@glencar.com,,Marketing Manager Level 6 Onboarding v1.1,1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+6767,Jemima Heard,jemima@jenningsandbarrett.co.uk,,Marketing Manager Level 6 Onboarding v1.1,0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+6943,Joanna Furnival,jojo@sitebulb.com,865,Marketing Manager Level 6 - Feb 2026,19,0,0,0,0,1,102420,No LMS section_title date matched Aptem month dates
+7196,Rosil Baby,rosil.baby@recomsolutions.co.uk,,Project Controls Professional Level 6 Onboarding v1.1,1,0,0,1,1,0,,missing lms_id; cannot link LMS weeks/components
+7784,Jodie Toms,jodie@trevornick.co.uk,,Marketing Manager Level 6 Onboarding v1.1,1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+7842,David McCarthy,david.mccarthy@morganlambert.com,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+8539,PCP L6 Oct 26 (Test),aymanurp+1@gmail.com,,Project Controls Professional Level 6 - Oct 2026,14,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+8861,Janet Alderman,janet@applesandsnakes.org,847,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,3,105908,No LMS section_title date matched Aptem month dates
+9117,Jack Martin,Jack@tradeapps.co.uk,914,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,3,105908,No LMS section_title date matched Aptem month dates
+9750,Roy Blagg,R.Blagg@mmu.ac.uk,1114,Associate Project Manager Level 4 - June 2026,13,0,0,0,0,3,105908,No LMS section_title date matched Aptem month dates
+9859,Lucy Fisher,lucy@dmsltd.com,1190,Marketing Manager Level 6 Onboarding v1.1,1,0,0,1,2,3,,LMS records exist but no course matches programme
+9872,Hamish Low,hamish.low@sizewellc.com,994,Associate Project Manager Level 4 - Feb 2026,14,0,0,0,0,4,105908,No LMS section_title date matched Aptem month dates
+9879,Kathleen Blott,kblott@richmond-dfs.com,934,Marketing Manager Level 6 - Feb 2026,19,0,0,0,0,2,102420,No LMS section_title date matched Aptem month dates
+10178,Jabran Amanullah Khan,jabran.aman@gmail.com,,Project Controls Professional Level 6 Onboarding v1.1,0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+10624,Adam Anson,a.anson@shu.ac.uk,1101,Marketing Manager Level 6 - June 2026,19,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+10910,Lucy Todd,lucy.todd@anthesisgroup.com,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+14190,Iryna Ivashenko,iryna.ivashenko@tollring.com,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+14545,Ellie Tapp,ellie.tapp@nhs.net,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,2,0,,missing lms_id; cannot link LMS weeks/components
+14637,APM L4 Oct 26 (Test),joosamo122@gmail.com,,Associate Project Manager Level 4 - Oct 2026,29,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+14640,ME L4 Oct 26 (Test),jeckoojee@gmail.com,,Marketing Executive Level 4 - Oct 2026,15,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+14642,MM L6 Oct 26 (Test),test@kentbusinesscollege.com,,Marketing Manager Level 6 - Oct 2026,19,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+14644,Test 10 (Test),midoelheq@gmail.com,,Associate Project Manager Level 4 - June 2026,15,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+14875,Danielle Roberts,danielleroberts@southdevon.ac.uk,,Marketing Executive Level 4 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+14890,Compliance Test,joosamoo122@gmail.com,,Marketing Manager Level 6 - June 2026,18,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+15517,Daniel Gbolagun,daniel.gbolagun@youfibre.com,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,1,0,,missing lms_id; cannot link LMS weeks/components
+15584,Afaan Test,afaan7119@gmail.com,,Project Controls Professional Level 6 - June 2026,27,0,0,0,0,0,,missing lms_id; cannot link LMS weeks/components
+15862,Suraj Sandhu,surajsandhu7@hotmail.com,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+15947,Kalum Test,kalumsnelling2@yahoo.com,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+15957,Renjith Babu,renjith.babu@ukdocks.com,,Project Controls Professional Level 6 Onboarding v1.1,0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16204,Megan Coates,meg@womenincx.community,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16211,Peter Townshend,peter.townshend@netbuilder.com,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16212,Sam Mapulango,sam.mapulango@onerse.com,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16457,Jazmine Hayes,jazmine.hayes@brighton-hove.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16460,Helen Lobb,hsl@collyers.ac.uk,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16461,Tea Lewis,tea@adventureyogi.com,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16476,Kimberley Gurney,sales@lazerbuilt.co.uk,1189,Marketing Manager Level 6 - June 2026,27,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+16477,Steven Howell,steve@niceguysgroup.com,1176,Marketing Manager Level 6 - June 2026,19,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+16482,Matthew ODonohoe,matt@sirkkaltd.com,1157,Marketing Manager Level 6 - June 2026,19,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+16485,Derek Clements,derek.clements@ametek.com,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,1,0,,missing lms_id; cannot link LMS weeks/components
+16549,Paul Brooks,paulb@alanhoward.co.uk,1144,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+16577,Owen Williams,owenwilliams@choiceinsuranceagency.com,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16598,Cliff Asamoah,cliff.asamoah@newham.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16655,Jacinta Barnicoat,jacinta@transit9.com,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+16726,Monica Moreira,barbara@argasolutions.co.uk,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16863,Arnav Sareen,arnavsareen114@gmail.com,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16949,Sara Bahmanyar,sb@bioxsystems.com,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16954,Frank Mclaughlin,fmclaughlin@acornfiresecurity.com,,Marketing Manager Level 6 Onboarding v1.1,0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+16963,Hussein Rammal,hussein.rammal@veolia.com,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+17254,Tom Lowes,tom@shacks.co.uk,1180,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17366,Lauren Jones,lauren@shacks.co.uk,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+17417,Natalie Rogers,natalie.rogers@rehau.com,1166,Marketing Manager Level 6 - June 2026,19,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17445,Naomi Smith,naomi.smith@gll.org,1196,Marketing Manager Level 6 - June 2026,18,0,0,0,0,1,125587,No LMS section_title date matched Aptem month dates
+17705,Annie Mannion,annie.mannion@abilitynet.org.uk,1193,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17753,Shelley Hart,shelley.lister@thinkdigitalpartners.com,1141,Marketing Manager Level 6 - June 2026,19,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17825,Isabella Francis,isabella.francis@plymouth.ac.uk,1192,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17926,Nicole Ireland,nicole@thekeyuk.org,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+17930,Kimberley Hatch,kimberley.hatch@glasswells.co.uk,1158,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17952,Lucy Beirne,lucyb@thomas.co,1190,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+17985,Kellymarie Lywood,marketing@nkholidays.co.uk,882,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,4,,LMS records exist but no course matches programme
+18170,Jacob Furness,jacob@addthenmultiply.com,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+18195,Kateryna Luchyna,kateryna@sleeps12.com,,Marketing Executive Level 4 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+18344,Kelly Harman,kelly.harman@harlow.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+18560,Faye Baker,fayebaker@wilsonandscott.co.uk,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+18586,Sienna Parkinson,siennalmparkinson@yahoo.co.uk,1191,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+18616,Christian Beckett,christian.beckett@roundaboutltd.org,1178,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+18617,Martha Pitcher,martha.pitcher@thetrampery.com,1209,Associate Project Manager Level 4 - June 2026,12,0,0,0,0,3,105908,No LMS section_title date matched Aptem month dates
+18705,Rebecca Badby,becka.badby@groundcontrol.com,1171,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+18716,Hannah Chantler,hannah.chantler@grandcentralrail.com,1177,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+19503,Jamie Harrison,jharrison@eyelit.com,1147,Project Controls Professional Level 6 (Onboarding Stage),1,0,0,1,3,1,,LMS records exist but no course matches programme
+19694,Brooke Elmer,Brooke.Elmer@gll.org,1195,Marketing Manager Level 6 - June 2026,18,0,0,0,0,3,125587,No LMS section_title date matched Aptem month dates
+19834,Lauren Fabregas,lauren.fabregas@sutton.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+20100,Colm Feeley,colm.feeley@hotelco51.com,,Marketing Manager Level 6 Onboarding v1.1,0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+20235,Amelia Ridgway,ameliar@tecniplastuk.com,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+20674,Arijana Behlic,arijanabehlic@disability-challengers.org,,Marketing Manager Level 6 (Onboarding Stage),1,0,0,1,3,0,,missing lms_id; cannot link LMS weeks/components
+20744,Jemma Hogg,jemmahogg@dalessurveying.co.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21087,Noman Saleem,Noman.Saleem@networkrail.co.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21094,Jason Fenton,jason.fenton368@mod.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21129,Caris Champion,Caris.champion@hcmediagroup.co.uk,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21133,Damion Walker,damion.walker334@mod.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21145,Khaya Mlalazi,Khaya.mlalazi@folkestone-hythe.gov.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21148,Amy Jones,amy.jones@thebrick.org.uk,,Associate Project Manager Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21154,Shemaine McCormack,s.brade@mapei.co.uk,,Marketing Manager Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21165,Kenan Tezcan,ktezcan@gmail.com,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21189,Emily Hoogkamer,emily.hoogkamer@bibliu.com,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21196,Matthew Booker,matthew.booker@kentectraining.co.uk,,Marketing Executive Level 4 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id
+21200,Hannah MacLellan,hannahmaclellan@b-gen.co.uk,,Project Controls Professional Level 6 (Onboarding Stage),0,0,0,0,0,0,,no Aptem months/components source and missing lms_id

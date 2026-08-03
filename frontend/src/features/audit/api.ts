@@ -19,6 +19,37 @@ export interface AuditLearnerSummary {
   hasAptemData: boolean;
   hasLmsData: boolean;
   warnings: AuditWarning[];
+  audit?: LearnerAuditResponse | null;
+  activities?: AuditActivitySummary[];
+}
+
+export interface AuditActivitySummary {
+  id: string;
+  source: 'Aptem' | 'LMS';
+  sourceId: string;
+  title: string;
+  subtitle: string;
+  category: string;
+  relevantDate: string | null;
+  plannedHours: number;
+  actualHours: number;
+  done: boolean;
+}
+
+export interface AuditActivityStatsBucket {
+  activities: number;
+  actualHours: number;
+  plannedHours: number;
+  done: number;
+}
+
+export interface AuditActivityStats {
+  learners: number;
+  activities: number;
+  actualHours: number;
+  plannedHours: number;
+  done: number;
+  categories: Record<string, AuditActivityStatsBucket>;
 }
 
 export interface AuditSignoff {
@@ -94,8 +125,8 @@ export interface AuditMonth {
   month_key: string;
   label: string;
   summary: {
-    actual_hours: number;
-    planned_hours: number;
+    actual_hours: number | null;
+    planned_hours: number | null;
     aptem_items: number;
     lms_items: number;
     completed: number;
@@ -165,6 +196,9 @@ export interface AuditSignoffResponse {
   signoffs: { learner: AuditSignoff | null; coach: AuditSignoff | null };
 }
 
+const learnerAuditRequests = new Map<string, Promise<LearnerAuditResponse>>();
+const learnerPageRequests = new Map<string, Promise<AuditLearnersResponse>>();
+
 async function parse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let data: unknown = null;
@@ -183,29 +217,82 @@ async function parse<T>(res: Response): Promise<T> {
 }
 
 export async function fetchLearnerAudit(learnerId: string): Promise<LearnerAuditResponse> {
+  const cachedRequest = learnerAuditRequests.get(learnerId);
+  if (cachedRequest) return cachedRequest;
   let res: Response;
-  try {
-    res = await fetch(`${BASE}/${learnerId}/`);
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-  return parse<LearnerAuditResponse>(res);
+  const request = (async () => {
+    try {
+      res = await fetch(`${BASE}/${learnerId}/`);
+    } catch {
+      throw new Error('Could not reach the server. Is the backend running on port 8000?');
+    }
+    return parse<LearnerAuditResponse>(res);
+  })();
+  learnerAuditRequests.set(learnerId, request);
+  request.then(
+    () => learnerAuditRequests.delete(learnerId),
+    () => learnerAuditRequests.delete(learnerId),
+  );
+  return request;
 }
 
-export async function fetchAuditLearners(options: { search?: string; limit?: number; includeTest?: boolean } = {}): Promise<AuditLearnerSummary[]> {
+export interface AuditLearnersResponse {
+  count: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  results: AuditLearnerSummary[];
+  activityStats?: AuditActivityStats | null;
+}
+
+export async function fetchAuditLearnersPage(options: { search?: string; limit?: number; page?: number; pageSize?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnersResponse> {
   const params = new URLSearchParams();
   if (options.search) params.set('search', options.search);
   if (options.limit) params.set('limit', String(options.limit));
+  if (options.page) params.set('page', String(options.page));
+  if (options.pageSize) params.set('pageSize', String(options.pageSize));
+  if (options.includeTest) params.set('includeTest', 'true');
+  if (options.includeAudit) params.set('includeAudit', 'true');
+  if (options.includeActivities) params.set('includeActivities', 'true');
+  if (options.activityCategory) params.set('activityCategory', options.activityCategory);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const cacheKey = `${BASE}/${qs}`;
+  const cachedRequest = learnerPageRequests.get(cacheKey);
+  if (cachedRequest) return cachedRequest;
+  let res: Response;
+  const request = (async () => {
+    try {
+      res = await fetch(cacheKey);
+    } catch {
+      throw new Error('Could not reach the server. Is the backend running on port 8000?');
+    }
+    return parse<AuditLearnersResponse>(res);
+  })();
+  learnerPageRequests.set(cacheKey, request);
+  request.then(
+    () => learnerPageRequests.delete(cacheKey),
+    () => learnerPageRequests.delete(cacheKey),
+  );
+  return request;
+}
+
+export async function fetchAuditLearners(options: { search?: string; limit?: number; includeTest?: boolean; includeAudit?: boolean; includeActivities?: boolean; activityCategory?: string } = {}): Promise<AuditLearnerSummary[]> {
+  const data = await fetchAuditLearnersPage(options);
+  return data.results;
+}
+
+export async function fetchAuditActivityStats(options: { search?: string; includeTest?: boolean } = {}): Promise<AuditActivityStats> {
+  const params = new URLSearchParams();
+  if (options.search) params.set('search', options.search);
   if (options.includeTest) params.set('includeTest', 'true');
   const qs = params.toString() ? `?${params.toString()}` : '';
   let res: Response;
   try {
-    res = await fetch(`${BASE}/${qs}`);
+    res = await fetch(`${BASE}/stats/${qs}`);
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
-  const data = await parse<{ results: AuditLearnerSummary[] }>(res);
-  return data.results;
+  return parse<AuditActivityStats>(res);
 }
 
 export async function fetchAuditSignoff(learnerId: string, monthKey: string): Promise<AuditSignoffResponse> {
@@ -231,6 +318,7 @@ export async function saveAuditSignoff(learnerId: string, payload: AuditSignoffP
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
+  learnerAuditRequests.delete(learnerId);
   return parse<AuditSignoffResponse>(res);
 }
 

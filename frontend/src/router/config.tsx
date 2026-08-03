@@ -63,7 +63,6 @@ const CoachOtjhReports = lazy(() => import("../pages/coach/otjh-reports/page"));
 const CoachProgressReviews = lazy(() => import("../pages/coach/progress-reviews/page"));
 const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
-const CommercialLearnersPage = lazy(() => import("../pages/delivery/LearnersPage"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
@@ -137,6 +136,7 @@ const LearnerCalendarPage = lazy(() => import("../pages/learner/calendar/page"))
 const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page"));
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
+const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
@@ -228,6 +228,7 @@ const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"
 const TenantOnboardingWizard = lazy(() => import("@/pages/admin/tenant-onboarding/page"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
+const ThisWeekPage = lazy(() => import("../pages/learner/this-week/page"));
 const TutorAiMarkingPage = lazy(() => import("../pages/tutor/ai-marking/page"));
 const TutorAssignmentMarking = lazy(() => import("../pages/tutor/assignment-marking/page"));
 const TutorDashboard = lazy(() => import("../pages/workspace/tutor/page"));
@@ -265,6 +266,17 @@ const routes: RouteObject[] = [
   {
     path: "/forgot-password",
     element: <ForgotPasswordPage />,
+  },
+  {
+    // The learner's own enrolment wizard. Onboarding learners are redirected
+    // here by useOnboardingRedirect, so the bare path must resolve; the wizard
+    // then navigates between steps by slug.
+    path: "/learner/onboarding",
+    element: <LearnerOnboardingPage />,
+  },
+  {
+    path: "/learner/onboarding/:stepSlug",
+    element: <LearnerOnboardingPage />,
   },
   {
     path: "/workspace/learner",
@@ -366,9 +378,14 @@ const routes: RouteObject[] = [
     path: "/users/:userId/wizard/:stepSlug",
     element: <WizardPage />,
   },
+ 
   {
-    path: "/delivery",
-    element: <CommercialLearnersPage />,
+    path: "/activity-categories",
+    element: <Navigate to="/workspace/auditor" replace />,
+  },
+  {
+    path: "/activity-categories/:kind/:id",
+    element: <Navigate to="/workspace/auditor" replace />,
   },
   {
     path: "/training-plan/:kind/:userId",
@@ -386,6 +403,14 @@ const routes: RouteObject[] = [
   {
     path: "/learner/training-plan/:kind/:id",
     element: <TrainingPlanPage />,
+  },
+  {
+    path: "/learner/lms-components",
+    element: <ThisWeekPage />,
+  },
+  {
+    path: "/learner/lms-components/:kind/:id",
+    element: <ThisWeekPage />,
   },
   {
     path: "/learner/quiz/:kind/:id/:quizId",
@@ -769,6 +794,18 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/auditor",
     element: <AuditorWorkspace />,
+  },
+  {
+    path: "/workspace/auditor/learner/:auditLearnerId",
+    element: <AuditorWorkspace />,
+  },
+  {
+    path: "/audit/activity-categories",
+    element: <Navigate to="/workspace/auditor" replace />,
+  },
+  {
+    path: "/audit/activity-categories/:kind/:id",
+    element: <Navigate to="/workspace/auditor" replace />,
   },
   {
     path: "/employer/apprentice-risk",

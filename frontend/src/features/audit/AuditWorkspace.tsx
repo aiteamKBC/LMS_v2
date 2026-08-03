@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { jsPDF } from 'jspdf';
 import SignaturePad from 'signature_pad';
+import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   fetchAuditLearners,
+  fetchAuditLearnersPage,
   fetchLearnerAudit,
   saveAuditSignoff,
+  type AuditActivitySummary,
+  type AuditActivityStats,
+  type AuditJsonValue,
   type AptemAuditItem,
   type AuditActivityItem,
   type AuditLearnerSummary,
@@ -18,6 +23,7 @@ import {
   type LearnerAuditResponse,
   type LmsAuditItem,
 } from './api';
+import { fetchLmsSchema, type LmsMaterial, type LmsSource } from '@/api/lmsSchema';
 
 const auditorConfig = roleNavMap.auditor;
 const KBC_LOGO_URL = '/assets/kbc-logo.png';
@@ -41,11 +47,1387 @@ const metricHelp = {
 };
 
 export default function AuditWorkspace() {
+  const { auditLearnerId } = useParams<{ auditLearnerId?: string }>();
+
+  return (
+    <WorkspaceShell
+      role="auditor"
+      roleLabel={auditorConfig.label}
+      navItems={auditorConfig.items}
+      pageTitle="Audit"
+      pageSubtitle="Activity categories and learner activity timeline"
+      userName="Patricia Stone"
+      userRole="External Auditor"
+      workspaceLabel={auditorConfig.workspaceLabel}
+    >
+      {auditLearnerId ? <AuditLearnerActivityPage learnerId={auditLearnerId} /> : <AuditActivitiesLanding />}
+    </WorkspaceShell>
+  );
+}
+
+type AuditCategoryKey = 'live_session' | 'quiz_reading' | 'video' | 'assignment' | 'self_study' | 'assessment' | 'other';
+type AuditSortKey = 'learner' | 'programme' | 'planned' | 'actual' | 'done';
+type AuditSortDirection = 'asc' | 'desc';
+
+interface AuditMatrixRecord {
+  learner: AuditLearnerSummary;
+  audit: LearnerAuditResponse | null;
+  activities: AuditMatrixItem[];
+  error?: string;
+}
+
+type AuditMatrixItem = AuditActivityItem | AuditActivitySummary;
+
+interface AuditMatrixCell {
+  item: AuditMatrixItem;
+  planned: number;
+  actual: number;
+  done: boolean;
+}
+
+interface AuditMatrixColumn {
+  key: string;
+  title: string;
+  subtitle: string;
+  date: string;
+}
+
+const AUDIT_CATEGORY_META: Record<AuditCategoryKey, { label: string; icon: string; className: string }> = {
+  live_session: { label: 'Live Session', icon: 'ri-vidicon-line', className: 'bg-rose-600 text-white border-rose-600' },
+  quiz_reading: { label: 'Quiz / Reading Material', icon: 'ri-book-open-line', className: 'bg-blue-50 text-blue-800 border-blue-200' },
+  video: { label: 'Video', icon: 'ri-play-circle-line', className: 'bg-red-50 text-red-800 border-red-200' },
+  assignment: { label: 'Assignment', icon: 'ri-file-edit-line', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  self_study: { label: 'Self Study', icon: 'ri-book-read-line', className: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+  assessment: { label: 'Assessment', icon: 'ri-checkbox-line', className: 'bg-violet-50 text-violet-800 border-violet-200' },
+  other: { label: 'Other Activity', icon: 'ri-stack-line', className: 'bg-background-100 text-foreground-700 border-background-300' },
+};
+
+function AuditActivitiesLanding() {
+  const navigate = useNavigate();
+  const [records, setRecords] = useState<AuditMatrixRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<AuditCategoryKey>('live_session');
+  const [programme, setProgramme] = useState('all');
+  const [search, setSearch] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [sortKey, setSortKey] = useState<AuditSortKey>('learner');
+  const [sortDirection, setSortDirection] = useState<AuditSortDirection>('asc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalLearners, setTotalLearners] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [activityStats, setActivityStats] = useState<AuditActivityStats | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    fetchAuditLearnersPage({ includeActivities: true, includeTest: true, activityCategory: selectedCategory, page, pageSize, search })
+      .then((response) => {
+        const details = response.results.map((learner) => ({
+          learner,
+          audit: null,
+          activities: learner.activities || [],
+        }));
+        if (!cancelled) {
+          setRecords(details);
+          setTotalLearners(response.count);
+          setTotalPages(response.totalPages || 1);
+          setActivityStats(response.activityStats || null);
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setRecords([]);
+          setError(requestError instanceof Error ? requestError.message : 'Unable to load audit learners.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [page, pageSize, search, selectedCategory]);
+
+  const programmeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    records.forEach(({ learner, audit }) => {
+      const name = audit?.learner.programme_name || learner.programName || 'No programme';
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [records]);
+
+  const categoryCounts = useMemo(() => (
+    (Object.keys(AUDIT_CATEGORY_META) as AuditCategoryKey[]).reduce((acc, key) => ({
+      ...acc,
+      [key]: activityStats?.categories[key]?.activities || 0,
+    }), {} as Record<AuditCategoryKey, number>)
+  ), [activityStats]);
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const rows = records
+      .filter((record) => {
+        const programmeName = record.audit?.learner.programme_name || record.learner.programName || 'No programme';
+        return programme === 'all' || programmeName === programme;
+      })
+      .filter((record) => {
+        if (!query) return true;
+        return [
+          record.learner.fullName,
+          record.learner.learnerId,
+          record.audit?.learner.name,
+          record.audit?.learner.programme_name,
+          record.learner.programName,
+        ].join(' ').toLowerCase().includes(query);
+      })
+      .map((record) => {
+        const cells = record.activities
+          .filter((item) => auditCategory(item) === selectedCategory)
+          .filter((item) => inAuditDateWindow(auditItemDate(item), fromDate, toDate))
+          .map((item) => auditCell(item));
+        const planned = roundHours(cells.reduce((sum, cell) => sum + cell.planned, 0));
+        const actual = roundHours(cells.reduce((sum, cell) => sum + cell.actual, 0));
+        const done = cells.filter((cell) => cell.done).length;
+        return { record, cells, planned, actual, done };
+      })
+      .filter((row) => row.cells.length > 0 || (!fromDate && !toDate));
+
+    return rows.sort((left, right) => {
+      const direction = sortDirection === 'asc' ? 1 : -1;
+      const leftProgramme = left.record.audit?.learner.programme_name || left.record.learner.programName || '';
+      const rightProgramme = right.record.audit?.learner.programme_name || right.record.learner.programName || '';
+      if (sortKey === 'learner') return (left.record.learner.fullName || '').localeCompare(right.record.learner.fullName || '') * direction;
+      if (sortKey === 'programme') return leftProgramme.localeCompare(rightProgramme) * direction;
+      if (sortKey === 'planned') return (left.planned - right.planned) * direction;
+      if (sortKey === 'actual') return (left.actual - right.actual) * direction;
+      return (left.done - right.done) * direction;
+    });
+  }, [fromDate, programme, records, search, selectedCategory, sortDirection, sortKey, toDate]);
+
+  const columns = useMemo<AuditMatrixColumn[]>(() => {
+    const preferredProgramme = programme === 'all' ? filteredRows.find((row) => row.record.audit?.learner.programme_name || row.record.learner.programName)?.record.audit?.learner.programme_name || filteredRows[0]?.record.learner.programName || '' : programme;
+    const byKey = new Map<string, AuditMatrixColumn>();
+    filteredRows
+      .filter((row) => programme !== 'all' || !preferredProgramme || (row.record.audit?.learner.programme_name || row.record.learner.programName || 'No programme') === preferredProgramme)
+      .forEach((row) => {
+        row.cells.forEach((cell) => {
+          const key = auditItemKey(cell.item);
+          if (!byKey.has(key)) {
+            byKey.set(key, { key, title: auditItemTitle(cell.item), subtitle: auditItemSubtitle(cell.item), date: auditItemDate(cell.item) || '' });
+          }
+        });
+      });
+    return Array.from(byKey.values()).sort((left, right) => {
+      if (left.date !== right.date) return left.date.localeCompare(right.date);
+      if (left.title !== right.title) return left.title.localeCompare(right.title);
+      return left.subtitle.localeCompare(right.subtitle);
+    });
+  }, [filteredRows, programme]);
+
+  const totals = useMemo(() => {
+    const planned = roundHours(filteredRows.reduce((sum, row) => sum + row.planned, 0));
+    const actual = roundHours(filteredRows.reduce((sum, row) => sum + row.actual, 0));
+    const done = filteredRows.reduce((sum, row) => sum + row.done, 0);
+    const cells = filteredRows.reduce((sum, row) => sum + row.cells.length, 0);
+    return { planned, actual, done, cells, rate: cells ? Math.round((done / cells) * 100) : 0 };
+  }, [filteredRows]);
+  const selectedDbStats = activityStats?.categories[selectedCategory] || null;
+
+  const requestSort = (next: AuditSortKey) => {
+    if (next === sortKey) setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc');
+    else {
+      setSortKey(next);
+      setSortDirection('asc');
+    }
+  };
+
+  const SortButton = ({ id, label }: { id: AuditSortKey; label: string }) => (
+    <button type="button" onClick={() => requestSort(id)} className="inline-flex items-center gap-1 font-bold text-foreground-700 hover:text-primary-700">
+      {label}
+      <i className={`${sortKey === id ? (sortDirection === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-expand-up-down-line'} text-xs`} />
+    </button>
+  );
+
+  return (
+    <div className="min-h-[calc(100vh-112px)] bg-[#f8f7f4] px-3 py-5 md:px-6">
+      <section className="mx-auto max-w-7xl rounded-xl border border-[#ebe4d9] bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-bold text-[#8a7561]">All Learners › Activity Categories</span>
+          <h1 className="text-2xl font-heading font-bold text-[#17110b]">Activity Categories</h1>
+          <p className="text-[13px] text-[#8a7561]">Matrix view — each column is a lesson, each row is a learner. Cells show actual / planned hours.</p>
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {(Object.keys(AUDIT_CATEGORY_META) as AuditCategoryKey[]).map((key) => {
+            const meta = AUDIT_CATEGORY_META[key];
+            const active = selectedCategory === key;
+            return (
+              <button key={key} type="button" onClick={() => {
+                setSelectedCategory(key);
+                setPage(1);
+              }} className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-[12px] font-bold transition ${active ? 'border-[#d97706] bg-[#d97706] text-white shadow-sm' : 'border-[#eee7dc] bg-white text-[#6f5b49] hover:bg-[#fff7ed]'}`}>
+                <i className={meta.icon} />
+                {meta.label}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] ${active ? 'bg-white/20 text-white' : 'bg-[#f5f1ea] text-[#8a7561]'}`}>
+                  {active ? categoryCounts[key] : '-'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 rounded-xl border border-[#eee7dc] bg-white p-3">
+          <div className="grid gap-3 lg:grid-cols-[120px_220px_170px_1fr]">
+            <label className="flex items-center gap-2 text-xs font-bold uppercase text-[#8a7561]"><i className="ri-filter-3-line" />Filters</label>
+            <select value={programme} onChange={(event) => setProgramme(event.target.value)} className="h-10 rounded-lg border border-[#eee7dc] bg-white px-3 text-sm outline-none focus:border-[#d97706]">
+              <option value="all">All programmes</option>
+              {programmeOptions.map(([option, count]) => <option key={option} value={option}>{display(option)} ({count})</option>)}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-[#eee7dc] bg-white px-2 text-sm outline-none focus:border-[#d97706]" />
+              <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-[#eee7dc] bg-white px-2 text-sm outline-none focus:border-[#d97706]" />
+            </div>
+            <div className="relative">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-[#9b8875]" />
+              <input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search learner..."
+                className="h-10 w-full rounded-lg border border-[#eee7dc] bg-white pl-10 pr-3 text-sm outline-none focus:border-[#d97706]"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#eee7dc] bg-[#fbfaf8] px-4 py-3 text-sm text-[#6f5b49]">
+          <div className="flex flex-wrap items-center gap-4">
+            {loading ? (
+              <AuditStatsSkeleton />
+            ) : (
+              <>
+                <span><strong>{filteredRows.length}</strong> learners on page</span>
+                <span><strong>{records.filter((record) => isTestLearner(record.learner)).length}</strong> test learners</span>
+                <span><strong>{totalLearners}</strong> matching learners</span>
+                <span><strong>{selectedDbStats?.activities ?? totals.cells}</strong> page activities</span>
+                <span><strong>{columns.length}</strong> page columns</span>
+                <span>Planned: <strong>{formatHoursFromHours(totals.planned)}</strong></span>
+                <span>Actual on page: <strong>{formatHoursFromHours(totals.actual)}</strong></span>
+                <span>Category actual: <strong>{formatHoursFromHours(selectedDbStats?.actualHours ?? totals.actual)}</strong></span>
+                <span>Completed: <strong>{totals.done}/{totals.cells}</strong></span>
+                <span>Rate: <strong>{totals.rate}%</strong></span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={pageSize}
+              onChange={(event) => {
+                setPageSize(Number(event.target.value));
+                setPage(1);
+              }}
+              className="h-8 rounded-md border border-background-300 bg-white px-2 text-xs font-semibold outline-none focus:border-primary-300"
+            >
+              {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size} / page</option>)}
+            </select>
+            <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
+              <i className="ri-arrow-left-s-line" />
+            </button>
+            <span className="min-w-[86px] text-center text-xs font-semibold text-foreground-600">Page {page} of {totalPages}</span>
+            <button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((value) => Math.min(totalPages, value + 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
+              <i className="ri-arrow-right-s-line" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-xl border border-[#eee7dc] bg-white">
+          {loading ? (
+            <ActivityMatrixSkeleton />
+          ) : error ? (
+            <div className="p-6"><StateBanner tone="error" text={error} /></div>
+          ) : filteredRows.length === 0 ? (
+            <div className="p-6"><EmptyPanel icon="ri-inbox-line" text="No learners match this activity category and filter set." /></div>
+          ) : (
+            <div className="overflow-auto">
+              <table className="min-w-full border-collapse text-sm">
+                <thead className="sticky top-0 z-20 bg-[#fbfaf8] text-xs uppercase tracking-wide text-[#8a7561]">
+                  <tr>
+                    <th className="sticky left-0 z-30 w-12 border-b border-r border-[#eee7dc] bg-[#fbfaf8] px-3 py-3 text-left">#</th>
+                    <th className="sticky left-12 z-30 min-w-[210px] border-b border-r border-[#eee7dc] bg-[#fbfaf8] px-3 py-3 text-left"><SortButton id="learner" label="Learner" /></th>
+                    <th className="min-w-[260px] border-b border-r border-background-300 px-3 py-3 text-left"><SortButton id="programme" label="Programme" /></th>
+                    <th className="min-w-[110px] border-b border-r border-background-300 px-3 py-3 text-right"><SortButton id="planned" label="Planned" /></th>
+                    <th className="min-w-[110px] border-b border-r border-background-300 px-3 py-3 text-right"><SortButton id="actual" label="Actual" /></th>
+                    <th className="min-w-[120px] border-b border-r border-background-300 px-3 py-3 text-center"><SortButton id="done" label="Completed" /></th>
+                    {columns.map((column) => (
+                      <th key={column.key} className="min-w-[240px] max-w-[320px] border-b border-r border-background-300 px-3 py-3 text-left align-top" title={`${column.title} - ${column.subtitle}`}>
+                        <span className="block whitespace-normal break-words text-[11px] font-bold leading-snug text-foreground-700">{column.title}</span>
+                        <span className="mt-1 block whitespace-normal break-words text-[10px] font-medium leading-snug normal-case tracking-normal text-foreground-400">{column.subtitle}</span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((row, index) => {
+                    const cellsByColumn = new Map(row.cells.map((cell) => [auditItemKey(cell.item), cell]));
+                    const learnerName = row.record.audit?.learner.name || row.record.learner.fullName || `Learner ${row.record.learner.learnerId}`;
+                    const programmeName = row.record.audit?.learner.programme_name || row.record.learner.programName || '';
+                    const learnerIsTest = isTestLearner(row.record.learner);
+                    return (
+                      <tr key={row.record.learner.learnerId} onClick={() => navigate(`/workspace/auditor/learner/${row.record.learner.learnerId}`)} className={`cursor-pointer border-b transition hover:bg-primary-50/40 ${learnerIsTest ? 'border-l-4 border-l-red-500 border-red-100 bg-red-50/80 hover:bg-red-100/80' : 'border-background-200'}`}>
+                        <td className={`sticky left-0 z-10 border-r border-background-200 px-3 py-3 text-foreground-600 ${learnerIsTest ? 'bg-red-50' : 'bg-white'}`}>{index + 1}</td>
+                        <td className={`sticky left-12 z-10 border-r border-background-200 px-3 py-3 ${learnerIsTest ? 'bg-red-50' : 'bg-white'}`}>
+                          <p className="flex items-center gap-2 font-bold text-foreground-950">
+                            {learnerName}
+                            {learnerIsTest && <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white"><i className="ri-close-line text-xs" />Test</span>}
+                          </p>
+                          <p className="text-[11px] text-foreground-400">ID {row.record.learner.learnerId}</p>
+                        </td>
+                        <td className="border-r border-background-200 px-3 py-3 text-left">
+                          <span className="block max-w-[260px] whitespace-normal break-words text-xs font-bold leading-snug text-[#8a5a14]" title={programmeName}>
+                            {display(programmeName)}
+                          </span>
+                        </td>
+                        <td className="border-r border-background-200 px-3 py-3 text-right font-semibold">{formatHoursFromHours(row.planned)}</td>
+                        <td className="border-r border-background-200 px-3 py-3 text-right font-semibold">{formatHoursFromHours(row.actual)}</td>
+                        <td className="border-r border-background-200 px-3 py-3 text-center font-semibold">{row.done}/{row.cells.length}</td>
+                        {columns.map((column) => {
+                          const cell = cellsByColumn.get(column.key);
+                          return (
+                            <td key={column.key} className="border-r border-background-200 px-3 py-3 text-center text-xs text-foreground-500">
+                              {cell ? <span className={`inline-flex rounded-md px-2 py-1 font-bold ${cell.done ? 'bg-cyan-50 text-cyan-800' : 'bg-background-100 text-foreground-500'}`}>{formatHoursFromHours(cell.actual)}/{formatHoursFromHours(cell.planned)}</span> : '-'}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
+  const navigate = useNavigate();
+  const [audit, setAudit] = useState<LearnerAuditResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [selectedMonthKeys, setSelectedMonthKeys] = useState<Set<string>>(new Set());
+  const [learnerSignerName, setLearnerSignerName] = useState('');
+  const [coachSignerName, setCoachSignerName] = useState('');
+  const [learnerSignature, setLearnerSignature] = useState('');
+  const [coachSignature, setCoachSignature] = useState('');
+  const [learnerConfirmed, setLearnerConfirmed] = useState(false);
+  const [coachConfirmed, setCoachConfirmed] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [signoffError, setSignoffError] = useState('');
+  const [pdfError, setPdfError] = useState('');
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [monthSort, setMonthSort] = useState<'desc' | 'asc'>('desc');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    fetchLearnerAudit(learnerId)
+      .then((payload) => {
+        if (cancelled) return;
+        const pastAudit = filterPastAudit(payload);
+        setAudit(pastAudit);
+        const monthKeys = pastAudit.months.filter((month) => month.month_key !== 'undated').map((month) => month.month_key);
+        setSelectedMonthKeys(new Set(monthKeys));
+        setLearnerSignerName(pastAudit.learner.name || '');
+        setCoachSignerName('');
+        setLearnerSignature('');
+        setCoachSignature('');
+        setLearnerConfirmed(false);
+        setCoachConfirmed(false);
+        setPreviewUrl('');
+      })
+      .catch((requestError) => { if (!cancelled) setError(requestError instanceof Error ? requestError.message : 'Unable to load learner audit.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [learnerId]);
+
+  const learnerName = audit?.learner.name || `Learner ${learnerId}`;
+  const sortedMonths = useMemo(() => sortAuditMonths(audit?.months || [], monthSort), [audit, monthSort]);
+  const selectedMonths = useMemo(() => sortedMonths.filter((month) => selectedMonthKeys.has(month.month_key)), [sortedMonths, selectedMonthKeys]);
+  const allDatedSelected = Boolean(audit?.months.filter((month) => month.month_key !== 'undated').every((month) => selectedMonthKeys.has(month.month_key)));
+  const overall = useMemo(() => {
+    const months = audit?.months || [];
+    const actual = sumAvailableHours(months.map((month) => month.summary.actual_hours));
+    const planned = sumAvailableHours(months.map((month) => month.summary.planned_hours));
+    const items = months.reduce((total, month) => total + month.summary.aptem_items + month.summary.lms_items, 0);
+    const completed = months.reduce((total, month) => total + month.summary.completed, 0);
+    return { actual, planned, items, completed, rate: percentage(actual, planned) };
+  }, [audit]);
+
+  const toggleMonth = (monthKey: string) => {
+    setSelectedMonthKeys((current) => {
+      const next = new Set(current);
+      if (next.has(monthKey)) next.delete(monthKey);
+      else next.add(monthKey);
+      return next;
+    });
+  };
+
+  const toggleAllMonths = () => {
+    if (!audit) return;
+    const dated = audit.months.filter((month) => month.month_key !== 'undated').map((month) => month.month_key);
+    setSelectedMonthKeys(allDatedSelected ? new Set() : new Set(dated));
+  };
+
+  const handleSaveAndPreview = async () => {
+    if (!audit) return;
+    setSignoffError('');
+    setPdfError('');
+    if (!selectedMonths.length) {
+      setSignoffError('Select at least one month for the report.');
+      return;
+    }
+    if (!learnerSignature || !coachSignature) {
+      setSignoffError('Learner and coach signatures are required.');
+      return;
+    }
+    const now = new Date().toISOString();
+    setSaving(true);
+    try {
+      const responses = await Promise.all(selectedMonths.map((month) => saveAuditSignoff(audit.learnerId, {
+        monthKey: month.month_key,
+        roles: {
+          learner: { signerName: learnerSignerName, signature: learnerSignature, confirmed: learnerConfirmed, signedAt: now },
+          coach: { signerName: coachSignerName, signature: coachSignature, confirmed: coachConfirmed, signedAt: now },
+        },
+      })));
+      const nextAudit = applyManySignoffs(audit, responses);
+      setAudit(nextAudit);
+      const logoDataUrl = await imageUrlToDataUrl(KBC_LOGO_URL).catch(() => '');
+      const doc = buildAuditPdf(nextAudit, selectedMonths, {
+        learnerSignerName,
+        learnerSignature,
+        learnerConfirmed,
+        learnerSignedAt: now,
+        coachSignerName,
+        coachSignature,
+        coachConfirmed,
+        coachSignedAt: now,
+      }, logoDataUrl);
+      setPreviewUrl(doc.output('bloburl').toString());
+    } catch (requestError) {
+      setSignoffError(requestError instanceof Error ? requestError.message : 'Unable to save signatures or generate the PDF.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!audit || !selectedMonths.length) return;
+    if (!learnerSignature || !coachSignature) {
+      setPdfError('Learner and coach signatures are required before downloading the PDF.');
+      return;
+    }
+    const logoDataUrl = await imageUrlToDataUrl(KBC_LOGO_URL).catch(() => '');
+    const now = new Date().toISOString();
+    const doc = buildAuditPdf(audit, selectedMonths, {
+      learnerSignerName,
+      learnerSignature,
+      learnerConfirmed,
+      learnerSignedAt: now,
+      coachSignerName,
+      coachSignature,
+      coachConfirmed,
+      coachSignedAt: now,
+    }, logoDataUrl);
+    doc.save(`learner-audit-${fileSegment(learnerName)}-${selectedMonths.length > 1 ? 'selected-months' : selectedMonths[0].month_key}.pdf`);
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-112px)] bg-[#f8f7f4] px-3 py-5 md:px-6">
+      <section className="mx-auto max-w-5xl rounded-xl border border-[#ebe4d9] bg-white p-4 shadow-sm md:p-6">
+        <button type="button" onClick={() => navigate('/workspace/auditor')} className="mb-6 inline-flex items-center gap-2 text-[13px] font-bold text-[#8b5a24] hover:text-[#d97706]">
+          <i className="ri-arrow-left-line text-base" />
+          Activity Categories
+        </button>
+
+        {loading ? (
+          <LearnerAuditPageSkeleton />
+        ) : error ? (
+          <div className="mt-6"><StateBanner tone="error" text={error} /></div>
+        ) : !audit || audit.months.length === 0 ? (
+          <div className="mt-6"><EmptyPanel icon="ri-inbox-line" text="No monthly audit activity was found for this learner." /></div>
+        ) : (
+          <div className="mx-auto max-w-4xl">
+            <div className="flex items-center justify-between gap-4 border-b border-[#f0ebe4] pb-5">
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#ffedd5] text-lg font-bold text-[#c2410c]">
+                  {learnerInitials(learnerName)}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="truncate text-xl font-heading font-bold text-[#17110b]">{learnerName}</h1>
+                    <span className="rounded-full bg-[#ccfbf1] px-2.5 py-1 text-[11px] font-bold text-[#0f766e]">Active</span>
+                    <span className="rounded-full bg-[#ffedd5] px-2.5 py-1 text-[11px] font-bold text-[#9a3412]">Programme: {display(audit.learner.programme_name)}</span>
+                  </div>
+                  <p className="mt-1 text-[13px] text-[#8a7561]">{display(audit.learner.programme_name)} · ID {learnerId}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-[#eee7dc] bg-white p-5">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <h2 className="text-[15px] font-heading font-bold text-[#2b2118]">Overall Hours — All Months</h2>
+                <span className="rounded-full bg-[#ffedd5] px-4 py-2 text-[12px] font-bold text-[#9a3412]">
+                  {formatSignedHoursFromHours(overall.actual - overall.planned)}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-end gap-6">
+                <div>
+                  <p className="text-[11px] font-semibold text-[#8a7561]">Planned</p>
+                  <p className="text-2xl font-bold text-[#09090b]">{formatHoursFromHours(overall.planned)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-[#8a7561]">Actual</p>
+                  <p className="text-2xl font-bold text-[#09090b]">{formatHoursFromHours(overall.actual)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-[#8a7561]">Completed</p>
+                  <p className="text-xl font-bold text-[#09090b]">{overall.completed}/{overall.items}</p>
+                </div>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#eee7dc]">
+                <div className="h-full rounded-full bg-[#d97706]" style={{ width: `${Math.min(100, overall.rate)}%` }} />
+              </div>
+              <p className="mt-2 text-[12px] font-semibold text-[#8a7561]">{overall.rate}% of planned hours completed</p>
+            </div>
+
+            <div className="mt-7">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <button type="button" onClick={toggleAllMonths} className="mb-3 inline-flex h-9 items-center gap-2 rounded-lg border border-[#eadfce] bg-white px-3 text-xs font-bold text-[#6f5b49] hover:bg-[#fff7ed]">
+                    <i className={allDatedSelected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
+                    {allDatedSelected ? 'Deselect all months' : 'Select all months'}
+                  </button>
+                  <h2 className="text-lg font-heading font-bold text-[#17110b]">Monthly Breakdown</h2>
+                  <p className="mt-1 text-[13px] text-[#8a7561]">Click a month to expand weeks</p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-[12px] font-bold text-[#6f5b49]">
+                  Sort
+                  <select
+                    value={monthSort}
+                    onChange={(event) => setMonthSort(event.target.value as 'desc' | 'asc')}
+                    className="h-9 rounded-lg border border-[#eadfce] bg-white px-3 text-[12px] font-bold text-[#6f5b49] outline-none hover:bg-[#fff7ed] focus:border-[#d97706]"
+                  >
+                    <option value="desc">Newest first</option>
+                    <option value="asc">Oldest first</option>
+                  </select>
+                </label>
+              </div>
+              <div className="mt-4 space-y-3">
+                {sortedMonths.map((month, index) => <AuditLearnerMonthSection key={month.month_key} month={month} defaultOpen={index === 0} selected={selectedMonthKeys.has(month.month_key)} onToggleSelected={toggleMonth} />)}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+      {!loading && audit && audit.months.length > 0 && (
+        <section className="mx-auto mt-4 max-w-5xl rounded-xl border border-[#ebe4d9] bg-white p-4 shadow-sm md:p-6">
+          <div className="mx-auto max-w-4xl">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-lg font-heading font-bold text-[#17110b]">Monthly Sign-Off</h2>
+              <p className="mt-1 text-[13px] text-[#8a7561]">The same learner and coach signatures will be applied to the checked month(s) and included in one PDF.</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={handleSaveAndPreview} disabled={saving} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-xs font-bold text-white shadow-sm hover:bg-[#115e59] disabled:opacity-50">
+                <i className={saving ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} />
+                Save
+              </button>
+              <button type="button" onClick={handleDownloadPdf} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-xs font-bold text-white hover:bg-[#115e59]">
+                <i className="ri-download-line" />
+                Download PDF
+              </button>
+            </div>
+          </div>
+          <p className="mt-3 text-[12px] font-semibold text-[#8a7561]">{selectedMonths.length} month(s) selected for the report.</p>
+          {(signoffError || pdfError) && <div className="mt-4"><StateBanner tone="error" text={signoffError || pdfError} /></div>}
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <SignoffCard
+              title="Learner signature"
+              signerName={learnerSignerName}
+              onSignerNameChange={setLearnerSignerName}
+              confirmed={learnerConfirmed}
+              onConfirmedChange={setLearnerConfirmed}
+              signature={learnerSignature}
+              onSignatureChange={setLearnerSignature}
+              declaration="I confirm the selected monthly learning record is accurate and reflects my completed activity."
+            />
+            <SignoffCard
+              title="Coach signature"
+              signerName={coachSignerName}
+              onSignerNameChange={setCoachSignerName}
+              confirmed={coachConfirmed}
+              onConfirmedChange={setCoachConfirmed}
+              signature={coachSignature}
+              onSignatureChange={setCoachSignature}
+              declaration="I confirm I have reviewed the selected monthly learning record, attendance, LMS activity, and assignments."
+            />
+          </div>
+          {previewUrl && (
+            <div className="mt-4 overflow-hidden rounded-lg border border-background-300 bg-white">
+              <div className="border-b border-background-200 px-4 py-3 text-sm font-bold text-foreground-900">PDF preview</div>
+              <iframe title="Learner audit PDF preview" src={previewUrl} className="h-[620px] w-full" />
+            </div>
+          )}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function AuditLearnerMonthSection({ month, defaultOpen, selected, onToggleSelected }: { month: AuditMonth; defaultOpen: boolean; selected: boolean; onToggleSelected: (monthKey: string) => void }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const displayWeeks = useMemo(() => displayWeeksForMonth(month), [month]);
+  const totalItems = useMemo(() => uniqueAuditItems([
+    ...displayWeeks.flatMap((week) => [...week.aptem_items, ...week.lms_items]),
+    ...month.undated_items,
+  ]).length, [displayWeeks, month.undated_items]);
+  const rate = percentage(month.summary.actual_hours, month.summary.planned_hours);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-[#eee7dc] bg-[#fbfaf8]">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-center gap-3 px-4 py-4 text-left transition hover:bg-[#fff7ed]">
+        {month.month_key !== 'undated' && (
+          <span
+            role="checkbox"
+            aria-label={`${selected ? 'Remove' : 'Include'} ${month.label} in report`}
+            aria-checked={selected}
+            tabIndex={0}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleSelected(month.month_key);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                event.stopPropagation();
+                onToggleSelected(month.month_key);
+              }
+            }}
+            className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border text-[13px] font-bold ${selected ? 'border-[#fed7aa] bg-[#ffedd5] text-[#9a3412]' : 'border-[#eadfce] bg-white text-[#8a7561]'}`}
+          >
+            <i className={selected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
+          </span>
+        )}
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#ffedd5] text-sm font-bold text-[#d97706]">{monthAbbrev(month.label)}</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-heading text-[15px] font-bold text-[#17110b]">{month.label}</p>
+            <span className="text-[12px] font-semibold text-[#9b8875]">
+              {monthDateRange(month)}
+              <span className="ml-1 text-[11px] font-semibold text-[#b08a68]" title="This is the first and last dated activity shown for this month, not the calendar month start and end.">
+                activity range
+              </span>
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-[12px] font-semibold text-[#6f5b49]">
+            <span>{formatHoursFromHours(month.summary.actual_hours)} / {formatHoursFromHours(month.summary.planned_hours)} planned</span>
+            <span className="text-[#d97706]">{rate}%</span>
+            <span>{displayWeeks.length} weeks</span>
+            <span>{totalItems} activities</span>
+          </div>
+          <div className="mt-2 h-1.5 max-w-xs overflow-hidden rounded-full bg-[#eee7dc]">
+            <div className="h-full rounded-full bg-[#d97706]" style={{ width: `${Math.min(100, rate)}%` }} />
+          </div>
+        </div>
+        <i className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-[#eee7dc] bg-white p-4">
+          <div className="space-y-3">
+            {displayWeeks.map((week, index) => <AuditLearnerWeekSection key={week.week_key} week={week} weekNumber={index + 1} />)}
+          </div>
+          {month.undated_items.length > 0 && (
+            <div className="rounded-lg border border-background-300">
+              <div className="border-b border-background-300 bg-background-50 px-4 py-3">
+                <p className="text-sm font-bold text-foreground-900">Undated activity</p>
+                <p className="text-xs text-foreground-500">Items without a reliable week date</p>
+              </div>
+              <div className="grid gap-3 p-3 xl:grid-cols-3">
+                <AuditActivityBucket title="Attendance" icon="ri-calendar-check-line" items={month.undated_items.filter(isAttendanceItem)} />
+                <AuditActivityBucket title="LMS Activity" icon="ri-computer-line" items={month.undated_items.filter(isLmsActivityItem)} />
+                <AuditActivityBucket title="Assignment" icon="ri-file-edit-line" items={month.undated_items.filter(isAssignmentItem)} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AuditLearnerWeekSection({ week, weekNumber }: { week: AuditWeek; weekNumber: number }) {
+  const [open, setOpen] = useState(false);
+  const allItems = uniqueAuditItems([...week.aptem_items, ...week.lms_items]);
+  const attendanceItems = allItems.filter(isAttendanceItem);
+  const lmsItems = allItems.filter(isLmsActivityItem);
+  const assignmentItems = allItems.filter(isAssignmentItem);
+  const actual = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).actual, 0));
+  const planned = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).planned, 0));
+  const done = allItems.filter((item) => auditCell(item).done).length;
+  const rate = percentage(actual, planned);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#eee7dc] bg-white">
+      <button type="button" onClick={() => setOpen((value) => !value)} className="w-full px-4 py-3 text-left transition hover:bg-[#fbfaf8]">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#ccfbf1] text-xs font-bold text-[#0f766e]">W{weekNumber}</span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-bold text-[#17110b]">Week {weekNumber}</p>
+                <span className="text-[12px] font-semibold text-[#8a7561]">{formatDateRange(week.start_date, week.end_date)}</span>
+              </div>
+              <p className="mt-1 text-[12px] font-semibold text-[#6f5b49]">{formatHoursFromHours(actual)} / {formatHoursFromHours(planned)} · {rate}% · {done}/{allItems.length} done</p>
+            </div>
+          </div>
+          <i className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
+        </div>
+      </button>
+      {open && (
+        <div className="grid gap-3 border-t border-[#eee7dc] bg-[#fbfaf8] p-3 xl:grid-cols-3">
+          <AuditActivityBucket title="Attendance" icon="ri-calendar-check-line" items={attendanceItems} />
+          <AuditActivityBucket title="LMS Activity" icon="ri-computer-line" items={lmsItems} />
+          <AuditActivityBucket title="Assignment" icon="ri-file-edit-line" items={assignmentItems} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function displayWeeksForMonth(month: AuditMonth): AuditWeek[] {
+  const match = /^(\d{4})-(\d{2})$/.exec(month.month_key);
+  if (!match) return month.weeks;
+
+  const year = Number(match[1]);
+  const monthNumber = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) return month.weeks;
+
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  const ranges = [
+    [1, 7],
+    [8, 14],
+    [15, 21],
+    [22, lastDay],
+  ];
+
+  const buckets = ranges.map(([startDay, endDay], index): AuditWeek => ({
+    week_key: `${month.month_key}-display-week-${index + 1}`,
+    label: `${startDay}-${endDay} ${shortMonthName(monthNumber)}`,
+    start_date: dateKey(year, monthNumber, startDay),
+    end_date: dateKey(year, monthNumber, endDay),
+    aptem_items: [],
+    lms_items: [],
+  }));
+
+  const overflowWeeks: AuditWeek[] = [];
+  month.weeks.forEach((week) => {
+    const bucketIndex = weekBucketIndex(month.month_key, week);
+    if (bucketIndex >= 0 && bucketIndex < buckets.length) {
+      buckets[bucketIndex].aptem_items = uniqueAuditItems([...buckets[bucketIndex].aptem_items, ...week.aptem_items]).filter((item): item is AptemAuditItem => item.source === 'Aptem');
+      buckets[bucketIndex].lms_items = uniqueAuditItems([...buckets[bucketIndex].lms_items, ...week.lms_items]).filter((item): item is LmsAuditItem => item.source === 'LMS');
+      return;
+    }
+    overflowWeeks.push({
+      ...week,
+      aptem_items: uniqueAuditItems(week.aptem_items).filter((item): item is AptemAuditItem => item.source === 'Aptem'),
+      lms_items: uniqueAuditItems(week.lms_items).filter((item): item is LmsAuditItem => item.source === 'LMS'),
+    });
+  });
+
+  return [...buckets, ...overflowWeeks];
+}
+
+function weekBucketIndex(monthKey: string, week: AuditWeek) {
+  const day = dayInsideMonth(monthKey, week.start_date) ?? dayInsideMonth(monthKey, week.end_date);
+  if (!day) return -1;
+  if (day <= 7) return 0;
+  if (day <= 14) return 1;
+  if (day <= 21) return 2;
+  return 3;
+}
+
+function dayInsideMonth(monthKey: string, value?: string | null) {
+  if (!value || !value.startsWith(monthKey)) return null;
+  const day = Number(value.slice(8, 10));
+  return Number.isFinite(day) && day > 0 ? day : null;
+}
+
+function dateKey(year: number, monthNumber: number, day: number) {
+  return `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function shortMonthName(monthNumber: number) {
+  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][monthNumber - 1] || '';
+}
+
+function AuditActivityBucket({ title, icon, items }: { title: string; icon: string; items: AuditActivityItem[] }) {
+  const [viewerItem, setViewerItem] = useState<AuditActivityItem | null>(null);
+  const visibleItems = useMemo(() => uniqueAuditItems(items), [items]);
+  return (
+    <div className="rounded-lg border border-[#eee7dc] bg-white p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="inline-flex items-center gap-2 text-sm font-bold text-[#17110b]"><i className={`${icon} text-[#d97706]`} />{title}</h3>
+        <span className="rounded-full bg-[#f5f1ea] px-2 py-0.5 text-xs font-bold text-[#6f5b49]">{visibleItems.length}</span>
+      </div>
+      {visibleItems.length === 0 ? (
+        <p className="rounded-lg bg-[#fbfaf8] px-3 py-4 text-center text-xs text-[#9b8875]">No activity</p>
+      ) : (
+        <div className="space-y-2">
+          {visibleItems.map((item, index) => {
+            const canOpen = canOpenAuditSource(item);
+            const ksbGroups = ksbGroupsForItem(item);
+            const itemContent = (
+              <div className="flex items-start gap-2">
+                <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${auditCell(item).done ? 'bg-[#ccfbf1] text-[#0f766e]' : 'bg-[#ffedd5] text-[#d97706]'}`}>
+                  <i className={AUDIT_CATEGORY_META[auditCategory(item)].icon} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-[#17110b]">{auditItemTitle(item)}</p>
+                  <p className="mt-1 text-xs text-[#8a7561]">{auditItemSubtitle(item)}</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#6f5b49]">
+                    <span className="rounded-full bg-[#f5f1ea] px-2 py-0.5">{formatHoursFromHours(auditCell(item).actual)} / {formatHoursFromHours(auditCell(item).planned)}</span>
+                    <span className={`rounded-full px-2 py-0.5 font-semibold ${statusPill(item.source === 'Aptem' ? item.status : item.completion_status)}`}>{item.source === 'Aptem' ? item.status : item.completion_status}</span>
+                    {item.warnings.length > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{item.warnings.length} warning(s)</span>}
+                    {canOpen && <span className="rounded-full bg-[#ffedd5] px-2 py-0.5 font-semibold text-[#9a3412]"><i className="ri-window-line mr-1" />Open</span>}
+                  </div>
+                  <ActivityKsbStrip groups={ksbGroups} compact />
+                </div>
+              </div>
+            );
+            return canOpen ? (
+              <button key={`${item.id}-${index}`} type="button" onClick={() => setViewerItem(item)} className="w-full rounded-lg border border-[#eee7dc] bg-white p-3 text-left transition hover:border-[#fed7aa] hover:bg-[#fff7ed] focus:outline-none focus:ring-2 focus:ring-[#fdba74]/60">
+                {itemContent}
+              </button>
+            ) : (
+              <div key={`${item.id}-${index}`} className="w-full rounded-lg border border-[#eee7dc] bg-white p-3 text-left">
+                {itemContent}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <AuditSourceViewer item={viewerItem} onClose={() => setViewerItem(null)} />
+    </div>
+  );
+}
+
+type KsbGroupKey = 'knowledge' | 'skills' | 'behaviour';
+type KsbGroups = Record<KsbGroupKey, string[]>;
+
+function ActivityKsbStrip({ groups, compact = false }: { groups: KsbGroups; compact?: boolean }) {
+  const total = groups.knowledge.length + groups.skills.length + groups.behaviour.length;
+  if (!total) return null;
+  return (
+    <div className={compact ? 'mt-3 rounded-lg border border-[#f0ebe4] bg-[#fbfaf8] p-2' : 'mt-3 rounded-lg border border-[#eee7dc] bg-white p-3'}>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wide text-[#8a4b0f]">KSBs - actual evidence</p>
+      <div className="grid gap-2 md:grid-cols-3">
+        <KsbGroupCard title="Knowledge" codes={groups.knowledge} tone="amber" />
+        <KsbGroupCard title="Skills" codes={groups.skills} tone="teal" />
+        <KsbGroupCard title="Behaviour" codes={groups.behaviour} tone="stone" />
+      </div>
+    </div>
+  );
+}
+
+function KsbGroupCard({ title, codes, tone }: { title: string; codes: string[]; tone: 'amber' | 'teal' | 'stone' }) {
+  const toneClass = tone === 'teal'
+    ? 'bg-[#ccfbf1] text-[#0f766e] ring-[#99f6e4]'
+    : tone === 'amber'
+      ? 'bg-[#ffedd5] text-[#9a3412] ring-[#fed7aa]'
+      : 'bg-[#f5f1ea] text-[#6f5b49] ring-[#eadfce]';
+  return (
+    <div className="min-w-0 rounded-lg bg-white/80 p-2 ring-1 ring-[#f0ebe4]">
+      <p className="text-[11px] font-bold text-[#17110b]">{title}</p>
+      {codes.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {codes.map((code) => <span key={code} className={`rounded-md px-1.5 py-0.5 text-[10px] font-bold ring-1 ${toneClass}`}>{code}</span>)}
+        </div>
+      ) : (
+        <p className="mt-2 text-[10px] font-semibold text-[#b08a68]">None recorded</p>
+      )}
+    </div>
+  );
+}
+
+type ViewerSource = {
+  title: string;
+  subtitle: string;
+  contentType: string;
+  source?: LmsSource | null;
+  embedUrl?: string | null;
+  openUrl?: string | null;
+  fileUrl?: string | null;
+  notice?: string | null;
+};
+
+function AuditSourceViewer({ item, onClose }: { item: AuditActivityItem | null; onClose: () => void }) {
+  const [viewer, setViewer] = useState<ViewerSource | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!item) {
+      setViewer(null);
+      setError('');
+      setLoading(false);
+      return;
+    }
+    document.body.style.overflow = 'hidden';
+    setLoading(true);
+    setError('');
+    resolveAuditViewerSource(item)
+      .then(setViewer)
+      .catch((reason) => setError(reason instanceof Error ? reason.message : 'Could not open this component.'))
+      .finally(() => setLoading(false));
+    return () => { document.body.style.overflow = ''; };
+  }, [item]);
+
+  if (!item) return null;
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 md:p-6">
+      <button type="button" aria-label="Close viewer" onClick={onClose} className="absolute inset-0 bg-[#17110b]/70 backdrop-blur-sm" />
+      <div className="relative z-[81] flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-[#eee7dc] px-4 py-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-[#17110b]">{viewer?.title || auditItemTitle(item)}</p>
+            <p className="truncate text-xs font-semibold text-[#8a7561]">{viewer?.subtitle || auditItemSubtitle(item)}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {(externalUrl(viewer?.openUrl) || externalUrl(viewer?.fileUrl)) && (
+              <a href={externalUrl(viewer?.openUrl) || externalUrl(viewer?.fileUrl) || undefined} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#eadfce] px-3 text-xs font-bold text-[#6f5b49] hover:bg-[#fff7ed]">
+                <i className="ri-external-link-line" /> New tab
+              </a>
+            )}
+            <button type="button" onClick={onClose} className="h-9 w-9 rounded-lg text-[#8a7561] hover:bg-[#fff7ed] hover:text-[#17110b]">
+              <i className="ri-close-line text-lg" />
+            </button>
+          </div>
+        </div>
+        {viewer?.notice && <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">{viewer.notice}</div>}
+        <div className="min-h-[360px] flex-1 bg-[#17110b]">
+          {loading ? (
+            <div className="grid h-[70vh] place-items-center text-sm font-bold text-white"><i className="ri-loader-4-line mr-2 animate-spin" />Loading component...</div>
+          ) : error ? (
+            <div className="grid h-[70vh] place-items-center p-8 text-center text-white">
+              <div>
+                <i className="ri-error-warning-line text-3xl text-amber-300" />
+                <p className="mt-3 text-sm font-bold">{error}</p>
+              </div>
+            </div>
+          ) : viewer ? (
+            <ViewerFrame viewer={viewer} />
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ViewerFrame({ viewer }: { viewer: ViewerSource }) {
+  const url = externalUrl(viewer.fileUrl) || externalUrl(viewer.embedUrl) || externalUrl(viewer.openUrl) || '';
+  const iframeUrl = externalUrl(viewer.embedUrl) || externalUrl(viewer.openUrl) || externalUrl(viewer.fileUrl) || '';
+  const type = viewer.contentType.toLowerCase();
+  if (url && shouldLaunchOutside(url)) {
+    return <ExternalLaunchPanel viewer={viewer} url={url} />;
+  }
+  if (url && (type.includes('video') || type.includes('recording')) && isDirectVideoUrl(url)) {
+    return <video src={url} controls autoPlay className="h-full max-h-[78vh] w-full bg-black" />;
+  }
+  if (url && type.includes('audio') && isDirectAudioUrl(url)) {
+    return (
+      <div className="grid h-[70vh] place-items-center bg-gradient-to-br from-[#312e81] to-[#17110b] p-8">
+        <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-white/10 p-6">
+          <p className="mb-4 text-sm font-bold text-white">{viewer.title}</p>
+          <audio src={url} controls autoPlay className="w-full" />
+        </div>
+      </div>
+    );
+  }
+  if (iframeUrl) {
+    return <iframe title={viewer.title} src={iframeUrl} className="h-[78vh] w-full bg-white" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen />;
+  }
+  return (
+    <div className="grid h-[70vh] place-items-center p-8 text-center text-white">
+      <div>
+        <i className="ri-link-unlink-m text-3xl text-white/40" />
+        <p className="mt-3 text-sm font-bold">No source link is available for this component.</p>
+      </div>
+    </div>
+  );
+}
+
+function ExternalLaunchPanel({ viewer, url }: { viewer: ViewerSource; url: string }) {
+  const host = urlHost(url);
+  return (
+    <div className="grid h-[70vh] place-items-center bg-[#f8f7f4] p-6">
+      <div className="w-full max-w-xl rounded-xl border border-[#eadfce] bg-white p-6 text-center shadow-sm">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#ffedd5] text-[#d97706]">
+          <i className="ri-external-link-line text-2xl" />
+        </span>
+        <h3 className="mt-4 text-base font-bold text-[#17110b]">Open this activity in a new tab</h3>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#6f5b49]">
+          {host || 'This site'} blocks embedded viewing, so the browser will refuse iframe playback. Use the direct launch button to open the original content.
+        </p>
+        <div className="mt-5 rounded-lg bg-[#fbfaf8] px-4 py-3 text-left">
+          <p className="truncate text-sm font-bold text-[#17110b]">{viewer.title}</p>
+          <p className="mt-1 truncate text-xs font-semibold text-[#8a7561]">{viewer.subtitle || viewer.contentType}</p>
+          {host && <p className="mt-2 text-xs font-bold text-[#d97706]">{host}</p>}
+        </div>
+        <a href={url} target="_blank" rel="noreferrer" className="mt-5 inline-flex h-10 items-center gap-2 rounded-lg bg-[#d97706] px-4 text-sm font-bold text-white hover:bg-[#b45309]">
+          <i className="ri-arrow-right-up-line" /> Open original
+        </a>
+      </div>
+    </div>
+  );
+}
+
+async function resolveAuditViewerSource(item: AuditActivityItem): Promise<ViewerSource> {
+  if (item.source === 'Aptem') return aptemViewerSource(item);
+  let materials: LmsMaterial[] = [];
+  try {
+    const schema = await fetchLmsSchema({ search: auditItemTitle(item) });
+    materials = schema.students.flatMap((student) =>
+      (student.courses || []).flatMap((course) => (course.sections || []).flatMap((section) => section.materials || [])),
+    );
+  } catch {
+    materials = [];
+  }
+  const material = findLmsMaterial(item, materials);
+  if (!material) {
+    const fallbackUrl = wordpressPostUrl(item);
+    return {
+      title: auditItemTitle(item),
+      subtitle: auditItemSubtitle(item),
+      contentType: item.component_type || String(item.raw.material_type || 'component'),
+      openUrl: fallbackUrl,
+      embedUrl: fallbackUrl,
+      notice: fallbackUrl
+        ? 'No direct file link was found in the paged LMS schema yet. Opening the WordPress LMS item by its component id.'
+        : 'No matching LMS material link was found in the source schema. The audit record still shows the component metadata.',
+    };
+  }
+  const source = material.source || null;
+  const attachment = source?.attachments?.[0];
+  const embedUrl = externalUrl(source?.embed_url) || externalUrl(attachment?.embed_url) || null;
+  const openUrl = externalUrl(source?.open_url) || externalUrl(attachment?.open_url) || externalUrl(source?.lms_url) || null;
+  const fileUrl = externalUrl(source?.file_url) || externalUrl(attachment?.file_url) || null;
+  return {
+    title: material.material_title || auditItemTitle(item),
+    subtitle: [item.course_module, material.material_format || material.content_type].filter(Boolean).join(' - '),
+    contentType: material.content_type || material.material_format || item.component_type || '',
+    source,
+    embedUrl: embedUrl || (fileUrl ? embeddableAuditUrl(fileUrl) : null),
+    openUrl: openUrl || fileUrl,
+    fileUrl,
+    notice: source?.requires_lms_login || source?.can_embed === false
+      ? 'This LMS item may require WordPress login or may block iframe embedding. Use New tab if the viewer stays blank.'
+      : null,
+  };
+}
+
+function wordpressPostUrl(item: LmsAuditItem) {
+  const rawId = Number(item.raw.component_id ?? item.raw.material_id ?? item.source_id);
+  if (!Number.isFinite(rawId) || rawId <= 0) return null;
+  return `https://kentbusinesscollege.org/?p=${rawId}`;
+}
+
+function findLmsMaterial(item: LmsAuditItem, materials: LmsMaterial[]) {
+  const rawId = Number(item.raw.component_id ?? item.raw.material_id ?? item.source_id);
+  if (Number.isFinite(rawId)) {
+    const byId = materials.find((material) => Number(material.material_id) === rawId || Number(material.curriculum_material_record_id) === rawId);
+    if (byId) return byId;
+  }
+  const title = normalizeLookup(item.component_name || String(item.raw.title || ''));
+  if (!title) return null;
+  return materials
+    .map((material) => ({ material, score: lmsMaterialScore(title, material) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)[0]?.material || null;
+}
+
+function aptemViewerSource(item: AptemAuditItem): ViewerSource {
+  const raw = item.raw.raw && typeof item.raw.raw === 'object' && !Array.isArray(item.raw.raw) ? item.raw.raw as Record<string, AuditJsonValue> : {};
+  const reportUrls = Array.isArray(item.raw.assignment_report_urls) ? item.raw.assignment_report_urls : [];
+  const evidence = assignmentEvidence(item);
+  const firstEvidence = evidence.find((entry) => externalUrl(entry.fileUrl) || externalUrl(entry.reportUrl) || externalUrl(entry.noteUrl));
+  const firstReport = reportUrls.find((value): value is string => Boolean(externalUrl(value)));
+  const safeUrl = externalUrl(firstEvidence?.fileUrl) || externalUrl(firstEvidence?.reportUrl) || externalUrl(firstEvidence?.noteUrl) || externalUrl(firstReport);
+  const componentName = String(raw.ComponentName || item.activity_name || 'Assignment');
+  return {
+    title: componentName,
+    subtitle: [item.type, item.status].filter(Boolean).join(' - '),
+    contentType: safeUrl ? inferContentType(safeUrl) : item.type,
+    fileUrl: safeUrl,
+    openUrl: safeUrl,
+    embedUrl: safeUrl ? embeddableAuditUrl(safeUrl) : null,
+    notice: safeUrl ? null : 'This Aptem assignment has no attached file, report, or evidence link in the audit source yet.',
+  };
+}
+
+function embeddableAuditUrl(url: string) {
+  const safeUrl = externalUrl(url);
+  if (!safeUrl) return null;
+  if (/drive\.google\.com\/file\/d\/([^/]+)/.test(safeUrl)) return safeUrl.replace(/\/view.*$/, '/preview');
+  if (/docs\.google\.com\/presentation\/d\/([^/]+)/.test(safeUrl)) return safeUrl.replace(/\/(edit|present).*$/, '/embed');
+  if (/docs\.google\.com\/document\/d\/([^/]+)/.test(safeUrl)) return safeUrl.replace(/\/edit.*$/, '/preview');
+  if (/\.(doc|docx|ppt|pptx|xls|xlsx)(\?.*)?$/i.test(safeUrl)) return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(safeUrl)}`;
+  return safeUrl;
+}
+
+function lmsMaterialScore(lookupTitle: string, material: LmsMaterial) {
+  const materialTitle = normalizeLookup(material.material_title);
+  if (!materialTitle) return 0;
+  const titleTokens = lookupTitle.split(' ').filter((token) => token.length > 2);
+  const materialTokens = new Set(materialTitle.split(' ').filter((token) => token.length > 2));
+  let score = 0;
+  if (materialTitle === lookupTitle) score += 120;
+  if (materialTitle.includes(lookupTitle) || lookupTitle.includes(materialTitle)) score += 70;
+  score += titleTokens.filter((token) => materialTokens.has(token)).length * 8;
+  const source = material.source || null;
+  const attachment = source?.attachments?.[0];
+  const hasDirectSource = Boolean(externalUrl(source?.embed_url) || externalUrl(source?.file_url) || externalUrl(attachment?.embed_url) || externalUrl(attachment?.file_url));
+  if (hasDirectSource) score += 35;
+  const type = `${material.content_type || ''} ${material.material_format || ''} ${material.component_type || ''}`.toLowerCase();
+  if (/(video|recording|powerpoint|presentation|pdf|word|file)/.test(type)) score += 20;
+  if (/quiz/.test(type) && !/^q\d+\b/.test(lookupTitle)) score -= 20;
+  return score;
+}
+
+function canOpenAuditSource(item: AuditActivityItem) {
+  if (item.source === 'LMS') return true;
+  if (isAttendanceItem(item)) return false;
+  return hasAptemSourceUrl(item);
+}
+
+function hasAptemSourceUrl(item: AptemAuditItem) {
+  const reportUrls = Array.isArray(item.raw.assignment_report_urls) ? item.raw.assignment_report_urls : [];
+  return assignmentEvidence(item).some((entry) => externalUrl(entry.fileUrl) || externalUrl(entry.reportUrl) || externalUrl(entry.noteUrl))
+    || reportUrls.some((value) => externalUrl(value));
+}
+
+function externalUrl(value?: string | null) {
+  if (!value) return null;
+  const url = String(value).trim();
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    if (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname)) return null;
+  } catch {
+    return null;
+  }
+  return url;
+}
+
+function inferContentType(url: string) {
+  if (/\.(ppt|pptx)(\?.*)?$/i.test(url)) return 'ppt';
+  if (/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(url)) return 'video';
+  if (/\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i.test(url)) return 'audio';
+  if (/\.pdf(\?.*)?$/i.test(url)) return 'pdf';
+  if (/\.(doc|docx)(\?.*)?$/i.test(url)) return 'word';
+  return 'file';
+}
+
+function isDirectVideoUrl(url: string) {
+  return /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(url);
+}
+
+function isDirectAudioUrl(url: string) {
+  return /\.(mp3|wav|ogg|m4a|aac|flac)(\?.*)?$/i.test(url);
+}
+
+function shouldLaunchOutside(url: string) {
+  const host = urlHost(url);
+  if (!host) return false;
+  return host.includes('aptem.co.uk');
+}
+
+function urlHost(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function normalizeLookup(value: unknown) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function auditItems(audit: LearnerAuditResponse | null): AuditActivityItem[] {
+  if (!audit) return [];
+  return audit.months.flatMap((month) => [
+    ...month.weeks.flatMap((week) => [...week.aptem_items, ...week.lms_items]),
+    ...month.undated_items,
+  ]);
+}
+
+function isAttendanceItem(item: AuditActivityItem) {
+  if (item.source !== 'Aptem') return false;
+  return item.type === 'Attendance' && (item.raw.Attendance !== undefined || item.raw.attendance !== undefined);
+}
+
+function isAssignmentItem(item: AuditActivityItem) {
+  if (item.source === 'LMS') return false;
+  if (isAttendanceItem(item)) return false;
+  const text = `${item.type} ${item.activity_name}`.toLowerCase();
+  return ['assignment', 'assessment', 'evidence', 'portfolio', 'project', 'task', 'exam', 'reflection'].some((term) => text.includes(term)) || item.source === 'Aptem';
+}
+
+function isLmsActivityItem(item: AuditActivityItem) {
+  return item.source === 'LMS';
+}
+
+function uniqueAuditItems<T extends AuditActivityItem>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  items.forEach((item) => {
+    const key = auditDuplicateKey(item);
+    if (seen.has(key)) return;
+    seen.add(key);
+    unique.push(item);
+  });
+  return unique;
+}
+
+function auditDuplicateKey(item: AuditActivityItem) {
+  const cell = auditCell(item);
+  const status = item.source === 'Aptem' ? item.status : item.completion_status;
+  return [
+    item.source,
+    normalizeLookup(auditItemTitle(item)),
+    normalizeLookup(auditItemSubtitle(item)),
+    auditItemDate(item) || '',
+    normalizeLookup(status),
+    cell.actual,
+    cell.planned,
+  ].join('|');
+}
+
+function auditCell(item: AuditMatrixItem): AuditMatrixCell {
+  if (isAuditActivitySummary(item)) {
+    return {
+      item,
+      planned: roundHours(item.plannedHours || 0),
+      actual: roundHours(item.actualHours || 0),
+      done: item.done,
+    };
+  }
+  if (item.source === 'Aptem') {
+    return {
+      item,
+      planned: roundHours(item.planned_hours || 0),
+      actual: roundHours(item.actual_hours || 0),
+      done: statusBucket(item.status) === 'completed',
+    };
+  }
+  return {
+    item,
+    planned: 0,
+    actual: roundHours((item.tracked_seconds || 0) / 3600),
+    done: statusBucket(item.completion_status) === 'completed',
+  };
+}
+
+function auditCategory(item: AuditMatrixItem): AuditCategoryKey {
+  if (isAuditActivitySummary(item)) {
+    if (item.category === 'quiz' || item.category === 'reading') return 'quiz_reading';
+    if (item.category in AUDIT_CATEGORY_META) return item.category as AuditCategoryKey;
+    return 'other';
+  }
+  const text = item.source === 'Aptem'
+    ? `${item.type} ${item.activity_name}`
+    : `${item.component_type} ${item.component_name} ${item.course_module}`;
+  const normalized = text.toLowerCase().replace(/[-\s]+/g, '_');
+  if (!isAuditActivitySummary(item) && isAttendanceItem(item)) return 'live_session';
+  if (normalized.includes('quiz') || normalized.includes('reading') || normalized.includes('material')) return 'quiz_reading';
+  if (normalized.includes('video') || normalized.includes('recording')) return 'video';
+  if (normalized.includes('assignment') || normalized.includes('evidence') || normalized.includes('portfolio')) return 'assignment';
+  if (normalized.includes('self_study') || normalized.includes('podcast') || normalized.includes('powerpoint')) return 'self_study';
+  if (normalized.includes('assessment') || normalized.includes('reflection')) return 'assessment';
+  return 'other';
+}
+
+function auditItemKey(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return `${item.source}:${item.sourceId || item.id}:${item.title}`;
+  return `${item.source}:${item.source_id || item.id}:${auditItemTitle(item)}`;
+}
+
+function auditItemTitle(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return item.title || 'Activity';
+  return item.source === 'Aptem' ? item.activity_name || item.type || 'Programme activity' : item.component_name || item.course_module || 'Online learning';
+}
+
+function auditItemSubtitle(item: AuditMatrixItem): string {
+  if (isAuditActivitySummary(item)) return item.subtitle || item.source;
+  if (item.source === 'Aptem' && isAttendanceItem(item)) {
+    const rawAttendance = item.raw.Attendance ?? item.raw.attendance;
+    return [
+      formatDate(item.relevant_date),
+      rawAttendance !== undefined && rawAttendance !== null ? `Attendance ${String(rawAttendance)}` : '',
+      item.status,
+      item.type || item.match_status,
+    ].filter(Boolean).join(' - ');
+  }
+  return item.source === 'Aptem' ? item.type || item.match_status : item.course_module || item.component_type || item.match_status;
+}
+
+function auditItemDate(item: AuditMatrixItem): string | null {
+  return isAuditActivitySummary(item) ? item.relevantDate : item.relevant_date;
+}
+
+function isAuditActivitySummary(item: AuditMatrixItem): item is AuditActivitySummary {
+  return 'plannedHours' in item;
+}
+
+function inAuditDateWindow(date: string | null, from: string, to: string): boolean {
+  if (!from && !to) return true;
+  if (!date) return true;
+  const value = date.slice(0, 10);
+  if (from && value < from) return false;
+  if (to && value > to) return false;
+  return true;
+}
+
+function compactLabel(value: string, max: number) {
+  const text = display(value);
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function programmeCode(value: string) {
+  const text = value.trim();
+  if (!text) return 'N/A';
+  return text.split(/\s+/).filter(Boolean).map((word) => word[0]).join('').slice(0, 4).toUpperCase();
+}
+
+function LegacyMonthlyAuditWorkspace() {
+  const [auditView, setAuditView] = useState<'monthly' | 'activities'>('monthly');
   const [learners, setLearners] = useState<AuditLearnerSummary[]>([]);
   const [selectedLearnerId, setSelectedLearnerId] = useState('');
   const [audit, setAudit] = useState<LearnerAuditResponse | null>(null);
   const [learnerSearch, setLearnerSearch] = useState('');
   const [learnerTestFilter, setLearnerTestFilter] = useState<'all' | 'test'>('all');
+  const [programmeFilter, setProgrammeFilter] = useState('all');
   const [activitySearch, setActivitySearch] = useState('');
   const [selectedMonthKey, setSelectedMonthKey] = useState('');
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
@@ -71,7 +1453,7 @@ export default function AuditWorkspace() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setLoadingLearners(true);
-      fetchAuditLearners({ search: learnerSearch, includeTest: true })
+fetchAuditLearners({ search: learnerSearch, includeTest: true })
         .then((rows) => {
           const visibleLearners = rows.filter((row) => learnerTestFilter === 'all' || isTestLearner(row));
           setLearners(visibleLearners);
@@ -87,6 +1469,26 @@ export default function AuditWorkspace() {
     }, 250);
     return () => window.clearTimeout(timer);
   }, [learnerSearch, learnerTestFilter]);
+
+  const programmeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    learners.forEach((learner) => {
+      const programme = learner.programName || 'No programme';
+      counts.set(programme, (counts.get(programme) || 0) + 1);
+    });
+    return Array.from(counts.entries()).sort(([left], [right]) => left.localeCompare(right));
+  }, [learners]);
+  const visibleLearners = useMemo(() => (
+    programmeFilter === 'all'
+      ? learners
+      : learners.filter((learner) => (learner.programName || 'No programme') === programmeFilter)
+  ), [learners, programmeFilter]);
+
+  useEffect(() => {
+    if (programmeFilter !== 'all' && !programmeOptions.some(([programme]) => programme === programmeFilter)) {
+      setProgrammeFilter('all');
+    }
+  }, [programmeFilter, programmeOptions]);
 
   useEffect(() => {
     if (!selectedLearnerId) {
@@ -130,7 +1532,7 @@ export default function AuditWorkspace() {
   const canPreviewPdf = Boolean(audit && selectedMonth && selectedSignoffMonths.length > 0 && learnerSignature && coachSignature);
 
   useEffect(() => {
-    if (!selectedMonth) return;
+if (!selectedMonth) return;
     const learner = selectedMonth.signoffs.learner;
     const coach = selectedMonth.signoffs.coach;
     setLearnerSignerName(learner?.signer_name || '');
@@ -235,7 +1637,7 @@ export default function AuditWorkspace() {
       userRole="External Auditor"
       workspaceLabel={auditorConfig.workspaceLabel}
     >
-      <div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
+<div className="h-[calc(100vh-112px)] overflow-hidden bg-background-100/50 p-3 md:p-5">
         <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50 shadow-sm">
             <div className="shrink-0 border-b border-background-200 bg-white p-4">
@@ -243,9 +1645,25 @@ export default function AuditWorkspace() {
                 <div>
                   <h2 className="text-sm font-heading font-semibold text-foreground-900">Learners</h2>
                 </div>
-                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{learners.length}</span>}
+                {loadingLearners ? <SkeletonBlock className="h-6 w-8 rounded-full" /> : <span className="rounded-full bg-primary-50 px-2 py-1 text-[11px] font-semibold text-primary-700">{visibleLearners.length}</span>}
               </div>
               <SearchBox value={learnerSearch} onChange={setLearnerSearch} placeholder="Search learner, ID, programme" />
+              <label className="mt-3 block">
+                <span className="sr-only">Programme filter</span>
+                <select
+                  value={programmeFilter}
+                  onChange={(event) => {
+                    setProgrammeFilter(event.target.value);
+                    setSelectedLearnerId('');
+                  }}
+                  className="h-9 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                >
+                  <option value="all">All programmes</option>
+                  {programmeOptions.map(([programme, count]) => (
+                    <option key={programme} value={programme}>{display(programme)} ({count})</option>
+                  ))}
+                </select>
+              </label>
               <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-background-100 p-1">
                 <button
                   type="button"
@@ -267,10 +1685,10 @@ export default function AuditWorkspace() {
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {loadingLearners ? (
                 <LearnerListSkeleton />
-              ) : learners.length === 0 ? (
-                <EmptyPanel icon="ri-user-search-line" text={learnerSearch ? 'Learner not found.' : 'No learners are available.'} />
+              ) : visibleLearners.length === 0 ? (
+                <EmptyPanel icon="ri-user-search-line" text={learnerSearch || programmeFilter !== 'all' ? 'Learner not found.' : 'No learners are available.'} />
               ) : (
-                learners.map((learner) => {
+                visibleLearners.map((learner) => {
                   const learnerIsTest = isTestLearner(learner);
                   return (
                   <button
@@ -311,6 +1729,29 @@ export default function AuditWorkspace() {
 
           <section className="min-h-0 min-w-0 overflow-y-auto pr-1">
             <div className="space-y-4 pb-8">
+            <div className="inline-grid grid-cols-2 gap-1 rounded-xl border border-background-200 bg-background-50 p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setAuditView('monthly')}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'monthly' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
+              >
+                <i className="ri-file-search-line" />
+                Monthly Audit
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuditView('activities')}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'activities' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
+              >
+                <i className="ri-stack-line" />
+                Activity Categories
+              </button>
+            </div>
+
+            {auditView === 'activities' ? (
+              <div />
+            ) : (
+            <>
             {error && <StateBanner tone="error" text={error} />}
             {pdfError && <StateBanner tone="error" text={pdfError} />}
 
@@ -400,6 +1841,8 @@ export default function AuditWorkspace() {
               )}
             </section>
 
+            </>
+            )}
             </div>
           </section>
         </div>
@@ -705,7 +2148,7 @@ function AuditItemDetails({ item, loading, audit, month }: { item: AuditActivity
     );
   }
   return (
-    <section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
+<section className="self-start rounded-xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm 2xl:sticky 2xl:top-3 2xl:max-h-[760px] 2xl:overflow-y-auto">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary-600">Learning Item Details</p>
@@ -721,35 +2164,89 @@ function AuditItemDetails({ item, loading, audit, month }: { item: AuditActivity
 }
 
 function AptemDetails({ item }: { item: AptemAuditItem }) {
+  const evidence = assignmentEvidence(item);
+  const ksbGroups = ksbGroupsForItem(item);
   return (
-    <InfoGrid rows={[
-      ['Learning type', 'Programme activity'],
-      ['Activity name', item.activity_name],
-      ['Type', item.type],
-      ['Status', item.status],
-      ['Actual hours', formatHoursFromHours(item.actual_hours)],
-      ['Planned hours', formatHoursFromHours(item.planned_hours)],
-      ['Hours variance', formatHoursFromHours(item.hours_variance)],
-      ['Start date', formatDate(item.start_date)],
-      ['End date', formatDate(item.end_date)],
-      ['Relevant date', formatDate(item.relevant_date)],
-    ]} />
+    <>
+      <InfoGrid rows={[
+        ['Learning type', 'Programme activity'],
+        ['Activity name', item.activity_name],
+        ['Type', item.type],
+        ['Status', item.status],
+        ['Actual hours', formatHoursFromHours(item.actual_hours)],
+        ['Planned hours', formatHoursFromHours(item.planned_hours)],
+        ['Hours variance', formatHoursFromHours(item.hours_variance)],
+        ['Start date', formatDate(item.start_date)],
+        ['End date', formatDate(item.end_date)],
+        ['Relevant date', formatDate(item.relevant_date)],
+      ]} />
+      <ActivityKsbStrip groups={ksbGroups} />
+      {evidence.length > 0 && (
+        <div className="mt-3 rounded-lg border border-background-200 bg-white p-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Assignment Evidence</p>
+          <div className="mt-2 space-y-2">
+            {evidence.map((entry, index) => (
+              <div key={`${entry.evidenceId || entry.name}-${index}`} className="rounded-lg border border-background-200 bg-background-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="break-words text-[12px] font-semibold text-foreground-900">{entry.name || 'Evidence item'}</p>
+                    <p className="mt-1 text-[11px] text-foreground-500">{[entry.kind, entry.status, formatDate(entry.submissionDate)].filter(Boolean).join(' - ')}</p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                    {entry.fileUrl && <EvidenceLink href={entry.fileUrl} icon="ri-file-word-line" label="File" />}
+                    {entry.noteUrl && <EvidenceLink href={entry.noteUrl} icon="ri-sticky-note-line" label="Note" />}
+                    {entry.reportUrl && <EvidenceLink href={entry.reportUrl} icon="ri-file-pdf-line" label="Report" />}
+                  </div>
+                </div>
+                {entry.feedbacks.length > 0 && (
+                  <div className="mt-3 space-y-2 border-t border-background-200 pt-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Coach Feedback</p>
+                    {entry.feedbacks.map((feedback, feedbackIndex) => (
+                      <div key={`${feedback.id || feedback.author}-${feedbackIndex}`} className="rounded-lg bg-white p-2 ring-1 ring-background-200">
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+                          <span>{feedback.author || 'Coach'}</span>
+                          {feedback.date && <span>{formatDate(feedback.date)}</span>}
+                        </div>
+                        <p className="mt-1 whitespace-pre-line text-[11px] leading-5 text-foreground-700">{feedback.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function EvidenceLink({ href, icon, label }: { href: string; icon: string; label: string }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-2.5 text-[11px] font-bold text-primary-700 hover:bg-primary-50">
+      <i className={icon} />
+      {label}
+    </a>
   );
 }
 
 function LmsDetails({ item }: { item: LmsAuditItem }) {
+  const ksbGroups = ksbGroupsForItem(item);
   return (
-    <InfoGrid rows={[
-      ['Learning type', 'Online learning'],
-      ['Course/module', item.course_module],
-      ['Component/material', item.component_name],
-      ['Quiz attempts', display(item.quiz_attempts)],
-      ['Quiz score', item.quiz_score == null ? 'Not available' : `${item.quiz_score}%`],
-      ['Tutor', display(item.tutor)],
-      ['Course started', formatDate(item.course_started_at)],
-      ['Course completed', formatDate(item.course_completed_at)],
-      ['Relevant date', formatDate(item.relevant_date)],
-    ]} />
+    <>
+      <InfoGrid rows={[
+        ['Learning type', 'Online learning'],
+        ['Course/module', item.course_module],
+        ['Component/material', item.component_name],
+        ['Quiz attempts', display(item.quiz_attempts)],
+        ['Quiz score', item.quiz_score == null ? 'Not available' : `${item.quiz_score}%`],
+        ['Tutor', display(item.tutor)],
+        ['Course started', formatDate(item.course_started_at)],
+        ['Course completed', formatDate(item.course_completed_at)],
+        ['Relevant date', formatDate(item.relevant_date)],
+      ]} />
+      <ActivityKsbStrip groups={ksbGroups} />
+    </>
   );
 }
 
@@ -989,6 +2486,158 @@ function SummaryFact({ label, value, title }: { label: string; value: string; ti
   );
 }
 
+function AuditStatsSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 10 }).map((_, index) => (
+        <span key={index} className="inline-flex items-center gap-1">
+          <SkeletonBlock className="h-4 w-8 rounded bg-[#eadfce]" />
+          <SkeletonBlock className={`${index % 3 === 0 ? 'w-24' : 'w-16'} h-3 rounded bg-[#efe7dc]`} />
+        </span>
+      ))}
+    </>
+  );
+}
+
+function ActivityMatrixSkeleton() {
+  const columns = 8;
+  const rows = 6;
+
+  return (
+    <div className="overflow-auto p-5">
+      <div className="min-w-[1120px] overflow-hidden rounded-lg border border-[#eee7dc]">
+        <div className="grid grid-cols-[54px_220px_90px_90px_90px_90px_repeat(8,145px)] bg-[#fbfaf8]">
+          {Array.from({ length: columns + 6 }).map((_, index) => (
+            <div key={index} className="border-b border-r border-[#eee7dc] px-3 py-4">
+              <SkeletonBlock className={`${index === 1 ? 'w-28' : index > 5 ? 'w-24' : 'w-12'} h-3 rounded bg-[#eadfce]`} />
+              {index > 5 && <SkeletonBlock className="mt-2 h-2.5 w-20 rounded bg-[#f0e8dd]" />}
+            </div>
+          ))}
+        </div>
+        {Array.from({ length: rows }).map((_, rowIndex) => (
+          <div key={rowIndex} className="grid grid-cols-[54px_220px_90px_90px_90px_90px_repeat(8,145px)]">
+            <div className="border-b border-r border-[#f0ebe4] px-3 py-4">
+              <SkeletonBlock className="h-3 w-4 rounded bg-[#efe7dc]" />
+            </div>
+            <div className="border-b border-r border-[#f0ebe4] px-3 py-4">
+              <SkeletonBlock className="h-4 w-32 rounded bg-[#e9dfd1]" />
+              <SkeletonBlock className="mt-2 h-3 w-16 rounded bg-[#f1e9df]" />
+            </div>
+            <div className="border-b border-r border-[#f0ebe4] px-3 py-4">
+              <SkeletonBlock className="mx-auto h-6 w-12 rounded-full bg-[#ffedd5]" />
+            </div>
+            {Array.from({ length: 3 }).map((_, metricIndex) => (
+              <div key={metricIndex} className="border-b border-r border-[#f0ebe4] px-3 py-4">
+                <SkeletonBlock className="ml-auto h-4 w-12 rounded bg-[#efe7dc]" />
+              </div>
+            ))}
+            {Array.from({ length: columns }).map((_, columnIndex) => (
+              <div key={columnIndex} className="border-b border-r border-[#f0ebe4] px-3 py-4">
+                <SkeletonBlock className={`mx-auto h-6 rounded-md ${columnIndex % 3 === rowIndex % 3 ? 'w-12 bg-[#ccfbf1]' : 'w-5 bg-[#f1e9df]'}`} />
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex justify-center">
+        <SkeletonBlock className="h-3 w-96 max-w-full rounded bg-[#eadfce]" />
+      </div>
+    </div>
+  );
+}
+
+function LearnerAuditPageSkeleton() {
+  return (
+    <div className="mx-auto max-w-4xl">
+      <div className="flex items-center gap-4 border-b border-[#f0ebe4] pb-5">
+        <SkeletonBlock className="h-14 w-14 shrink-0 rounded-full bg-[#ffedd5]" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <SkeletonBlock className="h-6 w-44 rounded bg-[#e9dfd1]" />
+            <SkeletonBlock className="h-6 w-16 rounded-full bg-[#ccfbf1]" />
+            <SkeletonBlock className="h-6 w-28 rounded-full bg-[#ffedd5]" />
+          </div>
+          <SkeletonBlock className="mt-2 h-3 w-64 max-w-full rounded bg-[#efe7dc]" />
+        </div>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-[#eee7dc] bg-white p-5">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <SkeletonBlock className="h-4 w-48 rounded bg-[#e9dfd1]" />
+          <SkeletonBlock className="h-8 w-24 rounded-full bg-[#ffedd5]" />
+        </div>
+        <div className="flex gap-8">
+          <div>
+            <SkeletonBlock className="h-3 w-16 rounded bg-[#efe7dc]" />
+            <SkeletonBlock className="mt-2 h-8 w-20 rounded bg-[#e9dfd1]" />
+          </div>
+          <div>
+            <SkeletonBlock className="h-3 w-14 rounded bg-[#efe7dc]" />
+            <SkeletonBlock className="mt-2 h-8 w-24 rounded bg-[#e9dfd1]" />
+          </div>
+        </div>
+        <SkeletonBlock className="mt-5 h-2 w-full rounded-full bg-[#ffedd5]" />
+        <SkeletonBlock className="mt-3 h-3 w-44 rounded bg-[#efe7dc]" />
+      </div>
+
+      <div className="mt-6">
+        <SkeletonBlock className="h-5 w-40 rounded bg-[#e9dfd1]" />
+        <SkeletonBlock className="mt-2 h-3 w-48 rounded bg-[#efe7dc]" />
+        <div className="mt-4 space-y-3">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <div key={index} className="rounded-lg border border-[#eee7dc] bg-[#fbfaf8] p-4">
+              <div className="flex items-center gap-4">
+                <SkeletonBlock className="h-9 w-9 rounded-lg bg-[#ffedd5]" />
+                <div className="flex-1">
+                  <SkeletonBlock className="h-4 w-44 rounded bg-[#e9dfd1]" />
+                  <div className="mt-2 flex gap-3">
+                    <SkeletonBlock className="h-3 w-20 rounded bg-[#efe7dc]" />
+                    <SkeletonBlock className="h-3 w-14 rounded bg-[#efe7dc]" />
+                    <SkeletonBlock className="h-3 w-16 rounded bg-[#efe7dc]" />
+                  </div>
+                  <SkeletonBlock className="mt-3 h-1.5 w-80 max-w-full rounded-full bg-[#f59e0b]" />
+                </div>
+                <SkeletonBlock className="h-5 w-5 rounded-full bg-[#efe7dc]" />
+              </div>
+              {index === 0 && (
+                <div className="mt-4 rounded-lg border border-[#eee7dc] bg-white p-4">
+                  <div className="flex items-center gap-3">
+                    <SkeletonBlock className="h-9 w-9 rounded-lg bg-[#ccfbf1]" />
+                    <div className="flex-1">
+                      <SkeletonBlock className="h-4 w-72 max-w-full rounded bg-[#e9dfd1]" />
+                      <SkeletonBlock className="mt-2 h-3 w-40 rounded bg-[#efe7dc]" />
+                    </div>
+                    <SkeletonBlock className="h-6 w-24 rounded-full bg-[#ccfbf1]" />
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {Array.from({ length: 3 }).map((_, cardIndex) => (
+                      <div key={cardIndex} className="rounded-lg bg-[#fbfaf8] p-3">
+                        <SkeletonBlock className="h-3 w-20 rounded bg-[#e9dfd1]" />
+                        <SkeletonBlock className="mt-3 h-3 w-full rounded bg-[#efe7dc]" />
+                        <SkeletonBlock className="mt-2 h-3 w-3/4 rounded bg-[#efe7dc]" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-8 rounded-xl border border-[#eee7dc] bg-white p-5">
+        <SkeletonBlock className="h-5 w-40 rounded bg-[#e9dfd1]" />
+        <SkeletonBlock className="mt-3 h-3 w-96 max-w-full rounded bg-[#efe7dc]" />
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <SkeletonBlock className="h-44 rounded-lg bg-[#fbfaf8]" />
+          <SkeletonBlock className="h-44 rounded-lg bg-[#fbfaf8]" />
+        </div>
+        <SkeletonBlock className="mt-5 h-10 w-32 rounded-lg bg-[#0f766e]" />
+      </div>
+    </div>
+  );
+}
+
 function LearnerListSkeleton() {
   return <div className="space-y-2 p-1">{Array.from({ length: 6 }).map((_, index) => <SkeletonBlock key={index} className="h-24 rounded-lg" />)}</div>;
 }
@@ -1013,27 +2662,128 @@ function filterMonthItems(month: AuditMonth | null, search: string) {
 
 function monthlyDeclarationData(audit: LearnerAuditResponse, month: AuditMonth) {
   const items = filterMonthItems(month, '');
-  const aptemItems = items.filter((item): item is AptemAuditItem => item.source === 'Aptem');
-  const hasAptemHours = aptemItems.some((item) => item.actual_hours != null || item.planned_hours != null);
-  const plannedHours = hasAptemHours || month.summary.planned_hours > 0 ? month.summary.planned_hours : audit.summary.planned_hours_month;
-  const completedHours = hasAptemHours || month.summary.actual_hours > 0 ? month.summary.actual_hours : audit.summary.completed_otjh;
   const approvedFromRows = sumRawHours(items, ['approved_hours', 'approved_otjh', 'approved otjh', 'approved']);
   const approvedHours = approvedFromRows ?? audit.summary.approved_hours;
   const ksbs = uniqueStrings(items.flatMap((item) => extractKsbCodes(item)));
 
   return {
-    plannedHours,
-    completedHours,
+    plannedHours: month.summary.planned_hours,
+    completedHours: month.summary.actual_hours,
     approvedHours,
     ksbs,
   };
 }
 
 function extractKsbCodes(item: AuditActivityItem) {
+  if (item.source === 'Aptem') {
+    const feedbackValues = assignmentEvidence(item).flatMap((entry) => entry.feedbacks.map((feedback) => feedback.message));
+    const feedbackCodes = uniqueStrings(feedbackValues.flatMap(extractCoachFeedbackKsbCodesFromText)).sort(compareKsbCodes);
+    if (feedbackCodes.length) return feedbackCodes;
+
+    const evidenceValues = assignmentEvidence(item).flatMap((entry) => [entry.name, entry.kind, entry.status].filter(Boolean));
+    const evidenceCodes = uniqueStrings(evidenceValues.flatMap(extractCoachFeedbackKsbCodesFromText)).sort(compareKsbCodes);
+    if (evidenceCodes.length) return evidenceCodes;
+  }
   const values = flattenAuditValues(item.raw);
-  if (item.source === 'LMS') values.push(item.component_name, item.course_module);
-  if (item.source === 'Aptem') values.push(item.activity_name, item.type);
-  return values.flatMap((value) => value.match(/\b(?:K|S|B|KSB)\s*\d+[a-z]?\b/gi) || []).map((code) => code.toUpperCase().replace(/\s+/g, ''));
+  return uniqueStrings(values.flatMap(extractCoachFeedbackKsbCodesFromText)).sort(compareKsbCodes);
+}
+
+function ksbGroupsForItem(item: AuditActivityItem): KsbGroups {
+  const groups: KsbGroups = { knowledge: [], skills: [], behaviour: [] };
+  extractKsbCodes(item).forEach((code) => {
+    const bucket = ksbGroupForCode(code);
+    if (!groups[bucket].includes(code)) groups[bucket].push(code);
+  });
+  groups.knowledge.sort(compareKsbCodes);
+  groups.skills.sort(compareKsbCodes);
+  groups.behaviour.sort(compareKsbCodes);
+  return groups;
+}
+
+function extractCoachFeedbackKsbCodesFromText(value: string) {
+  const cleanValue = stripHtml(value);
+  const matches = [...cleanValue.matchAll(/(?:KSBs?\s+achieved|Evidenced\s+KSBs?|KSBs?\s+evidenced|KSBs?)\s*:\s*([^\n\r]+)/gi)];
+  return matches.flatMap((match) => extractKsbCodesFromText(match[1] || ''));
+}
+
+function extractKsbCodesFromText(value: string) {
+  return (value.match(/\b(?:KSB\s*)?[KSB]\s*\d+(?:\.\d+)?[a-z]?\b/gi) || [])
+    .map((code) => code.toUpperCase().replace(/^KSB\s*/, '').replace(/\s+/g, ''))
+    .filter((code) => /^[KSB]\d/.test(code));
+}
+
+function ksbGroupForCode(code: string): KsbGroupKey {
+  if (code.startsWith('S')) return 'skills';
+  if (code.startsWith('B')) return 'behaviour';
+  return 'knowledge';
+}
+
+function compareKsbCodes(left: string, right: string) {
+  const leftMatch = /^([KSB])(\d+)(?:\.(\d+))?([A-Z])?$/.exec(left);
+  const rightMatch = /^([KSB])(\d+)(?:\.(\d+))?([A-Z])?$/.exec(right);
+  const order = { K: 0, S: 1, B: 2 } as Record<string, number>;
+  if (!leftMatch || !rightMatch) return left.localeCompare(right);
+  const groupDiff = order[leftMatch[1]] - order[rightMatch[1]];
+  if (groupDiff) return groupDiff;
+  const numberDiff = Number(leftMatch[2]) - Number(rightMatch[2]);
+  if (numberDiff) return numberDiff;
+  const decimalDiff = Number(leftMatch[3] || 0) - Number(rightMatch[3] || 0);
+  if (decimalDiff) return decimalDiff;
+  return (leftMatch[4] || '').localeCompare(rightMatch[4] || '');
+}
+
+function assignmentEvidence(item: AptemAuditItem) {
+  const rawEvidence = item.raw.evidence;
+  if (!Array.isArray(rawEvidence)) return [];
+  return rawEvidence
+    .filter((entry): entry is Record<string, AuditJsonValue> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => ({
+      kind: stringFromAuditValue(entry.kind),
+      name: stringFromAuditValue(entry.name),
+      status: stringFromAuditValue(entry.status),
+      evidenceId: stringFromAuditValue(entry.evidence_id),
+      submissionDate: stringFromAuditValue(entry.submission_date),
+      fileUrl: stringFromAuditValue(entry.file_blob_url) || stringFromAuditValue(entry.source_file_url),
+      noteUrl: stringFromAuditValue(entry.note_blob_url),
+      reportUrl: stringFromAuditValue(entry.assessment_report_blob_url) || stringFromAuditValue(entry.assessment_report_url),
+      feedbacks: feedbacksFromAuditValue(entry.feedbacks),
+    }));
+}
+
+function stringFromAuditValue(value: AuditJsonValue | undefined) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
+
+function feedbacksFromAuditValue(value: AuditJsonValue | undefined) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, AuditJsonValue> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => ({
+      id: stringFromAuditValue(entry.id),
+      author: stringFromAuditValue(entry.author),
+      date: stringFromAuditValue(entry.date),
+      message: stripHtml(stringFromAuditValue(entry.message)),
+    }))
+    .filter((entry) => entry.message || entry.author || entry.date);
+}
+
+function stripHtml(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function flattenAuditValues(value: unknown): string[] {
@@ -1123,7 +2873,7 @@ function applyManySignoffs(audit: LearnerAuditResponse, responses: Array<{ month
 
 function statusPill(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized.includes('complete') || normalized.includes('pass')) return 'bg-emerald-50 text-emerald-700';
+  if (normalized.includes('complete') || normalized.includes('pass') || normalized.includes('present') || normalized.includes('attend')) return 'bg-emerald-50 text-emerald-700';
   if (normalized.includes('progress') || normalized.includes('start')) return 'bg-blue-50 text-blue-700';
   return 'bg-amber-50 text-amber-700';
 }
@@ -1169,7 +2919,11 @@ function filterPastAudit(audit: LearnerAuditResponse) {
   const todayKey = toDateKey(new Date());
   const months = audit.months
     .map((month) => {
-      if (month.month_key === 'undated') return month;
+      if (month.month_key === 'undated') {
+        const undatedItems = month.undated_items.filter((item) => !item.relevant_date || isPastOrToday(item.relevant_date, todayKey));
+        if (!undatedItems.length) return null;
+        return recomputeMonthSummary({ ...month, label: 'Needs Review - Missing Date', undated_items: undatedItems });
+      }
       const weeks = month.weeks
         .map((week) => ({
           ...week,
@@ -1178,7 +2932,8 @@ function filterPastAudit(audit: LearnerAuditResponse) {
         }))
         .filter((week) => week.aptem_items.length || week.lms_items.length || Boolean(week.source_column));
       const undatedItems = month.undated_items.filter((item) => !item.relevant_date || isPastOrToday(item.relevant_date, todayKey));
-      if (!weeks.length && !undatedItems.length) return null;
+      const hasMonthlyHours = month.summary.planned_hours !== null || month.summary.actual_hours !== null;
+      if (!weeks.length && !undatedItems.length && !hasMonthlyHours) return null;
       return recomputeMonthSummary({ ...month, weeks, undated_items: undatedItems });
     })
     .filter((month): month is AuditMonth => Boolean(month));
@@ -1192,8 +2947,8 @@ function recomputeMonthSummary(month: AuditMonth): AuditMonth {
   return {
     ...month,
     summary: {
-      actual_hours: roundHours(aptemItems.reduce((total, item) => total + (item.actual_hours || 0), 0)),
-      planned_hours: roundHours(aptemItems.reduce((total, item) => total + (item.planned_hours || 0), 0)),
+      actual_hours: month.summary.actual_hours,
+      planned_hours: month.summary.planned_hours,
       aptem_items: aptemItems.length,
       lms_items: lmsItems.length,
       completed: items.filter((item) => statusBucket(item.source === 'Aptem' ? item.status : item.completion_status) === 'completed').length,
@@ -1222,7 +2977,7 @@ function roundHours(value: number) {
 
 function statusBucket(status: string) {
   const normalized = status.toLowerCase().replace(/\s/g, '');
-  if (normalized.includes('complete') || normalized === 'passed' || normalized === 'done') return 'completed';
+  if (normalized.includes('complete') || normalized === 'passed' || normalized === 'done' || normalized === 'present' || normalized === 'attended' || normalized === 'attend') return 'completed';
   if (normalized.includes('progress') || normalized.includes('started') || normalized.includes('visited')) return 'in_progress';
   return 'not_started';
 }
@@ -1232,6 +2987,12 @@ function formatDate(value?: string | null) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(parsed);
+}
+
+function formatDateRange(start?: string | null, end?: string | null) {
+  if (!start && !end) return 'Not available';
+  if (!start || !end) return formatDate(start || end);
+  return `${formatDate(start)} - ${formatDate(end)}`;
 }
 
 function formatDateTime(value?: string | null) {
@@ -1252,6 +3013,50 @@ function formatHours(seconds?: number | null) {
 function formatHoursFromHours(hours?: number | null) {
   if (hours === null || hours === undefined) return 'Not available';
   return formatHours(hours * 3600);
+}
+
+function sumAvailableHours(values: Array<number | null | undefined>) {
+  const available = values.filter((value): value is number => value !== null && value !== undefined);
+  if (!available.length) return null;
+  return roundHours(available.reduce((total, value) => total + value, 0));
+}
+
+function formatSignedHoursFromHours(hours?: number | null) {
+  if (hours === null || hours === undefined) return 'Not available';
+  const sign = hours > 0 ? '+' : hours < 0 ? '-' : '';
+  return `${sign}${formatHoursFromHours(Math.abs(hours))}`;
+}
+
+function percentage(actual?: number | null, planned?: number | null) {
+  if (!planned || planned <= 0) return actual && actual > 0 ? 100 : 0;
+  return Math.max(0, Math.round(((actual || 0) / planned) * 100));
+}
+
+function learnerInitials(value: string) {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  return (parts[0]?.[0] || 'L') + (parts[1]?.[0] || '');
+}
+
+function monthAbbrev(label: string) {
+  return (label || '').slice(0, 3) || 'Mon';
+}
+
+function monthDateRange(month: AuditMonth) {
+  const weeks = month.weeks;
+  const start = weeks[0]?.start_date || (month.month_key.match(/^\d{4}-\d{2}$/) ? `${month.month_key}-01` : null);
+  const end = weeks[weeks.length - 1]?.end_date || null;
+  if (start && end) return `${start} - ${end}`;
+  if (start) return start;
+  return '';
+}
+
+function sortAuditMonths(months: AuditMonth[], direction: 'desc' | 'asc') {
+  return [...months].sort((left, right) => {
+    if (left.month_key === 'undated') return 1;
+    if (right.month_key === 'undated') return -1;
+    const result = left.month_key.localeCompare(right.month_key);
+    return direction === 'asc' ? result : -result;
+  });
 }
 
 function fileSegment(value: string) {
@@ -1278,8 +3083,8 @@ function combineSelectedMonths(months: AuditMonth[]): AuditMonth {
     month_key: months.map((month) => month.month_key).join('__'),
     label: months.map((month) => month.label).join(', '),
     summary: {
-      actual_hours: roundHours(months.reduce((total, month) => total + month.summary.actual_hours, 0)),
-      planned_hours: roundHours(months.reduce((total, month) => total + month.summary.planned_hours, 0)),
+      actual_hours: sumAvailableHours(months.map((month) => month.summary.actual_hours)),
+      planned_hours: sumAvailableHours(months.map((month) => month.summary.planned_hours)),
       aptem_items: months.reduce((total, month) => total + month.summary.aptem_items, 0),
       lms_items: months.reduce((total, month) => total + month.summary.lms_items, 0),
       completed: months.reduce((total, month) => total + month.summary.completed, 0),

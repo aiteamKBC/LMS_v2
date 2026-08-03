@@ -2,7 +2,7 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile
+from .identity import learner_profile_for_source
 from .teams_attendance import fetch_verified_teams_attendance_rows
 
 
@@ -71,14 +71,15 @@ def learner_attendance(request, kind, learner_id):
         return _error("Unknown learner kind. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        source = model.objects.only('id', 'email').get(pk=learner_id)
+        # all_learners: the default manager is scoped to apprenticeship rows.
+        source = model.all_learners.only('id', 'email').get(pk=learner_id)
     except model.DoesNotExist:
         return _error('Learner not found.', 404)
     except DatabaseError as exc:
         return _error(f'Database error: {exc}', 502)
 
     try:
-        mirror = LearnerProfile.objects.filter(pk=learner_id).only('id', 'email').first()
+        mirror = learner_profile_for_source(source, learner_id)
         email = (mirror.email if mirror else source.email) or ''
         rows = fetch_verified_teams_attendance_rows([learner_id], [email])
     except DatabaseError as exc:

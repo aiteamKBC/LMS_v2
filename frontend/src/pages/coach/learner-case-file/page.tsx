@@ -525,7 +525,7 @@ export default function LearnerCaseFile() {
                       </span>
                     </p>
                     <p className="text-[10px] text-foreground-400">
-                      {data?.touchedKsbCodes.length || 0} KSB code(s) surfaced via quiz evidence
+                      {data?.touchedKsbCodes.length || 0} KSB code(s) surfaced via learner progress
                     </p>
                   </div>
                 </div>
@@ -657,6 +657,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
   const [ksbSearch, setKsbSearch] = useState('');
   const completed = data.otjhCompleted;
   const target = data.otjhTarget;
+  const programmeTotal = data.totalExpectedOtjh || null;
   const remaining = completed !== null && target !== null ? Math.max(0, target - completed) : null;
   const otjhPercent = completed !== null && target !== null && target > 0
     ? Math.min(100, Math.round((completed / target) * 100))
@@ -693,9 +694,10 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
   return (
     <div className="space-y-5">
       <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <BigMetric value={formatHours(data.otjhCompleted)} label="Hours Logged" tone="primary" />
-          <BigMetric value={formatHours(data.otjhTarget)} label="Target Hours" tone="muted" />
+          <BigMetric value={formatHours(data.otjhTarget)} label="Current Target" tone="muted" />
+          <BigMetric value={formatHours(programmeTotal)} label="Programme Total" tone="amber" />
           <BigMetric value={formatHours(remaining)} label="Hours Remaining" tone="red" />
         </div>
         <ProfileProgress label="OTJH Progress" value={otjhPercent} color="bg-primary-600" />
@@ -707,7 +709,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
         </div>
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
-        {ksbs.length === 0 ? <ProfileEmpty text="No KSB framework data is available." /> : (
+        {ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot is available for this programme yet." /> : (
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-3">
               <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
@@ -848,36 +850,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
 }
 
 function buildDisplayKsbs(data: CoachLearnerCaseFileData) {
-  const detailKsbs = data.detail?.ksbs || [];
-  if (detailKsbs.length > 0) {
-    return detailKsbs;
-  }
-
-  const itemsByCode = new Map<string, { code: string; type: string; number: string; description: string }>();
-  for (const component of data.detail?.components || []) {
-    for (const mapping of component.ksbMappings || []) {
-      const code = String(mapping.code || '').trim().toUpperCase();
-      if (!code) {
-        continue;
-      }
-      const existing = itemsByCode.get(code);
-      const description = String(mapping.description || '').trim() || `Mapped KSB ${code}`;
-      if (!existing) {
-        itemsByCode.set(code, {
-          code,
-          type: ksbCategoryFromCode(code),
-          number: code.replace(/^[A-Z]+/i, ''),
-          description,
-        });
-        continue;
-      }
-      if (!existing.description && description) {
-        existing.description = description;
-      }
-    }
-  }
-
-  return Array.from(itemsByCode.values());
+  return data.detail?.ksbs || [];
 }
 
 function ksbCategoryFromCode(code: string) {

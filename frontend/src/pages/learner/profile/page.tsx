@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 
 const learnerNav = roleNavMap.learner;
 
@@ -25,6 +26,9 @@ export default function LearnerProfilePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Still enrolling? The wizard is the only thing this learner can act on.
+  useOnboardingRedirect(learner?.programmeStatus, !loading);
 
   useEffect(() => {
     let cancelled = false;

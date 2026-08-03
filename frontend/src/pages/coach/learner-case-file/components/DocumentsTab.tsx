@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '@/pages/users/components/ui';
-import { formatDisplayDate, type CaseFileTabProps } from '../data';
+import { formatDisplayDate, resolveQuizAttemptTitle, type CaseFileTabProps } from '../data';
 
 interface LiveRecordRow {
   id: string;
@@ -156,7 +156,7 @@ function buildRecords(data: CaseFileTabProps['data']): LiveRecordRow[] {
       id: 'quiz-history',
       title: 'Assessment transcript',
       detail: `${data.detail?.quizAttempts.length || 0} quiz attempt(s) returned`,
-      meta: latestQuiz ? `Latest: ${latestQuiz.quizName} on ${formatDisplayDate(latestQuiz.submittedAt)}` : '--',
+      meta: latestQuiz ? `Latest: ${resolveQuizAttemptTitle(data.detail, latestQuiz)} on ${formatDisplayDate(latestQuiz.submittedAt)}` : '--',
       status: (data.detail?.quizAttempts.length || 0) > 0 ? 'available' : 'unavailable',
     },
   ];
