@@ -10,7 +10,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ChatCoach, ChatLearner
+from learner_api.models import EnrolmentUser, LearnerProfile
+
+from .models import ChatCoach, ChatLearner, Conversation
 from .permissions import IsConversationParticipant, IsMessageParticipant
 from .serializers import ConversationSerializer, MessageCreateSerializer, MessageSerializer
 from .services import (
@@ -47,7 +49,28 @@ DEMO_CHAT_IDENTITIES = {
 }
 
 
-def _demo_chat_identity(email):
+def _demo_learner_identity_from_source(source_id):
+    if source_id in (None, ""):
+        return None
+
+    try:
+        source_id = int(source_id)
+    except (TypeError, ValueError):
+        return None
+
+    source = EnrolmentUser.all_learners.filter(pk=source_id).only("email").first()
+    source_email = (getattr(source, "email", "") or "").strip()
+    if not source_email:
+        return None
+
+    learner = ChatLearner.objects.filter(email__iexact=source_email).first()
+    return ("learner", learner) if learner is not None else None
+
+
+def _demo_chat_identity(email, learner_source_id=None):
+    if learner_source_id not in (None, ""):
+        return _demo_learner_identity_from_source(learner_source_id)
+
     mapping = DEMO_CHAT_IDENTITIES.get((email or "").strip().lower())
     if not mapping:
         return None
@@ -55,6 +78,17 @@ def _demo_chat_identity(email):
     participant_type, participant_email = mapping
     participant_model = ChatCoach if participant_type == "coach" else ChatLearner
     return participant_type, participant_model.objects.filter(email__iexact=participant_email).first()
+
+
+def _ensure_assigned_coach_conversation(learner):
+    profile = LearnerProfile.objects.filter(pk=learner.pk).only("coach_email").first()
+    coach_email = (getattr(profile, "coach_email", "") or "").strip()
+    if not coach_email:
+        return
+
+    coach = ChatCoach.objects.filter(email__iexact=coach_email).first()
+    if coach is not None:
+        Conversation.objects.get_or_create(coach=coach, learner=learner)
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -75,11 +109,16 @@ class ChatSessionView(APIView):
             return Response({"detail": "Demo chat session bootstrap is disabled."}, status=status.HTTP_404_NOT_FOUND)
 
         demo_email = str(request.data.get("email", "")).strip().lower()
-        identity = _demo_chat_identity(demo_email)
+        identity = _demo_chat_identity(
+            demo_email,
+            learner_source_id=request.data.get("learner_source_id"),
+        )
         if identity is None or identity[1] is None:
             return Response({"detail": "This demo account has no chat identity."}, status=status.HTTP_400_BAD_REQUEST)
 
         participant_type, participant = identity
+        if participant_type == "learner":
+            _ensure_assigned_coach_conversation(participant)
         user_model = get_user_model()
         username = f"chat_demo_{participant_type}_{participant.pk}"[:150]
         user, _ = user_model.objects.get_or_create(

@@ -77,7 +77,10 @@ async function ensureChatCsrfCookie(): Promise<void> {
   if (!response.ok) throw new ChatApiError('Could not initialise the chat session.', response.status);
 }
 
-export async function bootstrapChatSession(email: string): Promise<void> {
+export async function bootstrapChatSession(
+  email: string,
+  options: { learnerSourceId?: string } = {},
+): Promise<void> {
   await ensureChatCsrfCookie();
   const headers = new Headers({ 'Content-Type': 'application/json' });
   const csrfToken = readCookie('csrftoken');
@@ -87,7 +90,10 @@ export async function bootstrapChatSession(email: string): Promise<void> {
     method: 'POST',
     headers,
     credentials: 'include',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({
+      email,
+      learner_source_id: options.learnerSourceId,
+    }),
   });
   if (!response.ok) {
     throw new ChatApiError('Could not initialise the chat session.', response.status);

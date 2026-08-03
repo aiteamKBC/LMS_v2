@@ -38,6 +38,11 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
   return null;
 }
 
+/** Return only an explicitly selected learner, without the demo fallback. */
+export function getRememberedLearner(): { kind: LearnerKind; id: string } | null {
+  return readOverride();
+}
+
 /** Persist the active learner so paramless /learner/* pages resolve to it. */
 export function rememberLearner(kind: string | undefined, id: string | undefined): void {
   if (!isKind(kind) || !id) return;
