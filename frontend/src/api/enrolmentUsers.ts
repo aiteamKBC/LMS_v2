@@ -106,7 +106,7 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   dob?: string;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -117,9 +117,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`The server returned ${res.headers.get('content-type') || 'a non-JSON response'} for ${url}.`);
+    }
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const error = data && typeof data === 'object' && 'error' in data ? String(data.error) : '';
+    throw new Error(error || `Request failed (${res.status})`);
   }
   return data as T;
 }
