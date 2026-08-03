@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, evidence, learner_detail, lms_schema, quizzes, reflection_ai, reflection_submissions, videos, views
+from . import absence_reports, attendance, calendar, calendar_connections, components, curriculum, evidence, learner_detail, lms_schema, quizzes, reflection_ai, reflection_submissions, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -37,6 +37,11 @@ urlpatterns = [
     # learner calendar (coaching sessions from Coach.coach_calendar_event)
     path("calendar/<str:kind>/<int:pk>/", calendar.learner_calendar, name="learner-calendar"),
     path("calendar/<str:kind>/<int:pk>/book/", calendar.learner_calendar_book, name="learner-calendar-book"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/", calendar_connections.connection_list, name="learner-calendar-connections"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/availability/", calendar_connections.availability, name="learner-calendar-availability"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/oauth/", calendar_connections.oauth_start, name="learner-calendar-oauth"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/connect/", calendar_connections.credential_connect, name="learner-calendar-connect"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/disconnect/", calendar_connections.disconnect, name="learner-calendar-disconnect"),
     path("absence-reports/<str:kind>/<int:learner_id>/", absence_reports.learner_absence_reports, name="learner-absence-reports"),
     # learner evidence uploads (Azure Blob Storage backed)
     path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),
