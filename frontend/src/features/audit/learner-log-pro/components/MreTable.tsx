@@ -78,7 +78,13 @@ export function MreTable({ learner }: { learner?: string }) {
                   <TableCell className="font-mono text-xs text-muted-foreground">{activity.time_from_to ?? "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{activity.activity_category}</TableCell>
                   <TableCell className="max-w-md text-sm text-foreground">
-                    <span className="font-medium">{activity.activity_unit}</span>
+                    <Link
+                      to="/activity"
+                      search={{ learner: "", plan: activity.plan_id }}
+                      className="font-semibold text-primary hover:underline"
+                    >
+                      {activity.activity_unit}
+                    </Link>
                     {activity.activity_description && <span className="mt-0.5 block text-xs text-muted-foreground">{activity.activity_description}</span>}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm text-muted-foreground">{activity.planned_hours ?? "—"}</TableCell>

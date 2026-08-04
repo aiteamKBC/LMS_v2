@@ -142,9 +142,6 @@ function SearchPage() {
             <span className="label-caps">Live learner search</span>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <Link to="/activity" search={{ learner: "" }} className="font-medium hover:underline">
-              Activity log
-            </Link>
             <Link to="/journal" search={{ learner: "", period: "" }} className="font-medium hover:underline">
               Monthly journal
             </Link>
@@ -218,7 +215,7 @@ function SearchPage() {
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
                     <TableHead className="label-caps text-right">Actual vs plan</TableHead>
                     <TableHead className="label-caps">Last activity</TableHead>
-                    <TableHead className="label-caps pr-7 text-right">Details</TableHead>
+                    <TableHead className="label-caps pr-7 text-right">Report</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -237,11 +234,11 @@ function SearchPage() {
                       <TableCell className="font-mono text-xs text-muted-foreground">{learner.last_activity_date ?? "—"}</TableCell>
                       <TableCell className="pr-7 text-right">
                         <Link
-                          to="/activity"
-                          search={{ learner: learner.id }}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground hover:underline"
+                          to="/journal"
+                          search={{ learner: learner.id, period: sharedPeriod }}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:text-primary hover:underline"
                         >
-                          <FileText className="h-3.5 w-3.5" /> View activity
+                          <FileText className="h-3.5 w-3.5" /> Monthly report
                         </Link>
                       </TableCell>
                     </TableRow>
@@ -332,7 +329,15 @@ function SearchPage() {
                       <TableCell className="text-sm font-medium">{row.learner}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.month_no}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                      <TableCell className="max-w-sm text-sm">{row.activity_unit}</TableCell>
+                      <TableCell className="max-w-sm text-sm">
+                        <Link
+                          to="/activity"
+                          search={{ learner: "", plan: row.plan_id }}
+                          className="font-semibold text-primary hover:underline"
+                        >
+                          {row.activity_unit}
+                        </Link>
+                      </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{row.planned_hours ?? "—"}</TableCell>
                       <TableCell className="pr-7 text-right font-mono text-sm text-success">{row.actual_lms_hours ?? "—"}</TableCell>

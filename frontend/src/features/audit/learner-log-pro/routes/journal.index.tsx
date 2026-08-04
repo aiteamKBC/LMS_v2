@@ -76,7 +76,7 @@ function JournalPage() {
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Live learner journal</span>
           </div>
-          <Link to="/activity" search={{ learner: selectedLearner }} className="text-xs font-medium text-muted-foreground hover:underline">← Back to activity log</Link>
+          <Link to="/search" className="text-xs font-medium text-muted-foreground hover:underline">← Back to learner search</Link>
         </div>
       </header>
 
