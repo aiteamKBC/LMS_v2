@@ -152,18 +152,18 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   return (
     <>
-    <header className="h-14 bg-background-200 border-b border-background-300/70 flex items-center shrink-0 px-3 md:px-4 gap-2 md:gap-3 shadow-sm shadow-foreground-950/5">
+    <header className="flex h-14 shrink-0 items-center gap-1.5 border-b border-background-300/70 bg-background-200 px-2 shadow-sm shadow-foreground-950/5 sm:px-3 md:gap-3 md:px-4">
       {/* Hamburger — mobile only */}
       <button
         onClick={onToggleMobileSidebar}
-        className="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
+        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 lg:hidden"
         title="Toggle menu"
       >
         <i className="ri-menu-line text-lg"></i>
       </button>
 
       {/* Provider Logo */}
-      <a href="/" className="flex items-center shrink-0">
+      <a href="/" className="hidden shrink-0 sm:flex">
         <BrandLockup size="compact" />
       </a>
 
@@ -232,7 +232,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
 
         {/* Tasks */}
-        <div className="relative" ref={tasksRef}>
+        <div className="relative hidden sm:block" ref={tasksRef}>
           <button
             onClick={() => { closeOthers('tasks'); setTasksOpen(!tasksOpen); }}
             className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
@@ -299,10 +299,10 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
 
         {/* Divider */}
-        <div className="w-px h-5 bg-background-200/60 mx-1"></div>
+        <div className="mx-1 hidden h-5 w-px bg-background-200/60 sm:block"></div>
 
         {/* Quick Create */}
-        <div className="relative" ref={createRef}>
+        <div className="relative hidden md:block" ref={createRef}>
           <button
             onClick={() => { closeOthers('create'); setQuickCreateOpen(!quickCreateOpen); }}
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer"
@@ -331,7 +331,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
 
         {/* Help */}
-        <div className="relative" ref={helpRef}>
+        <div className="relative hidden md:block" ref={helpRef}>
           <button
             onClick={() => { closeOthers('help'); setHelpOpen(!helpOpen); }}
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
@@ -373,12 +373,12 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
-            className="flex items-center gap-2 pl-2 pr-1 py-1 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer"
+            className="flex cursor-pointer items-center gap-1 rounded-lg p-1 transition-smooth hover:bg-background-100 sm:gap-2 sm:pl-2"
           >
             <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center ring-1 ring-primary-200/50">
               <span className="text-primary-700 text-xs font-semibold">{displayName.charAt(0)}</span>
             </div>
-            <i className="ri-arrow-down-s-line text-foreground-300 text-xs"></i>
+            <i className="ri-arrow-down-s-line hidden text-xs text-foreground-300 sm:inline"></i>
           </button>
           {profileOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-52 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
@@ -433,7 +433,7 @@ function DropdownPanel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="absolute right-0 top-full mt-1.5 w-80 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 overflow-hidden">
+    <div className="absolute right-0 top-full z-50 mt-1.5 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-lg shadow-foreground-950/5">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-background-100">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-foreground-900 font-heading">{title}</span>

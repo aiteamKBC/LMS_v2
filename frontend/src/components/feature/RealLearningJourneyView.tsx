@@ -836,35 +836,35 @@ function KsbSection({ real, evidencedCodes }: { real: LearnerDetail; evidencedCo
 
   return (
     <Reveal>
-      <section className="rounded-3xl border border-foreground-100 bg-gradient-to-br from-background-50 via-background-50 to-primary-50/20 p-5 shadow-[0_12px_40px_rgba(31,19,57,0.05)] md:p-6">
-        <div className="mb-5 flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-600"><i className="ri-bar-chart-grouped-line text-base"></i></span>
+      <section className="rounded-3xl border border-foreground-100 bg-gradient-to-br from-background-50 via-background-50 to-primary-50/20 p-5 shadow-[0_12px_40px_rgba(31,19,57,0.05)] md:p-7">
+        <div className="mb-6 flex items-center gap-3.5">
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-600"><i className="ri-bar-chart-grouped-line text-lg"></i></span>
           <div>
-            <h3 className="text-base font-heading font-bold text-foreground-900">KSB Progression</h3>
-            <p className="mt-0.5 text-xs text-foreground-400">{groups.reduce((n, g) => n + g.done, 0)} of {groups.reduce((n, g) => n + g.total, 0)} KSBs evidenced through your activities</p>
+            <h3 className="font-heading text-lg font-bold text-foreground-900">KSB Progression</h3>
+            <p className="mt-1 text-sm text-foreground-500">{groups.reduce((n, g) => n + g.done, 0)} of {groups.reduce((n, g) => n + g.total, 0)} KSBs evidenced through your activities</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           {groups.map((g) => (
-            <div key={g.key} className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
+            <div key={g.key} className="group rounded-2xl border border-foreground-100 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className={`flex h-10 w-10 items-center justify-center rounded-2xl ${g.chip}`}><i className={`${g.icon} text-base`}></i></span>
+                  <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${g.chip}`}><i className={`${g.icon} text-lg`}></i></span>
                   <div>
-                    <span className="text-sm font-semibold text-foreground-900">{g.label}</span>
-                    <p className="mt-0.5 text-[10px] text-foreground-400">{g.blurb}</p>
+                    <span className="text-base font-semibold text-foreground-900">{g.label}</span>
+                    <p className="mt-1 text-xs text-foreground-500">{g.blurb}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className={`text-xl font-heading font-bold ${g.text}`}>{g.pct}%</p>
-                  <p className="text-[9px] text-foreground-400">{g.done}/{g.total}</p>
+                  <p className={`font-heading text-2xl font-bold ${g.text}`}>{g.pct}%</p>
+                  <p className="text-[11px] text-foreground-500">{g.done}/{g.total}</p>
                 </div>
               </div>
-              <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-background-200">
+              <div className="mt-5 h-3 overflow-hidden rounded-full bg-background-200">
                 <div className={`h-full ${g.bar} rounded-full transition-all duration-1000 ease-out`} style={{ width: `${g.pct}%` }} />
               </div>
-              <div className="mt-2.5 flex items-center justify-between text-[10px] text-foreground-400">
+              <div className="mt-3 flex items-center justify-between text-xs text-foreground-500">
                 <span>{g.done} evidenced</span>
                 <span>{Math.max(0, g.total - g.done)} remaining</span>
               </div>
@@ -972,15 +972,15 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
 
   return (
     <section className="overflow-hidden rounded-3xl border border-foreground-100 bg-background-50 shadow-[0_12px_36px_rgba(31,19,57,0.06)]">
-      <header className="flex flex-col justify-between gap-4 border-b border-foreground-100 bg-gradient-to-r from-primary-50/70 via-background-50 to-emerald-50/40 px-5 py-4 md:flex-row md:items-center md:px-6">
+      <header className="flex flex-col justify-between gap-5 border-b border-foreground-100 bg-gradient-to-r from-primary-50/70 via-background-50 to-emerald-50/40 px-5 py-5 md:flex-row md:items-center md:px-7 md:py-6">
         <div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-100 px-2.5 py-1 text-[9px] font-semibold text-primary-700">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-100 px-3 py-1.5 text-[10px] font-semibold text-primary-700">
             <i className="ri-calendar-2-line" />Weekly schedule
           </span>
-          <h2 className="mt-2 text-xl font-heading font-bold text-foreground-950">Weekly Learning Calendar</h2>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-5 gap-y-2">
-            <p className="text-xs text-foreground-400">Module {station.index + 1} · {station.module.module}</p>
-            <div className="flex items-center gap-3 text-[9px] font-medium text-foreground-500">
+          <h2 className="mt-2.5 font-heading text-2xl font-bold text-foreground-950">Weekly Learning Calendar</h2>
+          <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
+            <p className="text-sm text-foreground-500">Module {station.index + 1} · {station.module.module}</p>
+            <div className="flex items-center gap-4 text-[11px] font-medium text-foreground-500">
               <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-400" />Completed</span>
               <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-red-400" />Not completed</span>
               <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-background-300" />No activity</span>
@@ -988,47 +988,47 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
           </div>
         </div>
 
-        <div className="flex w-full items-center overflow-hidden rounded-2xl border border-foreground-100 bg-white/90 p-1 shadow-sm backdrop-blur sm:w-auto">
-          <div className="flex min-w-0 items-center gap-2.5 rounded-xl px-3 py-2 sm:min-w-[180px]">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
-              <i className="ri-bar-chart-line text-sm" />
+        <div className="flex w-full flex-col overflow-hidden rounded-2xl border border-foreground-100 bg-white/90 p-1 shadow-sm backdrop-blur sm:w-auto sm:flex-row">
+          <div className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3.5 py-2.5 sm:min-w-[210px] sm:w-auto">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
+              <i className="ri-bar-chart-line text-base" />
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-[8px] font-semibold uppercase tracking-wider text-foreground-400">Week progress</p>
-                <span className="text-[9px] font-bold text-emerald-600">{completionPct}%</span>
+                <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Week progress</p>
+                <span className="text-[10px] font-bold text-emerald-600">{completionPct}%</span>
               </div>
-              <p className="mt-0.5 text-xs font-bold text-foreground-900">{completedCount}/{activities.length} completed</p>
+              <p className="mt-0.5 text-sm font-bold text-foreground-900">{completedCount}/{activities.length} completed</p>
               <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-background-200">
                 <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${completionPct}%` }} />
               </div>
             </div>
           </div>
-          <div className="my-2 h-10 w-px bg-foreground-100" />
-          <div className="flex min-w-0 items-center gap-0.5 px-1 sm:min-w-[155px]">
+          <div className="mx-2 h-px bg-foreground-100 sm:mx-0 sm:my-2 sm:h-10 sm:w-px" />
+          <div className="flex w-full min-w-0 items-center gap-0.5 px-1 sm:min-w-[170px] sm:w-auto">
             <button type="button" disabled={selectedWeekIndex === 0} onClick={() => setSelectedWeekIndex((index) => Math.max(0, index - 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Previous week"><i className="ri-arrow-left-s-line text-lg" /></button>
             <div className="min-w-[76px] flex-1 text-center">
-              <p className="text-[8px] font-semibold uppercase tracking-wider text-foreground-400">Viewing</p>
-              <p className="mt-0.5 text-[11px] font-bold text-foreground-900">{weekDisplayLabel(selectedWeek.week)}</p>
+              <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Viewing</p>
+              <p className="mt-0.5 text-xs font-bold text-foreground-900">{weekDisplayLabel(selectedWeek.week)}</p>
             </div>
             <button type="button" disabled={selectedWeekIndex >= station.module.weeks.length - 1} onClick={() => setSelectedWeekIndex((index) => Math.min(station.module.weeks.length - 1, index + 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Next week"><i className="ri-arrow-right-s-line text-lg" /></button>
           </div>
         </div>
       </header>
 
-      <div className="overflow-x-auto bg-background-100/35 p-3 md:p-4">
-        <div className="grid min-w-[1120px] grid-cols-7 gap-2.5">
+      <div className="bg-background-100/35 p-3 md:p-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
           {calendarDays.map((day, dayIndex) => {
             const dayActivities = activities.filter((_, activityIndex) => activityIndex % 7 === dayIndex);
             const weekend = dayIndex > 4;
             return (
-              <div key={day} className={`min-h-[184px] rounded-2xl border p-2.5 transition-colors ${weekend ? 'border-foreground-100 bg-background-100/70' : 'border-foreground-100 bg-background-50'} ${dayIndex === 0 ? 'border-primary-200 bg-primary-50/45 shadow-[0_6px_22px_rgba(97,61,184,0.08)]' : ''}`}>
-                <div className="flex items-center justify-between px-1 pb-2.5">
+              <div key={day} className={`min-h-[230px] rounded-2xl border p-3 transition-colors ${weekend ? 'border-foreground-100 bg-background-100/70' : 'border-foreground-100 bg-background-50'} ${dayIndex === 0 ? 'border-primary-200 bg-primary-50/45 shadow-[0_6px_22px_rgba(97,61,184,0.08)]' : ''}`}>
+                <div className="flex items-center justify-between px-1 pb-3">
                   <div>
-                    <p className={`text-[10px] font-bold uppercase tracking-[0.14em] ${dayIndex === 0 ? 'text-primary-700' : 'text-foreground-500'}`}>{day.slice(0, 3)}</p>
-                    <p className="mt-0.5 text-[8px] text-foreground-300">{dayActivities.length} {dayActivities.length === 1 ? 'activity' : 'activities'}</p>
+                    <p className={`text-[11px] font-bold uppercase tracking-[0.14em] ${dayIndex === 0 ? 'text-primary-700' : 'text-foreground-500'}`}>{day.slice(0, 3)}</p>
+                    <p className="mt-1 text-[9px] text-foreground-400">{dayActivities.length} {dayActivities.length === 1 ? 'activity' : 'activities'}</p>
                   </div>
-                  <span className={`flex h-7 w-7 items-center justify-center rounded-lg text-[10px] font-bold ${dayIndex === 0 ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20' : 'bg-background-50 text-foreground-600 ring-1 ring-foreground-200'}`}>{dayIndex + 1}</span>
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold ${dayIndex === 0 ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20' : 'bg-background-50 text-foreground-600 ring-1 ring-foreground-200'}`}>{dayIndex + 1}</span>
                 </div>
 
                 <div className="space-y-2">
@@ -1036,14 +1036,14 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
                     const complete = isJourneyComponentDone(component, real);
                     const meta = componentTypeVisual(component.type || (component.isQuiz ? 'quiz' : 'activity'));
                     return (
-                      <article key={component.componentId || `${component.title}-${activityIndex}`} className={`group relative min-h-[82px] overflow-hidden rounded-xl border bg-background-50 p-2.5 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${complete ? 'border-emerald-200' : 'border-red-200'}`}>
+                      <article key={component.componentId || `${component.title}-${activityIndex}`} className={`group relative min-h-[105px] overflow-hidden rounded-xl border bg-background-50 p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${complete ? 'border-emerald-200' : 'border-red-200'}`}>
                         <span className={`absolute inset-y-0 left-0 w-1 ${complete ? 'bg-emerald-400' : 'bg-red-400'}`} />
                         <div className="flex items-center justify-between gap-1.5 pl-1">
-                          <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${meta.cls}`}><i className={`${meta.icon} text-xs`} /></span>
-                          <span className={`rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-wide ${complete ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{complete ? 'Done' : 'Not completed'}</span>
+                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${meta.cls}`}><i className={`${meta.icon} text-sm`} /></span>
+                          <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${complete ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{complete ? 'Done' : 'Not completed'}</span>
                         </div>
-                        <p className="mt-2 line-clamp-2 pl-1 text-[10px] font-semibold leading-snug text-foreground-900">{component.title}</p>
-                        <p className="mt-1.5 pl-1 text-[8px] text-foreground-400"><i className="ri-time-line mr-1" />{component.durationMinutes ? `${component.durationMinutes} min` : component.expectedOtjh ? `${component.expectedOtjh} OTJ hrs` : 'Self-paced'}</p>
+                        <p className="mt-2.5 line-clamp-2 pl-1 text-xs font-semibold leading-snug text-foreground-900">{component.title}</p>
+                        <p className="mt-2 pl-1 text-[10px] text-foreground-500"><i className="ri-time-line mr-1" />{component.durationMinutes ? `${component.durationMinutes} min` : component.expectedOtjh ? `${component.expectedOtjh} OTJ hrs` : 'Self-paced'}</p>
                       </article>
                     );
                   }) : (
@@ -1084,46 +1084,46 @@ function AchievementsSection({ overallPct, modulesDone, quizzesPassed, attendanc
   const earnedCount = badges.filter((badge) => badge.earned).length;
 
   return (
-    <section className="overflow-hidden rounded-3xl border border-foreground-100 bg-gradient-to-br from-background-50 via-amber-50/20 to-primary-50/15 p-4 shadow-[0_10px_32px_rgba(31,19,57,0.04)]">
+    <section className="overflow-hidden rounded-3xl border border-foreground-100 bg-gradient-to-br from-background-50 via-amber-50/20 to-primary-50/15 p-5 shadow-[0_10px_32px_rgba(31,19,57,0.04)] md:p-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
-            <i className="ri-trophy-line text-sm" />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
+            <i className="ri-trophy-line text-base" />
           </span>
           <div className="min-w-0">
-            <h3 className="text-sm font-heading font-bold text-foreground-900">Your Badges</h3>
-            <p className="mt-0.5 truncate text-[10px] text-foreground-400">Milestones earned throughout your journey</p>
+            <h3 className="font-heading text-base font-bold text-foreground-900">Your Badges</h3>
+            <p className="mt-1 truncate text-xs text-foreground-500">Milestones earned throughout your journey</p>
           </div>
         </div>
-        <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[9px] font-semibold text-amber-700">
+        <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-[10px] font-semibold text-amber-700">
           {earnedCount} of {badges.length} unlocked
         </span>
       </div>
 
-      <div className="mt-4 grid w-full grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
+      <div className="mt-5 grid w-full grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         {badges.map((badge) => (
           <article
             key={badge.title}
-            className={`group relative min-h-[98px] rounded-2xl border p-3 transition-all duration-300 ${
+            className={`group relative min-h-[125px] rounded-2xl border p-4 transition-all duration-300 ${
               badge.earned
                 ? 'border-amber-200 bg-background-50 shadow-sm hover:-translate-y-0.5 hover:shadow-md'
                 : 'border-foreground-100 bg-background-50/70'
             }`}
           >
             <div className="flex items-start justify-between gap-2">
-              <span className={`flex h-8 w-8 items-center justify-center rounded-xl text-sm ${
+              <span className={`flex h-10 w-10 items-center justify-center rounded-xl text-base ${
                 badge.earned
                   ? 'bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-md shadow-amber-400/20'
                   : 'bg-background-100 text-foreground-300'
               }`}>
                 <i className={badge.icon} />
               </span>
-              <i className={`${badge.earned ? 'ri-check-line text-emerald-500' : 'ri-lock-line text-foreground-300'} text-[10px]`} />
+              <i className={`${badge.earned ? 'ri-check-line text-emerald-500' : 'ri-lock-line text-foreground-300'} text-xs`} />
             </div>
-            <p className={`mt-2.5 truncate text-[11px] font-semibold leading-snug ${
+            <p className={`mt-3 truncate text-xs font-semibold leading-snug ${
               badge.earned ? 'text-foreground-900' : 'text-foreground-500'
             }`}>{badge.title}</p>
-            <p className="mt-1 line-clamp-1 text-[9px] leading-relaxed text-foreground-400">{badge.text}</p>
+            <p className="mt-1.5 line-clamp-2 text-[10px] leading-relaxed text-foreground-500">{badge.text}</p>
           </article>
         ))}
       </div>
@@ -1359,21 +1359,21 @@ export function RealLearningJourneyView({
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <div className="space-y-5 p-3 sm:p-4 md:space-y-6 lg:p-6">
 
         {/* ═══════════ LEARNER PROFILE + QUICK STATS ═══════════ */}
-        <section className="relative overflow-hidden rounded-3xl border border-primary-100/70 bg-gradient-to-br from-background-50 via-primary-50/30 to-secondary-50/40 px-5 py-6 shadow-[0_16px_50px_rgba(41,20,82,0.08)] md:px-8 md:py-8">
+        <section className="relative overflow-hidden rounded-2xl border border-primary-100/70 bg-gradient-to-br from-background-50 via-primary-50/30 to-secondary-50/40 px-4 py-5 shadow-[0_16px_50px_rgba(41,20,82,0.08)] sm:rounded-3xl sm:px-5 sm:py-6 md:px-8 md:py-8">
           <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-primary-300/15 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-32 left-1/3 h-72 w-72 rounded-full bg-secondary-300/10 blur-3xl" />
           <div className="relative w-full">
             <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-start">
-              <div className="flex min-w-0 items-center gap-4">
-                <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-3xl bg-gradient-to-br from-primary-500 to-primary-700 text-2xl font-heading font-bold text-white shadow-xl shadow-primary-500/20">
+              <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
+                <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-xl font-heading font-bold text-white shadow-xl shadow-primary-500/20 sm:h-24 sm:w-24 sm:rounded-3xl sm:text-2xl">
                   {initials}
                   <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 text-white ring-4 ring-background-50"><i className="ri-check-line text-xs" /></span>
                 </div>
                 <div className="min-w-0">
-                  <h1 className="truncate text-2xl font-heading font-bold tracking-tight text-foreground-950 md:text-3xl">{real?.name || 'Learner'}</h1>
+                  <h1 className="break-words text-xl font-heading font-bold tracking-tight text-foreground-950 sm:text-2xl md:text-3xl">{real?.name || 'Learner'}</h1>
                   <p className="mt-1 text-sm text-foreground-500">{real?.programme || 'Learning programme'}</p>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {real?.cohort && <ProfileChip icon="ri-team-line" text={real.cohort} tone="primary" />}
@@ -1383,7 +1383,7 @@ export function RealLearningJourneyView({
                 </div>
               </div>
 
-              <div className="grid shrink-0 grid-cols-2 gap-3 rounded-2xl border border-white/70 bg-white/55 p-2 backdrop-blur">
+              <div className="grid w-full grid-cols-1 gap-2 rounded-2xl border border-white/70 bg-white/55 p-2 backdrop-blur sm:grid-cols-2 lg:w-auto lg:shrink-0">
                 <ProfileInfo icon="ri-building-line" label="Employer" value={real?.employer || 'Not assigned'} tone="amber" />
                 <ProfileInfo icon="ri-user-star-line" label="Line Manager" value={real?.lineManager || 'Not assigned'} tone="primary" />
                 <ProfileInfo icon="ri-fire-line" label="Programme Status" value={real?.programmeStatus || (real?.isActive ? 'Active' : 'Inactive')} tone="primary" />
@@ -1391,7 +1391,7 @@ export function RealLearningJourneyView({
               </div>
             </div>
 
-            <div className="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:mt-7 xl:grid-cols-5">
               {metrics.map((metric) => <JourneyMetric key={metric.label} metric={metric} onClick={() => setSelectedMetric(metric)} />)}
             </div>
           </div>
@@ -1430,7 +1430,7 @@ function ProfileChip({ icon, text, tone }: { icon: string; text: string; tone: '
 
 function ProfileInfo({ icon, label, value, tone }: { icon: string; label: string; value: string; tone: 'amber' | 'primary' }) {
   return (
-    <div className="flex min-w-[165px] items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5">
+    <div className="flex min-w-0 items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 sm:min-w-[165px]">
       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'}`}><i className={icon} /></span>
       <div className="min-w-0">
         <p className="text-[10px] text-foreground-400">{label}</p>

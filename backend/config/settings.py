@@ -23,6 +23,15 @@ def load_env_file(path):
     if not path.exists():
         return
 
+    # Real process-level environment variables keep priority. Microsoft calendar
+    # credentials were historically appended more than once, so only for that
+    # integration use the last file declaration. Other settings retain the
+    # original first-declaration behaviour (several legacy DB aliases depend on it).
+    process_environment_keys = set(os.environ)
+    last_declaration_keys = {
+        'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET',
+        'MICROSOFT_TENANT', 'MICROSOFT_TENANT_ID', 'MICROSOFT_CALLBACK_URI',
+    }
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#') or '=' not in line:
@@ -31,7 +40,10 @@ def load_env_file(path):
         key, value = line.split('=', 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        if key not in process_environment_keys and key in last_declaration_keys:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)
 
 
 load_env_file(BASE_DIR / '.env')
@@ -85,9 +97,9 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
     # The current frontend authentication is local/demo authentication and
-    # therefore cannot create a Django session by itself. Keep the tightly
-    # scoped chat identity bridge enabled in deployed builds until the main
-    # application login is replaced by a real Django authentication flow.
+    # therefore cannot create a Django session by itself. The deployed
+    # frontend uses tightly scoped local demo identities and needs this
+    # bridge until the main application login is replaced by real Django auth.
     "true",
 ).lower() == "true"
 

@@ -76,32 +76,32 @@ export function RealLearnerPlanView({
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
     >
-      <div className="p-3 md:p-6 space-y-5">
+      <div className="w-full space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6 lg:p-8">
         {/* ═══════════ HERO ═══════════ */}
-        <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="relative overflow-hidden rounded-2xl border border-white/10 shadow-[0_18px_45px_-28px_rgba(32,4,75,0.9)] animate-in fade-in duration-300 sm:rounded-3xl" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative flex flex-col lg:flex-row items-stretch min-h-[150px]">
-            <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
+          <div className="relative flex min-h-[184px] flex-col items-stretch lg:flex-row">
+            <div className="flex min-w-0 flex-1 flex-col justify-center px-5 py-6 sm:px-6 sm:py-7 md:px-9 md:py-8">
               {subtitle && (
-                <div className="flex items-center gap-3 mb-3 flex-wrap">
-                  <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">
+                <div className="mb-4 flex flex-wrap items-center gap-3">
+                  <span className="rounded-lg border border-accent-400/20 bg-accent-400/10 px-3 py-1.5 font-label text-xs font-semibold uppercase tracking-[0.12em] text-accent-200">
                     {subtitle}
                   </span>
                 </div>
               )}
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">{pageLabel}</h1>
-              <p className="text-sm text-white/40 max-w-lg">
+              <h1 className="mb-2 font-heading text-2xl font-bold tracking-tight text-white md:text-3xl">{pageLabel}</h1>
+              <p className="max-w-2xl text-sm font-medium text-white/65 md:text-base">
                 {journey.length} {journey.length === 1 ? 'module' : 'modules'} · {totalWeeks} {totalWeeks === 1 ? 'week' : 'weeks'} · {totalComponents} {totalComponents === 1 ? 'component' : 'components'}
               </p>
             </div>
             {totalOtjh > 0 && (
-              <div className="lg:w-[200px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-accent-400/10 flex items-center justify-center">
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-3xl font-heading font-bold text-white">{totalOtjh}h</span>
-                  <span className="text-[11px] text-white/50 font-medium uppercase tracking-wider">Planned OTJH</span>
+              <div className="flex shrink-0 items-center justify-center border-t border-white/10 bg-white/[0.025] px-8 py-6 lg:w-[230px] lg:border-l lg:border-t-0">
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="font-heading text-4xl font-bold tracking-tight text-white">{totalOtjh}h</span>
+                  <span className="text-xs font-semibold uppercase tracking-[0.14em] text-white/55">Planned OTJH</span>
                 </div>
               </div>
             )}
@@ -118,7 +118,7 @@ export function RealLearnerPlanView({
         ) : journey.length === 0 ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="No training plan built for this learner yet." /></div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {journey.map((mod, i) => (
               <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} completedIds={completedIds} />
             ))}
@@ -126,7 +126,7 @@ export function RealLearnerPlanView({
         )}
 
         {real && real.ksbs.length > 0 && (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 md:p-6 card-premium">
+          <div className="card-premium rounded-2xl border border-foreground-200/60 bg-background-50 p-5 shadow-sm md:p-6">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-heading font-semibold text-foreground-900">Programme KSBs</h2>
               <span className="text-xs text-foreground-400">{real.ksbs.length} total</span>
@@ -158,27 +158,27 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
   const moduleOtjh = module.weeks.reduce((n, w) => n + w.otjh, 0);
 
   return (
-    <div className="rounded-2xl border border-background-300 bg-background-50 transition-all overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.7)] transition-all hover:border-primary-200/80">
       {/* Module header */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="w-full flex items-center gap-3 px-5 py-3.5 transition-colors text-left cursor-pointer hover:bg-background-100/30"
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-primary-50/30 sm:gap-4 sm:px-5 md:px-6"
       >
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-primary-100">
-          <i className="ri-book-2-line text-primary-600 text-base" />
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary-200/70 bg-primary-100 sm:h-11 sm:w-11">
+          <i className="ri-book-2-line text-lg text-primary-600" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-heading font-bold text-foreground-800 truncate">{module.module}</p>
-          <p className="text-[11px] text-foreground-400">
+          <p className="truncate font-heading text-base font-bold text-foreground-900">{module.module}</p>
+          <p className="mt-1 text-xs text-foreground-500">
             {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {componentCount} {componentCount === 1 ? 'component' : 'components'}
           </p>
         </div>
         <div className="flex items-center gap-3">
           {moduleOtjh > 0 && (
-            <span className="hidden sm:inline text-xs font-semibold text-primary-600">{Math.round(moduleOtjh * 10) / 10}h</span>
+            <span className="hidden rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary-700 sm:inline">{Math.round(moduleOtjh * 10) / 10}h OTJH</span>
           )}
-          <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100">
-            <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`} />
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100">
+            <i className={`ri-arrow-down-s-line text-base text-foreground-500 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
           </div>
         </div>
       </button>
@@ -189,10 +189,8 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
           {weekCount === 0 ? (
             <p className="px-5 py-4 text-[12px] text-foreground-400 italic">No weeks added yet</p>
           ) : (
-            <div className="relative pl-10 md:pl-12 pr-4 md:pr-5 py-4">
-              {/* Timeline vertical line */}
-              <div className="absolute left-7 md:left-[34px] top-0 bottom-0 w-px bg-background-300" />
-              <div className="space-y-2">
+            <div className="bg-background-100/35 p-2.5 sm:p-3 md:p-5">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
                 {module.weeks.map((w) => (
                   <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} completedIds={completedIds} />
                 ))}
@@ -217,27 +215,24 @@ function WeekCard({ week, module, kind, learnerId, completedIds }: {
   const canStartQuiz = !!(kind && learnerId);
 
   return (
-    <div className="relative pl-6 md:pl-7">
-      {/* Timeline dot */}
-      <div className="absolute left-[-15px] md:left-[-16px] top-[19px] w-2 h-2 rounded-full ring-2 ring-background-100 bg-background-300 z-10" />
-
-      <div className="rounded-xl border border-background-300 bg-white transition-all duration-200 overflow-hidden">
+    <div className={`min-w-0 transition-all ${open ? 'xl:col-span-2' : ''}`}>
+      <div className="overflow-hidden rounded-xl border border-background-300 bg-white shadow-[0_6px_18px_-18px_rgba(15,23,42,0.8)] transition-all duration-200 hover:border-primary-200 hover:shadow-sm">
         {/* Header */}
         <button
           onClick={() => setOpen((o) => !o)}
-          className="w-full flex items-center gap-3 px-4 py-3 cursor-pointer text-left hover:bg-background-50/80 transition-colors"
+          className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-3.5 text-left transition-colors hover:bg-primary-50/30 sm:gap-3 sm:px-4"
         >
-          <span className="shrink-0 w-9 h-9 text-xs rounded-lg flex items-center justify-center font-heading font-bold bg-background-100 text-foreground-500">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-background-300 bg-background-100 font-heading text-sm font-bold text-foreground-600">
             <i className="ri-calendar-line" />
           </span>
           <div className="flex-1 min-w-0">
-            <span className="text-sm font-heading font-bold text-foreground-800">{week.week}</span>
-            <p className="text-[11px] text-foreground-400 mt-0.5">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
+            <span className="font-heading text-sm font-bold text-foreground-900 md:text-[15px]">{week.week}</span>
+            <p className="mt-1 text-xs text-foreground-500">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{Math.round(week.otjh * 10) / 10}h</span>}
-            <div className="flex items-center justify-center rounded-lg bg-background-100 w-6 h-6">
-              <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`} />
+            {week.otjh > 0 && <span className="rounded-md bg-background-100 px-2 py-1 text-xs font-semibold text-foreground-600">{Math.round(week.otjh * 10) / 10}h</span>}
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-background-100">
+              <i className={`ri-arrow-down-s-line text-sm text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`} />
             </div>
           </div>
         </button>
@@ -319,7 +314,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
 
   return (
     <div>
-      <div className="w-full flex items-center gap-3 px-4 py-3">
+      <div className="flex w-full flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
           <i className={`${meta.icon} text-[13px] ${meta.color}`} />
         </div>
@@ -358,7 +353,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
         {c.isQuiz && c.quizMeta?.quizId != null && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
-            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
+            className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
             <i className={lastAttempt ? 'ri-refresh-line text-[10px]' : 'ri-play-fill text-[10px]'} />
             {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
@@ -372,7 +367,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
         {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
-            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer"
+            className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
             <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
             {completed ? 'Rewatch' : 'Play'}
@@ -384,7 +379,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
         {!c.isQuiz && c.type !== 'video' && c.componentId && canOpenComponent && (
           <button
             onClick={() => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
-            className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
+            className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
             <i className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
             {completed ? 'Review again' : 'Open'}

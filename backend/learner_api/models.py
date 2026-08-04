@@ -20,7 +20,7 @@ Neon connection pooler may reject.
 import json
 from functools import lru_cache
 
-from django.db import DatabaseError, connections, models, router
+from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
 
 
@@ -47,6 +47,11 @@ LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
 
 @lru_cache(maxsize=None)
 def learner_activity_events_relation_exists(using: str) -> bool:
+    """Compatibility check for the retired standalone activity-events table.
+
+    Coach queries still use this to avoid prefetching the removed legacy
+    relation. The learner feed itself now comes from learner_progress_entries.
+    """
     try:
         with connections[using].cursor() as cursor:
             cursor.execute("select to_regclass(%s)", [LEARNER_ACTIVITY_EVENTS_RELATION])
@@ -554,10 +559,6 @@ class LearnerProfile(models.Model):
         return self.activity_feed_entries()
 
     def activity_feed_entries(self, *, newest_first=False):
-        using = self._state.db or router.db_for_read(self.__class__) or "default"
-        if not learner_activity_events_relation_exists(using):
-            return []
-
         prefetched = getattr(self, "_prefetched_objects_cache", None)
         prefetched_progress = (
             prefetched.get("progress_entries")
