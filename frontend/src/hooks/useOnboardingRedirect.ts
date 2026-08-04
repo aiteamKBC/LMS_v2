@@ -13,8 +13,12 @@ export const ONBOARDING_ROUTE = '/learner/onboarding';
  * plan, evidence, attendance, clubs…) depends on an enrolled learner with a
  * training plan, so showing them mid-enrolment offers links that lead nowhere.
  */
+/** Where an onboarding learner books their three enrolment reviews. */
+export const ONBOARDING_REVIEWS_ROUTE = '/learner/onboarding/reviews';
+
 export const ONBOARDING_NAV_ITEMS: SidebarNavItem[] = [
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: ONBOARDING_ROUTE },
+  { id: 'learner-onboarding-reviews', label: 'Reviews', icon: 'ri-calendar-check-line', href: ONBOARDING_REVIEWS_ROUTE },
 ];
 
 export function isOnboardingStatus(programmeStatus?: string | null): boolean {

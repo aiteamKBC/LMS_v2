@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useWizard } from '../WizardContext';
 import { useToast } from '@/hooks/useToast';
 import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS, WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
@@ -21,6 +21,30 @@ export default function Ilr() {
   const { success, error } = useToast();
   const ilr = draft.ilr;
   const set = (patch: Partial<typeof ilr>) => setSection('ilr', { ...ilr, ...patch });
+
+  // The learner already signed on Personal details, so reuse that signature here
+  // rather than asking for the same mark twice.
+  //
+  // Copied into the ILR block rather than only displayed: the PDF export and the
+  // "learner signed" flag both read learnerSignature.signatureUrl, so a purely
+  // visual fallback would show a signature on screen but file a blank one. Runs
+  // once, only while this block has no signature of its own — replacing or
+  // clearing it on this step then wins, so a deliberately different declaration
+  // signature is never overwritten.
+  const personalSignature = draft.personalDetails.signature;
+  const usingPersonalSignature = !ilr.learnerSignature.signatureUrl && Boolean(personalSignature);
+
+  useEffect(() => {
+    if (!usingPersonalSignature) return;
+    set({
+      learnerSignature: {
+        ...ilr.learnerSignature,
+        signatureUrl: personalSignature,
+        date: ilr.learnerSignature.date || draft.personalDetails.signatureDate || new Date().toISOString().slice(0, 10),
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usingPersonalSignature, personalSignature]);
 
   // Save the answers and file the PDF together: a filed document that doesn't
   // match the stored answers would be worse than not filing at all.
@@ -172,6 +196,11 @@ export default function Ilr() {
             value={ilr.learnerSignature.signatureUrl}
             onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, signatureUrl: v || undefined, date: v && !ilr.learnerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.learnerSignature.date } })}
           />
+          {Boolean(personalSignature) && ilr.learnerSignature.signatureUrl === personalSignature && (
+            <p className="text-[11px] text-foreground-400 -mt-1 mb-1">
+              <i className="ri-information-line mr-1" />Using the signature from your Personal details. Replace it here to sign this declaration differently.
+            </p>
+          )}
         </Fieldset>
 
         <Fieldset legend="Provider / Sub-contractor Declaration">
