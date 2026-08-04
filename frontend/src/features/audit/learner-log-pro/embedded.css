@@ -47,3 +47,31 @@
 .learner-log-pro .activity-snapshot dd {
   color: oklch(0.16 0.025 235);
 }
+
+/* Radix renders select menus in a portal under <body>, outside the scoped
+   Learner Log Pro container. Give that portal an opaque, readable surface. */
+.learner-log-pro-select-content {
+  z-index: 1000;
+  max-height: min(18rem, var(--radix-select-content-available-height));
+  overflow-y: auto;
+  border: 1px solid #d9d6cd;
+  background: #ffffff;
+  color: #17212b;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 18%);
+}
+
+.learner-log-pro-select-content [role="option"] {
+  color: #17212b;
+  background: #ffffff;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.learner-log-pro-select-content [role="option"][data-highlighted] {
+  background: #eef3f5;
+  color: #0f3140;
+}
+
+.learner-log-pro-select-content [role="option"][data-state="checked"] {
+  font-weight: 700;
+}
