@@ -5,7 +5,7 @@ import type { RoleDef, PermissionLevel, AccessScope } from '@/mocks/rbac';
 import { ALL_ROLES, ALL_PERMISSIONS, PERMISSION_LEVELS, ROUTE_PERMISSIONS, NAV_PERMISSIONS } from '@/mocks/rbac';
 import { kbcUsers } from '@/mocks/users';
 import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
-import { bootstrapChatSession, clearChatSession } from '@/api/chat';
+import { clearChatSession } from '@/api/chat';
 
 // ============================================================
 // Types
@@ -49,8 +49,6 @@ const AuthContext = createContext<RbacContextValue | null>(null);
 // ============================================================
 
 const AUTH_STORAGE_KEY = 'kbc_auth_email';
-const CHAT_DEMO_EMAILS = new Set(['coach@kbc.test', 'learner@kbc.test']);
-
 function getLevelRank(level: PermissionLevel): number {
   const found = PERMISSION_LEVELS.find(l => l.value === level);
   return found?.rank ?? 0;
@@ -148,17 +146,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
-
-  // Keep the Django chat session aligned with the local demo login. The chat
-  // API uses the participant email to scope conversations in PostgreSQL.
-  useEffect(() => {
-    if (!auth.isAuthenticated || !auth.user?.email) return;
-    if (!CHAT_DEMO_EMAILS.has(auth.user.email.toLowerCase())) return;
-    void bootstrapChatSession(auth.user.email).catch(() => {
-      // Non-chat demo roles do not have a chat identity; their normal app
-      // session should continue to work without showing a global error.
-    });
-  }, [auth.isAuthenticated, auth.user?.email]);
 
   const login = useCallback((email: string) => {
     const foundUser = kbcUsers.find(u => u.email === email);

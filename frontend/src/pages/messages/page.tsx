@@ -14,7 +14,7 @@ import {
   createChatMessage,
   deleteChatMessage,
   fetchChatConversations,
-  fetchChatMessages,
+  fetchAllChatMessages,
   markChatMessageRead,
   updateChatMessage,
 } from '@/api/chat';
@@ -111,9 +111,14 @@ export default function MessagesPage() {
     : authenticatedRole;
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
+  // A fresh localhost origin has no mock-login localStorage yet. Keep the
+  // learner inbox usable in development while production still requires the
+  // normal authenticated app session.
+  const canUseDemoLearnerChat = role === 'learner' && import.meta.env.DEV;
+  const chatReady = auth.isAuthenticated || canUseDemoLearnerChat;
   const rememberedLearnerId = role === 'learner' ? getRememberedLearner()?.id : undefined;
-  const chatSessionEmail = role === 'learner' && authenticatedRole !== 'learner'
-    ? 'learner@kbc.test'
+  const chatSessionEmail = role === 'learner'
+    ? (authenticatedRole !== 'learner' ? 'learner@kbc.test' : (auth.user?.email || 'learner@kbc.test'))
     : auth.user?.email;
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
@@ -188,14 +193,14 @@ export default function MessagesPage() {
   }, [chatSessionEmail, rememberedLearnerId, role]);
 
   useEffect(() => {
-    if (auth.isAuthenticated) void loadConversations();
+    if (chatReady) void loadConversations();
     else setLoadingConversations(false);
-  }, [auth.isAuthenticated, loadConversations]);
+  }, [chatReady, loadConversations]);
 
   // Keep the inbox list and unread badges current even when the production
   // WebSocket proxy is unavailable.
   useEffect(() => {
-    if (!auth.isAuthenticated) return;
+    if (!chatReady) return;
 
     const syncConversationList = async () => {
       try {
@@ -212,7 +217,7 @@ export default function MessagesPage() {
 
     const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
     return () => window.clearInterval(conversationTimer);
-  }, [auth.isAuthenticated]);
+  }, [chatReady]);
 
   useEffect(() => {
     if (activeConversationId === null) {
@@ -228,7 +233,7 @@ export default function MessagesPage() {
 
     const loadMessagesAndConnect = async () => {
       try {
-        const page = await fetchChatMessages(activeConversationId);
+        const page = await fetchAllChatMessages(activeConversationId);
         if (cancelled) return;
         setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
@@ -328,13 +333,13 @@ export default function MessagesPage() {
   // briefly drops. This is a lightweight fallback; the WebSocket remains the
   // primary delivery path when it is connected.
   useEffect(() => {
-    if (!auth.isAuthenticated || activeConversationId === null) return;
+    if (!chatReady || activeConversationId === null) return;
 
     shouldStickToBottomRef.current = true;
 
     const syncMessages = async () => {
       try {
-        const page = await fetchChatMessages(activeConversationId);
+        const page = await fetchAllChatMessages(activeConversationId);
         const unread = page.results.filter(message => !message.is_mine && !message.read_at);
         setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
@@ -363,7 +368,7 @@ export default function MessagesPage() {
     void syncMessages();
     const pollTimer = window.setInterval(() => { void syncMessages(); }, 1000);
     return () => window.clearInterval(pollTimer);
-  }, [activeConversationId, auth.isAuthenticated]);
+  }, [activeConversationId, chatReady]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
 
