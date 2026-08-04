@@ -29,6 +29,7 @@ const WORKSPACE_SECTIONS: WorkspaceSection[] = [
   { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-open-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
   { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement', highlighted: true },
   { slug: 'audit', label: 'Audit', icon: 'ri-file-search-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor', highlighted: true },
+  { slug: 'audit-copy', label: 'Audit', icon: 'ri-file-search-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor', highlighted: true },
   // { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
   //{ slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
   // { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
