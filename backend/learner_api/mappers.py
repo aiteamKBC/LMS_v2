@@ -14,6 +14,10 @@ from .constants import (
     PROGRAMME_STATUS_CHOICES,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
+    ORGANISATION_STATUS_CHOICES,
+    ORGANISATION_GROUP_TYPE_CHOICES,
+    LEVY_PAYER_CHOICES,
+    HEALTH_SAFETY_CHOICES,
 )
 
 
@@ -151,8 +155,12 @@ def _subscription(u):
 
 
 def to_board(u):
+    # Imported here, not at module scope: enrolment_api.models imports from
+    # learner_api.models, so a top-level import would be circular.
+    from .board_wizard import fmt_date, merge_wizard_sections
+
     enrolled_at, enrolled_by = _split_enrolled(u.enrolled_time_and_user)
-    return {
+    board = {
         "user": {
             "id": str(u.id),
             "name": _s(u.username),
@@ -166,7 +174,7 @@ def to_board(u):
         "contact": {
             "email": _s(u.email),
             "phone": _s(u.phone_number),
-            "dob": _s(u.date_of_birth),
+            "dob": fmt_date(u.date_of_birth),
             "groupMembership": _s(u.group),
             "signatureUrl": None,
             "hasMandate": False,
@@ -187,8 +195,13 @@ def to_board(u):
             "name": _s(u.programme),
             "cohort": _s(u.cohort),
             "status": _s(u.programme_status) or "Non starter",
-            "startDate": "",
-            "endDate": _s(u.apprenticeship_end_date),
+            # Cohort dates, matched from curriculum.cohort_authoring_details.
+            # apprenticeship_end_date is the learner's own override and only
+            # applies when it's set, so the cohort end date is the fallback.
+            # Formatted to match enrolledAt and the DOB row above — the panel
+            # renders these as plain strings and mixing ISO in reads as a bug.
+            "startDate": fmt_date(u.start_date),
+            "endDate": fmt_date(u.apprenticeship_end_date) or fmt_date(u.end_date),
             "enrolledAt": enrolled_at,
             "enrolledBy": enrolled_by,
             "onboardingStatus": _s(u.onboarding_status) or "Not started",
@@ -217,6 +230,10 @@ def to_board(u):
         "auditTrail": [],
         "trainingPlan": _as_list(u.learning_plan),
     }
+    # For a learner who came in through the enrolment wizard the JSON columns
+    # above are all NULL, but the same facts were captured during onboarding.
+    # Fill the empty sections from the Extended_ILR / Wizard_* tables.
+    return merge_wizard_sections(board, u.id)
 
 
 # --------------------------------------------------------------------------- #
@@ -668,3 +685,218 @@ def to_learner_detail(source, learner_profile):
         "componentProgress": component_progress,
         "activityFeed": activity_feed,
     }
+
+
+# --------------------------------------------------------------------------- #
+# organisations (enrolment."Organisations") and employers (enrolment."Employers")
+# --------------------------------------------------------------------------- #
+# payload key -> model attribute
+ORGANISATION_WRITABLE_FIELDS = {
+    "status": "status",
+    "name": "name",
+    "owner": "owner",
+    "category": "category",
+    "groupType": "group_type",
+    "parentName": "parent_name",
+    "edrsErnNumber": "edrs_ern_number",
+    "apprenticeshipAgreementId": "apprenticeship_agreement_id",
+    "postCode": "post_code",
+    "address1": "address_1",
+    "address2": "address_2",
+    "cityTown": "city_town",
+    "county": "county",
+    "country": "country",
+    "contactName": "contact_name",
+    "contactEmail": "contact_email",
+    "contactTelephone": "contact_telephone",
+    "contactRole": "contact_role",
+    "website": "website",
+    "referenceNumber": "reference_number",
+    "levyPayer": "levy_payer",
+    "healthAndSafety": "health_and_safety",
+    "logoUrl": "logo_url",
+}
+
+EMPLOYER_WRITABLE_FIELDS = {
+    "firstName": "first_name",
+    "surname": "surname",
+    "gender": "gender",
+    "email": "email",
+    "mobile": "mobile",
+    "postCode": "post_code",
+    "address1": "address_1",
+    "address2": "address_2",
+    "townCity": "town_city",
+    "county": "county",
+    "country": "country",
+}
+
+
+def _working_hours(value):
+    """Normalise the repeated {day, start, end} sessions to a clean list.
+
+    The form's "Add another session" control can leave a half-filled row behind,
+    so a session with no day and no times is dropped rather than stored as noise.
+    """
+    sessions = []
+    for item in _as_list(value):
+        if not isinstance(item, dict):
+            continue
+        session = {
+            "day": _s(item.get("day")),
+            "start": _s(item.get("start")),
+            "end": _s(item.get("end")),
+        }
+        if any(session.values()):
+            sessions.append(session)
+    return sessions
+
+
+def to_organisation_row(o):
+    """An organisation, shaped for the list table and the Employer Group picker."""
+    return {
+        "id": str(o.id),
+        "status": _s(o.status),
+        "name": _s(o.name),
+        "owner": _s(o.owner),
+        "category": _s(o.category),
+        # The picker's own columns.
+        "groupType": _s(o.group_type) or "Employer",
+        "parentName": _s(o.parent_name),
+        "edrsErnNumber": _s(o.edrs_ern_number),
+        "apprenticeshipAgreementId": _s(o.apprenticeship_agreement_id),
+        "postCode": _s(o.post_code),
+        "address1": _s(o.address_1),
+        "address2": _s(o.address_2),
+        "cityTown": _s(o.city_town),
+        "county": _s(o.county),
+        "country": _s(o.country),
+        "workingHours": _working_hours(o.working_hours),
+        "contactName": _s(o.contact_name),
+        "contactEmail": _s(o.contact_email),
+        "contactTelephone": _s(o.contact_telephone),
+        "contactRole": _s(o.contact_role),
+        "website": _s(o.website),
+        "referenceNumber": _s(o.reference_number),
+        "levyPayer": _s(o.levy_payer),
+        "approxNoOfEmployees": o.approx_no_of_employees,
+        "healthAndSafety": _s(o.health_and_safety),
+        "logoUrl": _s(o.logo_url),
+        "sendHoursVerificationEmails": o.send_hours_verification_emails,
+    }
+
+
+def write_organisation_fields(payload, *, require_create=False):
+    """Validate a payload and return {model_attr: value} for Organisations columns."""
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    if require_create and not _s(payload.get("name")):
+        raise ValidationError("name is required.")
+    # The organisation form no longer asks for a group type, but the Employer
+    # Group picker shows it as a column — so a new row is stored as an Employer
+    # rather than left blank for the read path to paper over.
+    if require_create and not _s(payload.get("groupType")):
+        payload = {**payload, "groupType": "Employer"}
+    for key, allowed in (
+        ("status", ORGANISATION_STATUS_CHOICES),
+        ("groupType", ORGANISATION_GROUP_TYPE_CHOICES),
+        ("levyPayer", LEVY_PAYER_CHOICES),
+        ("healthAndSafety", HEALTH_SAFETY_CHOICES),
+    ):
+        val = payload.get(key)
+        if val not in (None, "") and val not in allowed:
+            raise ValidationError(f"Invalid {key}: {val!r}. Allowed: {', '.join(allowed)}")
+
+    fields = {}
+    for key, attr in ORGANISATION_WRITABLE_FIELDS.items():
+        if key in payload:
+            val = payload[key]
+            fields[attr] = None if val is None else str(val).strip()
+    if "workingHours" in payload:
+        fields["working_hours"] = _working_hours(payload["workingHours"])
+    # A boolean, so it bypasses the string-coercing loop above.
+    if "sendHoursVerificationEmails" in payload:
+        fields["send_hours_verification_emails"] = _bool_or_none(
+            payload["sendHoursVerificationEmails"]
+        )
+    if "approxNoOfEmployees" in payload:
+        raw = payload["approxNoOfEmployees"]
+        if raw in (None, ""):
+            fields["approx_no_of_employees"] = None
+        else:
+            try:
+                fields["approx_no_of_employees"] = int(str(raw).strip())
+            except (TypeError, ValueError):
+                raise ValidationError("approxNoOfEmployees must be a whole number.")
+    return fields
+
+
+def to_employer_row(e):
+    """An employer (a person at one or more organisations), shaped for the list."""
+    return {
+        "id": str(e.id),
+        "firstName": _s(e.first_name),
+        "surname": _s(e.surname),
+        "name": e.full_name,
+        "gender": _s(e.gender),
+        "email": _s(e.email),
+        "mobile": _s(e.mobile),
+        "postCode": _s(e.post_code),
+        "address1": _s(e.address_1),
+        "address2": _s(e.address_2),
+        "townCity": _s(e.town_city),
+        "county": _s(e.county),
+        "country": _s(e.country),
+        # Ids are the link; names travel with them so a row renders without a join.
+        "employerGroupIds": [str(i) for i in _as_list(e.employer_group_ids)],
+        "employerGroupNames": [_s(n) for n in _as_list(e.employer_group_names)],
+    }
+
+
+def write_employer_fields(payload, *, require_create=False, resolve_groups=None):
+    """Validate a payload and return {model_attr: value} for Employers columns.
+
+    `resolve_groups` maps the submitted organisation ids to their current names,
+    which is what gets denormalised into "Employer_group_names". The caller
+    supplies it (it needs a database read), and it is also the membership check:
+    an id that resolves to nothing is rejected rather than stored as a dangling
+    reference.
+    """
+    if not isinstance(payload, dict):
+        raise ValidationError("Request body must be a JSON object.")
+    if require_create:
+        if not _s(payload.get("firstName")):
+            raise ValidationError("firstName is required.")
+        if not _s(payload.get("surname")):
+            raise ValidationError("surname is required.")
+
+    fields = {}
+    for key, attr in EMPLOYER_WRITABLE_FIELDS.items():
+        if key in payload:
+            val = payload[key]
+            fields[attr] = None if val is None else str(val).strip()
+
+    if "employerGroupIds" in payload:
+        raw = payload["employerGroupIds"]
+        if raw in (None, ""):
+            ids = []
+        elif not isinstance(raw, list):
+            raise ValidationError("employerGroupIds must be a list of organisation ids.")
+        else:
+            ids = []
+            for item in raw:
+                try:
+                    ids.append(int(str(item).strip()))
+                except (TypeError, ValueError):
+                    raise ValidationError(f"Invalid organisation id: {item!r}")
+        # Preserve the submitted order but drop repeats.
+        ids = list(dict.fromkeys(ids))
+        names_by_id = resolve_groups(ids) if resolve_groups else {}
+        missing = [i for i in ids if i not in names_by_id]
+        if missing:
+            raise ValidationError(
+                "Unknown organisation id(s): " + ", ".join(str(i) for i in missing)
+            )
+        fields["employer_group_ids"] = ids
+        fields["employer_group_names"] = [names_by_id[i] for i in ids]
+    return fields

@@ -2,6 +2,35 @@ import { useState, type ReactNode } from 'react';
 import { FieldRow, inputClass } from '../../components/ui';
 import { SignaturePad } from './SignaturePad';
 
+/**
+ * Format rules for typed inputs.
+ *
+ * `type="email"` / `type="tel"` alone do not enforce anything here: the browser
+ * only applies its own email check on native form submit, and never validates
+ * `tel` at all. These fields live outside a <form>, so without an explicit check
+ * a single letter is accepted as an email address or a phone number.
+ */
+// Deliberately permissive: something@something.tld, no spaces. Stricter regexes
+// reject addresses that are legitimately valid.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// UK-friendly: digits with optional +, spaces, dashes, brackets; 10-15 digits.
+const PHONE_RE = /^\+?[\d\s().-]{9,}$/;
+const digitsOf = (v: string) => v.replace(/\D/g, '');
+
+/** A format complaint for a filled value, or '' when it is acceptable. */
+export function formatError(type: string, value: string): string {
+  const v = value.trim();
+  if (!v) return ''; // emptiness is the required-check's job, not this one
+  if (type === 'email' && !EMAIL_RE.test(v)) return 'Enter a valid email address, e.g. name@example.com';
+  if (type === 'tel') {
+    if (!PHONE_RE.test(v)) return 'Enter a valid phone number, digits only';
+    const digits = digitsOf(v);
+    if (digits.length < 10 || digits.length > 15) return 'Enter a valid phone number (10–15 digits)';
+  }
+  if (type === 'number' && Number.isNaN(Number(v))) return 'Enter a number';
+  return '';
+}
+
 export function LabeledInput({
   label,
   type = 'text',
@@ -19,10 +48,26 @@ export function LabeledInput({
   placeholder?: string;
   helper?: ReactNode;
 }) {
+  // Complain only after the learner has left the field, so an address isn't
+  // marked invalid while it is still being typed.
+  const [touched, setTouched] = useState(false);
+  const error = touched ? formatError(type, value) : '';
+
   return (
     <FieldRow label={label} required={required}>
-      <input type={type} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={inputClass} />
-      {helper && <p className="text-[11px] text-foreground-400 mt-1">{helper}</p>}
+      <input
+        type={type}
+        value={value}
+        placeholder={placeholder ?? (type === 'email' ? 'name@example.com' : type === 'tel' ? '07123 456789' : undefined)}
+        inputMode={type === 'tel' ? 'tel' : type === 'email' ? 'email' : undefined}
+        autoComplete={type === 'email' ? 'email' : type === 'tel' ? 'tel' : undefined}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={() => setTouched(true)}
+        aria-invalid={error ? true : undefined}
+        className={`${inputClass}${error ? ' !border-red-400 focus:!border-red-400' : ''}`}
+      />
+      {error && <p className="text-[11px] text-red-600 mt-1"><i className="ri-error-warning-line mr-1" />{error}</p>}
+      {helper && !error && <p className="text-[11px] text-foreground-400 mt-1">{helper}</p>}
     </FieldRow>
   );
 }

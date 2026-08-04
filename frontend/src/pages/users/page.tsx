@@ -6,13 +6,51 @@ import { roleNavMap } from '@/mocks/navigation';
 import { CASE_OWNER_OPTIONS } from '@/mocks/enrolment-console';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
+import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { CreateUserModal } from './components/CreateUserModal';
 import { CreateAdminModal } from './components/CreateAdminModal';
+import { CreateEmployerModal } from './components/CreateEmployerModal';
+import { CreateOrganisationModal } from './components/CreateOrganisationModal';
+import { EditStaffModal } from './components/EditStaffModal';
 
 const enrolmentNav = roleNavMap.apprentice;
 const PAGE_SIZE = 8;
+
+/**
+ * A directory row. Learner rows are plain UserListRows; staff rows carry the
+ * extra Staff_users columns the edit modal prefills from, so the list holds the
+ * union and narrows on `source === 'staff'`.
+ */
+type DirectoryRow = UserListRow & Partial<StaffUserRow> & { employer?: EmployerRow };
+
+/**
+ * An employer contact, shaped like a UserListRow so the directory can list them
+ * alongside learners and staff.
+ *
+ * Employers aren't learners or staff: they have no subscription, learning plan or
+ * programme, so those columns stay blank rather than being filled with something
+ * that isn't true. Their organisations stand in for the Group column, which is
+ * the closest real equivalent — a learner's group is their cohort, an employer's
+ * is the company they belong to.
+ */
+function employerToRow(e: EmployerRow): DirectoryRow {
+  return {
+    id: e.id,
+    name: e.name,
+    type: 'Employer',
+    email: e.email,
+    group: e.employerGroupNames.join(', '),
+    subscriptionStatus: '',
+    subscriptionVerified: false,
+    learningPlan: false,
+    programmeStatus: '',
+    source: 'employer',
+    // Kept whole so the edit modal can prefill without a refetch.
+    employer: e,
+  };
+}
 
 const EMPTY_FILTER: UsersFilter = {
   userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '',
@@ -75,7 +113,7 @@ function SelectFilter({ label, value, options, onChange }: { label: string; valu
   );
 }
 
-function matches(row: UserListRow, f: UsersFilter): boolean {
+function matches(row: DirectoryRow, f: UsersFilter): boolean {
   if (f.userName && !row.name.toLowerCase().includes(f.userName.toLowerCase())) return false;
   if (f.email && !row.email.toLowerCase().includes(f.email.toLowerCase())) return false;
   if (f.groups && f.groups.length > 0 && !f.groups.includes(row.group)) return false;
@@ -95,32 +133,44 @@ export default function UsersListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createAdminOpen, setCreateAdminOpen] = useState(false);
+  const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
+  const [createOrgOpen, setCreateOrgOpen] = useState(false);
   const createRef = useRef<HTMLDivElement>(null);
   const createBtnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   // Viewport coords for the portalled Create menu, measured from the button.
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
-  const [rows, setRows] = useState<UserListRow[]>([]);
+  const [rows, setRows] = useState<DirectoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The staff row currently being edited, if any.
+  const [editStaff, setEditStaff] = useState<StaffUserRow | null>(null);
+  // Likewise for employer contacts.
+  const [editEmployer, setEditEmployer] = useState<EmployerRow | null>(null);
 
   // One directory for the whole enrolment section: every learner — both
   // apprenticeship and commercial — comes from the single Enrolment_Users table
   // in one call, each row carrying its own `learnerType`/`source`. Staff/admin
-  // accounts come from Staff_users.
+  // accounts come from Staff_users, employer contacts from Employers.
+  //
+  // Only the learner call is allowed to fail the page: it's the bulk of the
+  // directory. The other two are swallowed so a missing table or a 502 on either
+  // one leaves the learners listed instead of blanking the whole screen.
   const load = () => {
     setLoading(true);
     setError(null);
     Promise.all([
       fetchEnrolmentUsers(),
       fetchStaffUsers().catch(() => [] as StaffUserRow[]),
+      listEmployers().then((r) => r.results).catch(() => [] as EmployerRow[]),
     ])
-      .then(([learners, staff]) => {
+      .then(([learners, staff, employers]) => {
         setRows([
           ...learners,
           // Staff rows already arrive in UserListRow shape from to_staff_row.
           ...staff.map((r) => ({ ...r, source: 'staff' as const })),
+          ...employers.map(employerToRow),
         ]);
       })
       .catch((e: Error) => setError(e.message))
@@ -171,7 +221,10 @@ export default function UsersListPage() {
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const learners = rows.filter((r) => r.type === 'User').length;
-  const admins = rows.filter((r) => r.type !== 'User').length;
+  // Counted by source, not "not a learner": employers are in the table too now,
+  // and lumping them under Admins would misreport both.
+  const admins = rows.filter((r) => r.source === 'staff').length;
+  const employerCount = rows.filter((r) => r.source === 'employer').length;
   const active = rows.filter((r) => r.programmeStatus === 'Active').length;
 
   const set = (patch: Partial<UsersFilter>) => setDraft((d) => ({ ...d, ...patch }));
@@ -180,20 +233,44 @@ export default function UsersListPage() {
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
-  // Staff live in their own table and have no learner profile/wizard, so their
-  // rows aren't links — routing one to /users/<id> would read a learner record
-  // with a colliding id.
+  // Staff and employers live in their own tables and have no learner
+  // profile/wizard, so their rows aren't links — routing one to /users/<id>
+  // would read a learner record with a colliding id.
+  const isNonLearner = (row: UserListRow) => row.source === 'staff' || row.source === 'employer';
+
   const openUser = (row: UserListRow) => {
-    if (row.source === 'staff') return;
+    if (isNonLearner(row)) return;
     navigate(`/users/${row.id}${q(row)}`);
   };
 
   // The learner's own workspace view. `source` doubles as the :kind segment —
-  // staff have no learner record, so their rows get no link.
+  // staff and employers have no learner record, so their rows get no link.
   const openLearnerPage = (row: UserListRow) => {
-    if (row.source === 'staff') return;
+    if (isNonLearner(row)) return;
     const kind = row.source === 'commercial' ? 'commercial' : 'apprenticeship';
     navigate(`/workspace/learner/${kind}/${row.id}`);
+  };
+
+  // Staff/admin rows have no profile page — editing their details in place is
+  // the only way to correct an email, phone or position after creation.
+  const openStaffEdit = (row: DirectoryRow) => setEditStaff(row as StaffUserRow);
+
+  // Patch the edited row in place rather than refetching the whole directory,
+  // so the table doesn't flash back to its loading state on every save.
+  const applyStaffUpdate = (updated: StaffUserRow) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.source === 'staff' && r.id === updated.id ? { ...updated, source: 'staff' as const } : r,
+      ),
+    );
+  };
+
+  // Employers have no profile page either, so the row's Edit action is their
+  // only edit surface — same arrangement as staff.
+  const applyEmployerUpdate = (updated: EmployerRow) => {
+    setRows((prev) =>
+      prev.map((r) => (r.source === 'employer' && r.id === updated.id ? employerToRow(updated) : r)),
+    );
   };
 
   return (
@@ -204,7 +281,7 @@ export default function UsersListPage() {
           <Hero
             icon="ri-group-line"
             title="User Management"
-            subtitle={<><strong>{rows.length} users</strong> — {learners} learners, {admins} admins, {active} active on programme.</>}
+            subtitle={<><strong>{rows.length} users</strong> — {learners} learners, {admins} admins, {employerCount} employers, {active} active on programme.</>}
             right={
               <div ref={createRef}>
                 <button
@@ -222,10 +299,12 @@ export default function UsersListPage() {
                   <div
                     ref={menuRef}
                     style={{ top: menuPos.top, right: menuPos.right }}
-                    className="fixed w-44 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-[200]"
+                    className="fixed w-56 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-[200]"
                   >
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => navigate('/admin/bulk-user-import')}><i className="ri-upload-2-line mr-2 text-foreground-400" />Import users</button>
                   </div>,
                   document.body
@@ -236,10 +315,11 @@ export default function UsersListPage() {
         </div>
 
         {/* Stats strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 stagger-children">
           <StatCard icon="ri-group-line" label="Total users" value={rows.length} tint="primary" />
           <StatCard icon="ri-graduation-cap-line" label="Learners" value={learners} tint="accent" />
           <StatCard icon="ri-shield-user-line" label="Admins" value={admins} tint="secondary" />
+          <StatCard icon="ri-briefcase-line" label="Employers" value={employerCount} tint="amber" />
           <StatCard icon="ri-play-circle-line" label="Active on programme" value={active} tint="emerald" />
         </div>
 
@@ -269,7 +349,7 @@ export default function UsersListPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status', 'Learner page'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -285,15 +365,22 @@ export default function UsersListPage() {
                 {!loading && !error && pageRows.map((row, i) => {
                   const isLearner = row.type === 'User';
                   const isStaff = row.source === 'staff';
+                  const isEmployer = row.source === 'employer';
+                  // Neither has a profile page, so their name opens their edit
+                  // modal rather than routing to a learner record.
+                  const openInPlace = isStaff
+                    ? () => openStaffEdit(row)
+                    : isEmployer && row.employer
+                      ? () => setEditEmployer(row.employer!)
+                      : null;
                   return (
                   <tr key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
                     <td className="py-2.5 px-3">
-                      {/* Staff have no profile page, so their name is plain text. */}
-                      {isStaff ? (
-                        <span className="flex items-center gap-2.5">
+                      {openInPlace ? (
+                        <button onClick={openInPlace} className="flex items-center gap-2.5 cursor-pointer group text-left">
                           <span className="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 bg-secondary-100 text-secondary-700">{initials(row.name)}</span>
-                          <span className="font-medium text-foreground-800">{row.name}</span>
-                        </span>
+                          <span className="text-secondary-700 group-hover:underline font-medium">{row.name}</span>
+                        </button>
                       ) : (
                         <button onClick={() => openUser(row)} className="flex items-center gap-2.5 cursor-pointer group text-left">
                           <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-semibold shrink-0 ${isLearner ? 'bg-primary-100 text-primary-700' : 'bg-secondary-100 text-secondary-700'}`}>{initials(row.name)}</span>
@@ -313,7 +400,15 @@ export default function UsersListPage() {
                     <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
                     <td className="py-2.5 px-3">
-                      {isLearner ? (
+                      {openInPlace ? (
+                        <button
+                          onClick={openInPlace}
+                          title={`Edit ${row.name}'s details`}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                        >
+                          <i className="ri-edit-line text-[13px]" />Edit
+                        </button>
+                      ) : isLearner ? (
                         <button
                           onClick={() => openLearnerPage(row)}
                           title={`Open ${row.name}'s learner page`}
@@ -342,6 +437,19 @@ export default function UsersListPage() {
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {createAdminOpen && <CreateAdminModal onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
+      {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
+      {/* Organisations are companies rather than people, so they don't belong in
+          a directory of users — creating one just confirms and closes. Employers
+          are people and do get listed. */}
+      {createEmployerOpen && <CreateEmployerModal onClose={() => setCreateEmployerOpen(false)} onCreated={load} />}
+      {createOrgOpen && <CreateOrganisationModal onClose={() => setCreateOrgOpen(false)} onCreated={() => {}} />}
+      {editEmployer && (
+        <CreateEmployerModal
+          row={editEmployer}
+          onClose={() => setEditEmployer(null)}
+          onCreated={applyEmployerUpdate}
+        />
+      )}
     </WorkspaceShell>
   );
 }

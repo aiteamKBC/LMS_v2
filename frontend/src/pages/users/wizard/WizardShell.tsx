@@ -1,7 +1,8 @@
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useToast } from '@/hooks/useToast';
 import { WIZARD_STEPS } from '../types';
-import { btnDestructive, btnPrimary, btnSuccess, btnSecondary } from '../components/ui';
+import { missingAcrossWizard, missingForStep } from './validation';
+import { btnDestructive, btnPrimary, btnSuccess } from '../components/ui';
 import { useWizard } from './WizardContext';
 import Introduction from './steps/Introduction';
 import PersonalDetails from './steps/PersonalDetails';
@@ -46,27 +47,53 @@ export function WizardShell({
   header?: ReactNode;
   sidebar?: ReactNode;
 }) {
-  const { completed, saveIlr, ilrSaving } = useWizard();
-  const { success, error } = useToast();
+  const { completed, saveIlr, ilrSaving, draft } = useWizard();
+  const { error } = useToast();
   const tabScrollRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
-
-  const save = async () => {
-    try {
-      await saveIlr();
-      success('Progress saved', 'Every step of this wizard is stored against the learner.');
-    } catch (e) {
-      error('Could not save', e instanceof Error ? e.message : 'Unexpected error');
-    }
-  };
+  // Unfilled fields are only called out once the learner has tried to move on —
+  // showing errors on a form they haven't started yet reads as broken.
+  const [showErrors, setShowErrors] = useState(false);
 
   const Body = STEP_BODIES[currentIndex];
   const isFirst = currentIndex === 0;
   const isLast = currentIndex === WIZARD_STEPS.length - 1;
 
+  // Enrolment is only valid when every step is complete, so the current step
+  // gates Next and the whole wizard gates Submit.
+  const stepMissing = missingForStep(currentIndex, draft);
+  const allMissing = missingAcrossWizard(draft, WIZARD_STEPS.length);
+  const stepComplete = stepMissing.length === 0;
+  const wizardComplete = allMissing.length === 0;
+
+  // Reveal errors on step change only if that step is already incomplete, so a
+  // learner returning to a finished step isn't shouted at.
+  useEffect(() => { setShowErrors(false); }, [currentIndex]);
+
+  // Next saves before it advances, so there is no way to lose a step's answers
+  // by moving on — this replaced a separate "Save progress" button. The step
+  // only changes once the save succeeds; a failed save keeps the learner where
+  // they are, with their answers still on screen to retry.
+  const saveAndNext = async () => {
+    if (!stepComplete) {
+      setShowErrors(true);
+      return;
+    }
+    try {
+      await saveIlr();
+      onNavigateStep(currentIndex + 1);
+    } catch (e) {
+      error('Could not save', e instanceof Error ? e.message : 'Unexpected error');
+    }
+  };
+
   const scrollTabs = (dir: number) => tabScrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' });
 
   const finish = async () => {
+    if (!wizardComplete) {
+      setShowErrors(true);
+      return;
+    }
     setSubmitting(true);
     try {
       await onFinish();
@@ -93,20 +120,26 @@ export function WizardShell({
                   <div className="flex items-center gap-1.5 min-w-max">
                     {WIZARD_STEPS.map((step, i) => {
                       const active = i === currentIndex;
+                      // Derived from the answers themselves, not a manual flag,
+                      // so the tick always reflects what is actually filled in.
+                      const stepDone = completed[i] || missingForStep(i, draft).length === 0;
+                      // Progress indicators only — not clickable. Jumping
+                      // between steps here would skip the per-step validation
+                      // that Next enforces, so the steps must be walked in order.
                       return (
-                        <button
+                        <div
                           key={step.slug}
                           role="tab"
                           aria-selected={active}
+                          aria-current={active ? 'step' : undefined}
                           title={step.label}
-                          onClick={() => onNavigateStep(i)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap transition-smooth cursor-pointer max-w-[160px] ${
-                            active ? 'bg-primary-50 text-primary-700 border border-primary-300/60' : 'text-foreground-500 hover:bg-background-100 border border-transparent'
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap transition-smooth select-none max-w-[160px] ${
+                            active ? 'bg-primary-50 text-primary-700 border border-primary-300/60' : 'text-foreground-500 border border-transparent'
                           }`}
                         >
-                          <i className={`text-[13px] ${active ? 'ri-checkbox-blank-circle-line text-primary-500' : completed[i] ? 'ri-checkbox-circle-fill text-emerald-500' : 'ri-checkbox-blank-circle-fill text-foreground-300'}`} />
+                          <i className={`text-[13px] ${active ? 'ri-checkbox-blank-circle-line text-primary-500' : stepDone ? 'ri-checkbox-circle-fill text-emerald-500' : 'ri-checkbox-blank-circle-fill text-foreground-300'}`} />
                           <span className="truncate">{step.label}</span>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -115,7 +148,7 @@ export function WizardShell({
                   <i className="ri-arrow-right-s-line" />
                 </button>
                 <span className="text-[12px] text-foreground-500 shrink-0 ml-1 whitespace-nowrap">{currentIndex + 1} of {WIZARD_STEPS.length}</span>
-                <button onClick={() => !isLast && onNavigateStep(currentIndex + 1)} disabled={isLast} aria-label="Next step" className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center hover:bg-primary-600 shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                <button onClick={() => { if (!isLast) void saveAndNext(); }} disabled={isLast || ilrSaving} aria-label="Next step" className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center hover:bg-primary-600 shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
                   <i className="ri-arrow-right-line" />
                 </button>
               </div>
@@ -130,22 +163,50 @@ export function WizardShell({
               <Body />
             </div>
 
+            {/* What's still needed — shown once the learner tries to move on. */}
+            {showErrors && (isLast ? !wizardComplete : !stepComplete) && (
+              <div className="mx-5 mb-1 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3">
+                <p className="text-[12px] font-semibold text-amber-800 mb-1.5">
+                  <i className="ri-error-warning-line mr-1.5" />
+                  {isLast
+                    ? `Please complete every step before submitting — ${allMissing.length} ${allMissing.length === 1 ? 'answer is' : 'answers are'} still needed:`
+                    : 'Please answer everything on this step before continuing:'}
+                </p>
+                <ul className="text-[12px] text-amber-800/90 space-y-0.5 max-h-44 overflow-y-auto">
+                  {isLast
+                    ? allMissing.map((m, i) => (
+                        <li key={`${m.stepIndex}-${m.label}-${i}`}>
+                          • <span className="font-medium">{WIZARD_STEPS[m.stepIndex].label}</span> — {m.label}
+                        </li>
+                      ))
+                    : stepMissing.map((label, i) => <li key={`${label}-${i}`}>• {label}</li>)}
+                </ul>
+              </div>
+            )}
+
             {/* Footer */}
             <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-foreground-100">
               <button onClick={() => onNavigateStep(currentIndex - 1)} className={btnDestructive} style={{ visibility: isFirst ? 'hidden' : 'visible' }}>
                 <i className="ri-arrow-left-line" />Back
               </button>
-              {/* Save is available on every step, not just the ILR — otherwise a
-                  learner on (say) Policies has no way to keep their progress. */}
-              <button onClick={save} disabled={ilrSaving} className={`${btnSecondary} ml-auto mr-1`}>
-                {ilrSaving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save progress</>}
-              </button>
               {isLast ? (
-                <button onClick={finish} disabled={submitting} className={btnSuccess}>
+                <button
+                  onClick={finish}
+                  disabled={submitting}
+                  title={wizardComplete ? undefined : 'Every step must be completed first'}
+                  className={`${btnSuccess} ml-auto ${wizardComplete ? '' : 'opacity-60'}`}
+                >
                   {submitting ? <><i className="ri-loader-4-line animate-spin" />Submitting…</> : <><i className="ri-check-double-line" />{finishLabel}</>}
                 </button>
               ) : (
-                <button onClick={() => onNavigateStep(currentIndex + 1)} className={btnPrimary}>Next<i className="ri-arrow-right-line" /></button>
+                <button
+                  onClick={saveAndNext}
+                  disabled={ilrSaving}
+                  title={stepComplete ? undefined : 'Answer everything on this step to continue'}
+                  className={`${btnPrimary} ml-auto ${stepComplete ? '' : 'opacity-60'}`}
+                >
+                  {ilrSaving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <>Next<i className="ri-arrow-right-line" /></>}
+                </button>
               )}
             </div>
           </div>

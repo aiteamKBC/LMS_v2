@@ -39,6 +39,9 @@ load_env_file(BASE_DIR / '.env')
 
 DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
+# Seconds to wait for a database connection before giving up. Keeps a stalled DNS
+# resolver or unreachable Neon endpoint from hanging a request indefinitely.
+DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
 
 
 def database_from_url(database_url):
@@ -61,6 +64,9 @@ def database_from_url(database_url):
 
     options = dict(parse_qsl(parsed.query))
     options.pop('channel_binding', None)
+    # Bound how long a connection attempt can hang. Without it a stalled DNS
+    # resolver leaves requests waiting on the OS default instead of failing fast.
+    options.setdefault('connect_timeout', DB_CONNECT_TIMEOUT)
     return {
         'ENGINE': engine_by_scheme[scheme],
         'NAME': unquote(parsed.path.lstrip('/')),
@@ -191,6 +197,7 @@ USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "
 if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
+    db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",

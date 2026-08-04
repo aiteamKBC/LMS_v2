@@ -96,22 +96,48 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
 
   // Size the backing store to the element's CSS size × DPR, so strokes are
   // crisp on retina screens and coordinates map 1:1 to what the user sees.
+  //
+  // Re-measured whenever the element's box changes, not just on mount: the pad
+  // is a `w-full` canvas inside dialogs that are still settling when it first
+  // renders (and can be resized afterwards). Measuring once left the backing
+  // store at a stale width, which offsets every stroke from the cursor —
+  // setting canvas.width also wipes the bitmap, so this must not fire mid-draw.
   useEffect(() => {
     if (mode !== 'draw') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#111827';
-  }, [mode]);
+
+    let lastW = 0;
+    let lastH = 0;
+    const size = () => {
+      // A resize resets the bitmap, so never re-size out from under a stroke
+      // in progress or after the user has drawn something worth keeping.
+      if (drawing.current || hasInk) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (w === 0 || h === 0 || (w === lastW && h === lastH)) return;
+      lastW = w;
+      lastH = h;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      // setTransform, not scale: width/height assignment resets the transform,
+      // but this runs repeatedly and scale() would compound.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#111827';
+    };
+
+    size();
+    const ro = new ResizeObserver(size);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, [mode, hasInk]);
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

@@ -137,6 +137,8 @@ const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
+const LearnerOnboardingReviewsPage = lazy(() => import("../pages/learner/onboarding/reviews/page"));
+const LearnerReviewFormPage = lazy(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
@@ -272,6 +274,18 @@ const routes: RouteObject[] = [
     // then navigates between steps by slug.
     path: "/learner/onboarding",
     element: <LearnerOnboardingPage />,
+  },
+  {
+    // Declared before the :stepSlug pattern below, which would otherwise
+    // capture "reviews" as a wizard step.
+    path: "/learner/onboarding/reviews",
+    element: <LearnerOnboardingReviewsPage />,
+  },
+  {
+    // The review form. The event key contains colons ("eligibility-review:31:1:
+    // 2026-08-03"), which are fine in a single path segment.
+    path: "/learner/onboarding/reviews/:eventKey",
+    element: <LearnerReviewFormPage />,
   },
   {
     path: "/learner/onboarding/:stepSlug",

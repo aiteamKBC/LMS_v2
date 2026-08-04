@@ -813,3 +813,350 @@ class LearnerAbsence(models.Model):
 
     def __str__(self):
         return f"{self.learner_name}: {self.present}/{self.sessions} present"
+
+
+class EnrolmentReview(models.Model):
+    """One row per booked enrolment review — enrolment."Enrolment_Reviews".
+
+    The three onboarding reviews (eligibility / workspace / training plan) live
+    operationally in "Coach".coach_calendar_event, which is the calendar both the
+    learner and the case owner read. This table is the enrolment-side record of
+    them: who booked what, with which officer, and what happened to it.
+
+    Kept deliberately denormalised (names stored alongside ids) because it is a
+    compliance record — it must still read correctly after a learner is renamed,
+    archived to Unactive_users, or a case owner leaves and their staff row goes.
+
+    Written by learner_api.calendar on book/cancel; created by
+    `python manage.py apply_enrolment_reviews_table`.
+    """
+
+    STATUS_BOOKED = "booked"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_COMPLETED = "completed"
+
+    STATUS_CHOICES = [
+        (STATUS_BOOKED, "Booked"),
+        (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_COMPLETED, "Completed"),
+    ]
+
+    id = models.BigAutoField(primary_key=True)
+    # Mirrors the coach_calendar_event row this review is booked as, so the two
+    # can always be reconciled. Unique: one enrolment row per calendar event.
+    event_key = models.TextField(db_column="Event_key", unique=True)
+    review_type = models.TextField(db_column="Review_type")
+    review_label = models.TextField(db_column="Review_label", blank=True)
+
+    # Learner side. Learner_kind + Learner_id is the console's identity pair
+    # (one table cannot key both apprenticeship and commercial learners).
+    learner_kind = models.TextField(db_column="Learner_kind")
+    learner_id = models.BigIntegerField(db_column="Learner_id")
+    learner_name = models.TextField(db_column="Learner_name", blank=True)
+    learner_email = models.TextField(db_column="Learner_email", blank=True)
+
+    # Case owner / enrolment officer the review is booked with. Named "Coach_*"
+    # to match the vocabulary the rest of the calendar code uses for the event
+    # owner, though for these reviews it is the case owner rather than a coach.
+    coach_id = models.BigIntegerField(db_column="Coach_id", null=True, blank=True)
+    coach_name = models.TextField(db_column="Coach_name", blank=True)
+    coach_email = models.TextField(db_column="Coach_email", blank=True)
+
+    # Review details.
+    scheduled_date = models.DateField(db_column="Scheduled_date", null=True, blank=True)
+    scheduled_time = models.TimeField(db_column="Scheduled_time", null=True, blank=True)
+    duration_minutes = models.PositiveIntegerField(db_column="Duration_minutes", default=60)
+    status = models.TextField(db_column="Status", choices=STATUS_CHOICES, default=STATUS_BOOKED)
+    notes = models.TextField(db_column="Notes", blank=True)
+
+    # Microsoft Teams / Graph outcome. Invite_sent is false when the Graph sync
+    # failed, i.e. the slot is held but nobody was actually notified.
+    meeting_provider = models.TextField(db_column="Meeting_provider", blank=True)
+    meeting_link = models.TextField(db_column="Meeting_link", blank=True)
+    graph_event_id = models.TextField(db_column="Graph_event_id", blank=True)
+    invite_sent = models.BooleanField(db_column="Invite_sent", default=False)
+    sync_error = models.TextField(db_column="Sync_error", blank=True)
+
+    # The review form itself (ILR, Extended ILR, Functional Skills, FS & job role
+    # discussion, comments, programme status). One jsonb document rather than ~40
+    # columns, for the same reason as Extended_ILR.Answers: it is a compliance
+    # questionnaire that gets reworded, and a document absorbs added or renamed
+    # questions without DDL. Per-section completion lives in Section_status.
+    form_answers = SafeJSONField(db_column="Form_answers", null=True, blank=True)
+    section_status = SafeJSONField(db_column="Section_status", null=True, blank=True)
+    # Set when the officer clicks Finish, which closes the review.
+    form_completed = models.BooleanField(db_column="Form_completed", default=False)
+    form_completed_at = models.DateTimeField(db_column="Form_completed_at", null=True, blank=True)
+    reviewed_by = models.TextField(db_column="Reviewed_by", blank=True)
+    started_at = models.DateTimeField(db_column="Started_at", null=True, blank=True)
+
+    # Sign-off, available once the form is completed. Both sides sign the same
+    # review: the learner from their reviews page, staff from the learner's board.
+    # The signature itself is a PNG data URL (see SignaturePad), stored as text.
+    learner_signature = models.TextField(db_column="Learner_signature", blank=True)
+    learner_signed_name = models.TextField(db_column="Learner_signed_name", blank=True)
+    learner_signed_at = models.DateTimeField(db_column="Learner_signed_at", null=True, blank=True)
+    admin_signature = models.TextField(db_column="Admin_signature", blank=True)
+    admin_signed_name = models.TextField(db_column="Admin_signed_name", blank=True)
+    admin_signed_at = models.DateTimeField(db_column="Admin_signed_at", null=True, blank=True)
+
+    booked_at = models.DateTimeField(db_column="Booked_at", null=True, blank=True)
+    cancelled_at = models.DateTimeField(db_column="Cancelled_at", null=True, blank=True)
+    # NOT NULL in the table with a DEFAULT now(). Django always sends a value for
+    # a concrete field, which would override that default with NULL, so these are
+    # auto-populated here instead of relying on the database default.
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Enrolment_Reviews'
+        ordering = ("-scheduled_date", "review_type")
+
+    def __str__(self):
+        return f"{self.review_label or self.review_type} for {self.learner_name or self.learner_id}"
+
+
+class _ReviewDetail(models.Model):
+    """Shared identity for the per-review-type detail tables.
+
+    Each row belongs to one enrolment."Enrolment_Reviews" row, linked by
+    Review_id (a real FK, unlike the learner tables' loose id pairing) and also
+    carrying Event_key so a row is identifiable without a join.
+
+    These tables sit alongside Enrolment_Reviews.Form_answers rather than
+    replacing it: the jsonb document stays the working store the form reads and
+    writes section by section, while these give each review type real columns to
+    report on. review_tables.sync_review_detail projects one into the other on
+    every save.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+    review = models.ForeignKey(
+        EnrolmentReview,
+        on_delete=models.CASCADE,
+        db_column="Review_id",
+        related_name="%(class)s_rows",
+    )
+    event_key = models.TextField(db_column="Event_key")
+    learner_id = models.BigIntegerField(db_column="Learner_id")
+    learner_name = models.TextField(db_column="Learner_name", blank=True)
+    completed = models.BooleanField(db_column="Completed", default=False)
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        abstract = True
+
+
+class EligibilityReviewDetail(_ReviewDetail):
+    """enrolment."Review_Eligibility" — the Eligibility Review & FS Discussion."""
+
+    # ILR
+    over16 = models.TextField(db_column="Over_16", blank=True)
+    within_contract_time = models.TextField(db_column="Within_contract_time", blank=True)
+    paye_scheme = models.TextField(db_column="PAYE_scheme", blank=True)
+
+    # Extended ILR
+    eligible_residency = models.TextField(db_column="Eligible_residency", blank=True)
+    identity_documents_seen = models.TextField(db_column="Identity_documents_seen", blank=True)
+    eligibility_evidence = models.TextField(db_column="Eligibility_evidence", blank=True)
+    right_to_work_england = models.TextField(db_column="Right_to_work_England", blank=True)
+    fifty_percent_england = models.TextField(db_column="Fifty_percent_England", blank=True)
+    minimum_wage = models.TextField(db_column="Minimum_wage", blank=True)
+
+    # Functional Skills. The assessment lists and per-subject results stay jsonb:
+    # they are variable-length collections, not one value per learner.
+    initial_assessments = SafeJSONField(db_column="Initial_assessments", null=True, blank=True)
+    diagnostic_assessments = SafeJSONField(db_column="Diagnostic_assessments", null=True, blank=True)
+    exemption_english = models.TextField(db_column="Exemption_English", blank=True)
+    exemption_maths = models.TextField(db_column="Exemption_Maths", blank=True)
+    exemption_ict = models.TextField(db_column="Exemption_ICT", blank=True)
+    fs_results = SafeJSONField(db_column="FS_results", null=True, blank=True)
+
+    # Functional Skills & Job Role Discussion
+    holds_level2 = models.TextField(db_column="Holds_level_2", blank=True)
+    level_matches_role = models.TextField(db_column="Level_matches_role", blank=True)
+    productive_purpose = models.TextField(db_column="Productive_purpose", blank=True)
+    ksb_exposure = models.TextField(db_column="KSB_exposure", blank=True)
+    release_for_otj = models.TextField(db_column="Release_for_OTJ", blank=True)
+    embed_otj = models.TextField(db_column="Embed_OTJ", blank=True)
+    warning_areas = models.TextField(db_column="Warning_areas", blank=True)
+
+    comments = models.TextField(db_column="Comments", blank=True)
+    programme_status = models.TextField(db_column="Programme_status", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_Eligibility'
+
+    def __str__(self):
+        return f"Eligibility review {self.event_key}"
+
+
+class RplReviewDetail(_ReviewDetail):
+    """enrolment."Review_RPL" — RPL And Experience."""
+
+    # Prior Learning is a list of items, so it stays a document.
+    prior_learning_items = SafeJSONField(db_column="Prior_learning_items", null=True, blank=True)
+
+    # Recognition of Prior Learning and Experience
+    apprenticeship_appropriate = models.TextField(db_column="Apprenticeship_appropriate", blank=True)
+    plan_aligns_standard = models.TextField(db_column="Plan_aligns_standard", blank=True)
+    prior_education = models.TextField(db_column="Prior_education", blank=True)
+    prior_work_experience = models.TextField(db_column="Prior_work_experience", blank=True)
+    plan_needs_adjusting = models.TextField(db_column="Plan_needs_adjusting", blank=True)
+
+    # Personal Learner Record
+    uln = models.TextField(db_column="ULN", blank=True)
+    reported_attainment = models.TextField(db_column="Reported_attainment", blank=True)
+    attainment_english = models.TextField(db_column="Attainment_English", blank=True)
+    attainment_maths = models.TextField(db_column="Attainment_Maths", blank=True)
+    attainment_ict = models.TextField(db_column="Attainment_ICT", blank=True)
+
+    skills_radar_notes = models.TextField(db_column="Skills_radar_notes", blank=True)
+    comments = models.TextField(db_column="Comments", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_RPL'
+
+    def __str__(self):
+        return f"RPL review {self.event_key}"
+
+
+class HealthSafetyReviewDetail(_ReviewDetail):
+    """enrolment."Review_Health_Safety" — Workplace Health & Safety Declaration."""
+
+    basic_arrangements = models.TextField(db_column="Basic_arrangements", blank=True)
+    day_one_induction = models.TextField(db_column="Day_one_induction", blank=True)
+    fire_safety = models.TextField(db_column="Fire_safety", blank=True)
+    first_aid = models.TextField(db_column="First_aid", blank=True)
+    supervision = models.TextField(db_column="Supervision", blank=True)
+    ppe = models.TextField(db_column="PPE", blank=True)
+    accident_recording = models.TextField(db_column="Accident_recording", blank=True)
+    inform_changes = models.TextField(db_column="Inform_changes", blank=True)
+    hs_policy = models.TextField(db_column="HS_policy", blank=True)
+    liability_insurance = models.TextField(db_column="Liability_insurance", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_Health_Safety'
+
+    def __str__(self):
+        return f"Health & safety review {self.event_key}"
+
+
+class Organisation(models.Model):
+    """Unmanaged mapping of enrolment."Organisations" — the employing companies.
+
+    Backs the Create menu's "Create organisation profile" path, and is the source
+    of the Employer Group picker on the employer form: an employer is a person,
+    an organisation is the company they belong to.
+
+    Created by the apply_employer_tables management command; `id` is GENERATED
+    ALWAYS AS IDENTITY, so Django never supplies it on insert.
+    """
+
+    id = models.AutoField(primary_key=True, db_column="id")
+
+    status = models.TextField(db_column="Status", null=True, blank=True)
+    name = models.TextField(db_column="Name", null=True, blank=True)
+    owner = models.TextField(db_column="Owner", null=True, blank=True)
+    category = models.TextField(db_column="Category", null=True, blank=True)
+    # Shown in the Employer Group picker's Group type / Parent name columns.
+    group_type = models.TextField(db_column="Group_type", null=True, blank=True)
+    parent_name = models.TextField(db_column="Parent_name", null=True, blank=True)
+
+    edrs_ern_number = models.TextField(db_column="EDRS_ERN_number", null=True, blank=True)
+    apprenticeship_agreement_id = models.TextField(
+        db_column="Apprenticeship_agreement_id", null=True, blank=True
+    )
+
+    post_code = models.TextField(db_column="Post_code", null=True, blank=True)
+    address_1 = models.TextField(db_column="Address_1", null=True, blank=True)
+    address_2 = models.TextField(db_column="Address_2", null=True, blank=True)
+    city_town = models.TextField(db_column="City_Town", null=True, blank=True)
+    county = models.TextField(db_column="County", null=True, blank=True)
+    country = models.TextField(db_column="Country", null=True, blank=True)
+
+    # The form's "Add another session" repeats a {day, start, end} triple, so this
+    # is a list rather than a set of columns.
+    working_hours = SafeJSONField(db_column="Working_hours", default=list, blank=True)
+
+    contact_name = models.TextField(db_column="Contact_name", null=True, blank=True)
+    contact_email = models.TextField(db_column="Contact_email", null=True, blank=True)
+    contact_telephone = models.TextField(db_column="Contact_telephone", null=True, blank=True)
+    contact_role = models.TextField(db_column="Contact_role", null=True, blank=True)
+
+    website = models.TextField(db_column="Website", null=True, blank=True)
+    reference_number = models.TextField(db_column="Reference_number", null=True, blank=True)
+    levy_payer = models.TextField(db_column="Levy_payer", null=True, blank=True)
+    approx_no_of_employees = models.IntegerField(
+        db_column="Approx_no_of_employees", null=True, blank=True
+    )
+    health_and_safety = models.TextField(db_column="Health_and_safety", null=True, blank=True)
+    logo_url = models.TextField(db_column="Logo_url", null=True, blank=True)
+    # Nullable rather than defaulting to False: "not yet decided" is a distinct
+    # state from "deliberately off" on a form where the field can be left alone.
+    send_hours_verification_emails = models.BooleanField(
+        db_column="Send_hours_verification_emails", null=True, blank=True
+    )
+
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        # Emitted by Django as "enrolment"."Organisations".
+        db_table = 'enrolment"."Organisations'
+
+    def __str__(self):
+        return f"{self.name or 'Unnamed organisation'} [{self.status or 'no status'}]"
+
+
+class Employer(models.Model):
+    """Unmanaged mapping of enrolment."Employers" — a person at an organisation.
+
+    Backs the Create menu's "Create employer profile" path. The Employer Group
+    selection is stored as a jsonb array of Organisation ids, with the names
+    denormalised alongside so a list row renders without a join. Not a real FK:
+    the control is multi-select and these tables are unmanaged, so a constraint
+    would need DDL coordination for no gain.
+
+    Created by the apply_employer_tables management command; `id` is GENERATED
+    ALWAYS AS IDENTITY, so Django never supplies it on insert.
+    """
+
+    id = models.AutoField(primary_key=True, db_column="id")
+
+    first_name = models.TextField(db_column="First_name", null=True, blank=True)
+    surname = models.TextField(db_column="Surname", null=True, blank=True)
+    gender = models.TextField(db_column="Gender", null=True, blank=True)
+    email = models.TextField(db_column="Email", null=True, blank=True)
+    mobile = models.TextField(db_column="Mobile", null=True, blank=True)
+
+    post_code = models.TextField(db_column="Post_code", null=True, blank=True)
+    address_1 = models.TextField(db_column="Address_1", null=True, blank=True)
+    address_2 = models.TextField(db_column="Address_2", null=True, blank=True)
+    town_city = models.TextField(db_column="Town_City", null=True, blank=True)
+    county = models.TextField(db_column="County", null=True, blank=True)
+    country = models.TextField(db_column="Country", null=True, blank=True)
+
+    employer_group_ids = SafeJSONField(db_column="Employer_group_ids", default=list, blank=True)
+    employer_group_names = SafeJSONField(db_column="Employer_group_names", default=list, blank=True)
+
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        # Emitted by Django as "enrolment"."Employers".
+        db_table = 'enrolment"."Employers'
+
+    @property
+    def full_name(self):
+        return f"{self.first_name or ''} {self.surname or ''}".strip()
+
+    def __str__(self):
+        return f"{self.full_name or 'Unnamed employer'} <{self.email or 'no-email'}>"
