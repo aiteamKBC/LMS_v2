@@ -291,8 +291,8 @@ def _format_timestamp(value) -> dict[str, str | None]:
     }
 
 
-def _fetch_latest_conversation_summaries(learner_ids: list[int], coach_id: str) -> dict[int, dict]:
-    if not learner_ids:
+def _fetch_latest_conversation_summaries(learner_ids: list[int], coach_ids: list[str]) -> dict[int, dict]:
+    if not learner_ids or not coach_ids:
         return {}
 
     query = """
@@ -324,14 +324,14 @@ def _fetch_latest_conversation_summaries(learner_ids: list[int], coach_id: str) 
               and r.recipient_type = 'coach'
               and r.read_at is null
         ) unread on true
-        where c.coach_id = %s
+        where c.coach_id = any(%s)
           and c.learner_id = any(%s)
         order by c.updated_at desc nulls last, c.id desc
     """
     db_alias = get_learner_db_alias()
     summaries: dict[int, dict] = {}
     with connections[db_alias].cursor() as cursor:
-        cursor.execute(query, [coach_id, learner_ids])
+        cursor.execute(query, [coach_ids, learner_ids])
         for (
             conversation_id,
             learner_id,
@@ -358,7 +358,7 @@ def _fetch_latest_conversation_summaries(learner_ids: list[int], coach_id: str) 
     return summaries
 
 
-def _resolve_chat_coach_id(owner_email: str) -> str:
+def _resolve_chat_coach_ids(owner_email: str) -> list[str]:
     normalized_owner = normalize_email(owner_email)
     if not normalized_owner:
         raise ValueError("Coach email is required.")
@@ -368,16 +368,45 @@ def _resolve_chat_coach_id(owner_email: str) -> str:
         select id
         from curriculum.coaches
         where lower(trim(email)) = %s
-        order by updated_at desc nulls last, created_at desc nulls last, id desc
-        limit 1
+        order by id asc
     """
     with connections[db_alias].cursor() as cursor:
         cursor.execute(query, [normalized_owner])
-        row = cursor.fetchone()
-    if row and clean_text(row[0]):
-        return clean_text(row[0])
+        rows = cursor.fetchall()
+    coach_ids = [clean_text(row[0]) for row in rows if clean_text(row[0])]
+    if coach_ids:
+        return coach_ids
 
     raise ValueError(f"Unable to resolve a chat coach profile for {owner_email}.")
+
+
+def _resolve_chat_coach_id(owner_email: str, learner_id: int | None = None) -> str:
+    """Resolve the exact coach row for one email and learner conversation.
+
+    Legacy data can contain multiple coach rows with the same email. Prefer the
+    row already used by this learner's conversation; otherwise choose the first
+    stable id. This prevents one email from fragmenting a chat into new threads.
+    """
+
+    coach_ids = _resolve_chat_coach_ids(owner_email)
+    if learner_id is None:
+        return coach_ids[0]
+
+    db_alias = get_learner_db_alias()
+    with connections[db_alias].cursor() as cursor:
+        cursor.execute(
+            """
+            select coach_id
+            from chat.conversations
+            where learner_id = %s
+              and coach_id = any(%s)
+            order by updated_at desc nulls last, id desc
+            limit 1
+            """,
+            [learner_id, coach_ids],
+        )
+        row = cursor.fetchone()
+    return clean_text(row[0]) if row else coach_ids[0]
 
 
 def _serialize_thread(row: LearnerProfile, summary: dict | None) -> dict:
@@ -522,23 +551,43 @@ def _create_or_get_conversation(learner_id: int, coach_id: str) -> int:
             return int(existing[0])
 
 
-def _insert_coach_message(conversation_id: int, learner_id: int, coach_id: str, body: str) -> dict:
+def _insert_coach_message(
+    conversation_id: int,
+    learner_id: int,
+    coach_id: str,
+    body: str,
+    *,
+    coach_email: str,
+    learner_email: str,
+) -> dict:
     db_alias = get_learner_db_alias()
     with transaction.atomic(using=db_alias):
         with connections[db_alias].cursor() as cursor:
             cursor.execute(
                 """
                 select 1
-                from chat.conversations
-                where id = %s
-                  and coach_id = %s
-                  and learner_id = %s
-                for update
+                from chat.conversations conversation
+                join curriculum.coaches coach
+                  on coach.id = conversation.coach_id
+                join "Learner".learners learner
+                  on learner.id = conversation.learner_id
+                where conversation.id = %s
+                  and conversation.coach_id = %s
+                  and conversation.learner_id = %s
+                  and lower(trim(coach.email)) = %s
+                  and lower(trim(learner.email)) = %s
+                for update of conversation
                 """,
-                [conversation_id, coach_id, learner_id],
+                [
+                    conversation_id,
+                    coach_id,
+                    learner_id,
+                    normalize_email(coach_email),
+                    normalize_email(learner_email),
+                ],
             )
             if not cursor.fetchone():
-                raise ValueError("The conversation does not belong to this coach and learner.")
+                raise ValueError("The sender and receiver emails do not match this conversation.")
 
             cursor.execute(
                 """
@@ -641,8 +690,8 @@ def coach_messages_threads(request):
     try:
         rows = _fetch_owner_message_learners(owner_email)
         learner_ids = [int(row.id) for row in rows]
-        coach_id = _resolve_chat_coach_id(owner_email)
-        summaries = _fetch_latest_conversation_summaries(learner_ids, coach_id)
+        coach_ids = _resolve_chat_coach_ids(owner_email)
+        summaries = _fetch_latest_conversation_summaries(learner_ids, coach_ids)
         threads = [_serialize_thread(row, summaries.get(int(row.id))) for row in rows]
     except Exception as exc:
         return JsonResponse(
@@ -674,8 +723,9 @@ def coach_message_thread(request, learner_id: int):
 
     if request.method == "GET":
         try:
-            coach_id = _resolve_chat_coach_id(owner_email)
-            summary = _fetch_latest_conversation_summaries([int(learner_id)], coach_id).get(int(learner_id))
+            coach_ids = _resolve_chat_coach_ids(owner_email)
+            coach_id = _resolve_chat_coach_id(owner_email, int(learner_id))
+            summary = _fetch_latest_conversation_summaries([int(learner_id)], coach_ids).get(int(learner_id))
             thread = _serialize_thread(learner, summary)
             if summary and summary.get("conversationId"):
                 _mark_conversation_read(int(summary["conversationId"]), int(learner_id), coach_id)
@@ -709,11 +759,19 @@ def coach_message_thread(request, learner_id: int):
             return JsonResponse({"detail": "Message body is required."}, status=400)
 
         try:
-            coach_id = _resolve_chat_coach_id(owner_email)
+            coach_id = _resolve_chat_coach_id(owner_email, int(learner_id))
             conversation_id = _create_or_get_conversation(int(learner_id), coach_id)
-            message = _insert_coach_message(conversation_id, int(learner_id), coach_id, body)
+            message = _insert_coach_message(
+                conversation_id,
+                int(learner_id),
+                coach_id,
+                body,
+                coach_email=owner_email,
+                learner_email=learner.email,
+            )
             _broadcast_coach_message(conversation_id, message, coach_id)
-            summary = _fetch_latest_conversation_summaries([int(learner_id)], coach_id).get(int(learner_id))
+            coach_ids = _resolve_chat_coach_ids(owner_email)
+            summary = _fetch_latest_conversation_summaries([int(learner_id)], coach_ids).get(int(learner_id))
             thread = _serialize_thread(learner, summary)
         except Exception as exc:
             return JsonResponse(

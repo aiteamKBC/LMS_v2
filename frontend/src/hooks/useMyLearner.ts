@@ -19,7 +19,9 @@ import type { LearnerKind } from '@/api/learnerDetail';
  * instead of a hardcoded default — otherwise clicking "Training Plan" while
  * viewing learner A would jump to the pinned default learner.
  */
-const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '2' };
+// Current source id for the default demo learner after the enrolment-table
+// merge. Explicitly selected learners still override this value.
+const MY_LEARNER: { kind: LearnerKind; id: string } = { kind: 'commercial', id: '19' };
 const STORAGE_KEY = 'my_learner';
 
 function isKind(v: unknown): v is LearnerKind {
@@ -38,9 +40,9 @@ function readOverride(): { kind: LearnerKind; id: string } | null {
   return null;
 }
 
-/** Return only an explicitly selected learner, without the demo fallback. */
+/** Return the selected learner, falling back to the default demo learner. */
 export function getRememberedLearner(): { kind: LearnerKind; id: string } | null {
-  return readOverride();
+  return readOverride() || MY_LEARNER;
 }
 
 /** Persist the active learner so paramless /learner/* pages resolve to it. */

@@ -96,7 +96,14 @@ export async function bootstrapChatSession(
     }),
   });
   if (!response.ok) {
-    throw new ChatApiError('Could not initialise the chat session.', response.status);
+    let detail = 'Could not initialise the chat session.';
+    try {
+      const payload = await response.json() as { detail?: string };
+      if (payload.detail) detail = payload.detail;
+    } catch {
+      // Keep the stable fallback when an upstream proxy returns non-JSON.
+    }
+    throw new ChatApiError(detail, response.status);
   }
 }
 
@@ -163,8 +170,35 @@ export function fetchChatConversations(): Promise<ChatConversation[]> {
   return request<ChatConversation[]>('/conversations/');
 }
 
-export function fetchChatMessages(conversationId: number): Promise<PaginatedMessages> {
-  return request<PaginatedMessages>(`/conversations/${conversationId}/messages/`);
+export function fetchChatMessages(
+  conversationId: number,
+  page = 1,
+  pageSize = 100,
+): Promise<PaginatedMessages> {
+  const query = new URLSearchParams({
+    page: String(page),
+    page_size: String(pageSize),
+  });
+  return request<PaginatedMessages>(`/conversations/${conversationId}/messages/?${query.toString()}`);
+}
+
+export async function fetchAllChatMessages(conversationId: number): Promise<PaginatedMessages> {
+  const results: ChatMessage[] = [];
+  let pageNumber = 1;
+  let response: PaginatedMessages | null = null;
+
+  do {
+    response = await fetchChatMessages(conversationId, pageNumber, 100);
+    results.push(...response.results);
+    pageNumber += 1;
+  } while (response.next && response.results.length > 0);
+
+  return {
+    count: response?.count ?? results.length,
+    next: null,
+    previous: null,
+    results,
+  };
 }
 
 export function fetchLearnerMessages(page = 1, pageSize = 100): Promise<PaginatedMessages> {

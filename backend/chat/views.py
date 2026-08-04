@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
+from django.db import IntegrityError, router, transaction
 from django.http import Http404
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -45,31 +46,124 @@ class MessagePagination(PageNumberPagination):
 # session before it calls the protected chat endpoints.
 DEMO_CHAT_IDENTITIES = {
     "coach@kbc.test": ("coach", "Med.Maher@kentbusinesscollege.com"),
-    "learner@kbc.test": ("learner", "test@example.com"),
 }
 
 
-def _demo_learner_identity_from_source(source_id):
+class ChatIdentityError(ValueError):
+    """Raised when a selected learner cannot be mapped to an exact chat pair."""
+
+
+def _clean_text(value):
+    return "" if value in (None, "") else str(value).strip()
+
+
+def _learner_profile_defaults(source, source_email):
+    programme_status = _clean_text(getattr(source, "programme_status", ""))
+    source_status = _clean_text(getattr(source, "status", ""))
+    normalized_status = (programme_status or source_status).casefold()
+    lifecycle_status = (
+        "active"
+        if normalized_status in {"active", "fulluser"}
+        else ("onboarding" if normalized_status in {"", "onboarding", "ready to enrol"} else "inactive")
+    )
+    return {
+        "full_name": _clean_text(getattr(source, "username", "")) or source_email,
+        "email": source_email,
+        "phone_number": _clean_text(getattr(source, "phone_number", "")),
+        "lifecycle_status": lifecycle_status,
+        "programme": _clean_text(getattr(source, "programme", "")),
+        "programme_status": programme_status,
+        "cohort": _clean_text(getattr(source, "cohort", "")),
+        "group_name": _clean_text(getattr(source, "group", "")),
+    }
+
+
+def _sync_learner_identity_from_source(source_id):
+    """Resolve a selected learner into the ``Learner.learners`` identity.
+
+    ``enrolment.Created_users`` and ``Learner.learners`` have independent
+    primary-key sequences. Email is therefore the only safe bridge when a
+    current source row is available; legacy profile ids are also accepted for
+    sessions created before the learner-table merge.
+    """
+
     if source_id in (None, ""):
-        return None
+        raise ChatIdentityError("Select a learner before opening messages.")
 
     try:
         source_id = int(source_id)
     except (TypeError, ValueError):
-        return None
+        raise ChatIdentityError("The selected learner id is invalid.")
 
-    source = EnrolmentUser.all_learners.filter(pk=source_id).only("email").first()
-    source_email = (getattr(source, "email", "") or "").strip()
+    source = EnrolmentUser.all_learners.filter(pk=source_id).first()
+    if source is None:
+        # Older frontend sessions persisted the learner table id (for example
+        # LearnerProfile 2), while the merged enrolment table now exposes a
+        # different source id (for example 19). Keep those sessions usable by
+        # resolving the existing profile when no source row matches.
+        profile = LearnerProfile.objects.filter(pk=source_id).first()
+        if profile is None:
+            raise ChatIdentityError("The selected learner no longer exists.")
+
+        learner = ChatLearner.objects.filter(pk=profile.pk).first()
+        if learner is None:
+            raise ChatIdentityError("The learner identity could not be prepared for chat.")
+        return learner
+
+    source_email = _clean_text(getattr(source, "email", ""))
     if not source_email:
-        return None
+        raise ChatIdentityError("The selected learner needs an email before chat can be used.")
 
-    learner = ChatLearner.objects.filter(email__iexact=source_email).first()
-    return ("learner", learner) if learner is not None else None
+    defaults = _learner_profile_defaults(source, source_email)
+    db_alias = router.db_for_write(LearnerProfile) or "default"
+    with transaction.atomic(using=db_alias):
+        profile = (
+            LearnerProfile.objects.using(db_alias)
+            .select_for_update()
+            .filter(email__iexact=source_email)
+            .first()
+        )
+        if profile is None:
+            try:
+                profile = LearnerProfile.objects.using(db_alias).create(**defaults)
+            except IntegrityError:
+                # A simultaneous request may have inserted the same normalized
+                # email. Re-read it instead of creating a duplicate identity.
+                profile = (
+                    LearnerProfile.objects.using(db_alias)
+                    .select_for_update()
+                    .get(email__iexact=source_email)
+                )
+        else:
+            identity_updates = []
+            for field in ("full_name", "email"):
+                value = defaults[field]
+                if getattr(profile, field) != value:
+                    setattr(profile, field, value)
+                    identity_updates.append(field)
+            if identity_updates:
+                profile.save(update_fields=identity_updates)
+
+    # Return the chat model from its normal database alias so subsequent
+    # Conversation operations never become cross-alias relations.
+    learner = ChatLearner.objects.filter(pk=profile.pk).first()
+    if learner is None:
+        raise ChatIdentityError("The learner identity could not be prepared for chat.")
+    return learner
+
+
+def _demo_learner_identity_from_source(source_id):
+    return "learner", _sync_learner_identity_from_source(source_id)
 
 
 def _demo_chat_identity(email, learner_source_id=None):
     if learner_source_id not in (None, ""):
         return _demo_learner_identity_from_source(learner_source_id)
+
+    # Never silently impersonate Test User. The learner page must carry the
+    # selected directory row so its real name/email become the chat identity.
+    if (email or "").strip().lower() == "learner@kbc.test":
+        raise ChatIdentityError("Select a learner from the user list before opening messages.")
 
     mapping = DEMO_CHAT_IDENTITIES.get((email or "").strip().lower())
     if not mapping:
@@ -82,13 +176,31 @@ def _demo_chat_identity(email, learner_source_id=None):
 
 def _ensure_assigned_coach_conversation(learner):
     profile = LearnerProfile.objects.filter(pk=learner.pk).only("coach_email").first()
-    coach_email = (getattr(profile, "coach_email", "") or "").strip()
+    coach_email = _clean_text(getattr(profile, "coach_email", ""))
     if not coach_email:
-        return
+        raise ChatIdentityError("This learner does not have an assigned coach email.")
 
-    coach = ChatCoach.objects.filter(email__iexact=coach_email).first()
-    if coach is not None:
-        Conversation.objects.get_or_create(coach=coach, learner=learner)
+    # Reuse an existing conversation even if the legacy coach table contains
+    # duplicate rows for the same email. This keeps one continuous thread.
+    existing = (
+        Conversation.objects.filter(
+            learner_id=learner.pk,
+            coach__email__iexact=coach_email,
+        )
+        .select_related("coach")
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    coach = ChatCoach.objects.filter(email__iexact=coach_email).order_by("id").first()
+    if coach is None:
+        raise ChatIdentityError(
+            f"No coach chat identity matches {coach_email}."
+        )
+    conversation, _ = Conversation.objects.get_or_create(coach=coach, learner=learner)
+    return conversation
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -109,16 +221,24 @@ class ChatSessionView(APIView):
             return Response({"detail": "Demo chat session bootstrap is disabled."}, status=status.HTTP_404_NOT_FOUND)
 
         demo_email = str(request.data.get("email", "")).strip().lower()
-        identity = _demo_chat_identity(
-            demo_email,
-            learner_source_id=request.data.get("learner_source_id"),
-        )
+        try:
+            identity = _demo_chat_identity(
+                demo_email,
+                learner_source_id=request.data.get("learner_source_id"),
+            )
+        except ChatIdentityError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         if identity is None or identity[1] is None:
             return Response({"detail": "This demo account has no chat identity."}, status=status.HTTP_400_BAD_REQUEST)
 
         participant_type, participant = identity
         if participant_type == "learner":
-            _ensure_assigned_coach_conversation(participant)
+            try:
+                conversation = _ensure_assigned_coach_conversation(participant)
+            except ChatIdentityError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        else:
+            conversation = None
         user_model = get_user_model()
         username = f"chat_demo_{participant_type}_{participant.pk}"[:150]
         user, _ = user_model.objects.get_or_create(
@@ -137,6 +257,10 @@ class ChatSessionView(APIView):
             "email": participant.email,
             "participant_type": participant_type,
             "participant_id": str(participant.pk),
+            "participant_name": (
+                participant.name if participant_type == "coach" else participant.full_name
+            ),
+            "conversation_id": conversation.pk if conversation is not None else None,
         })
 
 

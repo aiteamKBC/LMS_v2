@@ -96,8 +96,10 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
-    # The deployed frontend uses tightly scoped local demo identities and
-    # needs this bridge to create the Django session used by chat.
+    # The current frontend authentication is local/demo authentication and
+    # therefore cannot create a Django session by itself. The deployed
+    # frontend uses tightly scoped local demo identities and needs this
+    # bridge until the main application login is replaced by real Django auth.
     "true",
 ).lower() == "true"
 
