@@ -31,6 +31,7 @@ const AdminUsersPage = lazy(() => import("../pages/admin/users/page"));
 const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
 const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-risk/page"));
 const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
+const AuditorCopyWorkspace = lazy(() => import("../pages/workspace/auditor-copy/page"));
 const BadgeDetailPage = lazy(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazy(() => import("../pages/users/BoardPage"));
 const BudgetsPage = lazy(() => import("../pages/finance/budgets/page"));
@@ -799,6 +800,10 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/auditor",
     element: <AuditorWorkspace />,
+  },
+  {
+    path: "/workspace/auditor-copy",
+    element: <AuditorCopyWorkspace />,
   },
   {
     path: "/workspace/auditor/learner/:auditLearnerId",
