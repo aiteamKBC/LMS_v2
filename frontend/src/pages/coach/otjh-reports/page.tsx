@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -10,6 +10,7 @@ const ROWS_PER_PAGE = 10;
 type FilterKey = 'all' | 'behind' | 'need-attention' | 'on-track';
 type OtjhRowStatus = 'behind' | 'on-track' | 'ahead' | 'need-attention' | 'unknown';
 type RiskTone = 'red' | 'amber' | 'green' | 'neutral';
+type OtjhDetailFocus = 'summary' | 'planned' | 'target' | 'completed' | 'remaining';
 
 interface CaseloadApiLearner {
   id: string;
@@ -176,6 +177,12 @@ function getProgressBarStyle(tone: RiskTone): string {
   return 'bg-foreground-300';
 }
 
+function getFocusCardStyle(focus: OtjhDetailFocus, activeFocus: OtjhDetailFocus): string {
+  return focus === activeFocus
+    ? 'border-violet-300 bg-violet-50/70 ring-2 ring-violet-200'
+    : 'border-foreground-200/60 bg-background-100/40';
+}
+
 function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   const target = Math.max(toNumber(learner.otjhTarget), 0);
   const minimum = Math.max(toNumber(learner.otjhMinimum), 0);
@@ -259,6 +266,31 @@ function OtjhMetricCard({ icon, label, value, tone }: { icon: string; label: str
   );
 }
 
+function OtjhValueButton({
+  value,
+  label,
+  tone = 'slate',
+  onClick,
+}: {
+  value: number;
+  label: string;
+  tone?: 'slate' | 'purple';
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Open ${label} OTJH details`}
+      className="mx-auto block min-w-16 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+    >
+      <span className={`text-[12px] font-bold ${tone === 'purple' ? 'text-violet-700' : 'text-slate-600'}`}>
+        {formatHours(value)}
+      </span>
+    </button>
+  );
+}
+
 function OtjhTableMessage({ icon, message }: { icon: string; message: string }) {
   return (
     <div className="px-5 py-14 text-center">
@@ -301,9 +333,11 @@ export default function CoachOtjhReports() {
   const [currentPage, setCurrentPage] = useState(1);
   const [rows, setRows] = useState<OtjhRow[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [selectedDetailFocus, setSelectedDetailFocus] = useState<OtjhDetailFocus>('summary');
   const [ownerName, setOwnerName] = useState('Med Maher');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const completedBreakdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -371,8 +405,24 @@ export default function CoachOtjhReports() {
 
   const selectedRow = rows.find(row => row.id === selectedRowId) || null;
 
-  const handleViewDetails = (row: OtjhRow) => {
+  useEffect(() => {
+    if (!selectedRow || selectedDetailFocus !== 'completed') return;
+
+    const timer = window.setTimeout(() => {
+      completedBreakdownRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+
+    return () => window.clearTimeout(timer);
+  }, [selectedRow, selectedDetailFocus]);
+
+  const handleViewDetails = (row: OtjhRow, focus: OtjhDetailFocus = 'summary') => {
     setSelectedRowId(row.id);
+    setSelectedDetailFocus(focus);
+  };
+
+  const closeDetails = () => {
+    setSelectedRowId(null);
+    setSelectedDetailFocus('summary');
   };
 
   return (
@@ -460,10 +510,10 @@ export default function CoachOtjhReports() {
                         </div>
                       </div>
                       <span className="truncate text-[11px] font-medium text-slate-600">{row.programme}</span>
-                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.planned)}</span>
-                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.target)}</span>
-                      <span className="text-center text-[12px] font-bold text-violet-700">{formatHours(row.completed)}</span>
-                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatHours(row.remaining)}</span>
+                      <OtjhValueButton value={row.planned} label="Planned" onClick={() => handleViewDetails(row, 'planned')} />
+                      <OtjhValueButton value={row.target} label="Target" onClick={() => handleViewDetails(row, 'target')} />
+                      <OtjhValueButton value={row.completed} label="Completed" tone="purple" onClick={() => handleViewDetails(row, 'completed')} />
+                      <OtjhValueButton value={row.remaining} label="Remaining" onClick={() => handleViewDetails(row, 'remaining')} />
                       <div className="min-w-0">
                         <div className="mb-1.5 flex items-center justify-between gap-2">
                           <span className={`text-[11px] font-bold ${getPaceTone(row.pace)}`}>{row.pace}%</span>
@@ -491,7 +541,7 @@ export default function CoachOtjhReports() {
 
       <RightSlidePanel
         isOpen={selectedRow !== null}
-        onClose={() => setSelectedRowId(null)}
+        onClose={closeDetails}
         title={selectedRow?.learner || 'OTJH Details'}
         width="w-[520px]"
       >
@@ -516,25 +566,25 @@ export default function CoachOtjhReports() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('planned', selectedDetailFocus)}`}>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.planned)}</p>
               </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('target', selectedDetailFocus)}`}>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.target)}</p>
               </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('completed', selectedDetailFocus)}`}>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
                 <p className="mt-1 text-xl font-bold text-primary-600">{formatHours(selectedRow.completed)}</p>
               </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('remaining', selectedDetailFocus)}`}>
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Remaining</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.remaining)}</p>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+            <div ref={completedBreakdownRef} className="scroll-mt-4 rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <div className="flex items-center justify-between text-[11px] text-foreground-500">
                 <span>OTJH completion against Target</span>
                 <span className="font-semibold text-foreground-900">{formatHours(selectedRow.completed)}/{formatHours(selectedRow.target)}</span>

@@ -6,7 +6,7 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { buildLearnerJourney, quizAggregateStats, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -177,7 +177,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
               <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> Current week
             </span>
-            <h3 className="mt-1 text-lg font-heading font-bold leading-tight truncate">Current Week</h3>
+            <h3 className="mt-1 text-lg font-heading font-bold leading-tight text-white truncate">Current Week</h3>
             <p className="text-[12px] text-white/75 truncate">{weekLabel} · {moduleTitle}</p>
           </div>
           <div className="shrink-0 text-right">
@@ -880,8 +880,7 @@ export default function LearnerOverview() {
     }
     return null;
   }, [journey]);
-  // Weekly_Quizzes rollup: each quiz's best attempt -> summed chosen time + union of KSBs.
-  const quizStats = useMemo(() => quizAggregateStats(real), [real]);
+  const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
 
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
@@ -1111,16 +1110,16 @@ export default function LearnerOverview() {
                       ragStatus={otj.status ?? undefined}
                     />
                   )}
-                  {quizStats.quizzesTaken > 0 ? (
+                  {evidencedKsbCodes.size > 0 ? (
                     <HealthCard
                       icon="ri-bar-chart-2-line"
                       label="KSB Progress"
-                      value={`${quizStats.ksbCount} evidenced`}
-                      detail={`Via quizzes · ${real?.ksbs.length || 0} defined`}
+                      value={`${evidencedKsbCodes.size} evidenced`}
+                      detail={`Via completed activities · ${real?.ksbs.length || 0} defined`}
                       status="emerald"
-                      progress={real?.ksbs.length ? Math.round((quizStats.ksbCount / real.ksbs.length) * 100) : 0}
+                      progress={real?.ksbs.length ? Math.round((evidencedKsbCodes.size / real.ksbs.length) * 100) : 0}
                       showBar
-                      badgeLabel="From quizzes"
+                      badgeLabel="From activities"
                     />
                   ) : (
                     <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="emerald" progress={0} badgeLabel="Defined" />
@@ -1246,7 +1245,7 @@ export default function LearnerOverview() {
               </div>
 
               {/* ── Activity Feed ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
                 </div>

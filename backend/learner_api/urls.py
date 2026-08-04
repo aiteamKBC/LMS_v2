@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, employers, evidence, learner_detail, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, attendance, calendar, components, curriculum, calendar_connections,employers, evidence, learner_detail, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -19,6 +19,7 @@ urlpatterns = [
     path("employers/", employers.employers, name="employers"),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
+    path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder
@@ -56,6 +57,11 @@ urlpatterns = [
     # "eligibility-review:31:1:2026-08-03" (colons, no slashes) but not the
     # trailing segment, so <path:> is used to keep it intact.
     path("reviews/<str:kind>/<int:pk>/<path:event_key>/", review_form.enrolment_review_form, name="enrolment-review-form"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/", calendar_connections.connection_list, name="learner-calendar-connections"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/availability/", calendar_connections.availability, name="learner-calendar-availability"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/oauth/", calendar_connections.oauth_start, name="learner-calendar-oauth"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/connect/", calendar_connections.credential_connect, name="learner-calendar-connect"),
+    path("calendar-connections/<str:kind>/<int:learner_id>/<str:provider>/disconnect/", calendar_connections.disconnect, name="learner-calendar-disconnect"),
     path("absence-reports/<str:kind>/<int:learner_id>/", absence_reports.learner_absence_reports, name="learner-absence-reports"),
     # learner evidence uploads (Azure Blob Storage backed)
     path("evidence/<str:kind>/<int:pk>/upload/", evidence.upload_evidence, name="evidence-upload"),

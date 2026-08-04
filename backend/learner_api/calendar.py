@@ -20,6 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from coach_api.models import CoachCalendarEvent
 
 from .learner_detail import SOURCE_MODELS
+from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
 
@@ -288,7 +289,7 @@ def learner_calendar(request, kind, pk):
         # The Active_users mirror carries the source row's id (see
         # active_users.sync_active_user), and coach events store that mirror's
         # id + email — so the mirror email is the authoritative one here.
-        mirror = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        mirror = learner_profile_for_source(learner, pk, active_only=True)
     except DatabaseError as exc:
         logger.exception("learner_calendar: mirror lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -385,7 +386,7 @@ def learner_calendar_book(request, kind, pk):
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
         learner = model.all_learners.filter(pk=pk).first()
-        mirror = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        mirror = learner_profile_for_source(learner, pk, active_only=True)
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -424,6 +425,9 @@ def learner_calendar_book(request, kind, pk):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or 60)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except ValueError as exc:
         return _error(str(exc), 400)
     if isinstance(scheduled_date, datetime):
@@ -432,6 +436,10 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
+
+    from .calendar_connections import booking_conflicts
+    if booking_conflicts(kind, pk, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+        return _error("That time overlaps an event in your connected personal calendar. Please choose another time.", 409)
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.

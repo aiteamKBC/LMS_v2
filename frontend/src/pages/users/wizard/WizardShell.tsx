@@ -107,16 +107,20 @@ export function WizardShell({
       <div className={mode === 'staff' ? 'max-w-6xl mx-auto px-6 py-6' : ''}>
         {header}
 
-        <div className="flex flex-col lg:flex-row gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row">
           {/* Main panel */}
-          <div className="flex-1 min-w-0 bg-background-50 rounded-2xl border border-foreground-200/60 overflow-hidden">
+          <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
             {/* Tab bar */}
-            <div className="border-b border-foreground-100 px-3 py-3">
+            <div className="border-b border-foreground-100 px-3 py-3 sm:px-4">
+              <div className="mb-2 flex items-center justify-between gap-3 sm:hidden">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Step {currentIndex + 1} of {WIZARD_STEPS.length}</span>
+                <span className="truncate text-xs font-semibold text-primary-700">{WIZARD_STEPS[currentIndex].label}</span>
+              </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left" className="w-8 h-8 rounded-lg border border-foreground-200 flex items-center justify-center text-foreground-500 hover:bg-background-100 shrink-0 cursor-pointer">
+                <button onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left" className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 sm:flex">
                   <i className="ri-arrow-left-s-line" />
                 </button>
-                <div ref={tabScrollRef} className="flex-1 overflow-x-auto scrollbar-thin" role="tablist" aria-label="Enrolment steps">
+                <div ref={tabScrollRef} className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:scrollbar-thin" role="tablist" aria-label="Enrolment steps">
                   <div className="flex items-center gap-1.5 min-w-max">
                     {WIZARD_STEPS.map((step, i) => {
                       const active = i === currentIndex;
@@ -144,7 +148,7 @@ export function WizardShell({
                     })}
                   </div>
                 </div>
-                <button onClick={() => scrollTabs(1)} aria-label="Scroll tabs right" className="w-8 h-8 rounded-lg border border-foreground-200 flex items-center justify-center text-foreground-500 hover:bg-background-100 shrink-0 cursor-pointer">
+                <button onClick={() => scrollTabs(1)} aria-label="Scroll tabs right" className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 sm:flex">
                   <i className="ri-arrow-right-s-line" />
                 </button>
                 <span className="text-[12px] text-foreground-500 shrink-0 ml-1 whitespace-nowrap">{currentIndex + 1} of {WIZARD_STEPS.length}</span>
@@ -159,7 +163,7 @@ export function WizardShell({
             </div>
 
             {/* Step body */}
-            <div key={currentIndex} className="p-5 md:p-6 animate-fade-in-up">
+            <div key={currentIndex} className="animate-fade-in-up p-4 sm:p-5 md:p-6">
               <Body />
             </div>
 

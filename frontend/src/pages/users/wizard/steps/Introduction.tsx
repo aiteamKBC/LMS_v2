@@ -4,7 +4,7 @@ export default function Introduction() {
   return (
     <div>
       <StepHeading title="Introduction" subtitle="Your Enrolment" />
-      <div className="space-y-4 text-[14px] text-foreground-700 leading-relaxed max-w-3xl">
+      <div className="max-w-3xl space-y-4 text-sm leading-relaxed text-foreground-700 sm:text-[14px]">
         <p>Welcome to your apprenticeship with IBIS.</p>
         <p>
           You will now be guided through the enrolment process, you will be asked to provide information about yourself
@@ -17,7 +17,7 @@ export default function Introduction() {
         </p>
         <p>
           If you have any questions or concerns about this, please contact{' '}
-          <a href="mailto:meadmissions@ibisconsultancy.com" className="text-primary-600 hover:underline">meadmissions@ibisconsultancy.com</a>
+          <a href="mailto:meadmissions@ibisconsultancy.com" className="break-all text-primary-600 hover:underline">meadmissions@ibisconsultancy.com</a>
         </p>
       </div>
     </div>

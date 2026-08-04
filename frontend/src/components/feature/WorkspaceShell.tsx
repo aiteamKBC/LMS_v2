@@ -207,8 +207,8 @@ export function WorkspaceShell({
 
         {/* Breadcrumbs */}
         {breadcrumbs.length > 0 && (
-          <div className="h-8 bg-background-200 border-b border-background-300/40 flex items-center px-3 md:px-5 shrink-0">
-            <nav className="flex items-center gap-1.5 text-xs" aria-label="Breadcrumb">
+          <div className="flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
+            <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
               <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
                 <i className="ri-home-3-line text-xs"></i>
               </Link>
@@ -248,7 +248,7 @@ export function WorkspaceShell({
         <button
           type="button"
           onClick={handleReturnToPreviousWindow}
-          className="fixed right-4 top-20 z-50 inline-flex h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
+          className="fixed right-4 top-20 z-50 hidden h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300 sm:inline-flex"
           title={previousRoute ? 'Back to the previous screen' : 'Back'}
         >
           <i className="ri-arrow-go-back-line text-base"></i>

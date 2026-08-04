@@ -71,8 +71,8 @@ function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone:
       onFinish={finish}
       finishLabel="Submit enrolment"
       header={
-        <div className="mb-4 bg-background-50 rounded-2xl border border-foreground-200/60 p-4">
-          <p className="text-[13px] text-foreground-700 leading-relaxed">
+        <div className="mb-4 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm sm:p-5">
+          <p className="text-sm leading-relaxed text-foreground-700">
             Please complete every step and sign where asked. Your answers save as you go, and the enrolment team will
             review them once you submit.
           </p>
@@ -134,10 +134,11 @@ export default function LearnerOnboardingPage() {
       pageSubtitle="Complete your onboarding"
       userName={board?.user.name || 'Learner'}
       userRole="Learner"
+      showBackButton={false}
     >
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
-      <main className="w-full p-4 md:p-6">
+      <main className="w-full p-3 sm:p-4 md:p-6">
         {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading your enrolment…</div>}
         {!loading && loadError && (
           <div className="py-20 text-center text-[13px]">

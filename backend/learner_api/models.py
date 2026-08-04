@@ -18,8 +18,9 @@ each field pins its exact `db_column`. The schema is targeted with the
 Neon connection pooler may reject.
 """
 import json
+from functools import lru_cache
 
-from django.db import models
+from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
 
 
@@ -41,6 +42,25 @@ class SafeJSONField(models.JSONField):
             return value
 
 
+LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
+
+
+@lru_cache(maxsize=None)
+def learner_activity_events_relation_exists(using: str) -> bool:
+    """Compatibility check for the retired standalone activity-events table.
+
+    Coach queries still use this to avoid prefetching the removed legacy
+    relation. The learner feed itself now comes from learner_progress_entries.
+    """
+    try:
+        with connections[using].cursor() as cursor:
+            cursor.execute("select to_regclass(%s)", [LEARNER_ACTIVITY_EVENTS_RELATION])
+            result = cursor.fetchone()
+    except DatabaseError:
+        return False
+    return bool(result and result[0])
+
+
 def _serialise_quiz_ref(value):
     """Keep learner API quiz IDs numeric when their database column is text."""
     if value in (None, ""):
@@ -49,6 +69,62 @@ def _serialise_quiz_ref(value):
         return int(value)
     except (TypeError, ValueError):
         return value
+
+
+def _progress_entry_activity(entry):
+    """Project one progress row into the learner activity-feed shape."""
+    feed_kind = str(getattr(entry, "feed_kind", "") or "").strip()
+    progress_kind = str(getattr(entry, "kind", "") or "").strip()
+    kind = feed_kind or ("" if progress_kind == "activity_event" else progress_kind)
+    component_type = str(getattr(entry, "component_type", "") or "").strip()
+
+    action = str(getattr(entry, "feed_action", "") or "").strip()
+    if not action:
+        if kind == "quiz":
+            action = "Completed quiz"
+        elif kind == "video":
+            action = "Watched video"
+        elif kind == "live_session":
+            action = "Completed live session"
+        elif kind == "component":
+            action = {
+                "podcast": "Listened to podcast",
+                "reading": "Completed reading",
+                "video": "Watched video",
+            }.get(component_type.casefold(), "Completed activity")
+
+    title = str(getattr(entry, "feed_title", "") or getattr(entry, "component_title", "") or "").strip()
+    if not title:
+        title = {"quiz": "Quiz", "video": "Video", "live_session": "Live session"}.get(kind, "Activity")
+
+    detail = str(getattr(entry, "feed_detail", "") or "").strip()
+    if not detail and kind == "quiz":
+        grade = getattr(entry, "grade", None)
+        achieved = getattr(entry, "achieved_score", None)
+        total = getattr(entry, "total_score", None)
+        if grade is not None:
+            percent = float(grade) * 100 if float(grade) <= 1 else float(grade)
+            percent_text = str(int(percent)) if percent.is_integer() else str(round(percent, 1))
+            detail = f"Scored {percent_text}%"
+            if achieved is not None and total is not None:
+                detail += f" · {float(achieved):g}/{float(total):g}"
+    if not detail:
+        detail = str(getattr(entry, "reported_time", "") or "").strip()
+
+    occurred_at = getattr(entry, "feed_occurred_at", None) or getattr(entry, "submitted_at", None)
+    return {
+        "kind": kind,
+        "action": action,
+        "title": title,
+        "detail": detail,
+        "componentId": getattr(entry, "component_ref", None),
+        "componentType": component_type,
+        "quizId": _serialise_quiz_ref(getattr(entry, "quiz_ref", None)),
+        "module": str(getattr(entry, "module_title", "") or ""),
+        "week": str(getattr(entry, "week_title", "") or ""),
+        "passed": getattr(entry, "passed", None),
+        "at": occurred_at.isoformat() if occurred_at else "",
+    }
 
 
 class LearnerTypeQuerySet(models.QuerySet):
@@ -368,6 +444,22 @@ class LearnerProfile(models.Model):
 
     @property
     def ksbs(self):
+        try:
+            assignment = self.ksb_assignment
+        except LearnerKsbAssignment.DoesNotExist:
+            assignment = None
+        if assignment is not None:
+            return [
+                {
+                    "code": item.code,
+                    "number": item.number,
+                    "type": item.ksb_type,
+                    "description": item.description,
+                }
+                for item in assignment.profile_version.definitions.all()
+            ]
+
+        # Compatibility fallback while existing environments are migrated.
         return [
             {
                 "code": item.code,
@@ -411,6 +503,8 @@ class LearnerProfile(models.Model):
     def training_plan_progress(self):
         records = []
         for entry in self.progress_entries.all():
+            if entry.kind == "activity_event":
+                continue
             record = {
                 "kind": entry.kind,
                 "moduleId": entry.module_ref,
@@ -465,27 +559,29 @@ class LearnerProfile(models.Model):
         return self.activity_feed_entries()
 
     def activity_feed_entries(self, *, newest_first=False):
-        entries = [
-            {
-                "kind": event.kind,
-                "action": event.action,
-                "title": event.title,
-                "detail": event.detail,
-                "componentId": event.component_ref,
-                "componentType": event.component_type,
-                "quizId": _serialise_quiz_ref(event.quiz_ref),
-                "module": event.module_title,
-                "week": event.week_title,
-                "passed": event.passed,
-                "at": event.occurred_at.isoformat() if event.occurred_at else "",
-            }
-            for event in self.activity_events.all()
-        ]
-        return list(reversed(entries)) if newest_first else entries
+        prefetched = getattr(self, "_prefetched_objects_cache", None)
+        prefetched_progress = (
+            prefetched.get("progress_entries")
+            if isinstance(prefetched, dict)
+            else None
+        )
+        if prefetched_progress is not None:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in prefetched_progress
+                if str(getattr(entry, "feed_kind", "") or "").strip()
+            ]
+        else:
+            entries = [
+                _progress_entry_activity(entry)
+                for entry in self.progress_entries.exclude(feed_kind="")
+            ]
+        entries.sort(key=lambda item: item.get("at") or "", reverse=newest_first)
+        return entries
 
     @property
     def latest_activity_feed(self):
-        """Newest-first feed from Learner.learner_activity_events."""
+        """Newest-first feed projected from learner_progress_entries."""
         return self.activity_feed_entries(newest_first=True)
 
 
@@ -501,6 +597,58 @@ class LearnerKsb(models.Model):
         managed = False
         db_table = 'Learner"."learner_ksbs'
         ordering = ("position", "id")
+
+
+class KsbProfileVersion(models.Model):
+    source_profile_id = models.CharField(max_length=255)
+    version_hash = models.CharField(max_length=64)
+    programme = models.TextField(blank=True)
+    definition_count = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."ksb_profile_versions'
+        unique_together = (("source_profile_id", "version_hash"),)
+
+
+class KsbDefinition(models.Model):
+    profile_version = models.ForeignKey(
+        KsbProfileVersion,
+        on_delete=models.CASCADE,
+        related_name="definitions",
+    )
+    position = models.PositiveIntegerField()
+    code = models.CharField(max_length=100)
+    number = models.CharField(max_length=100, blank=True)
+    ksb_type = models.CharField(max_length=100, blank=True)
+    description = models.TextField(blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'curriculum"."ksb_definitions'
+        ordering = ("position", "id")
+        unique_together = (("profile_version", "code"),)
+
+
+class LearnerKsbAssignment(models.Model):
+    learner = models.OneToOneField(
+        LearnerProfile,
+        on_delete=models.CASCADE,
+        primary_key=True,
+        related_name="ksb_assignment",
+    )
+    profile_version = models.ForeignKey(
+        KsbProfileVersion,
+        on_delete=models.PROTECT,
+        related_name="learner_assignments",
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Learner"."learner_ksb_assignments'
 
 
 class LearnerTrainingPlanModule(models.Model):
@@ -569,6 +717,11 @@ class LearnerProgressEntry(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     time_taken = models.TextField(blank=True)
+    feed_kind = models.CharField(max_length=30, blank=True)
+    feed_action = models.TextField(blank=True)
+    feed_title = models.TextField(blank=True)
+    feed_detail = models.TextField(blank=True)
+    feed_occurred_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -637,27 +790,6 @@ class LearnerQuizChosenAnswer(models.Model):
         ordering = ("position",)
 
 
-class LearnerActivityEvent(models.Model):
-    learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="activity_events")
-    event_order = models.PositiveIntegerField()
-    kind = models.CharField(max_length=30, blank=True)
-    action = models.TextField(blank=True)
-    title = models.TextField(blank=True)
-    detail = models.TextField(blank=True)
-    component_ref = models.TextField(null=True, blank=True)
-    component_type = models.CharField(max_length=100, blank=True)
-    quiz_ref = models.TextField(null=True, blank=True)
-    module_title = models.TextField(blank=True)
-    week_title = models.TextField(blank=True)
-    passed = models.BooleanField(null=True, blank=True)
-    occurred_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        managed = False
-        db_table = 'Learner"."learner_activity_events'
-        ordering = ("event_order", "id")
-
-
 class ActiveUser(models.Model):
     """Unmanaged mapping of "Learner"."Active_users".
 
@@ -723,8 +855,8 @@ class ActiveUser(models.Model):
     # ksbs, feedback, reportedTime, questions, startedAt, submittedAt, timeTaken}, ...]
     # — legacy read-only store; new attempts go to training_plan_progress.
     weekly_quizzes = SafeJSONField(db_column="Weekly_Quizzes", null=True, blank=True)
-    # Legacy mirror of the learner activity feed. Current dashboards read from
-    # Learner.learner_activity_events via LearnerProfile.activity_feed_entries().
+    # Legacy JSON mirror retained only for compatibility. Current dashboards
+    # project their feed from Learner.learner_progress_entries.
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
     # Legacy mirror of the learner progress log. Current dashboards read from
     # Learner.learner_progress_entries via LearnerProfile.training_plan_progress.
@@ -779,8 +911,8 @@ class UnactiveUser(models.Model):
     # Legacy archive mirror retained for compatibility; current UI reads from
     # Learner.learner_progress_entries when a learner profile is available.
     training_plan_progress = SafeJSONField(db_column="Training_plan_progress", null=True, blank=True)
-    # Legacy mirror retained for archive compatibility; current UI reads from
-    # Learner.learner_activity_events when the learner has an active profile.
+    # Legacy mirror retained for archive compatibility; current UI projects the
+    # feed from Learner.learner_progress_entries.
     activity_feed = SafeJSONField(db_column="Activity_Feed", null=True, blank=True)
 
     class Meta:

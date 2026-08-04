@@ -412,7 +412,7 @@ export default function Home() {
       </section>
 
       {/* ============ STATS BAR ============ */}
-      <section className="relative z-10 mt-8 max-w-5xl mx-auto px-6 animate-stats-bar-enter">
+      <section className="relative z-20 -mt-20 mx-auto max-w-5xl px-6 animate-stats-bar-enter sm:-mt-24">
         <div className="group cursor-pointer bg-background-50 rounded-2xl border border-foreground-200 shadow-lg shadow-foreground-950/5 p-6 md:p-8 transition-all duration-300 ease-out hover:-translate-y-1 hover:scale-[1.01] hover:border-primary-300/70 hover:shadow-xl hover:shadow-primary-500/10">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
             <div className="text-center">

@@ -22,6 +22,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 
 from .active_users import completed_hours_from_progress, fmt_hours
+from .identity import learner_profile_for_source
 from .mappers import _s, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
@@ -40,6 +41,17 @@ SOURCE_MODELS = {
 }
 
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+
+def _active_profile_for_source(source, source_pk):
+    """Resolve the active mirror after enrolment tables were consolidated.
+
+    ``Created_users`` and ``Learner.learners`` have independent primary-key
+    sequences, so their ids are no longer guaranteed to match.  Email is the
+    shared learner identity; the id lookup remains only as a compatibility
+    fallback for older records that do not have an email.
+    """
+    return learner_profile_for_source(source, source_pk, active_only=True)
 
 
 def _video_url_from_settings(settings):
@@ -443,7 +455,14 @@ def _cumulative_week_target(detail, learner_start_date=None, today=None):
 
 def _live_otjh_snapshot(detail, learner_profile=None):
     planned = fmt_hours(detail.get("totalExpectedOtjh") or 0)
-    completed = completed_hours_from_progress(learner_profile.training_plan_progress) if learner_profile else "0"
+    completed = (
+        completed_hours_from_progress(
+            learner_profile.training_plan_progress,
+            detail.get("components"),
+        )
+        if learner_profile
+        else "0"
+    )
 
     target_num = _cumulative_week_target(
         detail,
@@ -886,16 +905,19 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        learner_profile = _active_profile_for_source(source, pk)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
-    if learner_profile and not learner_profile.assigned_ksbs.exists():
+    if learner_profile and not learner_profile.ksbs:
         try:
             from .active_users import refresh_learner_ksb_snapshot
 
             refresh_learner_ksb_snapshot(learner_profile, source)
-            learner_profile = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+            learner_profile = LearnerProfile.objects.filter(
+                id=learner_profile.id,
+                lifecycle_status="active",
+            ).first()
         except DatabaseError as exc:
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 

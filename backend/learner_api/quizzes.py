@@ -29,8 +29,10 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from .identity import learner_profile_for_source
+
 from .active_users import save_progress_record
-from .models import CommercialUser, EnrolmentUser, LearnerProfile
+from .models import CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -363,7 +365,7 @@ def submit_quiz_attempt(request, quiz_id):
         return _error(f"Database error: {exc}", 502)
 
     try:
-        active = LearnerProfile.objects.filter(id=learner_id, lifecycle_status="active").first()
+        active = learner_profile_for_source(source, learner_id, active_only=True)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

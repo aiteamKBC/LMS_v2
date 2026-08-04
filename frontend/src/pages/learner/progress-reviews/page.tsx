@@ -219,15 +219,15 @@ export function ProgressReviewsListPage() {
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
-      <main className="w-full space-y-5 p-4 md:p-6">
+      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-6 text-white shadow-xl shadow-primary-950/10 md:p-7">
+        <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><i className="ri-team-line text-secondary-300" />Formal review</span>
-              <h1 className="mt-3 text-2xl font-bold text-white md:text-3xl">Progress reviews</h1>
+              <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress reviews</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
@@ -236,19 +236,58 @@ export function ProgressReviewsListPage() {
                 ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
                 ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
                 ['To plan', planningCount, 'ri-time-line', 'text-amber-300'],
-              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur"><i className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/50">{label}</p></div>)}
+              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><i className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
             </div>
           </div>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
-          <div className="flex flex-col gap-3 border-b border-background-200 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><i className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
             <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />Open calendar</Link>
           </div>
           {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading progress reviews...</div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
             <>
-              <div className="overflow-x-auto">
+              <div className="divide-y divide-background-200 md:hidden">
+                {visibleReviews.map((review) => {
+                  const isBooked = Boolean(review.scheduledDate && review.scheduledTime) && !['not-scheduled', 'cancelled'].includes(review.status);
+                  return (
+                    <article key={review.id} className="space-y-4 p-4">
+                      <div className="flex items-start gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-xs font-extrabold text-primary-700">#{review.sequence}</span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <h3 className="text-sm font-bold text-foreground-900">Progress Review #{review.sequence}</h3>
+                              <p className="mt-1 text-[11px] text-foreground-500">Formal progress review</p>
+                            </div>
+                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>
+                              <i className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span>
+                          <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">Reviewer</p><p className="truncate text-xs font-semibold text-foreground-800">{review.coachName || '-'}</p></div>
+                        </div>
+                        <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
+                          <i className="ri-calendar-line shrink-0 text-primary-500" />
+                          <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">{isBooked ? 'Scheduled' : 'Planned'}</p><p className="truncate text-xs font-semibold text-foreground-800">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="text-[10px] text-foreground-400">{formatTime(review.scheduledTime)}</p>}</div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <Link to="/learner/calendar" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link>
+                        <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <i className="ri-arrow-right-line" /></Link>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
                 <table className="w-full min-w-[980px] text-left">
                   <thead className="border-b border-primary-100 bg-primary-50/70 text-[10px] font-bold uppercase tracking-wide text-primary-900/60">
                     <tr><th className="px-5 py-3.5">Review Name / Review Type</th><th className="px-5 py-3.5">Reviewer</th><th className="px-5 py-3.5">Planned / Scheduled Date</th><th className="px-5 py-3.5">Status</th><th className="px-5 py-3.5">Scheduling Assistant</th><th className="px-5 py-3.5 text-right">Review Actions</th></tr>
@@ -270,14 +309,14 @@ export function ProgressReviewsListPage() {
                   </tbody>
                 </table>
               </div>
-              <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="flex items-center gap-1.5">
                   <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button>
                   <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>
                   {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
                   <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button>
                   <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button>
-                  <span className="ml-2 text-[10px] text-foreground-400">10 items per page</span>
+                  <span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span>
                 </div>
                 <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, reviews.length)} of {reviews.length} items</p>
               </div>

@@ -6,7 +6,13 @@ import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useMyLearner } from '@/hooks/useMyLearner';
-import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import {
+  fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach,
+  fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
+  disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
+  type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
+  type PersonalCalendarProvider, type CalendarBusySlot,
+} from '@/api/learnerCalendar';
 
 const learnerNav = roleNavMap.learner;
 const p = LEARNER_PROFILE;
@@ -15,6 +21,12 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const DAYS_SHORT = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_SHORT_INDEX: Record<string, number> = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
+const CALENDAR_PROVIDERS: Array<{ provider: PersonalCalendarProvider; title: string; subtitle: string; icon: string }> = [
+  { provider: 'google', title: 'Continue with Google', subtitle: 'OAuth access to free/busy availability', icon: 'ri-google-fill' },
+  { provider: 'microsoft', title: 'Continue with Microsoft', subtitle: 'Outlook or Microsoft 365 calendar', icon: 'ri-microsoft-fill' },
+  { provider: 'ics', title: 'Connect ICS Calendar', subtitle: 'Private iCal feed URL', icon: 'ri-links-line' },
+];
 
 /** Resolve an event's calendar day — prefers the exact isoDate carried by DB-backed
  * events, falls back to parsing the "13 Jun" display date (year unknown → null). */
@@ -66,6 +78,34 @@ function mapCoachEvent(ev: LearnerCalendarEvent, learnerName: string): CalendarE
       : `${ev.title} session with ${ev.coachName || 'your coach'} for ${learnerName}.`),
     isoDate: iso,
     meetingLink: ev.meetingLink || undefined,
+  };
+}
+
+function mapBusySlot(slot: CalendarBusySlot): CalendarEvent | null {
+  const start = new Date(slot.start);
+  const end = new Date(slot.end);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null;
+  const year = start.getFullYear();
+  const month = start.getMonth();
+  const day = start.getDate();
+  const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const time = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}–${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`;
+  return {
+    id: `personal-busy-${slot.provider}-${slot.start}-${slot.end}`,
+    title: 'Busy',
+    date: `${day} ${MONTH_NAMES[month].slice(0, 3)}`,
+    dayName: DAYS_OF_WEEK[start.getDay() === 0 ? 6 : start.getDay() - 1],
+    time,
+    club: 'Personal',
+    clubId: '',
+    type: 'Busy',
+    format: 'Connected personal calendar',
+    location: 'Private event',
+    host: 'Personal calendar',
+    points: 0,
+    status: 'confirmed',
+    description: 'Busy time from your connected personal calendar. Event details stay private.',
+    isoDate,
   };
 }
 
@@ -126,6 +166,7 @@ function getEventColorClass(type: string, customColor?: string) {
     Assessment: 'bg-red-100 text-red-700 border-l-red-500',
     'Networking Event': 'bg-violet-100 text-violet-700 border-l-violet-500',
     Personal: 'bg-sky-100 text-sky-700 border-l-sky-500',
+    Busy: 'bg-slate-200 text-slate-700 border-l-slate-500',
   };
   return map[type] || 'bg-background-100 text-foreground-600 border-l-foreground-300';
 }
@@ -139,7 +180,7 @@ function getEventDotColor(type: string, customColor?: string) {
     Workshop: 'bg-primary-500', 'Hands-on Lab': 'bg-secondary-500', Masterclass: 'bg-accent-500',
     'Panel Discussion': 'bg-amber-500', 'Case Study': 'bg-emerald-500', Showcase: 'bg-rose-500',
     'Study Group': 'bg-indigo-500', Coaching: 'bg-teal-500', Assessment: 'bg-red-500',
-    'Networking Event': 'bg-violet-500', Personal: 'bg-sky-500',
+    'Networking Event': 'bg-violet-500', Personal: 'bg-sky-500', Busy: 'bg-slate-500',
   };
   return map[type] || 'bg-foreground-400';
 }
@@ -291,7 +332,18 @@ export function LearnerCalendarContent() {
   const [bookSubmitting, setBookSubmitting] = useState(false);
   const [bookError, setBookError] = useState<string | null>(null);
   const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
-  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>();
+  const [showCalendarConnect, setShowCalendarConnect] = useState(false);
+  const [calendarConnections, setCalendarConnections] = useState<PersonalCalendarConnection[]>([]);
+  const [connectionProvider, setConnectionProvider] = useState<'icloud' | 'caldav' | 'ics' | null>(null);
+  const [connectionUrl, setConnectionUrl] = useState('');
+  const [connectionUsername, setConnectionUsername] = useState('');
+  const [connectionPassword, setConnectionPassword] = useState('');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionSubmitting, setConnectionSubmitting] = useState(false);
+  const [busySlots, setBusySlots] = useState<CalendarBusySlot[]>([]);
+  const [visibleBusySlots, setVisibleBusySlots] = useState<CalendarBusySlot[]>([]);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
+  const timersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const today = new Date();
   const todayDay = today.getDate();
@@ -303,13 +355,25 @@ export function LearnerCalendarContent() {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
 
+  const reloadCalendarConnections = useCallback(() => {
+    return fetchCalendarConnections(myLearner.kind, myLearner.id)
+      .then((result) => setCalendarConnections(result.connections));
+  }, [myLearner.kind, myLearner.id]);
+
+  const personalBusyEvents = useMemo(() => {
+    const unique = new Map<string, CalendarBusySlot>();
+    visibleBusySlots.forEach((slot) => unique.set(`${slot.start}-${slot.end}`, slot));
+    return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
+  }, [visibleBusySlots]);
+  const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+
   const getEventsForDay = useCallback((day: number, month: number): CalendarEvent[] => {
-    return myEvents.filter((ev) => {
+    return displayedEvents.filter((ev) => {
       const evDate = parseEventDate(ev);
       if (!evDate) return false;
       return evDate.day === day && evDate.month === month && (evDate.year === null || evDate.year === viewYear);
     });
-  }, [myEvents, viewYear]);
+  }, [displayedEvents, viewYear]);
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
@@ -321,6 +385,52 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
+
+  useEffect(() => {
+    reloadCalendarConnections().catch(() => setCalendarConnections([]));
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get('calendar_connected');
+    const oauthError = params.get('calendar_error');
+    if (connected) {
+      setAddToCalendarToast(`${connected === 'google' ? 'Google' : 'Microsoft'} Calendar connected successfully.`);
+      setShowCalendarConnect(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (oauthError) {
+      setConnectionError(oauthError);
+      setShowCalendarConnect(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [reloadCalendarConnections]);
+
+  useEffect(() => {
+    if (calendarConnections.length === 0) {
+      setVisibleBusySlots([]);
+      return;
+    }
+    const start = new Date(viewYear, viewMonth, 1).toISOString();
+    const end = new Date(viewYear, viewMonth + 1, 1).toISOString();
+    let cancelled = false;
+    fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
+      .then((result) => { if (!cancelled) setVisibleBusySlots(result.busy); })
+      .catch(() => { if (!cancelled) setVisibleBusySlots([]); });
+    return () => { cancelled = true; };
+  }, [calendarConnections.length, viewYear, viewMonth, myLearner.kind, myLearner.id]);
+
+  useEffect(() => {
+    if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
+      setBusySlots([]);
+      return;
+    }
+    const start = new Date(`${bookDate}T00:00:00`).toISOString();
+    const end = new Date(`${bookDate}T23:59:59`).toISOString();
+    let cancelled = false;
+    setAvailabilityLoading(true);
+    fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
+      .then((result) => { if (!cancelled) setBusySlots(result.busy); })
+      .catch(() => { if (!cancelled) setBusySlots([]); })
+      .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
+    return () => { cancelled = true; };
+  }, [showBookModal, calendarConnections.length, bookDate, myLearner.kind, myLearner.id]);
 
   // Load the learner's coaching sessions from Coach.coach_calendar_event.
   useEffect(() => {
@@ -345,8 +455,46 @@ export function LearnerCalendarContent() {
     return () => { cancelled = true; };
   }, [myLearner.kind, myLearner.id]);
 
+  const selectedSlotConflicts = useMemo(() => {
+    if (!bookDate || !bookTime) return false;
+    const start = new Date(`${bookDate}T${bookTime}:00`).getTime();
+    const end = start + parseInt(bookDuration || '60') * 60_000;
+    return busySlots.some((slot) => start < new Date(slot.end).getTime() && end > new Date(slot.start).getTime());
+  }, [bookDate, bookTime, bookDuration, busySlots]);
+
+  const handleCredentialConnect = async () => {
+    if (!connectionProvider || connectionSubmitting) return;
+    setConnectionSubmitting(true);
+    setConnectionError(null);
+    try {
+      await connectCredentialCalendar(myLearner.kind, myLearner.id, connectionProvider, {
+        url: connectionUrl.trim(), username: connectionUsername.trim(), password: connectionPassword,
+      });
+      await reloadCalendarConnections();
+      setConnectionProvider(null); setConnectionUrl(''); setConnectionUsername(''); setConnectionPassword('');
+      setAddToCalendarToast('Personal calendar connected successfully.');
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Calendar connection failed.');
+    } finally {
+      setConnectionSubmitting(false);
+    }
+  };
+
+  const handleDisconnectCalendar = async (provider: PersonalCalendarProvider) => {
+    try {
+      await disconnectPersonalCalendar(myLearner.kind, myLearner.id, provider);
+      await reloadCalendarConnections();
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Could not disconnect calendar.');
+    }
+  };
+
   const handleBookSession = async () => {
     if (bookSubmitting) return;
+    if (selectedSlotConflicts) {
+      setBookError('This time overlaps an event in your connected personal calendar. Please choose another time.');
+      return;
+    }
     setBookSubmitting(true);
     setBookError(null);
     try {
@@ -356,6 +504,7 @@ export function LearnerCalendarContent() {
         scheduledTime: bookTime,
         durationMinutes: parseInt(bookDuration),
         notes: bookNotes.trim() || undefined,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
       });
       const mapped = mapCoachEvent(res.event, p.fullName);
       if (mapped) setMyEvents((prev) => [...prev.filter((ev) => ev.id !== mapped.id), mapped]);
@@ -479,6 +628,56 @@ export function LearnerCalendarContent() {
       )}
 
       {/* ═══════════ BOOK COACH SESSION MODAL ═══════════ */}
+      {showCalendarConnect && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={() => setShowCalendarConnect(false)}>
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-background-50 p-6 shadow-xl animate-in zoom-in-95 duration-200" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600">Calendar source</p>
+                <h3 className="mt-1 text-xl font-heading font-bold text-foreground-900">Connect personal calendar</h3>
+                <p className="mt-1 text-xs text-foreground-400">We only read free/busy times to prevent booking conflicts.</p>
+              </div>
+              <button type="button" onClick={() => setShowCalendarConnect(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><i className="ri-close-line" /></button>
+            </div>
+            <div className="space-y-2.5">
+              {CALENDAR_PROVIDERS.map((item) => {
+                const connected = calendarConnections.find((connection) => connection.provider === item.provider);
+                return (
+                  <div key={item.provider} className={`rounded-xl border p-1 transition ${connected ? 'border-emerald-200 bg-emerald-50/30' : 'border-background-300'}`}>
+                    <div className="flex items-center gap-3 px-3 py-2.5">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${connected ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-50 text-primary-600'}`}><i className={connected ? 'ri-check-line' : item.icon} /></span>
+                      <button type="button" disabled={Boolean(connected)} onClick={async () => {
+                        setConnectionError(null);
+                        if (item.provider === 'google' || item.provider === 'microsoft') {
+                          try { await startCalendarOAuth(myLearner.kind, myLearner.id, item.provider); }
+                          catch (error) { setConnectionError(error instanceof Error ? error.message : 'Could not start calendar connection.'); }
+                        } else {
+                          setConnectionProvider(item.provider);
+                          setConnectionUrl(item.provider === 'icloud' ? 'https://caldav.icloud.com' : '');
+                        }
+                      }} className="min-w-0 flex-1 text-left disabled:cursor-default">
+                        <p className="text-sm font-semibold text-foreground-900">{connected ? `${item.title.replace('Continue with ', '').replace('Connect ', '')} connected` : item.title}</p>
+                        <p className="truncate text-xs text-foreground-400">{connected?.accountEmail || item.subtitle}</p>
+                      </button>
+                      {connected && <button type="button" onClick={() => handleDisconnectCalendar(item.provider)} className="rounded-lg px-2.5 py-1.5 text-[10px] font-semibold text-red-600 hover:bg-red-50">Disconnect</button>}
+                    </div>
+                    {connectionProvider === item.provider && !connected && (
+                      <div className="space-y-3 border-t border-background-200 px-3 pb-3 pt-3">
+                        <div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">{item.provider === 'ics' ? 'Private ICS feed URL' : 'Calendar server URL'}</label><input type="url" value={connectionUrl} onChange={(event) => setConnectionUrl(event.target.value)} placeholder="https://..." className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div>
+                        {item.provider !== 'ics' && <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">Calendar username</label><input value={connectionUsername} onChange={(event) => setConnectionUsername(event.target.value)} autoComplete="username" className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div><div><label className="mb-1 block text-[10px] font-semibold text-foreground-500">App-specific password</label><input type="password" value={connectionPassword} onChange={(event) => setConnectionPassword(event.target.value)} autoComplete="new-password" className="w-full rounded-lg border border-background-300 bg-white px-3 py-2 text-sm outline-none focus:border-primary-400" /></div></div>}
+                        <div className="flex gap-2"><button type="button" onClick={() => setConnectionProvider(null)} className="flex-1 rounded-lg border border-background-300 px-3 py-2 text-xs font-semibold text-foreground-600">Cancel</button><button type="button" onClick={handleCredentialConnect} disabled={connectionSubmitting || !connectionUrl || (item.provider !== 'ics' && (!connectionUsername || !connectionPassword))} className="flex-1 rounded-lg bg-primary-500 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{connectionSubmitting ? 'Connecting…' : 'Connect'}</button></div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {connectionError && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><i className="ri-error-warning-line mt-0.5" /><span>{connectionError}</span></div>}
+            <p className="mt-4 flex items-start gap-2 text-[10px] leading-relaxed text-foreground-400"><i className="ri-shield-keyhole-line mt-0.5 text-emerald-500" />OAuth tokens and calendar passwords are encrypted on the server and are never sent back to the browser.</p>
+          </div>
+        </div>
+      )}
+
       {showBookModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -512,6 +711,14 @@ export function LearnerCalendarContent() {
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Date <span className="text-red-400">*</span></label><input type="date" value={bookDate} min={todayISO()} onChange={(e) => setBookDate(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
                 <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Time <span className="text-red-400">*</span></label><input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               </div>
+              {calendarConnections.length > 0 ? (
+                <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                  <i className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
+                  <div><p className="text-xs font-semibold">{availabilityLoading ? 'Checking your personal calendar…' : selectedSlotConflicts ? 'This time is busy' : 'This time is available'}</p><p className="mt-0.5 text-[10px] opacity-75">Checked against {calendarConnections.length} connected calendar{calendarConnections.length === 1 ? '' : 's'}.</p></div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => { setShowBookModal(false); setShowCalendarConnect(true); }} className="flex w-full items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left text-xs font-semibold text-primary-700"><i className="ri-calendar-2-line" />Connect your personal calendar to prevent booking conflicts</button>
+              )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
                 <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all cursor-pointer">
@@ -534,7 +741,7 @@ export function LearnerCalendarContent() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
-              <button onClick={handleBookSession} disabled={bookSubmitting || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
                 {bookSubmitting ? <><i className="ri-loader-4-line animate-spin mr-1"></i>Booking...</> : <><i className="ri-calendar-check-line mr-1"></i>Book Session</>}
               </button>
             </div>
@@ -628,7 +835,7 @@ export function LearnerCalendarContent() {
         </div>
       )}
 
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <div className="space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6">
 
         {calendarError && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
@@ -644,22 +851,22 @@ export function LearnerCalendarContent() {
         )}
 
         {/* ═══════════ HERO BANNER ═══════════ */}
-        <section className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
+        <section className="relative overflow-hidden rounded-2xl animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative flex flex-col lg:flex-row items-stretch min-h-[160px]">
-            <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
+          <div className="relative flex min-h-[190px] flex-row items-center md:min-h-[160px] lg:items-stretch">
+            <div className="flex min-w-0 flex-1 flex-col justify-center px-5 py-6 md:px-7 md:py-6">
               <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <span className="text-xs font-semibold text-accent-300/80 uppercase tracking-wider bg-accent-400/10 px-2.5 py-1 rounded-md font-label border border-accent-400/15">{p.programme} &middot; Level {p.programmeLevel}</span>
+                <span className="max-w-full truncate rounded-md border border-accent-400/15 bg-accent-400/10 px-2.5 py-1 font-label text-[10px] font-semibold uppercase tracking-wider text-accent-300/80 sm:text-xs">{p.programme} &middot; Level {p.programmeLevel}</span>
               </div>
-              <h1 className="text-lg md:text-xl font-heading font-bold text-white tracking-tight mb-1.5">My Calendar</h1>
-              <p className="text-sm text-white/40 max-w-lg">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
+              <h1 className="mb-1.5 font-heading text-xl font-bold tracking-tight text-white md:text-xl">My Calendar</h1>
+              <p className="max-w-lg text-xs leading-relaxed text-white/55 sm:text-sm">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
             </div>
-            <div className="flex shrink-0 items-center justify-center px-5 py-5 md:px-7 md:py-6 lg:w-[380px]">
-              <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
-                <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
+            <div className="flex w-[130px] shrink-0 items-center justify-center px-3 py-4 sm:w-[155px] md:px-5 md:py-5 lg:w-[380px] lg:px-7 lg:py-6">
+              <div className="rounded-[22px] border border-white/10 bg-white/10 p-2 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md sm:rounded-[28px] sm:p-3">
+                <div className="relative w-[96px] overflow-hidden rounded-[18px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] sm:w-[120px] sm:rounded-[22px] md:w-[150px] md:rounded-[24px] lg:w-[168px]">
                   <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
                     <div className="flex items-center justify-between">
                       {[0, 1, 2, 3, 4, 5].map((index) => (
@@ -670,12 +877,12 @@ export function LearnerCalendarContent() {
                       ))}
                     </div>
                   </div>
-                  <div className="px-4 pb-4 pt-3 text-center">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
-                    <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
+                  <div className="px-2 pb-3 pt-2 text-center sm:px-4 sm:pb-4 sm:pt-3">
+                    <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:text-[11px] sm:tracking-[0.34em]">{todayMonthLabel}</p>
+                    <p className="mt-1 font-heading text-3xl font-bold leading-none text-foreground-950 sm:mt-2 sm:text-5xl md:text-6xl">
                       {String(todayDay).padStart(2, '0')}
                     </p>
-                    <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
+                    <p className="mt-2 text-[8px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:mt-2.5 sm:text-[10px] sm:tracking-[0.34em]">{todayWeekdayLabel}</p>
                   </div>
                   <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95" />
                 </div>
@@ -685,10 +892,10 @@ export function LearnerCalendarContent() {
         </section>
 
         {/* ═══════════ TOP BAR: VIEW TOGGLE + NAV ═══════════ */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
+        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <div className="grid w-full grid-cols-3 items-center gap-1 rounded-xl bg-background-100 p-1 sm:flex sm:w-auto">
             {([{ key: 'monthly' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },{ key: 'weekly' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },{ key: 'daily' as ViewMode, label: 'Day', icon: 'ri-calendar-line' }]).map((v) => (
-              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><i className={`${v.icon} text-sm`}></i>{v.label}</button>
+              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer sm:px-4 ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><i className={`${v.icon} text-sm`}></i>{v.label}</button>
             ))}
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
@@ -709,19 +916,19 @@ export function LearnerCalendarContent() {
 
             {/* MONTHLY VIEW */}
             {viewMode === 'monthly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 overflow-hidden">
+              <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 sm:border-2">
                 {/* Day headers */}
                 <div className="grid grid-cols-7 border-b-2 border-background-300">
                   {DAYS_OF_WEEK.map((day, i) => (
-                    <div key={day} className={`px-2 py-3 text-center ${i >= 5 ? 'bg-background-100/60' : 'bg-background-100/30'}`}>
-                      <span className="text-xs font-semibold text-foreground-400 uppercase tracking-wider">{day}</span>
+                    <div key={day} className={`px-1 py-3 text-center sm:px-2 ${i >= 5 ? 'bg-background-100/60' : 'bg-background-100/30'}`}>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-500 sm:text-xs sm:tracking-wider">{day}</span>
                     </div>
                   ))}
                 </div>
                 {/* Day cells */}
                 <div className="grid grid-cols-7">
                   {monthCells.map((day, idx) => {
-                    if (day === null) return <div key={`empty-${idx}`} className="aspect-[4/3] bg-background-50/40 border-b-2 border-r-2 border-background-300" />;
+                    if (day === null) return <div key={`empty-${idx}`} className="aspect-square border-b border-r border-background-300 bg-background-50/40 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2" />;
                     const eventsForDay = getEventsForDay(day, viewMonth);
                     const isSel = day === selectedDay && viewMode === 'monthly';
                     const isTdy = isToday(day, viewMonth, viewYear);
@@ -731,12 +938,20 @@ export function LearnerCalendarContent() {
                       <button
                         key={`d-${day}`}
                         onClick={() => { setSelectedDay(day); }}
-                        className={`aspect-[4/3] border-b-2 border-r-2 border-background-300 p-1.5 flex flex-col text-left cursor-pointer transition-all duration-150 hover:bg-primary-50/20 hover:z-10 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
+                        className={`flex aspect-square cursor-pointer flex-col border-b border-r border-background-300 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2 sm:p-1.5 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
                       >
-                        <span className={`text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full mb-1 shrink-0 ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
+                        <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
                         <div className="flex-1 w-full overflow-hidden space-y-0.5 min-w-0">
                           {visibleEvents.map((ev) => {
                             const dotColor = getEventDotColor(ev.type, ev.color);
+                            if (ev.type === 'Busy') {
+                              return (
+                                <div key={ev.id} className="flex w-full items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-slate-700" title={`Busy · ${ev.time}`}>
+                                  <i className="ri-lock-line shrink-0 text-[9px]" />
+                                  <span className="truncate text-[10px] font-semibold leading-tight">Busy · {ev.time.split('–')[0]}</span>
+                                </div>
+                              );
+                            }
                             return (
                               <div key={ev.id} className="flex items-center gap-1 min-w-0" title={ev.title}>
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`}></span>
@@ -755,9 +970,9 @@ export function LearnerCalendarContent() {
 
             {/* WEEKLY VIEW */}
             {viewMode === 'weekly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 overflow-hidden">
+              <div className="overflow-x-auto rounded-2xl border border-background-300 bg-background-50 sm:border-2">
                 {/* Week day headers */}
-                <div className="grid grid-cols-8 border-b-2 border-background-300">
+                <div className="grid min-w-[760px] grid-cols-8 border-b-2 border-background-300">
                   <div className="px-2 py-3 bg-background-100/30"></div>
                   {weekDates.map((wd, idx) => {
                     const isTdy = isToday(wd.day, wd.month, viewYear);
@@ -776,7 +991,7 @@ export function LearnerCalendarContent() {
                   {HOURS.map((hour) => {
                     const isCurrentHourRow = viewMode === 'weekly' && currentHour === hour;
                     return (
-                      <div key={`h-${hour}`} className={`grid grid-cols-8 border-b-2 border-background-300 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
+                      <div key={`h-${hour}`} className={`grid min-w-[760px] grid-cols-8 border-b-2 border-background-300 ${isCurrentHourRow ? 'bg-primary-50/15' : ''}`}>
                         <div className="px-3 py-3 text-right border-r-2 border-background-300">
                           <span className="text-xs font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
@@ -869,8 +1084,8 @@ export function LearnerCalendarContent() {
 
             {/* Selected day events list (monthly mode only) */}
             {viewMode === 'monthly' && (
-              <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
-                <div className="flex items-center justify-between mb-4">
+              <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <h3 className="text-sm font-heading font-bold text-foreground-900 flex items-center gap-2">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600'}`}>{selectedDay}</span>
                     {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}
@@ -911,18 +1126,23 @@ export function LearnerCalendarContent() {
           <div className="space-y-4">
 
             {/* Quick Actions */}
-            <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
+            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-flashlight-line text-accent-500"></i>Quick Actions</h3>
               <div className="space-y-2">
                 <button onClick={() => setShowBookModal(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-accent-500 text-white hover:bg-accent-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
+                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-accent-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-accent-600 active:scale-[0.99] sm:px-4">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-user-star-line text-white"></i></span>
                   <div className="text-left"><p className="text-sm font-semibold">Book Coach Session</p><p className="text-xs text-white/80">{coach ? `Catch-up or support with ${coach.name}` : 'Catch-up or student support'}</p></div>
                 </button>
                 <button onClick={() => setShowCreateModal(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-primary-500 text-white hover:bg-primary-600 hover:scale-[1.01] active:scale-[0.99] transition-all duration-200 cursor-pointer group">
+                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-primary-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-primary-600 active:scale-[0.99] sm:px-4">
                   <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-add-line text-white"></i></span>
                   <div className="text-left"><p className="text-sm font-semibold">Create Event</p><p className="text-xs text-white/80">Add a custom personal event</p></div>
+                </button>
+                <button onClick={() => { setConnectionError(null); setShowCalendarConnect(true); }}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
+                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${calendarConnections.length ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-100 text-primary-600'}`}><i className={calendarConnections.length ? 'ri-calendar-check-line' : 'ri-calendar-2-line'}></i></span>
+                  <div className="min-w-0 text-left"><p className="text-sm font-semibold text-foreground-900">Connect Your Personal Calendar</p><p className="truncate text-xs text-foreground-400">{calendarConnections.length ? `${calendarConnections.length} calendar${calendarConnections.length === 1 ? '' : 's'} connected` : 'Connect Google, Microsoft, Apple or ICS'}</p></div>
                 </button>
                 <button onClick={() => setShowShareCalendar(true)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
@@ -943,7 +1163,7 @@ export function LearnerCalendarContent() {
             </div>
 
             {/* Upcoming Events */}
-            <div className="bg-background-50 rounded-2xl border-2 border-background-300 p-5">
+            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
               <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-calendar-todo-line text-primary-500"></i>Upcoming</h3>
               <div className="space-y-2">
                 {myEvents.filter((ev) => {
