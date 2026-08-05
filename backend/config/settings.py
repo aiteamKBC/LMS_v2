@@ -23,6 +23,15 @@ def load_env_file(path):
     if not path.exists():
         return
 
+    # Real process-level environment variables keep priority. Microsoft calendar
+    # credentials were historically appended more than once, so only for that
+    # integration use the last file declaration. Other settings retain the
+    # original first-declaration behaviour (several legacy DB aliases depend on it).
+    process_environment_keys = set(os.environ)
+    last_declaration_keys = {
+        'MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET',
+        'MICROSOFT_TENANT', 'MICROSOFT_TENANT_ID', 'MICROSOFT_CALLBACK_URI',
+    }
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith('#') or '=' not in line:
@@ -31,7 +40,10 @@ def load_env_file(path):
         key, value = line.split('=', 1)
         key = key.strip()
         value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)
+        if key not in process_environment_keys and key in last_declaration_keys:
+            os.environ[key] = value
+        else:
+            os.environ.setdefault(key, value)
 
 
 load_env_file(BASE_DIR / '.env')
@@ -39,6 +51,9 @@ load_env_file(BASE_DIR / '.env')
 
 DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
+# Seconds to wait for a database connection before giving up. Keeps a stalled DNS
+# resolver or unreachable Neon endpoint from hanging a request indefinitely.
+DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
 
 
 def database_from_url(database_url):
@@ -61,6 +76,9 @@ def database_from_url(database_url):
 
     options = dict(parse_qsl(parsed.query))
     options.pop('channel_binding', None)
+    # Bound how long a connection attempt can hang. Without it a stalled DNS
+    # resolver leaves requests waiting on the OS default instead of failing fast.
+    options.setdefault('connect_timeout', DB_CONNECT_TIMEOUT)
     return {
         'ENGINE': engine_by_scheme[scheme],
         'NAME': unquote(parsed.path.lstrip('/')),
@@ -84,7 +102,11 @@ SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
-    "true" if DEBUG else "false",
+    # The current frontend authentication is local/demo authentication and
+    # therefore cannot create a Django session by itself. The deployed
+    # frontend uses tightly scoped local demo identities and needs this
+    # bridge until the main application login is replaced by real Django auth.
+    "true",
 ).lower() == "true"
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
@@ -196,6 +218,7 @@ USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "
 if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
+    db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -226,6 +249,13 @@ _enrolment_database_url = (
 )
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+
+# Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
+# separate alias prevents the imported audit workspace from changing the LMS's
+# primary database connection.
+_audit_database_url = os.environ.get('AUDIT_DATABASE_URL')
+if _audit_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['audit'] = database_from_url(_audit_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 

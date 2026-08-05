@@ -161,6 +161,120 @@ def components(request):
     ])
 
 
+def _ksb_profile_row(programme):
+    """The KSB profile authored for a programme, or None.
+
+    Two links exist and both are in live use, so both are tried in order of
+    authority:
+      1. programmes.ksb_profile_source_id — set by the curriculum structure
+         wizard, holds 'profile:<KSBP-id>' (or a bare id).
+      2. ksb_profiles.programme_id / .programme_name — the older direct link,
+         still populated for profiles authored before the wizard existed.
+    """
+    programme = (programme or "").strip()
+    if not programme:
+        return None
+
+    source = _rows(
+        "SELECT programme_id, ksb_profile_source_id FROM curriculum.programmes "
+        "WHERE name = %s OR programme_id = %s LIMIT 1",
+        [programme, programme],
+    )
+    programme_id = (source[0].get("programme_id") or "") if source else ""
+    raw_source = (source[0].get("ksb_profile_source_id") or "") if source else ""
+    # Stored as 'profile:<id>' by the wizard; tolerate a bare id too.
+    profile_id = raw_source.split(":", 1)[1] if ":" in raw_source else raw_source
+
+    if profile_id:
+        rows = _rows(
+            "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
+            "WHERE id = %s AND COALESCE(is_active, true) LIMIT 1",
+            [profile_id],
+        )
+        if rows:
+            return rows[0]
+
+    rows = _rows(
+        "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
+        "WHERE COALESCE(is_active, true) "
+        "  AND (programme_id = %s OR programme_name = %s) "
+        "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+        [programme_id or programme, programme],
+    )
+    return rows[0] if rows else None
+
+
+_KSB_KIND = {"K": "Knowledge", "S": "Skill", "B": "Behaviour"}
+
+
+def ksb_profile_for_programme(programme):
+    """(standard, results) for a programme's authored KSB profile.
+
+    Shared by the ksb_profile view and the enrolment review form, which shows the
+    learner's Skills Radar answers against these same KSBs. Returns (None, []) for
+    an unmapped programme so callers can say "none authored yet" rather than fail.
+    """
+    row = _ksb_profile_row(programme)
+    if row is None:
+        return None, []
+
+    items = row.get("ksb_items")
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except ValueError:
+            items = []
+    if not isinstance(items, list):
+        items = []
+
+    results = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        type_ = (item.get("type") or "").strip().upper()
+        number = str(item.get("code") or item.get("number") or "").strip()
+        # 'K' + '1' -> 'K1'. Authored codes are sometimes already prefixed.
+        code = number if number[:1].upper() in _KSB_KIND else f"{type_}{number}"
+        title = (item.get("title") or item.get("description") or "").strip()
+        results.append({
+            "id": str(item.get("id") or f"{row['id']}-{index}"),
+            "theme": (item.get("theme") or _KSB_KIND.get(type_, "")).strip(),
+            "kind": _KSB_KIND.get(type_, "Knowledge"),
+            "codes": [code] if code else [],
+            "title": title,
+            "displayOrder": item.get("displayOrder", index),
+        })
+
+    results.sort(key=lambda r: (r["displayOrder"] if isinstance(r["displayOrder"], int) else 0))
+    for r in results:
+        r.pop("displayOrder", None)
+
+    return {"id": row["id"], "label": row.get("name") or programme}, results
+
+
+def ksb_profile(request):
+    """The KSB list a learner should self-assess against, for their programme.
+
+        GET /learner_api/curriculum/ksb-profile/?programme=<name>
+
+    Returns {standard: {id, label}, results: [Ksb]} shaped for the Skills Radar
+    step. An unmapped programme returns an empty list rather than an error, so
+    the step can say "none authored yet" instead of failing.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    programme = (request.GET.get("programme") or "").strip()
+    if not programme:
+        return _error("programme query param is required.", 400)
+
+    try:
+        standard, results = ksb_profile_for_programme(programme)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    return JsonResponse({"standard": standard, "results": results})
+
+
 @csrf_exempt
 def legacy_otjh(request):
     """Best-effort OTJH lookup for older saved training-plan components."""

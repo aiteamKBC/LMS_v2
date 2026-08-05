@@ -20,6 +20,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import cohort_dates, replace_training_plan, sync_active_user
+from .identity import learner_profile_for_source
 from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
@@ -235,7 +236,12 @@ def learner_coach(request, pk):
     excludes these columns).
     """
     try:
-        active = LearnerProfile.objects.filter(id=pk, lifecycle_status="active").first()
+        source = EnrolmentUser.all_learners.filter(pk=pk).first()
+        active = (
+            learner_profile_for_source(source, pk, active_only=True)
+            if source is not None
+            else None
+        )
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
     if active is None:

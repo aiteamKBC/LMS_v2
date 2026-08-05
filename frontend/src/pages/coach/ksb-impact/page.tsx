@@ -10,6 +10,7 @@ const ROWS_PER_PAGE = 10;
 
 type FilterKey = 'all' | 'high-risk' | 'on-track' | 'gateway-ready';
 type RiskTone = 'red' | 'amber' | 'green';
+type KsbDetailFilter = 'all' | 'knowledge' | 'skills' | 'behaviours';
 
 interface CaseloadApiLearner {
   id: string;
@@ -180,6 +181,21 @@ function getKsbTypeStyle(type?: string): string {
   return 'bg-violet-50 text-violet-700 border-violet-100';
 }
 
+function ksbDetailFilterLabel(filter: KsbDetailFilter): string {
+  if (filter === 'knowledge') return 'Knowledge';
+  if (filter === 'skills') return 'Skills';
+  if (filter === 'behaviours') return 'Behaviours';
+  return 'All';
+}
+
+function ksbDetailMatchesFilter(detail: KsbCompletedDetail, filter: KsbDetailFilter): boolean {
+  if (filter === 'all') return true;
+  const lowerType = optionalText(detail.type).toLowerCase();
+  if (filter === 'knowledge') return lowerType.includes('knowledge');
+  if (filter === 'skills') return lowerType.includes('skill');
+  return lowerType.includes('behaviour') || lowerType.includes('behavior');
+}
+
 function toCompletedDetails(details?: KsbCompletedDetail[]): KsbCompletedDetail[] {
   if (!Array.isArray(details)) return [];
 
@@ -279,14 +295,39 @@ function KsbMetricCard({
   );
 }
 
-function KsbValue({ value, progress }: { value: number | null; progress: number | null }) {
-  return (
-    <div className="text-center">
+function KsbValue({
+  value,
+  progress,
+  label,
+  onClick,
+}: {
+  value: number | null;
+  progress: number | null;
+  label: string;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <p className={`text-[12px] font-bold ${isNumber(value) ? getMetricTone(progress ?? 0) : 'text-slate-400'}`}>
         {formatKsbCompleted(value)}
       </p>
       {isNumber(progress) && <p className="mt-0.5 text-[9px] text-slate-400">{progress}%</p>}
-    </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="text-center">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Open ${label} KSB details`}
+      className="mx-auto block min-w-14 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+    >
+      {content}
+    </button>
   );
 }
 
@@ -361,6 +402,7 @@ export default function CoachKsbImpact() {
   const [currentPage, setCurrentPage] = useState(1);
   const [rows, setRows] = useState<KsbImpactRow[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [selectedDetailFilter, setSelectedDetailFilter] = useState<KsbDetailFilter>('all');
   const [ownerName, setOwnerName] = useState('Med Maher');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -421,6 +463,9 @@ export default function CoachKsbImpact() {
   }, [filter, rows]);
 
   const selectedRow = rows.find(row => row.id === selectedRowId) || null;
+  const selectedCompletedDetails = selectedRow
+    ? selectedRow.completedDetails.filter(detail => ksbDetailMatchesFilter(detail, selectedDetailFilter))
+    : [];
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / ROWS_PER_PAGE));
   const activePage = Math.min(currentPage, pageCount);
   const paginatedRows = filteredRows.slice((activePage - 1) * ROWS_PER_PAGE, activePage * ROWS_PER_PAGE);
@@ -428,6 +473,16 @@ export default function CoachKsbImpact() {
   const changeFilter = (nextFilter: FilterKey) => {
     setFilter(nextFilter);
     setCurrentPage(1);
+  };
+
+  const openKsbDetails = (rowId: string, detailFilter: KsbDetailFilter = 'all') => {
+    setSelectedRowId(rowId);
+    setSelectedDetailFilter(detailFilter);
+  };
+
+  const closeKsbDetails = () => {
+    setSelectedRowId(null);
+    setSelectedDetailFilter('all');
   };
 
   const filterOptions: Array<{ key: FilterKey; label: string; count: number }> = [
@@ -545,9 +600,24 @@ export default function CoachKsbImpact() {
                           <p className="mt-0.5 truncate text-[10px] text-slate-500">{row.programme}</p>
                         </div>
                       </div>
-                      <KsbValue value={row.knowledgeCompleted} progress={row.knowledgeProgress} />
-                      <KsbValue value={row.skillsCompleted} progress={row.skillsProgress} />
-                      <KsbValue value={row.behavioursCompleted} progress={row.behavioursProgress} />
+                      <KsbValue
+                        value={row.knowledgeCompleted}
+                        progress={row.knowledgeProgress}
+                        label="Knowledge"
+                        onClick={() => openKsbDetails(row.id, 'knowledge')}
+                      />
+                      <KsbValue
+                        value={row.skillsCompleted}
+                        progress={row.skillsProgress}
+                        label="Skills"
+                        onClick={() => openKsbDetails(row.id, 'skills')}
+                      />
+                      <KsbValue
+                        value={row.behavioursCompleted}
+                        progress={row.behavioursProgress}
+                        label="Behaviours"
+                        onClick={() => openKsbDetails(row.id, 'behaviours')}
+                      />
                       <span className="text-center text-[11px] font-semibold text-slate-600">{formatKsbRatio(row.completed, row.target)}</span>
                       <div className="min-w-0">
                         <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -567,7 +637,7 @@ export default function CoachKsbImpact() {
                       <div className="text-center">
                         <button
                           type="button"
-                          onClick={() => setSelectedRowId(row.id)}
+                          onClick={() => openKsbDetails(row.id)}
                           className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[10px] font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100"
                         >
                           Details
@@ -593,7 +663,7 @@ export default function CoachKsbImpact() {
 
       <RightSlidePanel
         isOpen={selectedRow !== null}
-        onClose={() => setSelectedRowId(null)}
+        onClose={closeKsbDetails}
         title={selectedRow?.learner || 'KSB Details'}
         width="w-[560px]"
       >
@@ -686,21 +756,40 @@ export default function CoachKsbImpact() {
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <h4 className="text-xs font-heading font-semibold text-foreground-900">Completed KSB Breakdown</h4>
+                  <h4 className="text-xs font-heading font-semibold text-foreground-900">
+                    {ksbDetailFilterLabel(selectedDetailFilter)} KSB Breakdown
+                  </h4>
                   <p className="mt-1 text-[11px] text-foreground-400">Each completed KSB and the activity that surfaced it.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-violet-50 px-3 py-1 text-[10px] font-bold text-violet-700">
-                  {selectedRow.completedDetails.length} KSB{selectedRow.completedDetails.length === 1 ? '' : 's'}
+                  {selectedCompletedDetails.length} KSB{selectedCompletedDetails.length === 1 ? '' : 's'}
                 </span>
               </div>
 
-              {selectedRow.completedDetails.length === 0 ? (
+              <div className="mt-4 flex gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
+                {(['all', 'knowledge', 'skills', 'behaviours'] as KsbDetailFilter[]).map(detailFilter => (
+                  <button
+                    key={detailFilter}
+                    type="button"
+                    onClick={() => setSelectedDetailFilter(detailFilter)}
+                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[10px] font-bold transition ${
+                      selectedDetailFilter === detailFilter
+                        ? 'bg-[#21003f] text-white shadow-sm'
+                        : 'text-slate-500 hover:bg-white hover:text-slate-900'
+                    }`}
+                  >
+                    {ksbDetailFilterLabel(detailFilter)}
+                  </button>
+                ))}
+              </div>
+
+              {selectedCompletedDetails.length === 0 ? (
                 <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center">
                   <p className="text-[11px] font-semibold text-foreground-500">No completed KSB details available yet.</p>
                 </div>
               ) : (
                 <div className="mt-4 max-h-[24rem] space-y-2 overflow-y-auto pr-1">
-                  {selectedRow.completedDetails.map(detail => (
+                  {selectedCompletedDetails.map(detail => (
                     <div key={detail.code} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_5px_16px_rgba(15,23,42,0.03)]">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">

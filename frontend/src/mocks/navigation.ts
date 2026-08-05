@@ -21,7 +21,6 @@ export const learnerNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'learner-training-plan', label: 'Training Plan', icon: 'ri-road-map-line', href: '/learner/training-plan' },
-      { id: 'learner-lms-components', label: 'LMS Components', icon: 'ri-window-line', href: '/learner/lms-components' },
       { id: 'learner-learning-journey', label: 'Learning Journey', icon: 'ri-compass-3-line', href: '/learner/modules' },
       { id: 'learner-quizzes', label: 'Quizzes', icon: 'ri-questionnaire-line', href: '/learner/quizzes', badge: 1 },
       { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },

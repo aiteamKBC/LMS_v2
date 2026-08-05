@@ -1,5 +1,4 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { PCP_STANDARD } from '@/mocks/enrolment-console';
 import { fetchExtendedIlr, saveExtendedIlr, type LearnerKind } from '@/api/extendedIlr';
 import { uploadEnrolmentDocument } from '@/api/enrolmentDocuments';
 import { ilrDocumentBlob, ilrDocumentFilename } from './steps/ilrDocument';
@@ -44,7 +43,9 @@ function makeInitialDraft(b: EnrolmentBoard): WizardDraft {
   const iso = ddmmToIso(b.contact.dob);
   return {
     personalDetails: { firstName: first, lastName: last, email: b.contact.email, phone: b.contact.phone, address: '', dob: iso, age: undefined, sex: '' },
-    skillsRadar: { standardId: PCP_STANDARD.id, assessments: {} },
+    // The standard is resolved from the learner's own programme by the Skills
+    // Radar step (curriculum.ksb_profiles), so it isn't seeded to a fixed one.
+    skillsRadar: { standardId: '', assessments: {} },
     ilr: emptyIlr(first, last),
     plr: { uln: '', records: [] },
     cvJob: { pmQualifications: '', experienceText: '', functionalSkillsEnrol: '' },

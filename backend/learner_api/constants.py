@@ -40,6 +40,40 @@ POSITION_CHOICES = [
     "Operations team",
 ]
 
+# Organisation record status, from the organisation form's Status dropdown.
+# Validated in the API rather than by a DB check constraint, as above.
+ORGANISATION_STATUS_CHOICES = [
+    "Confirmed",
+    "Opportunity",
+    "Archived",
+]
+
+# Whether the organisation pays the apprenticeship levy. "Not selected" is the
+# form's own default and is stored as-is rather than as NULL, so an untouched
+# dropdown is distinguishable from a deliberate blank.
+LEVY_PAYER_CHOICES = [
+    "Not selected",
+    "Yes",
+    "No",
+]
+
+# The organisation's health & safety risk rating, not a pass/fail outcome.
+HEALTH_SAFETY_CHOICES = [
+    "Not known",
+    "Low",
+    "Medium",
+    "High",
+]
+
+# What kind of group an organisation is. The Employer Group picker shows this in
+# its own column; every row in the reference screenshots is an Employer.
+ORGANISATION_GROUP_TYPE_CHOICES = [
+    "Employer",
+    "Provider",
+    "Sub-contractor",
+    "Other",
+]
+
 PROGRAMME_STATUS_CHOICES = [
     "Ready to enrol",
     # Learner is filling in their own enrolment wizard. While a learner sits at

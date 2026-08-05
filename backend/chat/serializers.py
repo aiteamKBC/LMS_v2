@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .models import Conversation, Message, MessageReceipt
-from .services import chat_principal_for_user
+from .services import chat_principal_for_user, principal_owns_identity
 
 
 def _request_user(context):
@@ -128,7 +128,7 @@ class MessageSerializer(serializers.ModelSerializer):
         return bool(
             principal
             and principal.kind == obj.sender_type
-            and str(principal.id) == str(obj.sender_id)
+            and principal_owns_identity(principal, obj.sender_id)
         )
 
     def get_read_at(self, obj):
@@ -140,7 +140,10 @@ class MessageSerializer(serializers.ModelSerializer):
         if principal is None:
             return None
         recipient_filter = (
-            {"recipient_type": "coach", "recipient_coach_id": principal.id}
+            {
+                "recipient_type": "coach",
+                "recipient_coach_id__in": principal.identity_ids,
+            }
             if principal.kind == "coach"
             else {"recipient_type": "learner", "recipient_learner_id": principal.id}
         )

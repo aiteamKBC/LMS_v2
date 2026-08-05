@@ -1,3 +1,5 @@
+import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
+
 export const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 
 const API_ENDPOINT = `/coach_api/coach/timetable?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
@@ -84,8 +86,7 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchCoachCalendarEvents(signal?: AbortSignal) {
-  const response = await fetch(API_ENDPOINT, { signal });
-  return readJsonResponse<CoachTimetableResponse>(response);
+  return fetchSharedJsonGet<CoachTimetableResponse>(API_ENDPOINT, { signal });
 }
 
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {

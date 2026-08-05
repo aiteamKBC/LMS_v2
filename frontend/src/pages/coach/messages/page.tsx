@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
+import { bootstrapChatSession, chatSocketUrl, type ChatSocketMessage } from '@/api/chat';
 import {
   fetchCoachMessageThread,
   fetchCoachMessageThreads,
@@ -94,6 +96,33 @@ function mergeCoachMessages(current: CoachMessage[], fetched: CoachMessage[]): C
   return [...fetched, ...liveMessages].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
 }
 
+function mergeLiveCoachMessage(current: CoachMessage[], next: CoachMessage): CoachMessage[] {
+  const existingIndex = current.findIndex(message => message.id === next.id);
+  if (existingIndex === -1) {
+    return [...current, next].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+  }
+
+  const merged = [...current];
+  merged[existingIndex] = next;
+  return merged;
+}
+
+function socketMessageToCoachMessage(message: ChatSocketMessage): CoachMessage {
+  const createdAt = new Date(message.created_at);
+  const validDate = !Number.isNaN(createdAt.getTime());
+  return {
+    id: String(message.id),
+    from: message.sender.type === 'coach' ? 'me' : 'them',
+    body: message.is_deleted ? 'Message deleted.' : message.body,
+    createdAt: message.created_at,
+    dateLabel: validDate ? createdAt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '--',
+    timeLabel: validDate ? createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--',
+    editedAt: message.edited_at,
+    isDeleted: message.is_deleted,
+    status: message.sender.type === 'coach' ? 'delivered' : 'sent',
+  };
+}
+
 // Refreshing the inbox should update card content without moving cards that
 // the coach may be reading. The initial API response provides the first order;
 // later refreshes preserve that order and only append genuinely new learners.
@@ -111,6 +140,7 @@ function mergeCoachThreads(current: CoachMessageThread[], incoming: CoachMessage
 }
 
 export default function CoachMessagesPage() {
+  const { auth } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialLearnerIdRef = useRef(searchParams.get('learner'));
@@ -249,6 +279,8 @@ export default function CoachMessagesPage() {
   useEffect(() => {
     if (!selectedLearnerId) return;
     let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
 
     const syncActiveThread = async () => {
       try {
@@ -264,11 +296,55 @@ export default function CoachMessagesPage() {
 
     void syncActiveThread();
     const timer = window.setInterval(() => { void syncActiveThread(); }, 1000);
+
+    const connectSocket = async () => {
+      const conversationId = Number(activeThread?.conversationId);
+      if (!conversationId || !Number.isFinite(conversationId) || cancelled) return;
+
+      try {
+        if (auth.user?.email) {
+          try {
+            await bootstrapChatSession(auth.user.email);
+          } catch {
+            // A production Django session may already be active.
+          }
+        }
+        if (cancelled) return;
+
+        socket = new WebSocket(chatSocketUrl(conversationId));
+        socket.onmessage = (event) => {
+          if (cancelled) return;
+          try {
+            const payload = JSON.parse(event.data) as {
+              type?: string;
+              message?: ChatSocketMessage;
+            };
+            if (!payload.message || payload.message.conversation !== conversationId) return;
+            if (payload.type === 'new_message' || payload.type === 'message_updated' || payload.type === 'message_deleted') {
+              const next = socketMessageToCoachMessage(payload.message);
+              setMessages(current => mergeLiveCoachMessage(current, next));
+            }
+          } catch {
+            // The HTTP refresh remains the fallback if a malformed event arrives.
+          }
+        };
+        socket.onclose = () => {
+          if (cancelled) return;
+          reconnectTimer = window.setTimeout(() => { void connectSocket(); }, 2000);
+        };
+      } catch {
+        // The existing HTTP refresh remains available when WebSocket setup fails.
+      }
+    };
+
+    void connectSocket();
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      socket?.close();
     };
-  }, [selectedLearnerId, ownerEmail]);
+  }, [activeThread?.conversationId, auth.user?.email, ownerEmail, selectedLearnerId]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
 
@@ -345,7 +421,7 @@ export default function CoachMessagesPage() {
       const response = await sendCoachMessage(activeThread.learnerId, newMessage.trim(), ownerEmail || undefined);
       setOwnerName(response.owner.name || ownerName);
       setOwnerEmail(response.owner.email || ownerEmail);
-      setMessages((current) => [...current, response.message]);
+      setMessages((current) => mergeLiveCoachMessage(current, response.message));
       setActiveThread(response.thread);
       upsertThread(response.thread);
       setNewMessage('');

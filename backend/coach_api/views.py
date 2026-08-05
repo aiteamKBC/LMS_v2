@@ -2,6 +2,9 @@ import json
 import logging
 import os
 import re
+# `time` below is datetime.time, so the sleep function is imported under its own
+# name to avoid shadowing it.
+from time import sleep as _sleep
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -30,8 +33,18 @@ from learner_api.evidence_storage import (
     parse_blob_url,
     resolve_read_url,
 )
-from learner_api.models import CommercialUser, EnrolmentUser, LearnerAbsence, LearnerProfile
+from learner_api.models import (
+    CommercialUser,
+    EnrolmentUser,
+    LearnerAbsence,
+    LearnerProfile,
+    learner_activity_events_relation_exists,
+)
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
+from learner_api.calendar_connections import (
+    booking_conflicts as personal_calendar_booking_conflicts,
+    cached_learner_busy_slots,
+)
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
@@ -486,9 +499,25 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
 
 # Learner-booked session types (booked from the learner calendar page, unlike the
 # generated mcr / progress-review events which only the coach schedules).
+# The three onboarding reviews are booked the same way, but with the learner's
+# case owner rather than their coach (see learner_api.calendar).
 BOOKED_EVENT_TITLES = {
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
+    "eligibility-review": "Eligibility Review & FS Discussion",
+    "workspace": "RPL And Experience",
+    "training-plan": "Workplace Health & Safety Declaration",
+}
+
+# Session types the coach can book from their own timetable page.
+COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
+
+# Calendar colour/type vocabulary for the booked types above.
+BOOKED_EVENT_JSON_TYPES = {
+    "student-support": "welfare",
+    "eligibility-review": "review",
+    "workspace": "review",
+    "training-plan": "review",
 }
 
 
@@ -529,14 +558,25 @@ def microsoft_graph_token() -> str:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    try:
-        with urllib_request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Microsoft token request failed: {exc.code} {detail}") from exc
-    except urllib_error.URLError as exc:
-        raise RuntimeError(f"Microsoft token request failed: {exc}") from exc
+    # Transient DNS/network blips otherwise fail a booking outright and leave the
+    # learner holding a slot nobody was told about, so retry the connection a
+    # couple of times. HTTP errors are real rejections -- never retried.
+    last_url_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib_request.urlopen(request, timeout=20) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            last_url_error = None
+            break
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Microsoft token request failed: {exc.code} {detail}") from exc
+        except urllib_error.URLError as exc:
+            last_url_error = exc
+            if attempt < 2:
+                _sleep(1 + attempt)
+    if last_url_error is not None:
+        raise RuntimeError(f"Microsoft token request failed: {last_url_error}") from last_url_error
 
     access_token = data.get("access_token")
     if not access_token:
@@ -871,6 +911,12 @@ def completed_ksb_codes(progress_entries: list[dict], activity_entries: list[dic
     for entry in [*progress_entries, *activity_entries]:
         if not isinstance(entry, dict):
             continue
+        # A failed quiz is an attempt, not KSB evidence.  Legacy failed
+        # attempts can carry an entire profile's codes, which previously made
+        # coach totals jump to almost 100% while the learner page correctly
+        # showed only KSBs evidenced by completed activities.
+        if clean_text(entry.get("kind")).lower() == "quiz" and entry.get("passed") is not True:
+            continue
         completed.update(extract_ksb_codes(entry.get("ksbs")))
     return completed
 
@@ -1052,19 +1098,28 @@ def find_learner_absence_relation(connection) -> str | None:
 
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
-    queryset = LearnerProfile.objects.prefetch_related(
+    prefetches = [
         "assigned_ksbs",
+        "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_activity_events_relation_exists(get_learner_db_alias()):
+        prefetches.append("activity_events")
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .prefetch_related(*prefetches)
+        .order_by("full_name", "id")
     )
     rows = [
         row
-        for row in queryset.order_by("full_name", "id")
-        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
+        for row in queryset
+        if clean_text(row.username)
     ]
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in rows])
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
     for row in rows:
         setattr(
             row,
@@ -1121,27 +1176,39 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
     return rows
 
 
-def fetch_source_schedule_rows(learner_ids: list[int]) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
-    if not learner_ids:
+def fetch_source_schedule_rows(
+    learners: list[LearnerProfile | SimpleNamespace],
+) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
+    """Map profile ids to Created_users source rows using email identity."""
+    if not learners:
         return {}, {}
 
-    # These are legacy source schemas and are not present in every deployment.
-    # LearnerProfile carries the canonical start/end dates, so a missing source
-    # table must not take down the entire coach calendar.
+    profile_ids_by_email = {
+        normalize_email(getattr(learner, "email", "")): int(learner.id)
+        for learner in learners
+        if getattr(learner, "id", None) is not None
+        and normalize_email(getattr(learner, "email", ""))
+    }
+    if not profile_ids_by_email:
+        return {}, {}
+
     try:
-        commercial_rows = {
-            row.id: row
-            for row in CommercialUser.objects.filter(id__in=learner_ids)
-        }
+        source_rows = EnrolmentUser.all_learners.annotate(
+            source_email_key=Lower(Trim("email"))
+        ).filter(source_email_key__in=profile_ids_by_email)
     except DatabaseError:
-        commercial_rows = {}
-    try:
-        enrolment_rows = {
-            row.id: row
-            for row in EnrolmentUser.objects.filter(id__in=learner_ids)
-        }
-    except DatabaseError:
-        enrolment_rows = {}
+        return {}, {}
+
+    commercial_rows = {}
+    enrolment_rows = {}
+    for row in source_rows:
+        profile_id = profile_ids_by_email.get(normalize_email(row.email))
+        if profile_id is None:
+            continue
+        if clean_text(row.learner_type).casefold() == "commercial":
+            commercial_rows[profile_id] = row
+        else:
+            enrolment_rows[profile_id] = row
     return commercial_rows, enrolment_rows
 
 
@@ -1161,7 +1228,7 @@ def resolve_caseload_source_row(
     if learner_id is None:
         return None
     if commercial_rows is None and enrolment_rows is None:
-        commercial_rows, enrolment_rows = fetch_source_schedule_rows([int(learner_id)])
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
     commercial_rows = commercial_rows or {}
     enrolment_rows = enrolment_rows or {}
     commercial_row = commercial_rows.get(learner_id)
@@ -1169,6 +1236,44 @@ def resolve_caseload_source_row(
     if profile_prefers_apprenticeship_source(learner):
         return enrolment_row or commercial_row
     return commercial_row or enrolment_row
+
+
+def learner_calendar_source_identity(
+    learner: LearnerProfile | SimpleNamespace,
+    *,
+    commercial_rows: dict[int, CommercialUser] | None = None,
+    enrolment_rows: dict[int, EnrolmentUser] | None = None,
+) -> tuple[str, int] | None:
+    source = resolve_caseload_source_row(
+        learner,
+        commercial_rows=commercial_rows,
+        enrolment_rows=enrolment_rows,
+    )
+    if source is None or not getattr(source, "id", None):
+        return None
+    kind = "commercial" if clean_text(getattr(source, "learner_type", "")).casefold() == "commercial" else "apprenticeship"
+    return kind, int(source.id)
+
+
+def coach_learner_personal_calendar_conflicts(
+    learner: LearnerProfile | SimpleNamespace,
+    scheduled_date: date,
+    scheduled_time: time,
+    duration_minutes: int,
+    timezone_offset_minutes: int = 0,
+) -> bool:
+    identity = learner_calendar_source_identity(learner)
+    if not identity:
+        return False
+    kind, source_id = identity
+    return personal_calendar_booking_conflicts(
+        kind,
+        source_id,
+        scheduled_date,
+        scheduled_time,
+        duration_minutes,
+        timezone_offset_minutes,
+    )
 
 
 def refresh_caseload_learner_ksb_snapshot(row: LearnerProfile | SimpleNamespace) -> None:
@@ -1227,19 +1332,24 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
     return [entry for entry in list_or_empty(getattr(row, "activity_feed", [])) if isinstance(entry, dict)]
 
 
-def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
-    refresh_caseload_learner_ksb_snapshot(row)
-    if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
-        try:
-            # Keep coach-facing caseload cards aligned with the live learner
-            # detail OTJ calculation instead of stale stored snapshot values.
-            refresh_learner_otjh_snapshot(row)
-        except Exception as exc:
-            logger.warning(
-                "Could not refresh live OTJ snapshot for learner %s: %s",
-                getattr(row, "id", None),
-                exc,
-            )
+def serialize_caseload_learner(
+    row: LearnerProfile | SimpleNamespace,
+    *,
+    refresh_live_snapshots: bool = True,
+) -> dict:
+    if refresh_live_snapshots:
+        refresh_caseload_learner_ksb_snapshot(row)
+        if callable(getattr(row, "save", None)) and hasattr(row, "training_plan_progress"):
+            try:
+                # Keep coach-facing caseload cards aligned with the live learner
+                # detail OTJ calculation instead of stale stored snapshot values.
+                refresh_learner_otjh_snapshot(row)
+            except Exception as exc:
+                logger.warning(
+                    "Could not refresh live OTJ snapshot for learner %s: %s",
+                    getattr(row, "id", None),
+                    exc,
+                )
 
     progress_entries = [entry for entry in list_or_empty(row.training_plan_progress) if isinstance(entry, dict)]
     activity_entries = learner_activity_feed_entries(row)
@@ -1372,6 +1482,16 @@ def serialize_caseload_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     }
 
 
+def request_prefers_live_caseload_snapshots(request) -> bool:
+    """Opt into expensive live KSB/OTJ recalculation when explicitly requested.
+
+    The dashboard and coach list views only need the persisted caseload
+    snapshot, so they stay fast by default. Drill-down callers can pass
+    `?live=1` when they genuinely need a fresh recomputation.
+    """
+    return clean_text(request.GET.get("live")).casefold() in {"1", "true", "yes", "on"}
+
+
 def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
     target_hours_value = (
         clean_text(row.target_hours)
@@ -1469,7 +1589,8 @@ def reported_minutes(value) -> float:
     match = re.search(r"\d+(?:\.\d+)?", lower_text)
     if not match:
         return 0.0
-    return float(match.group(0)) * 60
+    value = float(match.group(0))
+    return value if value > 24 else value * 60
 
 
 def format_hours_number(hours: float) -> str:
@@ -1568,8 +1689,41 @@ def training_plan_component_lookup(training_plan) -> dict[str, dict[str, str]]:
                     "module": module_title,
                     "week": week_title,
                     "title": clean_text(component.get("componentTitle") or component.get("title")),
+                    "expectedOtjh": component.get("expectedOtjh") or component.get("expected_otjh"),
                 }
     return lookup
+
+
+def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[str, float]:
+    ids = sorted({clean_text(component_id) for component_id in component_ids if clean_text(component_id)})
+    if not ids:
+        return {}
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                "SELECT id, expected_otjh FROM curriculum.components WHERE id = ANY(%s)",
+                [ids],
+            )
+            return {
+                component_id: float(expected)
+                for component_id, expected in cur.fetchall()
+                if expected is not None
+            }
+    except DatabaseError as exc:
+        logger.warning("Could not look up component expected_otjh for OTJH breakdown: %s", exc)
+        return {}
+
+
+def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float]) -> float | None:
+    if component_id in expected_by_id:
+        return expected_by_id[component_id]
+    expected = component_meta.get("expectedOtjh")
+    if expected in (None, ""):
+        return None
+    try:
+        return float(expected)
+    except (TypeError, ValueError):
+        return None
 
 
 def build_otjh_completed_entries(
@@ -1595,22 +1749,29 @@ def build_otjh_completed_entries(
             activity_by_component.setdefault(component_id, activity)
 
     entries: list[dict] = []
+    expected_by_id = curriculum_expected_otjh_by_component_id([
+        clean_text(entry.get("componentId"))
+        for entry in progress_entries
+        if isinstance(entry, dict)
+    ])
     for index, entry in enumerate(dedupe_otjh_progress_records(progress_entries)):
         if not isinstance(entry, dict):
-            continue
-        minutes = reported_minutes(entry.get("reportedTime"))
-        if minutes <= 0:
             continue
 
         kind = clean_text(entry.get("kind")).lower()
         quiz_id = clean_text(entry.get("quizId"))
         component_id = clean_text(entry.get("componentId"))
+        component_meta = component_lookup.get(component_id, {})
+        expected_hours = component_expected_otjh_hours(component_id, component_meta, expected_by_id)
+        minutes = expected_hours * 60 if expected_hours is not None else reported_minutes(entry.get("reportedTime"))
+        if minutes <= 0:
+            continue
+
         activity = (
             activity_by_quiz.get(quiz_id)
             if quiz_id
             else activity_by_component.get(f"{kind}:{component_id}") or activity_by_component.get(component_id)
         )
-        component_meta = component_lookup.get(component_id, {})
         merged_entry = {
             **(activity or {}),
             **entry,
@@ -1704,6 +1865,10 @@ def build_ksb_completed_details(
         ("progress", entry)
         for entry in dedupe_otjh_progress_records(progress_entries)
         if isinstance(entry, dict)
+        and not (
+            clean_text(entry.get("kind")).lower() == "quiz"
+            and entry.get("passed") is not True
+        )
     ]
     source_entries.extend(
         ("activity", entry)
@@ -3448,7 +3613,7 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
         "source": record.event_type,
         "sequence": record.sequence,
         "title": title,
-        "type": "welfare" if record.event_type == "student-support" else "coaching",
+        "type": BOOKED_EVENT_JSON_TYPES.get(record.event_type, "coaching"),
         "targetDate": target_date.isoformat(),
         "date": target_date.isoformat(),
         "year": target_date.year,
@@ -3568,8 +3733,18 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     body_lines = [
         f"<p><strong>{base_event['title']}</strong></p>",
         f"<p>Learner: {learner_name}</p>",
-        f"<p>Target date: {format_date(record.target_date)}</p>",
     ]
+    if base_event.get("source") in BOOKED_EVENT_TITLES:
+        # Learner-booked: the owner is being told about a meeting someone else
+        # put in their diary, so lead with who booked it and when.
+        body_lines.append(f"<p>Booked by the learner for {format_date(record.scheduled_date)} "
+                          f"at {record.scheduled_time.strftime('%H:%M')}.</p>")
+        if learner_email:
+            body_lines.append(f"<p>Learner email: {learner_email}</p>")
+        if clean_text(record.notes):
+            body_lines.append(f"<p>Notes: {clean_text(record.notes)}</p>")
+    else:
+        body_lines.append(f"<p>Target date: {format_date(record.target_date)}</p>")
 
     payload = {
         "subject": subject,
@@ -3588,8 +3763,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
         "isOnlineMeeting": True,
         "onlineMeetingProvider": "teamsForBusiness",
     }
+    attendees = []
     if learner_email:
-        payload["attendees"] = [
+        attendees.append(
             {
                 "emailAddress": {
                     "address": learner_email,
@@ -3597,8 +3773,65 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
                 },
                 "type": "required",
             }
-        ]
+        )
+
+    # The mailbox the event is created on becomes the organizer, and Graph never
+    # emails the organizer -- it just appears on their calendar. So for
+    # learner-booked sessions the owner is listed as an attendee AND the event is
+    # created on the learner's mailbox instead (see graph_organizer_mailbox), or
+    # the invite would land on the calendar of the one person who already knows.
+    owner_email = clean_text(record.owner_email)
+    if base_event.get("source") in BOOKED_EVENT_TITLES and owner_email:
+        already_invited = any(
+            clean_text(a["emailAddress"]["address"]).casefold() == owner_email.casefold()
+            for a in attendees
+        )
+        if not already_invited:
+            attendees.append(
+                {
+                    "emailAddress": {
+                        "address": owner_email,
+                        "name": clean_text(record.owner_name) or owner_email,
+                    },
+                    "type": "required",
+                }
+            )
+
+    # Drop the organizer from its own attendee list -- Graph would ignore the
+    # entry for mail purposes anyway, and leaving it in shows the organizer as an
+    # invitee of their own meeting.
+    organizer = graph_organizer_mailbox(record, base_event).casefold()
+    attendees = [
+        a for a in attendees
+        if clean_text(a["emailAddress"]["address"]).casefold() != organizer
+    ]
+
+    if attendees:
+        payload["attendees"] = attendees
     return payload
+
+
+def graph_organizer_mailbox(record: CoachCalendarEvent, base_event: dict) -> str:
+    """Which mailbox the Graph event is created on -- i.e. who organizes it.
+
+    Graph never emails the organizer; the meeting just shows up on their
+    calendar. Only the other attendees get an invite.
+
+    For coach-scheduled events (mcr / progress-review) the coach is the organizer
+    and the learner is mailed -- correct, the coach already knows.
+
+    Learner-booked sessions are the mirror image: the learner initiated it and the
+    owner (coach or enrolment officer) is the one who must be told. Creating the
+    event on the owner's mailbox would make them the organizer and silently
+    deliver no mail, so it is created on the learner's mailbox instead.
+
+    Falls back to the owner when the learner has no address to organize from.
+    """
+    if base_event.get("source") in BOOKED_EVENT_TITLES:
+        learner_email = clean_text(record.learner_email)
+        if learner_email:
+            return learner_email
+    return clean_text(record.owner_email)
 
 
 def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -> str:
@@ -3609,7 +3842,8 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
         return "Microsoft Graph credentials are not configured; event was saved locally only."
 
     payload = build_graph_event_payload(record, base_event)
-    owner_key = urllib_parse.quote(record.owner_email, safe="")
+    organizer_mailbox = graph_organizer_mailbox(record, base_event)
+    owner_key = urllib_parse.quote(organizer_mailbox, safe="")
     try:
         if clean_text(record.graph_event_id):
             event_key = urllib_parse.quote(record.graph_event_id, safe="")
@@ -3658,6 +3892,7 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
             response_join_url = clean_text(online_meeting.get("joinUrl"))
 
     record.graph_event_id = response_event_id
+    record.graph_organizer_email = organizer_mailbox if response_event_id else ""
     record.meeting_provider = "Microsoft Teams" if (response_event_id or response_join_url or response_web_link) else ""
     record.meeting_link = response_join_url or response_web_link
     record.graph_web_link = response_web_link
@@ -3668,7 +3903,11 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
     if not clean_text(record.graph_event_id) or not has_graph_credentials():
         return ""
 
-    owner_key = urllib_parse.quote(record.owner_email, safe="")
+    # The event lives on whichever mailbox organized it, which for learner-booked
+    # sessions is the learner, not the owner (see graph_organizer_mailbox). Deleting
+    # as the organizer is also what makes Graph email the cancellation to attendees.
+    mailbox = clean_text(record.graph_organizer_email) or clean_text(record.owner_email)
+    owner_key = urllib_parse.quote(mailbox, safe="")
     event_key = urllib_parse.quote(record.graph_event_id, safe="")
     try:
         microsoft_graph_request("DELETE", f"users/{owner_key}/events/{event_key}")
@@ -3936,7 +4175,7 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
     )
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows([row.id for row in active_rows])
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
     live_session_events = collect_live_session_events(
         owner_email, owner_name, start_date=start_date, end_date=end_date
     )
@@ -4119,6 +4358,9 @@ def coach_timetable_schedule_event(request):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
@@ -4133,6 +4375,13 @@ def coach_timetable_schedule_event(request):
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
+        learner_rows = fetch_owner_active_learner_profiles(owner_email)
+        learner_map = build_learner_profile_map(learner_rows)
+        learner = learner_map.get(catchup_record.learner_id)
+        if learner and coach_learner_personal_calendar_conflicts(
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+        ):
+            return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.scheduled_date = scheduled_date
         catchup_record.scheduled_time = scheduled_time
@@ -4140,8 +4389,6 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-        learner = fetch_owner_active_learner_profiles(owner_email)
-        learner_map = build_learner_profile_map(learner)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -4167,6 +4414,11 @@ def coach_timetable_schedule_event(request):
         learner_rows = fetch_owner_active_learner_profiles(owner_email)
         learner_map = build_learner_profile_map(learner_rows)
         learner_id = int(catchup_template_event["learnerId"])
+        learner = learner_map.get(learner_id)
+        if learner and coach_learner_personal_calendar_conflicts(
+            learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+        ):
+            return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
         target_date = scheduled_date
 
         record, _ = CoachCalendarEvent.objects.get_or_create(
@@ -4224,6 +4476,14 @@ def coach_timetable_schedule_event(request):
         target_date = target_date.date()
     if not isinstance(target_date, date):
         return JsonResponse({"detail": "Target date is missing for this event."}, status=400)
+
+    learner_rows = fetch_owner_active_learner_profiles(owner_email)
+    learner_map = build_learner_profile_map(learner_rows)
+    base_learner = learner_map.get(int(base_event["learnerId"]))
+    if base_learner and coach_learner_personal_calendar_conflicts(
+        base_learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    ):
+        return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
 
     record, _ = CoachCalendarEvent.objects.get_or_create(
         event_key=event_key,
@@ -4284,10 +4544,15 @@ def coach_timetable_book_event(request):
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
         duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
+        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
+        if not -840 <= timezone_offset_minutes <= 840:
+            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
     except (TypeError, ValueError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    if session_type not in BOOKED_EVENT_TITLES:
+    # Deliberately narrower than BOOKED_EVENT_TITLES: the onboarding reviews in
+    # that map are booked by the learner against their case owner, not here.
+    if session_type not in COACH_BOOKABLE_EVENT_TYPES:
         return JsonResponse({"detail": "sessionType must be 'catch-up' or 'student-support'."}, status=400)
     if learner_id <= 0:
         return JsonResponse({"detail": "learnerId is required."}, status=400)
@@ -4305,6 +4570,10 @@ def coach_timetable_book_event(request):
     learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if not learner:
         return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+    if coach_learner_personal_calendar_conflicts(
+        learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
+    ):
+        return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
 
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
     learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
@@ -4737,6 +5006,65 @@ def coach_timetable(request):
 
 
 @require_GET
+def coach_learner_busy_slots(request, learner_id=None):
+    """Return privacy-safe cached busy blocks for learners in this coach's caseload."""
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    requested_learner_id = learner_id or parse_int(request.GET.get("learner_id"), 0)
+    start = clean_text(request.GET.get("start"))
+    end = clean_text(request.GET.get("end"))
+    if not start or not end:
+        return JsonResponse({"detail": "start and end are required ISO-8601 datetimes."}, status=400)
+
+    try:
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError:
+        return JsonResponse({"detail": "start and end must be ISO-8601 datetimes."}, status=400)
+    if end_dt <= start_dt or (end_dt - start_dt).days > 31:
+        return JsonResponse({"detail": "Busy-slot range must be between 0 and 31 days."}, status=400)
+
+    learners = fetch_owner_active_learner_profiles(owner_email)
+    if requested_learner_id:
+        learners = [row for row in learners if int(getattr(row, "id", 0) or 0) == requested_learner_id]
+        if not learners:
+            return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    commercial_rows, enrolment_rows = fetch_source_schedule_rows(learners)
+    slots = []
+    seen_slots = set()
+    try:
+        for learner in learners:
+            identity = learner_calendar_source_identity(
+                learner,
+                commercial_rows=commercial_rows,
+                enrolment_rows=enrolment_rows,
+            )
+            if not identity:
+                continue
+            kind, source_id = identity
+            for slot in cached_learner_busy_slots(kind, source_id, start, end):
+                slot_key = (str(learner.id), slot["start"], slot["end"])
+                if slot_key in seen_slots:
+                    continue
+                seen_slots.add(slot_key)
+                slots.append(
+                    {
+                        "id": slot["id"],
+                        "learnerId": str(learner.id),
+                        "learnerName": clean_text(getattr(learner, "username", "")) or "Learner",
+                        "start": slot["start"],
+                        "end": slot["end"],
+                        "status": "busy",
+                        "syncedAt": slot["syncedAt"],
+                    }
+                )
+    except Exception as exc:
+        return JsonResponse({"detail": "Unable to load learner busy slots.", "error": str(exc)}, status=503)
+
+    return JsonResponse({"busy": slots})
+
+
+@require_GET
 def coach_monthly_activity(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
@@ -4806,10 +5134,14 @@ def coach_monthly_activity(request):
 @require_GET
 def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
     try:
         rows = fetch_caseload_learner_profiles(owner_email)
-        learners = [serialize_caseload_learner(row) for row in rows]
+        learners = [
+            serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
+            for row in rows
+        ]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},

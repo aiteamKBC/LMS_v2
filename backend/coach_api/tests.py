@@ -3,15 +3,102 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport
 from coach_api.views import (
+    build_otjh_completed_entries,
     build_monthly_activity_learner,
+    coach_caseload,
+    completed_ksb_codes,
+    fetch_source_schedule_rows,
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
 )
+
+
+class SourceProfileIdentityTests(SimpleTestCase):
+    @patch("coach_api.views.EnrolmentUser.all_learners.annotate")
+    def test_source_rows_are_keyed_by_profile_id_after_email_match(self, annotate):
+        source = SimpleNamespace(
+            id=19,
+            email="Mahmoud.Fouda@kentbusinesscollege.com",
+            learner_type="commercial",
+        )
+        annotate.return_value.filter.return_value = [source]
+        profile = SimpleNamespace(
+            id=2,
+            email="mahmoud.fouda@kentbusinesscollege.com",
+        )
+
+        commercial, apprenticeship = fetch_source_schedule_rows([profile])
+
+        self.assertEqual(commercial, {2: source})
+        self.assertEqual(apprenticeship, {})
+        annotate.return_value.filter.assert_called_once_with(
+            source_email_key__in={"mahmoud.fouda@kentbusinesscollege.com": 2}
+        )
+
+
+class CoachKsbEvidenceTests(SimpleTestCase):
+    def test_failed_quiz_codes_do_not_count_as_completed_ksbs(self):
+        completed = completed_ksb_codes(
+            [
+                {"kind": "quiz", "passed": False, "ksbs": ["K1", "K2", "S1"]},
+                {"kind": "video", "ksbs": ["K3.1", "B2.2"]},
+            ],
+            [],
+        )
+
+        self.assertEqual(completed, {"K3", "B2"})
+
+
+class CoachCaseloadViewTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_caseload_uses_cached_snapshots_by_default(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
+
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_caseload_allows_live_snapshot_refresh_when_requested(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com", "live": "1"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
 
 
 @override_settings(
@@ -92,10 +179,11 @@ class AbsenceEvidenceRoutingTests(SimpleTestCase):
 
 
 class MonthlyActivityTests(SimpleTestCase):
-    def test_reported_minutes_treats_bare_numbers_as_hours(self):
+    def test_reported_minutes_treats_small_bare_numbers_as_hours_and_large_values_as_minutes(self):
         self.assertEqual(reported_minutes("2"), 120.0)
         self.assertEqual(reported_minutes("2h"), 120.0)
         self.assertEqual(reported_minutes("1.5"), 90.0)
+        self.assertEqual(reported_minutes("120"), 120.0)
         self.assertEqual(reported_minutes("90 min"), 90.0)
 
     def test_build_monthly_activity_learner_dedupes_duplicate_feed_items(self):
@@ -129,6 +217,7 @@ class MonthlyActivityTests(SimpleTestCase):
                 },
             ],
         )
+
         learner = {
             "id": "42",
             "name": "Test Learner",
@@ -157,6 +246,35 @@ class MonthlyActivityTests(SimpleTestCase):
                 "feed:quiz|quiz-1|2|2026-07-15|Quiz A",
             ],
         )
+
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={"component-1": 1.5})
+    def test_build_otjh_completed_entries_prefers_curriculum_expected_otjh(self, expected_lookup):
+        entries = build_otjh_completed_entries(
+            [
+                {
+                    "kind": "video",
+                    "componentId": "component-1",
+                    "componentTitle": "Pre-recorded video",
+                    "reportedTime": "120",
+                    "submittedAt": "2026-07-18T08:05:37Z",
+                }
+            ],
+            [],
+            [{
+                "moduleTitle": "Module A",
+                "weeks": [{
+                    "weekTitle": "Week 1",
+                    "components": [{
+                        "componentId": "component-1",
+                        "componentTitle": "Pre-recorded video",
+                    }],
+                }],
+            }],
+        )
+
+        expected_lookup.assert_called_once_with(["component-1"])
+        self.assertEqual(entries[0]["hours"], 1.5)
+        self.assertEqual(entries[0]["reportedTime"], "120")
 
 
 class CaseloadOtjhSnapshotTests(SimpleTestCase):
@@ -289,8 +407,10 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
     def test_serialize_caseload_learner_rolls_subcodes_up_to_parent_ksbs(
         self,
+        curriculum_expected_lookup,
         refresh_otjh_snapshot,
         refresh_ksb_snapshot,
         learner_activity_feed_entries,

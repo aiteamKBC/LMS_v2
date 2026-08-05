@@ -79,38 +79,54 @@ class Migration(migrations.Migration):
             END;
             $$;
 
-            DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
-            ON "Coach".learner_attendance_details;
+            -- These reporting tables are externally managed and intentionally
+            -- absent from a fresh Django test database. Install/backfill the
+            -- trigger only where both source and target tables already exist.
+            DO $migration$
+            BEGIN
+                IF to_regclass('"Coach".learner_attendance_details') IS NOT NULL
+                   AND to_regclass('"Learner"."Absence"') IS NOT NULL THEN
+                    DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
+                    ON "Coach".learner_attendance_details;
 
-            CREATE TRIGGER learner_attendance_details_sync_absence_counts
-            AFTER INSERT OR UPDATE OR DELETE
-            ON "Coach".learner_attendance_details
-            FOR EACH ROW
-            EXECUTE FUNCTION "Coach".sync_learner_absence_counts_from_details();
+                    CREATE TRIGGER learner_attendance_details_sync_absence_counts
+                    AFTER INSERT OR UPDATE OR DELETE
+                    ON "Coach".learner_attendance_details
+                    FOR EACH ROW
+                    EXECUTE FUNCTION "Coach".sync_learner_absence_counts_from_details();
 
-            WITH detail_counts AS (
-                SELECT
-                    learner_id,
-                    count(*) FILTER (
-                        WHERE lower(trim(attendance_status::text)) IN ('1', 'true', 'yes', 'y', 'present', 'attended', 'attend')
-                    ) AS present_count,
-                    count(*) FILTER (
-                        WHERE lower(trim(attendance_status::text)) IN ('0', 'false', 'no', 'n', 'absent', 'missed', 'did not attend', 'non-attendance')
-                    ) AS absent_count
-                FROM "Coach".learner_attendance_details
-                WHERE learner_id IS NOT NULL
-                GROUP BY learner_id
-            )
-            UPDATE "Learner"."Absence" absence
-            SET present = detail_counts.present_count,
-                absent = detail_counts.absent_count,
-                updated_at = now()
-            FROM detail_counts
-            WHERE absence.learner_id = detail_counts.learner_id;
+                    WITH detail_counts AS (
+                        SELECT
+                            learner_id,
+                            count(*) FILTER (
+                                WHERE lower(trim(attendance_status::text)) IN ('1', 'true', 'yes', 'y', 'present', 'attended', 'attend')
+                            ) AS present_count,
+                            count(*) FILTER (
+                                WHERE lower(trim(attendance_status::text)) IN ('0', 'false', 'no', 'n', 'absent', 'missed', 'did not attend', 'non-attendance')
+                            ) AS absent_count
+                        FROM "Coach".learner_attendance_details
+                        WHERE learner_id IS NOT NULL
+                        GROUP BY learner_id
+                    )
+                    UPDATE "Learner"."Absence" absence
+                    SET present = detail_counts.present_count,
+                        absent = detail_counts.absent_count,
+                        updated_at = now()
+                    FROM detail_counts
+                    WHERE absence.learner_id = detail_counts.learner_id;
+                END IF;
+            END
+            $migration$;
             """,
             reverse_sql="""
-            DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
-            ON "Coach".learner_attendance_details;
+            DO $migration$
+            BEGIN
+                IF to_regclass('"Coach".learner_attendance_details') IS NOT NULL THEN
+                    DROP TRIGGER IF EXISTS learner_attendance_details_sync_absence_counts
+                    ON "Coach".learner_attendance_details;
+                END IF;
+            END
+            $migration$;
             DROP FUNCTION IF EXISTS "Coach".sync_learner_absence_counts_from_details();
             DROP FUNCTION IF EXISTS "Coach".refresh_learner_absence_counts(integer, text);
             """,

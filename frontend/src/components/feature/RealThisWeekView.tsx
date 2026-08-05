@@ -228,7 +228,9 @@ function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchLmsSchema()
+    // Request only this learner. Loading the all-students schema made a normal
+    // client-side route change look like a full page reload.
+    fetchLmsSchema({ email: real.email, perPage: 1 })
       .then((schema) => {
         if (cancelled) return;
         const email = real.email.trim().toLowerCase();

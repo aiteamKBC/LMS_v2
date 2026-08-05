@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
+import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   bootstrapChatSession,
@@ -13,7 +14,7 @@ import {
   createChatMessage,
   deleteChatMessage,
   fetchChatConversations,
-  fetchChatMessages,
+  fetchAllChatMessages,
   markChatMessageRead,
   updateChatMessage,
 } from '@/api/chat';
@@ -101,11 +102,24 @@ function isWithinMessageActionWindow(message: ChatMessage): boolean {
 
 export default function MessagesPage() {
   const { auth } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
-  const role = auth.roles[0]?.slug || 'learner';
+  const authenticatedRole = auth.roles[0]?.slug || 'learner';
+  const role = location.pathname.startsWith('/learner/messages')
+    ? 'learner'
+    : authenticatedRole;
   const nav = roleNavMap[role] || roleNavMap.learner;
   const isCoach = role === 'coach';
+  // A fresh localhost origin has no mock-login localStorage yet. Keep the
+  // learner inbox usable in development while production still requires the
+  // normal authenticated app session.
+  const canUseDemoLearnerChat = role === 'learner' && import.meta.env.DEV;
+  const chatReady = auth.isAuthenticated || canUseDemoLearnerChat;
+  const rememberedLearnerId = role === 'learner' ? getRememberedLearner()?.id : undefined;
+  const chatSessionEmail = role === 'learner'
+    ? (authenticatedRole !== 'learner' ? 'learner@kbc.test' : (auth.user?.email || 'learner@kbc.test'))
+    : auth.user?.email;
 
   const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
@@ -150,8 +164,17 @@ export default function MessagesPage() {
     try {
       // The app login is local-demo auth, so ensure the protected Django chat
       // session is ready before loading the PostgreSQL conversations.
-      if (auth.user?.email && (role === 'coach' || role === 'learner')) {
-        await bootstrapChatSession(auth.user.email);
+      if (chatSessionEmail && (role === 'coach' || role === 'learner')) {
+        try {
+          await bootstrapChatSession(chatSessionEmail, {
+            learnerSourceId: rememberedLearnerId,
+          });
+        } catch (cause) {
+          // A 404 means production demo bootstrapping is disabled and the real
+          // Django login owns the session. Other failures must stop here so a
+          // stale learner session can never display or send another learner's chat.
+          if (!(cause instanceof ChatApiError) || cause.status !== 404) throw cause;
+        }
       }
       const data = await fetchChatConversations();
       setConversations(data);
@@ -167,17 +190,17 @@ export default function MessagesPage() {
     } finally {
       setLoadingConversations(false);
     }
-  }, [auth.user?.email, role]);
+  }, [chatSessionEmail, rememberedLearnerId, role]);
 
   useEffect(() => {
-    if (auth.isAuthenticated) void loadConversations();
+    if (chatReady) void loadConversations();
     else setLoadingConversations(false);
-  }, [auth.isAuthenticated, loadConversations]);
+  }, [chatReady, loadConversations]);
 
   // Keep the inbox list and unread badges current even when the production
   // WebSocket proxy is unavailable.
   useEffect(() => {
-    if (!auth.isAuthenticated) return;
+    if (!chatReady) return;
 
     const syncConversationList = async () => {
       try {
@@ -194,7 +217,7 @@ export default function MessagesPage() {
 
     const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
     return () => window.clearInterval(conversationTimer);
-  }, [auth.isAuthenticated]);
+  }, [chatReady]);
 
   useEffect(() => {
     if (activeConversationId === null) {
@@ -210,7 +233,7 @@ export default function MessagesPage() {
 
     const loadMessagesAndConnect = async () => {
       try {
-        const page = await fetchChatMessages(activeConversationId);
+        const page = await fetchAllChatMessages(activeConversationId);
         if (cancelled) return;
         setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
@@ -310,13 +333,13 @@ export default function MessagesPage() {
   // briefly drops. This is a lightweight fallback; the WebSocket remains the
   // primary delivery path when it is connected.
   useEffect(() => {
-    if (!auth.isAuthenticated || activeConversationId === null) return;
+    if (!chatReady || activeConversationId === null) return;
 
     shouldStickToBottomRef.current = true;
 
     const syncMessages = async () => {
       try {
-        const page = await fetchChatMessages(activeConversationId);
+        const page = await fetchAllChatMessages(activeConversationId);
         const unread = page.results.filter(message => !message.is_mine && !message.read_at);
         setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
@@ -345,7 +368,7 @@ export default function MessagesPage() {
     void syncMessages();
     const pollTimer = window.setInterval(() => { void syncMessages(); }, 1000);
     return () => window.clearInterval(pollTimer);
-  }, [activeConversationId, auth.isAuthenticated]);
+  }, [activeConversationId, chatReady]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
 
@@ -382,7 +405,7 @@ export default function MessagesPage() {
         || (activeFilter === 'recent' && isRecent(conversation.updated_at));
       return matchesQuery && matchesFilter;
     });
-  }, [activeFilter, conversations, role, searchQuery]);
+  }, [activeFilter, conversations, isCoach, role, searchQuery]);
 
   const unreadCount = conversations.reduce((sum, item) => sum + item.unread_count, 0);
   const needReplyCount = conversations.filter(item => item.latest_message?.sender.type !== role).length;

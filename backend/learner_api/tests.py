@@ -6,8 +6,10 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
 from .active_users import (
+    _canonical_ksb_items,
     _coerce_ksb_items,
     _fetch_ksb_items,
+    _ksb_version_hash,
     _reported_minutes,
     completed_hours_from_progress,
     refresh_learner_ksb_snapshot,
@@ -25,7 +27,7 @@ from .learner_detail import (
     _sequential_week_target,
 )
 from .mappers import to_learner_detail
-from .models import _progress_entry_activity, _serialise_quiz_ref
+from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -33,6 +35,34 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertEqual(_serialise_quiz_ref("42"), 42)
         self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
         self.assertIsNone(_serialise_quiz_ref(None))
+
+
+class LearnerActivityFeedFallbackTests(SimpleTestCase):
+    @patch("learner_api.models.learner_activity_events_relation_exists", return_value=False)
+    def test_returns_empty_activity_feed_when_relation_is_missing(self, relation_exists):
+        learner = LearnerProfile()
+
+        self.assertEqual(learner.activity_feed_entries(), [])
+        relation_exists.assert_called_once()
+
+    @patch("learner_api.models._progress_entry_activity")
+    @patch("learner_api.models.learner_activity_events_relation_exists", return_value=True)
+    def test_uses_prefetched_progress_entries_when_available(self, relation_exists, project_entry):
+        learner = LearnerProfile()
+        learner._prefetched_objects_cache = {
+            "progress_entries": [
+                SimpleNamespace(feed_kind="video", feed_key="keep"),
+                SimpleNamespace(feed_kind="", feed_key="skip"),
+            ]
+        }
+        project_entry.side_effect = lambda entry: {"kind": entry.feed_key, "at": entry.feed_key}
+
+        self.assertEqual(
+            learner.activity_feed_entries(newest_first=True),
+            [{"kind": "keep", "at": "keep"}],
+        )
+        project_entry.assert_called_once()
+        relation_exists.assert_called_once()
 
 
 class ProgressActivityProjectionTests(SimpleTestCase):
@@ -75,7 +105,7 @@ class ProgressActivityProjectionTests(SimpleTestCase):
 
 
 class LearnerProfileResolutionTests(SimpleTestCase):
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_resolves_active_profile_by_email_before_source_id(self, profile_filter):
         expected = SimpleNamespace(id=2)
         profile_filter.return_value.first.return_value = expected
@@ -91,7 +121,7 @@ class LearnerProfileResolutionTests(SimpleTestCase):
             lifecycle_status="active",
         )
 
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_falls_back_to_source_id_only_when_source_has_no_email(self, profile_filter):
         expected = SimpleNamespace(id=19)
         profile_filter.return_value.first.return_value = expected
@@ -102,9 +132,9 @@ class LearnerProfileResolutionTests(SimpleTestCase):
         )
 
         self.assertIs(result, expected)
-        profile_filter.assert_called_once_with(id=19, lifecycle_status="active")
+        profile_filter.assert_called_once_with(pk=19, lifecycle_status="active")
 
-    @patch("learner_api.learner_detail.LearnerProfile.objects.filter")
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_does_not_cross_link_an_unmatched_email_by_source_id(self, profile_filter):
         profile_filter.return_value.first.return_value = None
 
@@ -156,10 +186,29 @@ class AttendanceSummaryTests(SimpleTestCase):
 
 
 class LearnerKsbSnapshotTests(SimpleTestCase):
-    def test_reported_minutes_treats_bare_numbers_as_hours(self):
+    def test_versioned_ksb_content_is_canonical_and_deduplicated(self):
+        items = _canonical_ksb_items([
+            {"code": " k1 ", "number": "1", "type": "Knowledge", "description": "First"},
+            {"code": "K1", "number": "1", "type": "Knowledge", "description": "Duplicate"},
+            {"code": "S2", "number": "2", "type": "Skills", "description": "Second"},
+        ])
+
+        self.assertEqual([item["code"] for item in items], ["K1", "S2"])
+        self.assertEqual(items[0]["description"], "First")
+        self.assertEqual(len(_ksb_version_hash(items)), 64)
+        self.assertEqual(_ksb_version_hash(items), _ksb_version_hash(list(items)))
+
+    def test_version_hash_changes_when_a_definition_changes(self):
+        original = [{"code": "K1", "number": "1", "type": "Knowledge", "description": "Original"}]
+        changed = [{**original[0], "description": "Updated"}]
+
+        self.assertNotEqual(_ksb_version_hash(original), _ksb_version_hash(changed))
+
+    def test_reported_minutes_treats_small_bare_numbers_as_hours_and_large_values_as_minutes(self):
         self.assertEqual(_reported_minutes("2"), 120.0)
         self.assertEqual(_reported_minutes("2h"), 120.0)
         self.assertEqual(_reported_minutes("1.5"), 90.0)
+        self.assertEqual(_reported_minutes("120"), 120.0)
         self.assertEqual(_reported_minutes("120 min"), 120.0)
 
     def test_completed_hours_dedupes_repeated_otj_progress(self):
@@ -172,6 +221,18 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
         ]
 
         self.assertEqual(completed_hours_from_progress(progress), "6")
+
+    def test_completed_hours_prefers_curriculum_expected_otjh_for_known_components(self):
+        progress = [
+            {"kind": "video", "componentId": "component-1", "reportedTime": "120"},
+            {"kind": "component", "componentId": "component-2", "reportedTime": "5"},
+        ]
+        components = [
+            {"componentId": "component-1", "expectedOtjh": 1.5},
+            {"componentId": "component-2", "expectedOtjh": 2},
+        ]
+
+        self.assertEqual(completed_hours_from_progress(progress, components), "3.5")
 
     def test_coerce_ksb_items_parses_profile_json_payload(self):
         items = _coerce_ksb_items(

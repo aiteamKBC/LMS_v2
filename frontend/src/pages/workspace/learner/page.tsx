@@ -177,7 +177,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
               <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> Current week
             </span>
-            <h3 className="mt-1 text-lg font-heading font-bold leading-tight truncate">Current Week</h3>
+            <h3 className="mt-1 text-lg font-heading font-bold leading-tight text-white truncate">Current Week</h3>
             <p className="text-[12px] text-white/75 truncate">{weekLabel} · {moduleTitle}</p>
           </div>
           <div className="shrink-0 text-right">
@@ -1245,7 +1245,7 @@ export default function LearnerOverview() {
               </div>
 
               {/* ── Activity Feed ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
+              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
                 </div>

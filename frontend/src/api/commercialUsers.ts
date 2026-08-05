@@ -9,6 +9,7 @@ import type { EnrolmentBoard } from '@/pages/users/types';
 import type { AptemUserFields } from './enrolmentUsers';
 
 const BASE = '/learner_api/commercial-users';
+const UNIFIED_ENROLMENT_BASE = '/learner_api/enrolment-users';
 
 export interface CommercialUserRow extends AptemUserFields {
   id: string;
@@ -59,7 +60,7 @@ export interface CommercialProgrammeInput {
   trainingPlan?: TrainingPlan;
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
@@ -70,9 +71,17 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(`The server returned ${res.headers.get('content-type') || 'a non-JSON response'} for ${url}.`);
+    }
+  }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const error = data && typeof data === 'object' && 'error' in data ? String(data.error) : '';
+    throw new Error(error || `Request failed (${res.status})`);
   }
   return data as T;
 }
@@ -104,12 +113,12 @@ export function updateCommercialProgramme(id: string, patch: CommercialProgramme
  * back empty, so the wizard renders those steps blank instead of erroring.
  */
 export function fetchCommercialBoard(id: string): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`/enrolment_api/commercial-users/${id}/board/`);
+  return request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`);
 }
 
 /** Save wizard edits for a commercial learner (flat columns + training plan). */
 export function updateCommercialBoard(id: string, patch: Record<string, unknown>): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`/enrolment_api/commercial-users/${id}/board/`, {
+  return request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });

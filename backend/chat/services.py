@@ -45,6 +45,21 @@ class ChatPrincipal:
     id: str | int
     name: str
     email: str
+    identity_ids: tuple[str | int, ...]
+
+
+def principal_owns_identity(principal, identity_id):
+    """Return whether an email-resolved principal owns an external identity id.
+
+    Learner emails are unique. The existing coach table can contain duplicate
+    rows for the same email, so a signed-in coach must be able to access the
+    conversations attached to any of those equivalent rows. The conversation
+    id still determines the exact sender row used when a message is persisted.
+    """
+
+    if principal is None:
+        return False
+    return str(identity_id) in {str(value) for value in principal.identity_ids}
 
 
 def _principal_cache_key(user):
@@ -69,13 +84,26 @@ def chat_principal_for_user(user):
     email = (getattr(user, "email", "") or "").strip()
     principal = None
     if email:
-        coach = ChatCoach.objects.filter(email__iexact=email).first()
-        if coach:
-            principal = ChatPrincipal("coach", coach.pk, coach.name, coach.email)
+        coaches = list(ChatCoach.objects.filter(email__iexact=email).order_by("id"))
+        if coaches:
+            coach = coaches[0]
+            principal = ChatPrincipal(
+                "coach",
+                coach.pk,
+                coach.name,
+                coach.email,
+                tuple(item.pk for item in coaches),
+            )
         else:
             learner = ChatLearner.objects.filter(email__iexact=email).first()
             if learner:
-                principal = ChatPrincipal("learner", learner.pk, learner.full_name, learner.email)
+                principal = ChatPrincipal(
+                    "learner",
+                    learner.pk,
+                    learner.full_name,
+                    learner.email,
+                    (learner.pk,),
+                )
 
     setattr(user, cache_key, principal)
     return principal
@@ -89,8 +117,16 @@ def _principal_matches_conversation(conversation, principal):
     if principal is None:
         return False
     if principal.kind == "coach":
-        return str(conversation.coach_id) == str(principal.id)
-    return str(conversation.learner_id) == str(principal.id)
+        return principal_owns_identity(principal, conversation.coach_id)
+    return principal_owns_identity(principal, conversation.learner_id)
+
+
+def _principal_sent_message(principal, message):
+    return bool(
+        principal
+        and principal.kind == message.sender_type
+        and principal_owns_identity(principal, message.sender_id)
+    )
 
 
 def user_belongs_to_conversation(conversation, user):
@@ -99,14 +135,17 @@ def user_belongs_to_conversation(conversation, user):
 
 def _receipt_recipient_filter(principal, prefix=""):
     field_prefix = f"{prefix}__" if prefix else ""
-    identity_field = (
-        f"{field_prefix}recipient_coach_id"
-        if principal.kind == "coach"
-        else f"{field_prefix}recipient_learner_id"
-    )
+    if principal.kind == "coach":
+        identity_filter = {
+            f"{field_prefix}recipient_coach_id__in": principal.identity_ids,
+        }
+    else:
+        identity_filter = {
+            f"{field_prefix}recipient_learner_id": principal.id,
+        }
     return {
         f"{field_prefix}recipient_type": principal.kind,
-        identity_field: principal.id,
+        **identity_filter,
     }
 
 
@@ -118,7 +157,7 @@ def _hidden_message_filter(principal, prefix=""):
         **{
             message_field: OuterRef("pk"),
             "participant_type": principal.kind,
-            "participant_id": str(principal.id),
+            "participant_id__in": tuple(str(value) for value in principal.identity_ids),
         }
     )
 
@@ -136,7 +175,7 @@ def conversation_queryset_for_user(user):
         return Conversation.objects.none()
 
     ownership = (
-        Q(coach_id=principal.id)
+        Q(coach_id__in=principal.identity_ids)
         if principal.kind == "coach"
         else Q(learner_id=principal.id)
     )
@@ -206,7 +245,7 @@ def learner_messages_queryset_for_coach(user):
     ).values("read_at")[:1]
     return (
         Message.objects.filter(
-            conversation__coach_id=principal.id,
+            conversation__coach_id__in=principal.identity_ids,
             sender_type="learner",
         )
         .select_related("conversation", "sender_coach", "sender_learner")
@@ -221,7 +260,7 @@ def get_message_for_user(message_id, user):
     if principal is None:
         return None
     ownership = (
-        Q(conversation__coach_id=principal.id)
+        Q(conversation__coach_id__in=principal.identity_ids)
         if principal.kind == "coach"
         else Q(conversation__learner_id=principal.id)
     )
@@ -283,7 +322,9 @@ def create_message(conversation, sender, body):
         "is_deleted": False,
     }
     if principal.kind == "coach":
-        message_kwargs["sender_coach_id"] = principal.id
+        # The exact conversation row is authoritative. This is important when
+        # old coach identity rows share the same normalized email.
+        message_kwargs["sender_coach_id"] = locked_conversation.coach_id
     else:
         message_kwargs["sender_learner_id"] = principal.id
 
@@ -323,7 +364,7 @@ def edit_message(message, editor, body):
         raise ChatAccessError("Editor does not belong to this conversation.")
     if message.is_deleted:
         raise InvalidMessageError("Deleted messages cannot be edited.")
-    if message.sender_type != principal.kind or str(message.sender_id) != str(principal.id):
+    if not _principal_sent_message(principal, message):
         raise ChatAccessError("Only the message sender can edit this message.")
     _ensure_message_action_is_recent(message)
     if not isinstance(body, str):
@@ -345,7 +386,7 @@ def edit_message(message, editor, body):
         raise ChatAccessError("Editor does not belong to this conversation.")
     if locked_message.is_deleted:
         raise InvalidMessageError("Deleted messages cannot be edited.")
-    if locked_message.sender_type != principal.kind or str(locked_message.sender_id) != str(principal.id):
+    if not _principal_sent_message(principal, locked_message):
         raise ChatAccessError("Only the message sender can edit this message.")
     _ensure_message_action_is_recent(locked_message)
 
@@ -374,7 +415,11 @@ def delete_message_for_me(message, user):
     MessageDeletion.objects.get_or_create(
         message_id=message.pk,
         participant_type=principal.kind,
-        participant_id=str(principal.id),
+        participant_id=str(
+            message.conversation.coach_id
+            if principal.kind == "coach"
+            else message.conversation.learner_id
+        ),
     )
 
 
@@ -385,7 +430,7 @@ def delete_message_for_everyone(message, user):
     principal = chat_principal_for_user(user)
     if not _principal_matches_conversation(message.conversation, principal):
         raise ChatAccessError("User does not belong to this conversation.")
-    if message.sender_type != principal.kind or str(message.sender_id) != str(principal.id):
+    if not _principal_sent_message(principal, message):
         raise ChatAccessError("Only the message sender can delete this message for everyone.")
     if message.is_deleted:
         return message
@@ -396,7 +441,7 @@ def delete_message_for_everyone(message, user):
     locked_message = Message.objects.select_for_update().get(pk=message.pk)
     if locked_message.is_deleted:
         return locked_message
-    if locked_message.sender_type != principal.kind or str(locked_message.sender_id) != str(principal.id):
+    if not _principal_sent_message(principal, locked_message):
         raise ChatAccessError("Only the message sender can delete this message for everyone.")
     _ensure_message_action_is_recent(locked_message)
 
