@@ -81,6 +81,7 @@ function SearchPage() {
   const [activitySearch, setActivitySearch] = useState("");
   const [activityLearner, setActivityLearner] = useState("");
   const [activityCategory, setActivityCategory] = useState("");
+  const [activityPlan, setActivityPlan] = useState("");
   const [page, setPage] = useState(0);
 
   const filterOptions = useQuery({
@@ -114,6 +115,7 @@ function SearchPage() {
       learnerSearch,
       sharedPeriod,
       activityCategory,
+      activityPlan,
       page,
     ],
     queryFn: () =>
@@ -123,6 +125,7 @@ function SearchPage() {
         learnerSearch: learnerSearch || undefined,
         period: sharedPeriod || undefined,
         category: activityCategory || undefined,
+        plan: activityPlan || undefined,
         limit: pageSize,
         offset: page * pageSize,
       }),
@@ -262,7 +265,7 @@ function SearchPage() {
             </dl>
           </header>
 
-          <div className="grid gap-4 border-b border-border px-7 py-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 border-b border-border px-7 py-5 sm:grid-cols-2 lg:grid-cols-5">
             <Filter label="Search">
               <input className={field} placeholder="Plan or activity…" value={activitySearch} onChange={(event) => { setActivitySearch(event.target.value); resetPage(); }} />
             </Filter>
@@ -294,6 +297,14 @@ function SearchPage() {
                 allLabel="All categories"
                 options={filterOptions.data?.categories.map((category) => ({ value: category, label: category })) ?? []}
                 onChange={(value) => { setActivityCategory(value); resetPage(); }}
+              />
+            </Filter>
+            <Filter label="Activity">
+              <StyledFilterSelect
+                value={activityPlan}
+                allLabel="All activities"
+                options={filterOptions.data?.activities ?? []}
+                onChange={(value) => { setActivityPlan(value); resetPage(); }}
               />
             </Filter>
           </div>

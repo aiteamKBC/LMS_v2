@@ -49,6 +49,7 @@ export type LearnersResponse = {
   learners: LearnerSummary[];
   months: Array<{ number: number; label: string }>;
   categories: string[];
+  activities: Array<{ value: string; label: string }>;
   periods: Array<{ value: string; label: string }>;
 };
 
@@ -69,6 +70,7 @@ export function getLearnerActivities(params: {
   learnerSearch?: string;
   month?: number;
   category?: string;
+  plan?: string;
   period?: string;
 }) {
   const query = new URLSearchParams({
@@ -80,6 +82,7 @@ export function getLearnerActivities(params: {
   if (params.learnerSearch) query.set("learner_search", params.learnerSearch);
   if (params.month) query.set("month", String(params.month));
   if (params.category) query.set("category", params.category);
+  if (params.plan) query.set("plan", params.plan);
   if (params.period) query.set("period", params.period);
   return getJson<LearnerActivitiesResponse>(`/learner-activities?${query}`);
 }

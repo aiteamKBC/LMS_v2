@@ -125,6 +125,7 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
         search = request.GET.get("search", "").strip()[:100]
         learner_filter = request.GET.get("learner", "").strip().lower()
         learner_search = request.GET.get("learner_search", "").strip().lower()[:100]
+        plan_filter = request.GET.get("plan", "").strip()[:100]
         month_raw = request.GET.get("month")
         month = int(month_raw) if month_raw else None
         category = request.GET.get("category", "").strip()[:100]
@@ -151,6 +152,8 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
     ]
     try:
         queryset = MreActivity.objects.all()
+        if plan_filter:
+            queryset = queryset.filter(plan_id=plan_filter)
         if month is not None:
             queryset = queryset.filter(month_no=month)
         if category:
@@ -274,7 +277,9 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
         if period:
             queryset = queryset.filter(month_no__in=_month_numbers_for_period(period))
         rows = list(queryset.values(*fields))
-        all_rows = list(MreActivity.objects.values("month_no", "month_unit", "activity_date", "activity_category"))
+        all_rows = list(MreActivity.objects.values(
+            "plan_id", "activity_unit", "month_no", "month_unit", "activity_date", "activity_category"
+        ))
     except DatabaseError:
         return JsonResponse(
             {"error": "The configured database does not contain the Audit.mre table."},
@@ -315,11 +320,20 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
         key=lambda item: item[0],
     )
     categories = sorted({row["activity_category"] for row in all_rows if row["activity_category"]})
+    activities = sorted(
+        {
+            (row["plan_id"], row["activity_unit"])
+            for row in all_rows
+            if row["plan_id"] and row["activity_unit"]
+        },
+        key=lambda item: (item[1].lower(), item[0]),
+    )
     period_values = sorted({row["activity_date"].strftime("%Y-%m") for row in all_rows if row["activity_date"]})
     return JsonResponse({
         "learners": learners,
         "months": [{"number": number, "label": label} for number, label in months],
         "categories": categories,
+        "activities": [{"value": plan_id, "label": label} for plan_id, label in activities],
         "periods": [
             {
                 "value": value,
