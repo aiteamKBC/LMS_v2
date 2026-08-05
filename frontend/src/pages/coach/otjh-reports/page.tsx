@@ -245,27 +245,6 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   };
 }
 
-function OtjhMetricCard({ icon, label, value, tone }: { icon: string; label: string; value: string; tone: 'purple' | 'blue' | 'amber' | 'red' }) {
-  const toneClasses = {
-    purple: 'bg-violet-50 text-violet-700',
-    blue: 'bg-sky-50 text-sky-700',
-    amber: 'bg-amber-50 text-amber-700',
-    red: 'bg-red-50 text-red-700',
-  };
-
-  return (
-    <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
-        <i className={`${icon} text-xl`} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
-        <p className="mt-2 truncate text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      </div>
-    </div>
-  );
-}
-
 function OtjhValueButton({
   value,
   label,
@@ -372,15 +351,11 @@ export default function CoachOtjhReports() {
   }, []);
 
   const stats = useMemo(() => {
-    const totalTarget = rows.reduce((total, row) => total + row.target, 0);
-    const totalPlanned = rows.reduce((total, row) => total + row.planned, 0);
-    const totalCompleted = rows.reduce((total, row) => total + row.completed, 0);
     const behind = rows.filter(row => row.status === 'behind').length;
     const onTrack = rows.filter(row => row.status === 'on-track').length;
     const needAttention = rows.filter(row => row.status === 'need-attention').length;
-    const completion = totalTarget > 0 ? Math.round((totalCompleted / totalTarget) * 100) : 0;
 
-    return { totalTarget, totalPlanned, totalCompleted, behind, onTrack, needAttention, completion };
+    return { behind, onTrack, needAttention };
   }, [rows]);
 
   const filteredRows = useMemo(
@@ -430,18 +405,18 @@ export default function CoachOtjhReports() {
       <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
         <section className="rounded-2xl border border-white/10 px-5 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-7" style={{ background: 'linear-gradient(110deg, #100021 0%, #190034 52%, #2a0752 100%)' }}>
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-            <div>
-              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/55">
+            <div className="text-white">
+              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/65">
                 <span>Coach Workspace</span>
                 <i className="ri-arrow-right-s-line text-sm" />
                 <span className="text-white">OTJH Reports</span>
               </div>
-              <h1 className="font-heading text-2xl font-bold tracking-tight md:text-[28px]">Off-The-Job Hours</h1>
-              <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/70">
+              <h1 className="font-heading text-2xl font-bold tracking-tight text-white md:text-[28px]">Off-The-Job Hours</h1>
+              <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/80">
                 Monitor completed hours against each learner's target and quickly identify caseload risks.
               </p>
             </div>
-            <button type="button" onClick={() => changeFilter(stats.behind ? 'behind' : 'on-track')} className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur-sm transition hover:bg-white/15 md:self-auto">
+            <button type="button" onClick={() => changeFilter(stats.behind ? 'behind' : 'on-track')} className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left text-white backdrop-blur-sm transition hover:bg-white/15 md:self-auto">
               <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.behind ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
                 <i className={stats.behind ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
               </span>
@@ -451,13 +426,6 @@ export default function CoachOtjhReports() {
               </span>
             </button>
           </div>
-        </section>
-
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <OtjhMetricCard icon="ri-checkbox-circle-line" label="Completed hours" value={formatHours(stats.totalCompleted)} tone="purple" />
-          <OtjhMetricCard icon="ri-calendar-schedule-line" label="Planned hours" value={formatHours(stats.totalPlanned)} tone="blue" />
-          <OtjhMetricCard icon="ri-focus-3-line" label="Target hours" value={formatHours(stats.totalTarget)} tone="amber" />
-          <OtjhMetricCard icon="ri-alarm-warning-line" label="Learners at risk" value={String(stats.behind)} tone="red" />
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">

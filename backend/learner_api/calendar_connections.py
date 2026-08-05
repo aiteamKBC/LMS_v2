@@ -522,6 +522,33 @@ def cached_learner_busy_slots(kind, learner_id, start, end):
     ]
 
 
+def _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider=None):
+    """Return True when cached privacy-safe busy slots overlap a proposed booking."""
+    try:
+        provider_clause = ""
+        params = [kind, learner_id, end_dt, start_dt]
+        if provider:
+            provider_clause = "AND connection.provider = %s"
+            params.append(provider)
+        with _db().cursor() as cursor:
+            cursor.execute(
+                f'''SELECT 1
+                   FROM "Learner"."calendar_busy_slots" slot
+                   JOIN "Learner"."calendar_connections" connection
+                     ON connection.id = slot.connection_id
+                   WHERE connection.learner_kind = %s
+                     AND connection.learner_id = %s
+                     AND connection.status = 'connected'
+                     AND slot.starts_at < %s AND slot.ends_at > %s
+                     {provider_clause}
+                   LIMIT 1''',
+                params,
+            )
+            return cursor.fetchone() is not None
+    except Exception:
+        return False
+
+
 def availability(request, kind, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
@@ -548,7 +575,7 @@ def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration
                               WHERE learner_kind = %s AND learner_id = %s AND status = 'connected' ''', [kind, learner_id])
             providers = [item[0] for item in cursor.fetchall()]
     except Exception:
-        return False
+        return _cached_booking_conflicts(kind, learner_id, start_dt, end_dt)
     for provider in providers:
         try:
             row = _row(kind, learner_id, provider)
@@ -559,6 +586,8 @@ def booking_conflicts(kind, learner_id, scheduled_date, scheduled_time, duration
                     return True
         except Exception:
             # A transient provider failure should not make the whole LMS unusable;
-            # the booking still receives the existing coach-calendar conflict rules.
+            # cached busy slots still block known conflicts without exposing details.
+            if _cached_booking_conflicts(kind, learner_id, start_dt, end_dt, provider):
+                return True
             continue
     return False
