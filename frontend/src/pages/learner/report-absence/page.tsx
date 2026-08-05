@@ -213,7 +213,7 @@ export default function ReportAbsencePage() {
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-start gap-4">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 backdrop-blur-sm">
-                <i className="ri-file-warning-line text-2xl" />
+                <AppIcon className="ri-file-warning-line text-2xl" />
               </span>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
@@ -242,7 +242,7 @@ export default function ReportAbsencePage() {
         {submitted ? (
           <section className="mx-auto max-w-3xl rounded-2xl border border-emerald-200 bg-background-50 p-6 text-center shadow-sm sm:p-8">
             <span className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100">
-              <i className="ri-check-line text-3xl text-emerald-600" />
+              <AppIcon className="ri-check-line text-3xl text-emerald-600" />
             </span>
             <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-emerald-600">Report submitted</p>
             <h2 className="mb-2 font-heading text-xl font-bold text-foreground-900">Thanks for letting us know</h2>
@@ -266,7 +266,7 @@ export default function ReportAbsencePage() {
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
             <form onSubmit={handleSubmit} className="space-y-6 rounded-2xl border border-background-200/70 bg-background-50 p-5 shadow-sm sm:p-6 xl:col-span-2">
               <div className="flex items-center gap-3 border-b border-background-200/60 pb-4">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-100 text-primary-600"><i className="ri-edit-box-line" /></span>
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-100 text-primary-600"><AppIcon className="ri-edit-box-line" /></span>
                 <div><h3 className="font-heading text-base font-bold text-foreground-900">Absence details</h3><p className="text-xs text-foreground-400">Fields marked with * are required</p></div>
               </div>
 
@@ -278,9 +278,9 @@ export default function ReportAbsencePage() {
                 </select>
                 {selectedSession && (
                   <div className="mt-3 grid gap-2 rounded-xl border border-primary-100 bg-primary-50/60 p-3 sm:grid-cols-3">
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-time-line text-primary-500" />{selectedSession.startTime}{selectedSession.endTime ? ` - ${selectedSession.endTime}` : ''}</div>
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-user-star-line text-primary-500" />{selectedSession.coach || 'Coach not assigned'}</div>
-                    <div className="flex items-center gap-2 text-xs text-foreground-600"><i className="ri-book-open-line text-primary-500" />{selectedSession.module || selectedSession.sessionType.replaceAll('_', ' ')}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><AppIcon className="ri-time-line text-primary-500" />{selectedSession.startTime}{selectedSession.endTime ? ` - ${selectedSession.endTime}` : ''}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><AppIcon className="ri-user-star-line text-primary-500" />{selectedSession.coach || 'Coach not assigned'}</div>
+                    <div className="flex items-center gap-2 text-xs text-foreground-600"><AppIcon className="ri-book-open-line text-primary-500" />{selectedSession.module || selectedSession.sessionType.replaceAll('_', ' ')}</div>
                   </div>
                 )}
               </div>
@@ -291,9 +291,9 @@ export default function ReportAbsencePage() {
                   {REASONS.map((reason) => (
                     <label key={reason.value} className={`flex cursor-pointer items-center gap-2.5 rounded-xl border p-3 text-xs font-medium transition ${reasonType === reason.value ? 'border-primary-400 bg-primary-50 text-primary-700 ring-1 ring-primary-200' : 'border-background-200 bg-white text-foreground-600 hover:border-primary-200'}`}>
                       <input type="radio" name="reason" value={reason.value} checked={reasonType === reason.value} onChange={(event) => setReasonType(event.target.value)} className="sr-only" />
-                      <i className={`${reason.icon} text-base ${reasonType === reason.value ? 'text-primary-600' : 'text-foreground-400'}`} />
+                      <AppIcon className={`${reason.icon} text-base ${reasonType === reason.value ? 'text-primary-600' : 'text-foreground-400'}`} />
                       <span>{reason.label}</span>
-                      {reasonType === reason.value && <i className="ri-check-line ml-auto text-primary-600" />}
+                      {reasonType === reason.value && <AppIcon className="ri-check-line ml-auto text-primary-600" />}
                     </label>
                   ))}
                 </div>
@@ -339,7 +339,7 @@ export default function ReportAbsencePage() {
                     onDrop={(event) => { event.preventDefault(); setDragging(false); if (canUploadEvidence) selectFile(event.dataTransfer.files[0]); }}
                     className={`flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-7 text-center transition ${!canUploadEvidence ? 'cursor-not-allowed border-background-200 bg-background-100/70 opacity-60' : dragging ? 'border-primary-400 bg-primary-50' : 'border-background-300 bg-background-100/40 hover:border-primary-300 hover:bg-primary-50/40'}`}
                   >
-                    <span className={`mb-2 flex h-11 w-11 items-center justify-center rounded-xl ${canUploadEvidence ? 'bg-primary-100' : 'bg-background-200'}`}><i className={`${canUploadEvidence ? 'ri-upload-cloud-2-line text-primary-600' : 'ri-lock-line text-foreground-400'} text-xl`} /></span>
+                    <span className={`mb-2 flex h-11 w-11 items-center justify-center rounded-xl ${canUploadEvidence ? 'bg-primary-100' : 'bg-background-200'}`}><AppIcon className={`${canUploadEvidence ? 'ri-upload-cloud-2-line text-primary-600' : 'ri-lock-line text-foreground-400'} text-xl`} /></span>
                     <span className="text-sm font-semibold text-foreground-700">{canUploadEvidence ? 'Drop an image here or click to browse' : 'Complete the session and reason above first'}</span>
                     <span className="mt-1 text-[11px] text-foreground-400">{canUploadEvidence ? 'JPG, PNG or PDF - maximum 10 MB' : 'Evidence upload will unlock automatically'}</span>
                   </button>
@@ -348,18 +348,18 @@ export default function ReportAbsencePage() {
                     {file.type.startsWith('image/') && selectedFilePreviewUrl ? (
                       <img src={selectedFilePreviewUrl} alt="Selected evidence preview" className="h-14 w-14 shrink-0 rounded-lg border border-white object-cover shadow-sm" />
                     ) : (
-                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-white text-xl text-red-500 shadow-sm"><i className="ri-file-pdf-2-line" /></span>
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-white text-xl text-red-500 shadow-sm"><AppIcon className="ri-file-pdf-2-line" /></span>
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-foreground-800">{file.name}</p>
                       <p className="text-[11px] text-foreground-400">{(file.size / 1024 / 1024).toFixed(2)} MB - ready to upload</p>
-                      <button type="button" onClick={openSelectedFilePreview} className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 hover:underline"><i className="ri-eye-line" />Preview selected file</button>
+                      <button type="button" onClick={openSelectedFilePreview} className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 hover:underline"><AppIcon className="ri-eye-line" />Preview selected file</button>
                     </div>
-                    <button type="button" onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} aria-label="Remove attachment" className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 transition hover:bg-red-50 hover:text-red-600"><i className="ri-delete-bin-line" /></button>
+                    <button type="button" onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} aria-label="Remove attachment" className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 transition hover:bg-red-50 hover:text-red-600"><AppIcon className="ri-delete-bin-line" /></button>
                   </div>
                 )}
                 <input ref={fileInputRef} type="file" disabled={!canUploadEvidence} accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(event) => selectFile(event.target.files?.[0])} className="hidden" />
-                {fileError && <p className="mt-2 flex items-center gap-1 text-xs text-red-600"><i className="ri-error-warning-line" />{fileError}</p>}
+                {fileError && <p className="mt-2 flex items-center gap-1 text-xs text-red-600"><AppIcon className="ri-error-warning-line" />{fileError}</p>}
               </div>
 
               <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-background-100/60 p-3.5">
@@ -368,17 +368,17 @@ export default function ReportAbsencePage() {
               </label>
 
               <div className="flex flex-col-reverse gap-3 border-t border-background-200/60 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                <p className="flex items-center gap-1.5 text-[11px] text-foreground-400"><i className="ri-shield-check-line text-emerald-500" />Your information is only shared with the relevant support team.</p>
+                <p className="flex items-center gap-1.5 text-[11px] text-foreground-400"><AppIcon className="ri-shield-check-line text-emerald-500" />Your information is only shared with the relevant support team.</p>
                 <button type="submit" disabled={!canSubmit || submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-500 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-40">
-                  {submitting ? <><i className="ri-loader-4-line animate-spin" /> Saving report...</> : <>Submit absence report <i className="ri-arrow-right-line" /></>}
+                  {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving report...</> : <>Submit absence report <AppIcon className="ri-arrow-right-line" /></>}
                 </button>
               </div>
-              {requestError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"><i className="ri-error-warning-line mr-1.5" />{requestError}</p>}
+              {requestError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"><AppIcon className="ri-error-warning-line mr-1.5" />{requestError}</p>}
             </form>
 
             <aside className="space-y-5">
               <section className="rounded-2xl border border-background-200/70 bg-background-50 p-5 shadow-sm">
-                <div className="mb-4 flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary-100 text-secondary-600"><i className="ri-route-line" /></span><h3 className="font-heading text-sm font-bold text-foreground-900">What happens next?</h3></div>
+                <div className="mb-4 flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary-100 text-secondary-600"><AppIcon className="ri-route-line" /></span><h3 className="font-heading text-sm font-bold text-foreground-900">What happens next?</h3></div>
                 <ol className="space-y-4">
                   {[
                     ['1', 'Report received', 'Your coach and tutor are notified.'],
@@ -397,13 +397,13 @@ export default function ReportAbsencePage() {
               <section className="rounded-2xl border border-background-200/70 bg-background-50 p-5 shadow-sm">
                 <div className="mb-4 flex items-center justify-between"><h3 className="font-heading text-sm font-bold text-foreground-900">Previous reports</h3><span className="text-[11px] text-foreground-400">Last 90 days</span></div>
                 <div className="space-y-3">
-                  {reportsLoading && <div className="py-6 text-center text-xs text-foreground-400"><i className="ri-loader-4-line mr-1.5 animate-spin" />Loading reports...</div>}
-                  {!reportsLoading && reports.length === 0 && <div className="rounded-xl border border-dashed border-background-200 py-7 text-center"><i className="ri-file-list-3-line mb-2 block text-xl text-foreground-300" /><p className="text-xs font-medium text-foreground-500">No absence reports yet</p></div>}
+                  {reportsLoading && <div className="py-6 text-center text-xs text-foreground-400"><AppIcon className="ri-loader-4-line mr-1.5 animate-spin" />Loading reports...</div>}
+                  {!reportsLoading && reports.length === 0 && <div className="rounded-xl border border-dashed border-background-200 py-7 text-center"><AppIcon className="ri-file-list-3-line mb-2 block text-xl text-foreground-300" /><p className="text-xs font-medium text-foreground-500">No absence reports yet</p></div>}
                   {reports.map((report) => (
                     <article key={report.id} className="rounded-xl border border-background-200/60 bg-white p-3.5">
                       <div className="mb-2 flex items-start justify-between gap-2"><div className="min-w-0"><p className="truncate text-xs font-semibold text-foreground-800">{report.sessionTitle}</p><p className="mt-0.5 text-[10px] text-foreground-400">{displayDate(report.sessionDate)} - {report.reference}</p></div><span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusClass[report.status.trim().toLowerCase()] || statusClass.pending}`}>{report.status}</span></div>
                       <div className="flex items-center gap-1.5 border-t border-background-100 pt-2 text-[10px] text-foreground-400">
-                        <i className="ri-attachment-2" />
+                        <AppIcon className="ri-attachment-2" />
                         {report.evidenceUrl ? (
                           <button
                             type="button"
@@ -412,7 +412,7 @@ export default function ReportAbsencePage() {
                             title="Preview evidence"
                           >
                             {/\.pdf(?:\?|$)/i.test(report.evidenceUrl) ? 'View PDF evidence' : 'View image evidence'}
-                            <i className="ri-eye-line" />
+                            <AppIcon className="ri-eye-line" />
                           </button>
                         ) : (
                           <span className="truncate">Written explanation</span>
@@ -424,7 +424,7 @@ export default function ReportAbsencePage() {
               </section>
 
               <div className="rounded-xl border border-amber-200/70 bg-amber-50 p-4">
-                <div className="flex gap-3"><i className="ri-information-line mt-0.5 text-amber-600" /><div><p className="text-xs font-semibold text-amber-900">Need urgent support?</p><p className="mt-1 text-[11px] leading-4 text-amber-700">Contact your coach directly if your absence relates to wellbeing or safeguarding.</p><a href="/learner/messages" className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:underline">Message my coach <i className="ri-arrow-right-s-line" /></a></div></div>
+                <div className="flex gap-3"><AppIcon className="ri-information-line mt-0.5 text-amber-600" /><div><p className="text-xs font-semibold text-amber-900">Need urgent support?</p><p className="mt-1 text-[11px] leading-4 text-amber-700">Contact your coach directly if your absence relates to wellbeing or safeguarding.</p><a href="/learner/messages" className="mt-2 inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 hover:underline">Message my coach <AppIcon className="ri-arrow-right-s-line" /></a></div></div>
               </div>
             </aside>
           </div>
@@ -440,12 +440,12 @@ export default function ReportAbsencePage() {
                 <h3 className="truncate text-sm font-bold text-foreground-900">{evidencePreview.title}</h3>
               </div>
               <button type="button" onClick={closeEvidencePreview} aria-label="Close evidence preview" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900">
-                <i className="ri-close-line text-xl" />
+                <AppIcon className="ri-close-line text-xl" />
               </button>
             </header>
             <div className="relative flex min-h-0 flex-1 items-center justify-center bg-background-200/60 p-2 sm:p-4">
-              {previewLoading && <div className="text-sm font-medium text-foreground-500"><i className="ri-loader-4-line mr-2 animate-spin text-primary-600" />Loading evidence...</div>}
-              {!previewLoading && previewError && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center"><i className="ri-error-warning-line mb-2 block text-2xl text-red-500" /><p className="text-sm font-semibold text-red-700">{previewError}</p></div>}
+              {previewLoading && <div className="text-sm font-medium text-foreground-500"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600" />Loading evidence...</div>}
+              {!previewLoading && previewError && <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-center"><AppIcon className="ri-error-warning-line mb-2 block text-2xl text-red-500" /><p className="text-sm font-semibold text-red-700">{previewError}</p></div>}
               {!previewLoading && !previewError && evidencePreview.objectUrl && evidencePreview.isPdf && (
                 <iframe
                   src={evidencePreview.objectUrl}

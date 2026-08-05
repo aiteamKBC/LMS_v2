@@ -65,13 +65,13 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="relative px-6 py-5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <span className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-magic-line text-white text-xl" /></span>
+              <span className="w-11 h-11 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-magic-line text-white text-xl" /></span>
               <div className="min-w-0">
                 <p className="text-[11px] text-white/60 uppercase tracking-wide">Enrolment Wizard</p>
                 <p className="text-[15px] font-heading font-semibold text-white truncate">You are viewing: {board.user.name}{board.user.reference ? <span className="text-white/60 font-normal"> ({board.user.reference})</span> : null}</p>
               </div>
             </div>
-            <button onClick={() => navigate(profileHref)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-white/15 backdrop-blur-sm text-white rounded-lg text-[12px] font-medium hover:bg-white/25 transition-smooth cursor-pointer shrink-0"><i className="ri-close-line" />Close wizard</button>
+            <button onClick={() => navigate(profileHref)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-white/15 backdrop-blur-sm text-white rounded-lg text-[12px] font-medium hover:bg-white/25 transition-smooth cursor-pointer shrink-0"><AppIcon className="ri-close-line" />Close wizard</button>
           </div>
         </div>
       }
@@ -114,13 +114,13 @@ export default function WizardPage() {
     return (
       <div className="min-h-screen bg-background-200 flex items-center justify-center p-6">
         <div className="text-center">
-          {loading && <p className="text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading enrolment…</p>}
+          {loading && <p className="text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading enrolment…</p>}
           {!loading && loadError && (
             <>
-              <p className="text-red-600 text-[13px] mb-3"><i className="ri-error-warning-line mr-1.5" />{loadError}</p>
+              <p className="text-red-600 text-[13px] mb-3"><AppIcon className="ri-error-warning-line mr-1.5" />{loadError}</p>
               <div className="flex items-center justify-center gap-3">
-                <button className={btnSecondary} onClick={reload}><i className="ri-refresh-line" />Retry</button>
-                <button className={btnSecondary} onClick={() => navigate(`/users/${userId}${suffix}`)}><i className="ri-close-line" />Back to profile</button>
+                <button className={btnSecondary} onClick={reload}><AppIcon className="ri-refresh-line" />Retry</button>
+                <button className={btnSecondary} onClick={() => navigate(`/users/${userId}${suffix}`)}><AppIcon className="ri-close-line" />Back to profile</button>
               </div>
             </>
           )}

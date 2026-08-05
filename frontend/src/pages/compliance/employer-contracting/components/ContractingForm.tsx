@@ -29,7 +29,7 @@ export function ContractingForm({ record }: ContractingFormProps) {
             <FormField label="Workplace Address" value={record.workplaceAddress} icon="ri-building-line" type="textarea" />
             <div className="flex items-center gap-3">
               <span className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${record.workplaceInEngland ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-300'}`}>
-                <i className={`${record.workplaceInEngland ? 'ri-check-line' : 'ri-close-line'} text-xs`}></i>
+                <AppIcon className={`${record.workplaceInEngland ? 'ri-check-line' : 'ri-close-line'} text-xs`}></AppIcon>
               </span>
               <span className={`text-[13px] ${record.workplaceInEngland ? 'text-emerald-700 font-medium' : 'text-foreground-400'}`}>
                 Workplace in England confirmed
@@ -75,7 +75,7 @@ export function ContractingForm({ record }: ContractingFormProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex items-center gap-3">
               <span className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${record.payeConfirmed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-300'}`}>
-                <i className={`${record.payeConfirmed ? 'ri-check-line' : 'ri-close-line'} text-xs`}></i>
+                <AppIcon className={`${record.payeConfirmed ? 'ri-check-line' : 'ri-close-line'} text-xs`}></AppIcon>
               </span>
               <span className={`text-[13px] ${record.payeConfirmed ? 'text-emerald-700 font-medium' : 'text-foreground-400'}`}>
                 PAYE Confirmed
@@ -84,7 +84,7 @@ export function ContractingForm({ record }: ContractingFormProps) {
             <FormField label="DAS Account Status" value={record.dasAccountStatus} icon="ri-database-2-line" type="select" options={['Active', 'Pending Setup', 'Unknown', 'Not Applicable']} />
             <div className="flex items-center gap-3">
               <span className={`w-5 h-5 rounded flex items-center justify-center shrink-0 ${record.providerAddedToDas ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-300'}`}>
-                <i className={`${record.providerAddedToDas ? 'ri-check-line' : 'ri-close-line'} text-xs`}></i>
+                <AppIcon className={`${record.providerAddedToDas ? 'ri-check-line' : 'ri-close-line'} text-xs`}></AppIcon>
               </span>
               <span className={`text-[13px] ${record.providerAddedToDas ? 'text-emerald-700 font-medium' : 'text-foreground-400'}`}>
                 Provider Added to DAS
@@ -98,7 +98,7 @@ export function ContractingForm({ record }: ContractingFormProps) {
             {!record.coInvestmentRequired && record.fundingRoute && (
               <div className="flex items-center gap-3">
                 <span className="w-5 h-5 rounded flex items-center justify-center shrink-0 bg-background-100 text-foreground-300">
-                  <i className="ri-close-line text-xs"></i>
+                  <AppIcon className="ri-close-line text-xs"></AppIcon>
                 </span>
                 <span className="text-[13px] text-foreground-400">No co-investment required</span>
               </div>
@@ -135,7 +135,7 @@ export function ContractingForm({ record }: ContractingFormProps) {
             Reset
           </button>
           <button type="button" className="ml-auto px-4 py-2.5 text-[12px] text-red-600 hover:bg-red-50 rounded-lg transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-delete-bin-line mr-1.5"></i>Delete Record
+            <AppIcon className="ri-delete-bin-line mr-1.5"></AppIcon>Delete Record
           </button>
         </div>
       </form>
@@ -147,7 +147,7 @@ function Section({ title, icon, children }: { title: string; icon: string; child
   return (
     <fieldset className="border border-foreground-200/60 rounded-lg p-4">
       <legend className="flex items-center gap-2 px-2 text-[12px] font-semibold text-foreground-600 font-heading">
-        <i className={`${icon} text-foreground-400`}></i>
+        <AppIcon className={`${icon} text-foreground-400`}></AppIcon>
         {title}
       </legend>
       <div className="mt-1">
@@ -165,7 +165,7 @@ function FormField({ label, value, icon, type, options, placeholder }: {
       <label className="text-[10px] text-foreground-400 uppercase tracking-wider font-medium block mb-1">{label}</label>
       <div className="relative">
         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 pointer-events-none">
-          <i className={`${icon} text-[13px]`}></i>
+          <AppIcon className={`${icon} text-[13px]`}></AppIcon>
         </span>
         {type === 'select' && options ? (
           <select
@@ -195,7 +195,7 @@ function FormField({ label, value, icon, type, options, placeholder }: {
         )}
         {type === 'select' && (
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-300 pointer-events-none">
-            <i className="ri-arrow-down-s-line text-xs"></i>
+            <AppIcon className="ri-arrow-down-s-line text-xs"></AppIcon>
           </span>
         )}
       </div>

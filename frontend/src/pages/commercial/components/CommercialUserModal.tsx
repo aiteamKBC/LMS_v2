@@ -74,7 +74,7 @@ export function CommercialUserModal({ onClose, onCreated }: { onClose: () => voi
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Cancel</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-user-add-line" />Create learner</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-user-add-line" />Create learner</>}
           </button>
         </>
       }

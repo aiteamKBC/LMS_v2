@@ -49,7 +49,7 @@ export function ContractingTimeline({ record }: ContractingTimelineProps) {
                   'border-background-200 bg-background-50'
                 }`}>
                   {isPast ? (
-                    <i className="ri-check-line text-emerald-500 text-xs"></i>
+                    <AppIcon className="ri-check-line text-emerald-500 text-xs"></AppIcon>
                   ) : isCurrent ? (
                     <div className="w-2 h-2 rounded-full bg-primary-500 animate-pulse"></div>
                   ) : (

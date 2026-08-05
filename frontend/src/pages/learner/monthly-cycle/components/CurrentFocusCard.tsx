@@ -32,11 +32,11 @@ export default function CurrentFocusCard({ month }: CurrentFocusCardProps) {
         <p className="text-sm text-foreground-500 mt-1">{focus.description}</p>
         <div className="flex items-center gap-3 mt-3">
           <a href={focus.actionUrl} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5">
-            <i className={`${focus.icon} text-sm`}></i>
+            <AppIcon className={`${focus.icon} text-sm`}></AppIcon>
             {focus.actionLabel}
           </a>
           <span className="text-xs text-foreground-400">
-            <i className="ri-time-line mr-1"></i>
+            <AppIcon className="ri-time-line mr-1"></AppIcon>
             Due: {focus.deadline}
           </span>
         </div>
@@ -54,11 +54,11 @@ export default function CurrentFocusCard({ month }: CurrentFocusCardProps) {
         <p className="text-sm text-foreground-500 mt-1">{next.description}</p>
         <div className="flex items-center gap-3 mt-3">
           <a href={next.actionUrl} className="px-4 py-2 border border-foreground-300 text-foreground-700 rounded-lg text-sm font-semibold hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap inline-flex items-center gap-1.5">
-            <i className={`${next.icon} text-sm`}></i>
+            <AppIcon className={`${next.icon} text-sm`}></AppIcon>
             {next.actionLabel}
           </a>
           <span className="text-xs text-primary-600">
-            <i className="ri-flashlight-line mr-1"></i>
+            <AppIcon className="ri-flashlight-line mr-1"></AppIcon>
             {next.impact}
           </span>
         </div>

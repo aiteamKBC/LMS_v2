@@ -194,7 +194,7 @@ export default function CoachAttendanceProfile() {
                     </div>
                   </div>
                   <button type="button" onClick={() => navigate('/coach/attendance')} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[10px] font-bold text-primary-800 shadow-sm hover:bg-primary-50">
-                    <i className="ri-arrow-left-line"></i> Back to Attendance
+                    <AppIcon className="ri-arrow-left-line"></AppIcon> Back to Attendance
                   </button>
                 </div>
               </section>
@@ -226,7 +226,7 @@ export default function CoachAttendanceProfile() {
                   <div className="max-h-[240px] space-y-2.5 overflow-y-auto pr-1">
                     {absenceTimeline.length ? absenceTimeline.map((item, index) => (
                       <button type="button" key={`${item.date}-${index}`} onClick={() => openHistory('absent', item.month)} className="group flex w-full cursor-pointer gap-3 rounded-xl border border-red-100 bg-red-50/50 p-3.5 text-left transition hover:border-red-200 hover:bg-red-50 hover:shadow-sm">
-                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-red-500 ring-1 ring-red-100"><i className="ri-close-line"></i></span>
+                        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-red-500 ring-1 ring-red-100"><AppIcon className="ri-close-line"></AppIcon></span>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-3">
                             <p className="truncate text-[11px] font-bold text-foreground-900 group-hover:text-red-700">{item.title}</p>
@@ -234,7 +234,7 @@ export default function CoachAttendanceProfile() {
                           </div>
                           <span className="mt-2 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[8px] font-semibold text-amber-700">{item.reason}</span>
                         </div>
-                        <i className="ri-arrow-right-s-line self-center text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-red-500"></i>
+                        <AppIcon className="ri-arrow-right-s-line self-center text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-red-500"></AppIcon>
                       </button>
                     )) : <EmptyText text="No absences are recorded for this learner." />}
                   </div>
@@ -268,7 +268,7 @@ export default function CoachAttendanceProfile() {
                   {historyMonth && (
                     <button type="button" onClick={() => setHistoryMonth(null)} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-[9px] font-semibold text-primary-700 hover:bg-primary-100">
                       {new Date(`${historyMonth}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}
-                      <i className="ri-close-line"></i>
+                      <AppIcon className="ri-close-line"></AppIcon>
                     </button>
                   )}
                 </div>
@@ -287,7 +287,7 @@ export default function CoachAttendanceProfile() {
                           <td className="px-4 py-3.5 text-[10px] text-foreground-500">{display(session.startTime)} – {display(session.endTime)}</td>
                           <td className="px-4 py-3.5"><span className={`rounded-full border px-2.5 py-1 text-[8px] font-semibold capitalize ${statusClasses(session.status)}`}>{display(session.status)}</span></td>
                           <td className="px-4 py-3.5 text-[10px] text-foreground-500">{display(session.reason)}</td>
-                          <td className="px-4 py-3.5 text-[10px] text-foreground-500">{session.catchupCompleted ? <span className="inline-flex items-center gap-1 text-emerald-600"><i className="ri-check-line"></i> Completed</span> : '--'}</td>
+                          <td className="px-4 py-3.5 text-[10px] text-foreground-500">{session.catchupCompleted ? <span className="inline-flex items-center gap-1 text-emerald-600"><AppIcon className="ri-check-line"></AppIcon> Completed</span> : '--'}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -343,10 +343,10 @@ function ProfileMetric({ icon, label, value, tone = 'primary', onClick }: { icon
       <span className={`absolute inset-x-0 top-0 h-1 ${style.accent}`} />
       <div className="flex items-start justify-between">
         <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${style.icon}`}>
-          <i className={`${icon} text-lg`}></i>
+          <AppIcon className={`${icon} text-lg`}></AppIcon>
         </span>
         <span className={`flex h-7 w-7 items-center justify-center rounded-full bg-white text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition ${style.action}`}>
-          <i className="ri-arrow-right-line text-[11px] transition group-hover:translate-x-0.5"></i>
+          <AppIcon className="ri-arrow-right-line text-[11px] transition group-hover:translate-x-0.5"></AppIcon>
         </span>
       </div>
       <div className="mt-auto pt-3">
@@ -361,7 +361,7 @@ function ProfileSection({ title, icon, children }: { title: string; icon?: strin
   return (
     <section className="rounded-xl border border-foreground-200/60 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center gap-2.5">
-        {icon && <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><i className={icon}></i></span>}
+        {icon && <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className={icon}></AppIcon></span>}
         <h2 className="text-sm font-heading font-bold text-foreground-900">{title}</h2>
       </div>
       {children}

@@ -852,7 +852,7 @@ export default function CoachDashboard() {
           <SectionReveal delay={80}>
             <div className="rounded-xl border border-red-200/50 bg-red-50/70 p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
               <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-                <i className="ri-alert-fill text-red-600 text-base"></i>
+                <AppIcon className="ri-alert-fill text-red-600 text-base"></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-800">Risk Alert: {atRiskCount} learners need immediate attention</p>
@@ -886,7 +886,7 @@ export default function CoachDashboard() {
                       to="/coach/caseload"
                       className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 transition-colors hover:bg-primary-100"
                     >
-                      <i className="ri-group-line"></i>
+                      <AppIcon className="ri-group-line"></AppIcon>
                       All Learners
                     </Link>
                   </div>
@@ -917,7 +917,7 @@ export default function CoachDashboard() {
                     <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
                   </div>
                   <Link to="/coach/timetable" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100">
-                    <i className="ri-calendar-line"></i> Full Calendar
+                    <AppIcon className="ri-calendar-line"></AppIcon> Full Calendar
                   </Link>
                 </div>
                 <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
@@ -926,14 +926,14 @@ export default function CoachDashboard() {
                     return (
                       <Link to="/coach/timetable" key={event.eventKey || event.id} className="group flex flex-col rounded-2xl border border-sky-100/80 bg-sky-50/35 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_45px_-32px_rgba(14,165,233,0.55)]">
                         <div className="mb-4 flex items-start justify-between gap-3">
-                          <span className="rounded-full border border-sky-100 bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-sky-700"><i className="ri-live-line mr-1"></i>Live Session</span>
+                          <span className="rounded-full border border-sky-100 bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-sky-700"><AppIcon className="ri-live-line mr-1"></AppIcon>Live Session</span>
                           <span className="rounded-full bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-foreground-500">{formatDateLabel(sessionDate)}</span>
                         </div>
                         <p className="line-clamp-2 text-[15px] font-semibold leading-6 text-foreground-900">{displayValue(event.title)}</p>
                         <p className="mt-1 truncate text-[10px] text-foreground-400">{displayValue(event.programme)} · {displayValue(event.cohort)}{event.location ? ` · ${event.location}` : ''}</p>
                         <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-background-200/70 bg-background-50/80 px-3 py-2.5 text-[10px]">
-                          <span className="text-foreground-600"><i className="ri-time-line mr-1 text-sky-500"></i>{upcomingLiveSessionTimeLabel(event)}</span>
-                          <span className="text-foreground-500"><i className="ri-video-line mr-1 text-sky-500"></i>{displayValue(event.platform)}</span>
+                          <span className="text-foreground-600"><AppIcon className="ri-time-line mr-1 text-sky-500"></AppIcon>{upcomingLiveSessionTimeLabel(event)}</span>
+                          <span className="text-foreground-500"><AppIcon className="ri-video-line mr-1 text-sky-500"></AppIcon>{displayValue(event.platform)}</span>
                         </div>
                       </Link>
                     );
@@ -978,7 +978,7 @@ export default function CoachDashboard() {
                             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${classes.badge}`}>{eventTypeLabel(event)}</span>
                           </div>
                         </div>
-                        <i className={`text-sm shrink-0 ${classes.icon}`}></i>
+                        <AppIcon className={`text-sm shrink-0 ${classes.icon}`}></AppIcon>
                       </div>
                     );
                   })}
@@ -999,7 +999,7 @@ export default function CoachDashboard() {
                     <p className="mt-1 text-sm text-foreground-400">Learners with evidence waiting to be reviewed</p>
                   </div>
                   <Link to="/coach/marking-queue" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100 cursor-pointer">
-                    View All <i className="ri-arrow-right-line"></i>
+                    View All <AppIcon className="ri-arrow-right-line"></AppIcon>
                   </Link>
                 </div>
                 <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
@@ -1010,7 +1010,7 @@ export default function CoachDashboard() {
                       state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
                       className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/70 p-3.5 transition-all hover:-translate-y-0.5 hover:border-secondary-200 hover:bg-secondary-50/30"
                     >
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-50 text-secondary-600"><i className="ri-file-list-3-line"></i></span>
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-50 text-secondary-600"><AppIcon className="ri-file-list-3-line"></AppIcon></span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
                         <p className="truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
@@ -1020,7 +1020,7 @@ export default function CoachDashboard() {
                         <span className="block text-[8px] text-foreground-400">Pending / Total</span>
                         {learner.lastSubmission !== EMPTY_VALUE && <span className="block text-[8px] text-foreground-400">Last {learner.lastSubmission}</span>}
                       </span>
-                      <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                      <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                     </Link>
                   ))}
                   {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
@@ -1039,12 +1039,12 @@ export default function CoachDashboard() {
                     Absence Reports
                     <span className="ml-2 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{pendingAbsenceReports.length} pending</span>
                   </h3>
-                  <Link to="/coach/absence-reports" className="text-[10px] font-semibold text-primary-600 hover:text-primary-700">View All <i className="ri-arrow-right-s-line"></i></Link>
+                  <Link to="/coach/absence-reports" className="text-[10px] font-semibold text-primary-600 hover:text-primary-700">View All <AppIcon className="ri-arrow-right-s-line"></AppIcon></Link>
                 </div>
                 <div className="space-y-2.5">
                   {pendingAbsenceReports.slice(0, 4).map(report => (
                     <Link key={report.id} to="/coach/absence-reports" className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/60 p-3 transition-colors hover:bg-background-100">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><i className="ri-emotion-sad-line text-sm"></i></span>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><AppIcon className="ri-emotion-sad-line text-sm"></AppIcon></span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[12px] font-semibold text-foreground-900">{report.learner}</p>
                         <p className="truncate text-[10px] text-foreground-400">{formatDateLabel(report.sessionDate)} · {report.reason}</p>
@@ -1137,7 +1137,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
       <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-foreground-200/70 bg-background-50/95 shadow-[0_36px_90px_-38px_rgba(15,23,42,0.5)]">
         <header className="flex items-start justify-between gap-4 border-b border-foreground-100/80 bg-background-50/95 px-5 py-5 md:px-6">
           <div className="flex items-center gap-3">
-            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><i className={`${current.icon} text-lg`}></i></span>
+            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><AppIcon className={`${current.icon} text-lg`}></AppIcon></span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 id="kpi-modal-title" className="font-heading text-lg font-bold text-foreground-900">{current.title}</h2>
@@ -1146,7 +1146,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
               <p className="mt-1 text-[11px] text-foreground-400">{current.subtitle}</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </header>
 
         <div className="flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/35 p-4 md:p-5">
@@ -1215,7 +1215,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-50 text-[10px] font-bold text-secondary-700">{learner.initials}</span>
                   <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p><p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p></div>
                   <div className="text-right"><p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p><p className="text-[8px] text-foreground-400">Pending / Total</p>{learner.isOverdue && <p className="mt-0.5 text-[8px] font-semibold text-red-600">Overdue</p>}</div>
-                  <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                 </Link>
               ))}
               {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
@@ -1226,7 +1226,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
             <div className="space-y-2">
               {reviews.map(event => {
                 const date = eventDisplayDate(event);
-                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarMonth(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><i className="ri-arrow-right-s-line text-foreground-300"></i></div>;
+                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarMonth(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon></div>;
               })}
               {!reviews.length && <ModalEmpty icon="ri-calendar-check-line" title="No reviews due" description="There are no progress reviews scheduled in the next 14 days." />}
             </div>
@@ -1264,7 +1264,7 @@ function ModalMiniMetric({ label, value, tone = 'neutral' }: { label: string; va
 }
 
 function ModalEmpty({ icon, title, description }: { icon: string; title: string; description: string }) {
-  return <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50/80 py-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><i className={`${icon} text-lg`}></i></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
+  return <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50/80 py-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><AppIcon className={`${icon} text-lg`}></AppIcon></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1293,10 +1293,10 @@ function StatCard({ label, value, sub, icon, color, active = false, onClick }: {
       <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.glow}`}></span>
       <div className="mb-3 flex items-center gap-3">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{label}</span>
-        <i className="ri-arrow-right-up-line ml-auto text-[11px] text-foreground-300 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary-500"></i>
+        <AppIcon className="ri-arrow-right-up-line ml-auto text-[11px] text-foreground-300 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary-500"></AppIcon>
       </div>
       <p className={`text-2xl font-heading font-bold leading-tight ${c.accent}`}>{value}</p>
       <p className="mt-2 text-[11px] leading-5 text-foreground-400">{sub}</p>
@@ -1372,7 +1372,7 @@ function MiniScheduleTile({ label, value }: { label: string; value: string; stat
     <div className="rounded-2xl border border-foreground-200/60 bg-white px-3 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <p className="text-[11px] font-medium text-foreground-500">{label}</p>
-        <i className={`${label === 'PR' ? 'ri-calendar-event-line' : 'ri-user-voice-line'} text-[12px] text-foreground-400`}></i>
+        <AppIcon className={`${label === 'PR' ? 'ri-calendar-event-line' : 'ri-user-voice-line'} text-[12px] text-foreground-400`}></AppIcon>
       </div>
       <p className="text-[11px] font-semibold text-foreground-700">{value}</p>
     </div>
@@ -1496,7 +1496,7 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
             aria-label={`Open ${learner.name} profile`}
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all hover:scale-105 hover:shadow-sm ${badge.arrowClass}`}
           >
-            <i className="ri-arrow-right-s-line text-lg"></i>
+            <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
           </Link>
         </div>
       </div>
@@ -1527,7 +1527,7 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
       {primaryRisk && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold ${riskFlagClass(primaryRisk)}`}>
-            <i className="ri-error-warning-fill text-[10px]"></i>
+            <AppIcon className="ri-error-warning-fill text-[10px]"></AppIcon>
             {primaryRisk}
           </span>
           {visibleFlags.map(flag => (

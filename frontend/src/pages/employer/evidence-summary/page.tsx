@@ -55,7 +55,7 @@ export default function EmployerEvidenceSummary() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-folder-upload-line text-white text-2xl"></i>
+              <AppIcon className="ri-folder-upload-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Evidence Summary</h2>
@@ -78,7 +78,7 @@ export default function EmployerEvidenceSummary() {
 
         {pendingAction > 0 && (
           <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><i className="ri-alert-line text-amber-600 text-base"></i></span>
+            <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><AppIcon className="ri-alert-line text-amber-600 text-base"></AppIcon></span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-amber-800">{pendingAction} evidence items need your review</p>
               <p className="text-[12px] text-amber-600 mt-0.5">Confirm or validate workplace evidence to support your apprentices' progress</p>
@@ -88,7 +88,7 @@ export default function EmployerEvidenceSummary() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search evidence..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -117,10 +117,10 @@ export default function EmployerEvidenceSummary() {
               {item.employerAction !== 'none' && (
                 <div className="flex items-center gap-2">
                   <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-check-line mr-1"></i> {item.employerAction === 'validate' ? 'Validate' : 'Confirm'}
+                    <AppIcon className="ri-check-line mr-1"></AppIcon> {item.employerAction === 'validate' ? 'Validate' : 'Confirm'}
                   </button>
                   <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-file-search-line mr-1"></i> Review
+                    <AppIcon className="ri-file-search-line mr-1"></AppIcon> Review
                   </button>
                 </div>
               )}

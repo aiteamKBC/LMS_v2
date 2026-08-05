@@ -168,17 +168,17 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
         {/* stats row */}
         <div className="px-3.5 pb-2 flex items-center gap-3 text-[11px] text-gray-500 font-sans">
           <span className="flex items-center gap-1">
-            <i className="ri-book-open-line text-gray-300 text-[11px]"></i>
+            <AppIcon className="ri-book-open-line text-gray-300 text-[11px]"></AppIcon>
             <span className={mod.quizzesPassed === mod.quizzes && mod.quizzes > 0 ? 'text-emerald-600 font-medium' : ''}>{mod.quizzes}</span>
             <span className="text-gray-300">lessons</span>
           </span>
           <span className="flex items-center gap-1">
-            <i className="ri-file-text-line text-gray-300 text-[11px]"></i>
+            <AppIcon className="ri-file-text-line text-gray-300 text-[11px]"></AppIcon>
             <span className={mod.assignmentsCompleted === mod.assignments && mod.assignments > 0 ? 'text-emerald-600 font-medium' : ''}>{mod.assignments}</span>
             <span className="text-gray-300">tasks</span>
           </span>
           <span className="flex items-center gap-1 ml-auto">
-            <i className="ri-time-line text-gray-300 text-[11px]"></i>
+            <AppIcon className="ri-time-line text-gray-300 text-[11px]"></AppIcon>
             <span>{mod.otjhExpected}h</span>
           </span>
         </div>
@@ -193,13 +193,13 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
               onMouseOver={(e) => { e.currentTarget.style.opacity = '0.9'; }}
               onMouseOut={(e) => { e.currentTarget.style.opacity = '1'; }}
             >
-              <i className="ri-play-circle-line text-[13px]"></i>Continue
+              <AppIcon className="ri-play-circle-line text-[13px]"></AppIcon>Continue
             </Link>
           ) : mod.status === 'Completed' ? (
             <button
               className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] font-medium text-gray-500 bg-gray-50 border border-gray-100 transition-colors duration-200 whitespace-nowrap cursor-pointer font-label hover:bg-gray-100"
             >
-              <i className="ri-check-double-line text-[13px]"></i>Review
+              <AppIcon className="ri-check-double-line text-[13px]"></AppIcon>Review
             </button>
           ) : mod.status === 'Gateway' ? (
             <Link
@@ -209,7 +209,7 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
               onMouseOver={(e) => { e.currentTarget.style.opacity = '0.9'; }}
               onMouseOut={(e) => { e.currentTarget.style.opacity = '1'; }}
             >
-              <i className="ri-shield-check-line text-[13px]"></i>Prepare
+              <AppIcon className="ri-shield-check-line text-[13px]"></AppIcon>Prepare
             </Link>
           ) : (
             <button
@@ -218,9 +218,9 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
               disabled={isLocked}
             >
               {isLocked ? (
-                <><i className="ri-lock-line text-[13px]"></i>Locked</>
+                <><AppIcon className="ri-lock-line text-[13px]"></AppIcon>Locked</>
               ) : (
-                <><i className="ri-eye-line text-[13px]"></i>Preview</>
+                <><AppIcon className="ri-eye-line text-[13px]"></AppIcon>Preview</>
               )}
             </button>
           )}
@@ -259,7 +259,7 @@ export default function RoadJourneyView({ modules, currentWeek, totalWeeks, over
         <div className="px-5 md:px-7 py-4 flex flex-col sm:flex-row sm:items-center gap-3 border-b border-background-200/40">
           <div className="flex items-center gap-3">
             <span className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center">
-              <i className="ri-subway-line text-violet-500 text-[15px]"></i>
+              <AppIcon className="ri-subway-line text-violet-500 text-[15px]"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Your Learning Road</h3>

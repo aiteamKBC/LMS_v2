@@ -30,7 +30,7 @@ export default function CoachEmployerActions() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-building-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-building-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Employer Actions</h2>
@@ -68,7 +68,7 @@ export default function CoachEmployerActions() {
             <div key={action.id} className={`bg-background-50 rounded-xl border p-4 card-premium transition-smooth ${action.status === 'pending' ? 'border-amber-200/50' : 'border-foreground-200/60'}`}>
               <div className="flex items-center gap-4">
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ring-2 ${action.priority === 'high' ? 'bg-red-100 text-red-700 ring-red-200' : 'bg-primary-100 text-primary-700 ring-primary-200'}`}>
-                  <i className="ri-building-2-line text-sm"></i>
+                  <AppIcon className="ri-building-2-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -84,18 +84,18 @@ export default function CoachEmployerActions() {
                 </div>
               </div>
               <div className="ml-14 mt-2 flex items-center gap-2">
-                <span className="text-[11px] text-foreground-400"><i className="ri-information-line mr-1"></i>{action.notes}</span>
+                <span className="text-[11px] text-foreground-400"><AppIcon className="ri-information-line mr-1"></AppIcon>{action.notes}</span>
               </div>
               <div className="ml-14 mt-3 flex items-center gap-2">
                 {action.status === 'pending' && (
                   <>
-                    <button className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Mark Complete</button>
-                    <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-mail-line mr-1"></i> Send Reminder</button>
-                    <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-phone-line mr-1"></i> Call Employer</button>
+                    <button className="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Mark Complete</button>
+                    <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-mail-line mr-1"></AppIcon> Send Reminder</button>
+                    <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-phone-line mr-1"></AppIcon> Call Employer</button>
                   </>
                 )}
                 {action.status === 'completed' && (
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-file-search-line mr-1"></i> View Record</button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-file-search-line mr-1"></AppIcon> View Record</button>
                 )}
               </div>
             </div>

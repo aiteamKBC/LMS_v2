@@ -78,7 +78,7 @@ export default function MisTutorAssignmentPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -89,7 +89,7 @@ export default function MisTutorAssignmentPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search tutor, specialism..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -97,7 +97,7 @@ export default function MisTutorAssignmentPage() {
               {['All', 'Available', 'Heavy load', 'At capacity', 'On leave'].map(s => <option key={s}>{s}</option>)}
             </select>
             <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> Add Tutor
+              <AppIcon className="ri-add-line mr-1"></AppIcon> Add Tutor
             </button>
           </div>
         </div>
@@ -137,7 +137,7 @@ export default function MisTutorAssignmentPage() {
                     <span className="text-foreground-300">|</span>
                     <span>{tutor.activeLearners} learners</span>
                     <button onClick={() => setExpandedId(isExpanded ? null : tutor.id)} className="w-7 h-7 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-                      <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></i>
+                      <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -171,10 +171,10 @@ export default function MisTutorAssignmentPage() {
                       <p className="text-[10px] uppercase tracking-wide text-foreground-400 mb-2 font-medium">Actions</p>
                       <div className="flex flex-col gap-2">
                         <button onClick={() => { setSelectedTutor(tutor.id); setShowAssign(true); }} className="px-3 py-1.5 bg-accent-500 text-white rounded-lg text-[11px] font-semibold hover:bg-accent-600 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-calendar-line mr-1"></i> Assign Session
+                          <AppIcon className="ri-calendar-line mr-1"></AppIcon> Assign Session
                         </button>
                         <Link to="/mis/timetables" className="px-3 py-1.5 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-calendar-line mr-1"></i> View Timetable
+                          <AppIcon className="ri-calendar-line mr-1"></AppIcon> View Timetable
                         </Link>
                       </div>
                     </div>
@@ -193,7 +193,7 @@ export default function MisTutorAssignmentPage() {
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-heading font-semibold text-foreground-900">Assign Session</h2>
               <button onClick={() => setShowAssign(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500"></i>
+                <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
               </button>
             </div>
             <p className="text-[13px] text-foreground-600 mb-4">Assign a session to <strong className="text-foreground-900">{TUTORS.find(t => t.id === selectedTutor)?.name}</strong></p>

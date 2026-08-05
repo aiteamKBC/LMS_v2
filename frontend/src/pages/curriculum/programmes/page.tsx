@@ -426,7 +426,7 @@ export default function CurriculumProgrammes() {
                   }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
-                  <i className="ri-add-line text-base"></i>
+                  <AppIcon className="ri-add-line text-base"></AppIcon>
                   Create Programme Structure
                 </button>
                 <button
@@ -434,7 +434,7 @@ export default function CurriculumProgrammes() {
                   onClick={() => reload()}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
                 >
-                  <i className="ri-refresh-line text-base"></i>
+                  <AppIcon className="ri-refresh-line text-base"></AppIcon>
                   Refresh
                 </button>
               </div>
@@ -463,7 +463,7 @@ export default function CurriculumProgrammes() {
         <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input
                 type="text"
                 value={search}
@@ -473,7 +473,7 @@ export default function CurriculumProgrammes() {
               />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700" aria-label="Clear search">
-                  <i className="ri-close-line"></i>
+                  <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               )}
             </div>
@@ -494,13 +494,13 @@ export default function CurriculumProgrammes() {
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: prog.color || '#6941c6' }}>
-                      <i className="ri-book-2-line text-base"></i>
+                      <AppIcon className="ri-book-2-line text-base"></AppIcon>
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
-                        <i className="ri-calendar-event-line text-[10px]"></i>
+                        <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
                         Programme
                       </span>
                     </div>
@@ -514,7 +514,7 @@ export default function CurriculumProgrammes() {
                 >
                   <div className="flex items-start gap-2">
                     <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'bg-primary-600 text-white' : 'bg-amber-500 text-white'}`}>
-                      <i className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></i>
+                      <AppIcon className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className={`text-[9px] font-black uppercase tracking-wide ${appliedSource.value ? 'text-primary-700' : 'text-amber-700'}`}>
@@ -524,7 +524,7 @@ export default function CurriculumProgrammes() {
                       <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{appliedSource.detail || appliedSource.subtitle}</p>
                     </div>
                     <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-primary-600">
-                      <i className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></i>
+                      <AppIcon className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></AppIcon>
                     </span>
                   </div>
                 </button>
@@ -547,24 +547,24 @@ export default function CurriculumProgrammes() {
                 {prog.description && <p className="mb-4 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
                 <div className="flex flex-wrap items-center gap-2 border-t border-background-200/70 pt-4">
                   <button className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
-                    <i className="ri-eye-line"></i>
+                    <AppIcon className="ri-eye-line"></AppIcon>
                     Open
                   </button>
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
-                    <i className="ri-node-tree text-sm"></i>KSB source
+                    <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB source
                   </button>
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
-                    <i className="ri-user-follow-line text-sm"></i>Learners
+                    <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
                   </button>
                   <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
-                    <i className="ri-pencil-line text-sm"></i>Edit
+                    <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
                   <button
                     className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
                   >
-                    <i className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></i>
+                    <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></AppIcon>
                     Delete
                   </button>
                 </div>
@@ -714,7 +714,7 @@ function ProgrammeLearnerImpactModal({
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close learner impact">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
@@ -727,7 +727,7 @@ function ProgrammeLearnerImpactModal({
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -793,7 +793,7 @@ function ProgrammeLearnerImpactRow({
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
           <button type="button" onClick={() => setExpanded(value => !value)} className="inline-flex h-full min-h-14 items-center justify-center gap-2 rounded-xl border border-background-200 bg-background-100 px-3 text-[11px] font-black text-foreground-700 transition-smooth hover:bg-background-200">
-            <i className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
+            <AppIcon className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
             Details
           </button>
         </div>
@@ -888,7 +888,7 @@ function ImpactStat({ icon, label, value, detail }: { icon: string; label: strin
   return (
     <div className="rounded-xl border border-background-200 bg-background-100 p-3">
       <div className="flex items-center gap-2 text-foreground-500">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
@@ -995,13 +995,13 @@ function ProgrammeKsbReviewModal({
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB review">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1068,13 +1068,13 @@ function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSour
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB profile">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1190,7 +1190,7 @@ function ApplyProgrammeKsbSourceModal({
             <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or Skills Standard this programme must be measured against.</p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB source">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-5">
@@ -1238,7 +1238,7 @@ function ApplyProgrammeKsbSourceModal({
           <div>
             {currentSource.value && (
               <button type="button" disabled={applying} onClick={onUnapply} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
-                <i className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></i>
+                <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></AppIcon>
                 Unapply source
               </button>
             )}
@@ -1248,7 +1248,7 @@ function ApplyProgrammeKsbSourceModal({
               Cancel
             </button>
             <button type="button" disabled={!selectedSource || applying || selectedIsCurrent} onClick={() => onApply(selectedSource)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
-              <i className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></i>
+              <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></AppIcon>
               {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply source'}
             </button>
           </div>
@@ -1325,7 +1325,7 @@ function ProgrammeKsbCard({ item, descriptions }: { item: CurriculumKsbCoverageI
 function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title: string; message: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100 px-6 py-12 text-center">
-      <i className={`${icon} text-3xl text-foreground-400`}></i>
+      <AppIcon className={`${icon} text-3xl text-foreground-400`}></AppIcon>
       <h4 className="mt-3 text-sm font-heading font-bold text-foreground-950">{title}</h4>
       <p className="mt-2 text-[13px] text-foreground-500">{message}</p>
     </div>
@@ -1336,7 +1336,7 @@ function DashboardStat({ icon, label, value, detail }: { icon: string; label: st
   return (
     <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
       <div className="flex items-center gap-2 text-white/70">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-white">{value}</p>
@@ -1362,19 +1362,19 @@ function ProgrammesEmptyState({
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 px-6 py-14 text-center shadow-sm">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-        <i className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></i>
+        <AppIcon className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
       </span>
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
       <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
         {hasSearch && (
           <button type="button" onClick={onClear} className="inline-flex h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
-            <i className="ri-filter-off-line"></i>
+            <AppIcon className="ri-filter-off-line"></AppIcon>
             Clear search
           </button>
         )}
         <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-          <i className="ri-add-line"></i>
+          <AppIcon className="ri-add-line"></AppIcon>
           Create programme
         </button>
       </div>
@@ -1516,7 +1516,7 @@ function ChoiceSelect({
               {selectedOption?.label || placeholder}
             </span>
           </span>
-          <i className={`ri-arrow-down-s-line shrink-0 text-lg text-foreground-400 transition-transform ${open ? 'rotate-180 text-primary-500' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line shrink-0 text-lg text-foreground-400 transition-transform ${open ? 'rotate-180 text-primary-500' : ''}`}></AppIcon>
         </span>
       </button>
       {selectedOption?.meta ? <p className="mt-1 text-[11px] font-medium text-foreground-400 truncate">{selectedOption.meta}</p> : null}
@@ -1528,7 +1528,7 @@ function ChoiceSelect({
           role="listbox"
         >
           <div className="relative mb-2">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1547,10 +1547,10 @@ function ChoiceSelect({
                 aria-selected={!value}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-                  <i className="ri-close-circle-line text-sm"></i>
+                  <AppIcon className="ri-close-circle-line text-sm"></AppIcon>
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{placeholder}</span>
-                {!value ? <i className="ri-check-line shrink-0 text-primary-600"></i> : null}
+                {!value ? <AppIcon className="ri-check-line shrink-0 text-primary-600"></AppIcon> : null}
               </button>
             ) : null}
             {filteredOptions.map(option => {
@@ -1565,13 +1565,13 @@ function ChoiceSelect({
                   aria-selected={selected}
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500">
-                    {option.color ? <span className="h-4 w-4 rounded-[5px] ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <i className="ri-arrow-right-up-line text-sm"></i>}
+                    {option.color ? <span className="h-4 w-4 rounded-[5px] ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <AppIcon className="ri-arrow-right-up-line text-sm"></AppIcon>}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-bold" title={option.label}>{option.label}</span>
                     {option.meta ? <span className="mt-0.5 block truncate text-[11px] font-medium text-foreground-400" title={option.meta}>{option.meta}</span> : null}
                   </span>
-                  {selected ? <i className="ri-check-line shrink-0 text-primary-600"></i> : null}
+                  {selected ? <AppIcon className="ri-check-line shrink-0 text-primary-600"></AppIcon> : null}
                 </button>
               );
             })}
@@ -2103,10 +2103,10 @@ function ProgrammeStructureEditor({
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => onOpenAddStructure(addAction.step, addAction.cohortId, addAction.groupId)} className="px-4 py-2.5 rounded-lg bg-emerald-500 text-white text-[12px] font-bold hover:bg-emerald-600 transition-smooth shadow-sm">
-              <i className={`${addAction.icon} mr-1`}></i>{addAction.label}
+              <AppIcon className={`${addAction.icon} mr-1`}></AppIcon>{addAction.label}
             </button>
             <button onClick={onClose} className="w-9 h-9 rounded-lg bg-background-100 border border-background-200 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-              <i className="ri-close-line text-foreground-500"></i>
+              <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
             </button>
           </div>
         </div>
@@ -2168,7 +2168,7 @@ function EmptyStructure({ label }: { label: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100/70 px-4 py-10 text-center">
       <span className="mx-auto mb-3 flex w-11 h-11 items-center justify-center rounded-xl bg-background-50 border border-background-200 text-primary-600 shadow-sm">
-        <i className="ri-stack-line text-lg"></i>
+        <AppIcon className="ri-stack-line text-lg"></AppIcon>
       </span>
       <p className="text-[13px] font-semibold text-foreground-700">{label}</p>
     </div>
@@ -2192,7 +2192,7 @@ function EditorCardHeader({
     <div className="flex flex-col gap-3 border-b border-background-200/70 bg-background-100/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: normaliseHex(color || '#6941c6') }}>
-          <i className={`${icon} text-base`}></i>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-heading font-bold text-foreground-950">{title || 'Untitled'}</p>
@@ -2207,7 +2207,7 @@ function EditorCardHeader({
 function SummaryPill({ icon, label }: { icon: string; label: string }) {
   return (
     <span className="inline-flex h-7 items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 shadow-sm">
-      <i className={`${icon} text-[13px] text-primary-600`}></i>
+      <AppIcon className={`${icon} text-[13px] text-primary-600`}></AppIcon>
       {label}
     </span>
   );
@@ -2493,10 +2493,10 @@ function RowActions({ saving, onDelete, align = 'end' }: { saving: boolean; onDe
   return (
     <div className={`flex items-end gap-2 ${align === 'right' ? 'justify-end' : ''}`}>
       <button type="submit" disabled={saving} className="h-10 px-4 rounded-lg bg-primary-500 text-white text-[12px] font-bold hover:bg-primary-600 disabled:opacity-50 shadow-sm transition-smooth">
-        {saving ? 'Saving...' : <><i className="ri-save-3-line mr-1"></i>Save</>}
+        {saving ? 'Saving...' : <><AppIcon className="ri-save-3-line mr-1"></AppIcon>Save</>}
       </button>
       <button type="button" onClick={onDelete} disabled={saving} className="h-10 px-4 rounded-lg bg-red-50 text-red-600 border border-red-200/70 text-[12px] font-bold hover:bg-red-100 disabled:opacity-50 transition-smooth">
-        <i className="ri-archive-line mr-1"></i>Archive
+        <AppIcon className="ri-archive-line mr-1"></AppIcon>Archive
       </button>
     </div>
   );

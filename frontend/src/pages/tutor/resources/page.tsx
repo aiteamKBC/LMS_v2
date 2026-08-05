@@ -67,7 +67,7 @@ export default function TutorResourcesPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-folder-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-folder-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Teaching Resources</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{RESOURCES.length} resources across {uniqueTypes} types · {totalDownloads} total downloads · covering all your cohorts</p>
@@ -82,7 +82,7 @@ export default function TutorResourcesPage() {
 
         <div className="flex items-center gap-3 flex-wrap justify-between">
           <div className="relative flex-1 max-w-xs">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search resources..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] text-foreground-900 placeholder-foreground-300 outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-2">
@@ -91,7 +91,7 @@ export default function TutorResourcesPage() {
                 <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>{t === 'all' ? 'All Types' : t}</button>
               ))}
             </div>
-            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-upload-cloud-line mr-1"></i> Upload</button>
+            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-upload-cloud-line mr-1"></AppIcon> Upload</button>
           </div>
         </div>
 
@@ -99,7 +99,7 @@ export default function TutorResourcesPage() {
           {filtered.map(r => (
             <div key={r.id} onClick={() => setExpandedId(expandedId === r.id ? null : r.id)} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer hover:border-primary-200/50 transition-smooth">
               <div className="flex items-start justify-between mb-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center"><i className={`${TYPE_ICONS[r.type] || 'ri-file-line'} text-base`}></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className={`${TYPE_ICONS[r.type] || 'ri-file-line'} text-base`}></AppIcon></span>
                 <div className="flex flex-col items-end gap-1">
                   <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-foreground-100 text-foreground-500">{r.format}</span>
                   <span className="text-[9px] text-foreground-400">{r.size}</span>
@@ -113,14 +113,14 @@ export default function TutorResourcesPage() {
                 ))}
               </div>
               <div className="flex items-center justify-between text-[10px] text-foreground-400">
-                <span><i className="ri-download-line mr-1"></i>{r.downloads}</span>
+                <span><AppIcon className="ri-download-line mr-1"></AppIcon>{r.downloads}</span>
                 <span>Updated {r.lastUpdated}</span>
               </div>
               {expandedId === r.id && (
                 <div className="mt-3 pt-3 border-t border-background-200/30 flex items-center gap-2">
-                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex-1"><i className="ri-download-line mr-1"></i> Download</button>
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-pencil-line mr-1"></i> Edit</button>
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-delete-bin-line"></i></button>
+                  <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex-1"><AppIcon className="ri-download-line mr-1"></AppIcon> Download</button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-pencil-line mr-1"></AppIcon> Edit</button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-delete-bin-line"></AppIcon></button>
                 </div>
               )}
             </div>

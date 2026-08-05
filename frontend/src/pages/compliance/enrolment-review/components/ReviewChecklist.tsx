@@ -49,11 +49,11 @@ export function ReviewChecklist({ record }: ReviewChecklistProps) {
             className="flex items-center justify-between w-full cursor-pointer"
           >
             <div className="flex items-center gap-2">
-              <i className="ri-error-warning-line text-red-500"></i>
+              <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Missing Information</h3>
               <span className="text-[10px] font-medium text-red-600 bg-red-100 px-2 py-0.5 rounded-full">{record.missingInformation.length} item{record.missingInformation.length !== 1 ? 's' : ''}</span>
             </div>
-            <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${showMissingInfo ? 'rotate-180' : ''}`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${showMissingInfo ? 'rotate-180' : ''}`}></AppIcon>
           </button>
 
           {showMissingInfo && (
@@ -73,7 +73,7 @@ export function ReviewChecklist({ record }: ReviewChecklistProps) {
       {record.internalNotes.length > 0 && (
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
           <div className="flex items-center gap-2 mb-3">
-            <i className="ri-sticky-note-line text-foreground-400"></i>
+            <AppIcon className="ri-sticky-note-line text-foreground-400"></AppIcon>
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Internal Notes</h3>
             <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{record.internalNotes.length}</span>
           </div>
@@ -100,7 +100,7 @@ export function ReviewChecklist({ record }: ReviewChecklistProps) {
       {record.actionHistory.length > 0 && (
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
           <div className="flex items-center gap-2 mb-3">
-            <i className="ri-history-line text-foreground-400"></i>
+            <AppIcon className="ri-history-line text-foreground-400"></AppIcon>
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Action History</h3>
           </div>
           <div className="space-y-2">
@@ -142,7 +142,7 @@ function CheckItemRow({ item, index, isExpanded, onToggle }: {
       >
         <span className="text-[10px] text-foreground-400 font-mono w-5 shrink-0">{String(index).padStart(2, '0')}</span>
         <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${resultConfig.bg}`}>
-          <i className={`${resultConfig.icon} ${resultConfig.iconColor} text-sm`}></i>
+          <AppIcon className={`${resultConfig.icon} ${resultConfig.iconColor} text-sm`}></AppIcon>
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-[13px] font-medium text-foreground-800 truncate">{item.label}</p>
@@ -153,7 +153,7 @@ function CheckItemRow({ item, index, isExpanded, onToggle }: {
         <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${resultConfig.badgeBg} ${resultConfig.badgeText}`}>
           {resultConfig.label}
         </span>
-        <i className={`ri-arrow-down-s-line text-foreground-300 transition-transform ${isExpanded ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-foreground-300 transition-transform ${isExpanded ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {isExpanded && (

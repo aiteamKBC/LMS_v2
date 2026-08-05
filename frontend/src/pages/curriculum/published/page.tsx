@@ -69,7 +69,7 @@ export default function CurriculumPublished() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-book-open-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-book-open-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Published Curriculum</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{PUBLISHED.length} curricula</strong> · {live} live · {scheduled} scheduled · {totalActiveLearners} learners on live curricula</p>
@@ -90,7 +90,7 @@ export default function CurriculumPublished() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search curricula..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -144,13 +144,13 @@ export default function CurriculumPublished() {
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-foreground-400 mb-3">
                   <span className={`px-2 py-0.5 rounded-full font-medium ${rc.bg} ${rc.text}`}>{rc.label}</span>
-                  {curriculum.status === 'live' && <span><i className="ri-calendar-check-line mr-0.5"></i> Next review: {curriculum.nextReviewDue}</span>}
-                  {curriculum.publishedDate !== '—' && <span><i className="ri-calendar-line mr-0.5"></i> Published: {curriculum.publishedDate}</span>}
+                  {curriculum.status === 'live' && <span><AppIcon className="ri-calendar-check-line mr-0.5"></AppIcon> Next review: {curriculum.nextReviewDue}</span>}
+                  {curriculum.publishedDate !== '—' && <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon> Published: {curriculum.publishedDate}</span>}
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-eye-line mr-1"></i> View Details</button>
-                  {curriculum.status === 'live' && <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line"></i></button>}
+                  <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-eye-line mr-1"></AppIcon> View Details</button>
+                  {curriculum.status === 'live' && <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line"></AppIcon></button>}
                 </div>
               </div>
             );
@@ -165,7 +165,7 @@ function StatCard({ label, value, sub, icon, color }: { label: string; value: st
   const iconBg = color === 'emerald' ? 'bg-emerald-100 text-emerald-600' : color === 'primary' ? 'bg-primary-100 text-primary-600' : color === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-foreground-100 text-foreground-500';
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
-      <div className="flex items-start justify-between mb-3"><span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}><i className={`${icon} text-sm`}></i></span></div>
+      <div className="flex items-start justify-between mb-3"><span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}><AppIcon className={`${icon} text-sm`}></AppIcon></span></div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>
       <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400 mt-1">{sub}</p>

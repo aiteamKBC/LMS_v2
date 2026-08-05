@@ -25,7 +25,7 @@ export default function Policies() {
           {POLICY_DOCS_KBC.map((doc) => (
             <div key={doc.id} className="flex items-start justify-between gap-3 px-3 py-2.5">
               <a href={doc.url} className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1.5 min-w-0">
-                <i className="ri-file-pdf-2-line text-red-500 shrink-0" />
+                <AppIcon className="ri-file-pdf-2-line text-red-500 shrink-0" />
                 <span className="break-all">{doc.label}</span>
               </a>
               <label className="flex items-center gap-1.5 text-[11px] text-foreground-600 cursor-pointer shrink-0">
@@ -44,7 +44,7 @@ export default function Policies() {
           {POLICY_DOCS_IBIS.map((doc) => (
             <div key={doc.id} className="px-3 py-2.5">
               <a href={doc.url} className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1.5">
-                <i className="ri-file-pdf-2-line text-red-500 shrink-0" />
+                <AppIcon className="ri-file-pdf-2-line text-red-500 shrink-0" />
                 <span className="break-all">{doc.label}</span>
               </a>
             </div>

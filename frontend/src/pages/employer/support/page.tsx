@@ -46,13 +46,13 @@ export default function EmployerSupportRequests() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-question-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-question-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Support Requests</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{SUPPORT_REQUESTS.length} requests</strong> · {open} open · {inProgress} in progress</p>
             </div>
             <button className="px-4 py-2.5 bg-white text-accent-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> New Request
+              <AppIcon className="ri-add-line mr-1"></AppIcon> New Request
             </button>
           </div>
         </div>
@@ -83,13 +83,13 @@ export default function EmployerSupportRequests() {
                   <p className="text-[12px] text-foreground-500 mb-2">{sr.description}</p>
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-foreground-400">
                     <span className="font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">{sr.category}</span>
-                    {sr.relatedApprentice !== '—' && <span><i className="ri-user-line mr-0.5"></i> {sr.relatedApprentice}</span>}
-                    <span><i className="ri-calendar-line mr-0.5"></i> {sr.submittedDate}</span>
-                    <span><i className="ri-user-settings-line mr-0.5"></i> {sr.assignedTo}</span>
+                    {sr.relatedApprentice !== '—' && <span><AppIcon className="ri-user-line mr-0.5"></AppIcon> {sr.relatedApprentice}</span>}
+                    <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon> {sr.submittedDate}</span>
+                    <span><AppIcon className="ri-user-settings-line mr-0.5"></AppIcon> {sr.assignedTo}</span>
                   </div>
                 </div>
                 <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                  <i className="ri-eye-line mr-1"></i> View
+                  <AppIcon className="ri-eye-line mr-1"></AppIcon> View
                 </button>
               </div>
             </div>

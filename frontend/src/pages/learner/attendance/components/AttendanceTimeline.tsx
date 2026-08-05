@@ -22,7 +22,7 @@ export default function AttendanceTimeline() {
       <div className="p-5 border-b border-background-200/60 flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <span className="w-9 h-9 rounded-xl bg-primary-100 flex items-center justify-center">
-            <i className="ri-history-line text-primary-600 text-base"></i>
+            <AppIcon className="ri-history-line text-primary-600 text-base"></AppIcon>
           </span>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">History</h3>
         </div>
@@ -53,7 +53,7 @@ export default function AttendanceTimeline() {
               </div>
               {/* Icon */}
               <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconMap[entry.color] || 'bg-background-100 text-foreground-400'}`}>
-                <i className={`${entry.icon} text-[13px]`}></i>
+                <AppIcon className={`${entry.icon} text-[13px]`}></AppIcon>
               </span>
               {/* Info */}
               <div className="flex-1 min-w-0">

@@ -529,7 +529,7 @@ export function ReflectionWindow({
               aria-label="Close reflection"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#607086] transition-colors hover:bg-[#e7eef5] hover:text-[#142033]"
             >
-              <i className="ri-close-line text-xl" />
+              <AppIcon className="ri-close-line text-xl" />
             </button>
           )}
         </div>
@@ -571,7 +571,7 @@ export function ReflectionWindow({
 
       {loadingExisting && (
         <div className="border-t border-[#d7e0e8] bg-white px-5 py-3 text-sm text-[#607086] md:px-8">
-          <i className="ri-loader-4-line mr-2 animate-spin" />
+          <AppIcon className="ri-loader-4-line mr-2 animate-spin" />
           Loading your saved reflection...
         </div>
       )}
@@ -579,7 +579,7 @@ export function ReflectionWindow({
       {submissionLocked && (
         <div className="border-t border-emerald-200 bg-emerald-50 px-5 py-4 md:px-8">
           <div className="flex items-start gap-3">
-            <i className="ri-lock-2-line mt-0.5 text-lg text-emerald-700" />
+            <AppIcon className="ri-lock-2-line mt-0.5 text-lg text-emerald-700" />
             <div>
               <p className="text-sm font-semibold text-emerald-900">
                 Accepted by your coach — this submission is now locked.
@@ -624,7 +624,7 @@ export function ReflectionWindow({
                     : 'border-[#d3dee8] bg-[#f8fcff] text-[#24354a] disabled:cursor-not-allowed disabled:opacity-60'
                 }`}
               >
-                <i className={`${voiceProcessing ? 'ri-loader-4-line animate-spin' : recording ? 'ri-stop-circle-line' : 'ri-mic-line'} text-lg`} />
+                <AppIcon className={`${voiceProcessing ? 'ri-loader-4-line animate-spin' : recording ? 'ri-stop-circle-line' : 'ri-mic-line'} text-lg`} />
                 {voiceProcessing ? 'Processing recording...' : recording ? 'Stop recording' : 'Record my answer'}
               </button>
               <button
@@ -632,7 +632,7 @@ export function ReflectionWindow({
                 disabled={!reflection.trim() || proofreading}
                 className="inline-flex items-center gap-2 rounded-xl border border-[#d3dee8] bg-[#f8fcff] px-4 py-2.5 text-sm font-medium text-[#7a8797] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <i className={`${proofreading ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-lg`} />
+                <AppIcon className={`${proofreading ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-lg`} />
                 {proofreading ? 'Improving wording...' : 'Proofread & improve my wording'}
               </button>
               <p className={`ml-auto text-sm ${learningReady ? 'text-emerald-600' : 'text-[#607086]'}`}>
@@ -644,7 +644,7 @@ export function ReflectionWindow({
             </p>
             {recording && (
               <p className="mt-2 text-xs font-medium text-red-600">
-                <i className="ri-record-circle-line mr-1 animate-pulse" />
+                <AppIcon className="ri-record-circle-line mr-1 animate-pulse" />
                 Recording in English... select Stop recording when you finish.
               </p>
             )}
@@ -740,7 +740,7 @@ export function ReflectionWindow({
                             ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
                             : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'
                         }`}>
-                          <i className={requirementsComplete ? 'ri-check-line' : 'ri-time-line'} />
+                          <AppIcon className={requirementsComplete ? 'ri-check-line' : 'ri-time-line'} />
                           {requirementsComplete ? 'Evidence complete' : 'Needs input'}
                         </span>
                       </div>
@@ -812,7 +812,7 @@ export function ReflectionWindow({
                 />
                 {applicationType === 'unsure' && (
                   <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                    <i className="ri-alert-line mr-1" />
+                    <AppIcon className="ri-alert-line mr-1" />
                     Submitting this will alert your coach to discuss the support you need in your next meeting.
                   </p>
                 )}
@@ -840,7 +840,7 @@ export function ReflectionWindow({
               disabled={evidenceUploading}
               className="mt-4 inline-flex items-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-700 shadow-sm disabled:cursor-wait disabled:opacity-60"
             >
-              <i className={evidenceUploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
+              <AppIcon className={evidenceUploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
               {evidenceUploading ? 'Uploading to Azure...' : 'Add evidence file'}
             </button>
             {evidenceUploadError && (
@@ -852,9 +852,9 @@ export function ReflectionWindow({
               <div className="mt-3 space-y-2">
                 {allEvidenceFileNames.map((fileName, index) => (
                   <div key={`${fileName}-${index}`} className="flex items-center justify-between rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700">
-                    <span className="truncate"><i className="ri-file-line mr-2" />{fileName}</span>
+                    <span className="truncate"><AppIcon className="ri-file-line mr-2" />{fileName}</span>
                     <span className="ml-3 inline-flex shrink-0 items-center gap-1 font-medium text-emerald-700">
-                      <i className="ri-checkbox-circle-line" /> Uploaded
+                      <AppIcon className="ri-checkbox-circle-line" /> Uploaded
                     </span>
                   </div>
                 ))}
@@ -964,7 +964,7 @@ export function ReflectionWindow({
                   onClick={() => setAiChecked(true)}
                   className="inline-flex items-center gap-2 rounded-lg border border-foreground-200 px-3 py-2 text-xs font-medium text-foreground-700 shadow-sm"
                 >
-                  <i className="ri-sparkling-line" /> {aiChecked ? 'Run again' : 'Run check'}
+                  <AppIcon className="ri-sparkling-line" /> {aiChecked ? 'Run again' : 'Run check'}
                 </button>
               </div>
               {aiChecked && (
@@ -997,7 +997,7 @@ export function ReflectionWindow({
               )}
             </div>
             <div className="rounded-xl border border-primary-200 bg-primary-50/30 p-4">
-              <h2 className="text-sm font-semibold text-foreground-900"><i className="ri-shield-check-line mr-2 text-primary-600" />Learner declaration &amp; signature</h2>
+              <h2 className="text-sm font-semibold text-foreground-900"><AppIcon className="ri-shield-check-line mr-2 text-primary-600" />Learner declaration &amp; signature</h2>
               <p className="mt-2 text-xs leading-relaxed text-foreground-500">
                 Your stored signature is reused on every submission and saved with the document dated and time-stamped for legal and compliance reasons.
               </p>
@@ -1015,7 +1015,7 @@ export function ReflectionWindow({
               <div className="space-y-1.5">
                 {checklist.map(item => (
                   <p key={item.label} className={`flex items-center gap-2 text-xs ${item.complete ? 'text-emerald-700' : 'text-foreground-500'}`}>
-                    <i className={item.complete ? 'ri-checkbox-circle-line' : 'ri-alert-line'} /> {item.label}
+                    <AppIcon className={item.complete ? 'ri-checkbox-circle-line' : 'ri-alert-line'} /> {item.label}
                   </p>
                 ))}
               </div>
@@ -1041,7 +1041,7 @@ export function ReflectionWindow({
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
           {submissionLocked ? (
             <span className="inline-flex items-center gap-2 rounded-xl bg-emerald-100 px-5 py-2.5 text-sm font-semibold text-emerald-800">
-              <i className="ri-lock-2-line" /> Accepted &amp; locked
+              <AppIcon className="ri-lock-2-line" /> Accepted &amp; locked
             </span>
           ) : (
             <>
@@ -1059,8 +1059,8 @@ export function ReflectionWindow({
                   className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
                 >
                   {submitting || reflectionSaving
-                    ? <><i className="ri-loader-4-line animate-spin" /> Saving...</>
-                    : <><i className="ri-edit-line" /> Submit for tutor review</>}
+                    ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving...</>
+                    : <><AppIcon className="ri-edit-line" /> Submit for tutor review</>}
                 </button>
               ) : (
                 <button

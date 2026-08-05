@@ -92,7 +92,7 @@ export default function MisCohortsPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -103,7 +103,7 @@ export default function MisCohortsPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search cohorts, programme, standard..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -114,7 +114,7 @@ export default function MisCohortsPage() {
               {['All', 'Blended', 'Remote', 'On-site'].map(m => <option key={m}>{m}</option>)}
             </select>
             <button onClick={() => setShowForm(true)} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> New Cohort
+              <AppIcon className="ri-add-line mr-1"></AppIcon> New Cohort
             </button>
           </div>
         </div>
@@ -130,7 +130,7 @@ export default function MisCohortsPage() {
                 <div className="p-4 flex flex-col sm:flex-row sm:items-center gap-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${statusColour(cohort.status)}`}>
-                      <i className="ri-group-line text-sm"></i>
+                      <AppIcon className="ri-group-line text-sm"></AppIcon>
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -158,7 +158,7 @@ export default function MisCohortsPage() {
                     <span className="text-foreground-300">|</span>
                     <span>{cohort.groups} group{cohort.groups !== 1 ? 's' : ''}</span>
                     <button onClick={() => setExpandedId(isExpanded ? null : cohort.id)} className="w-7 h-7 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 transition-colors cursor-pointer">
-                      <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></i>
+                      <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -196,13 +196,13 @@ export default function MisCohortsPage() {
                       <p className="text-[10px] uppercase tracking-wide text-foreground-400 mb-2 font-medium">Actions</p>
                       <div className="flex flex-col gap-2">
                         <Link to={`/curriculum/cohorts/${cohort.id}`} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-eye-line mr-1"></i> View Details
+                          <AppIcon className="ri-eye-line mr-1"></AppIcon> View Details
                         </Link>
                         <Link to={`/curriculum/cohorts/${cohort.id}/allocate`} className="px-3 py-1.5 bg-accent-500 text-white rounded-lg text-[11px] font-semibold hover:bg-accent-600 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                          <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
                         </Link>
                         <Link to="/mis/timetables" className="px-3 py-1.5 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-calendar-line mr-1"></i> View Timetable
+                          <AppIcon className="ri-calendar-line mr-1"></AppIcon> View Timetable
                         </Link>
                       </div>
                     </div>
@@ -216,7 +216,7 @@ export default function MisCohortsPage() {
         {filtered.length === 0 && (
           <div className="text-center py-16">
             <div className="w-14 h-14 bg-background-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <i className="ri-group-line text-foreground-300 text-2xl"></i>
+              <AppIcon className="ri-group-line text-foreground-300 text-2xl"></AppIcon>
             </div>
             <p className="text-sm font-medium text-foreground-600">No cohorts found</p>
             <p className="text-[12px] text-foreground-400 mt-1">Try adjusting your filters</p>
@@ -231,7 +231,7 @@ export default function MisCohortsPage() {
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-heading font-semibold text-foreground-900">Create New Cohort</h2>
               <button onClick={() => setShowForm(false)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500"></i>
+                <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
               </button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">

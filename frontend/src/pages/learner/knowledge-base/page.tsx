@@ -63,7 +63,7 @@ export default function LearnerKnowledgeBase() {
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-2">
                   <span className="w-11 h-11 md:w-12 md:h-12 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
-                    <i className="ri-book-read-line text-white text-xl"></i>
+                    <AppIcon className="ri-book-read-line text-white text-xl"></AppIcon>
                   </span>
                   <div>
                     <h1 className="text-lg md:text-xl font-heading font-bold text-white">Knowledge Base</h1>
@@ -76,14 +76,14 @@ export default function LearnerKnowledgeBase() {
                   onClick={() => setShowGlossary(true)}
                   className="px-4 py-2.5 bg-white/10 border border-white/20 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-smooth cursor-pointer whitespace-nowrap backdrop-blur-sm flex items-center gap-2"
                 >
-                  <i className="ri-book-2-line"></i> Glossary
+                  <AppIcon className="ri-book-2-line"></AppIcon> Glossary
                 </button>
               </div>
             </div>
 
             {/* Search */}
             <div className="mt-5 relative max-w-2xl">
-              <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-white/50 text-lg"></i>
+              <AppIcon className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-white/50 text-lg"></AppIcon>
               <input
                 type="text"
                 value={search}
@@ -96,7 +96,7 @@ export default function LearnerKnowledgeBase() {
                   onClick={() => setSearch('')}
                   className="absolute right-3 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/20 transition-smooth cursor-pointer"
                 >
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               )}
             </div>
@@ -110,7 +110,7 @@ export default function LearnerKnowledgeBase() {
                 { icon: 'ri-question-answer-line', label: 'Quick Links', value: LEARNER_KB_QUICK_LINKS.length },
               ].map(stat => (
                 <div key={stat.label} className="flex items-center gap-2 text-white/80">
-                  <i className={`${stat.icon} text-white/50 text-sm`}></i>
+                  <AppIcon className={`${stat.icon} text-white/50 text-sm`}></AppIcon>
                   <span className="text-xs"><strong className="text-white font-semibold">{stat.value}</strong> {stat.label}</span>
                 </div>
               ))}
@@ -137,7 +137,7 @@ export default function LearnerKnowledgeBase() {
                     className="bg-background-50 rounded-xl border border-background-200/50 p-4 text-left hover:border-background-300/60 hover:bg-background-100/50 transition-smooth group cursor-pointer"
                   >
                     <span className={`w-10 h-10 rounded-xl ${cat.color} flex items-center justify-center mb-3`}>
-                      <i className={`${cat.icon} text-lg`}></i>
+                      <AppIcon className={`${cat.icon} text-lg`}></AppIcon>
                     </span>
                     <h3 className="text-[13px] font-semibold text-foreground-800 mb-1 group-hover:text-foreground-900 transition-smooth">{cat.name}</h3>
                     <p className="text-[11px] text-foreground-400 leading-relaxed line-clamp-2">{cat.description}</p>
@@ -156,10 +156,10 @@ export default function LearnerKnowledgeBase() {
               onClick={() => { setActiveCategory(null); setSelectedArticle(null); }}
               className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
             >
-              <i className="ri-arrow-left-line text-sm"></i>
+              <AppIcon className="ri-arrow-left-line text-sm"></AppIcon>
             </button>
             <span className={`w-10 h-10 rounded-xl ${activeCategoryData.color} flex items-center justify-center shrink-0`}>
-              <i className={`${activeCategoryData.icon} text-lg`}></i>
+              <AppIcon className={`${activeCategoryData.icon} text-lg`}></AppIcon>
             </span>
             <div>
               <h2 className="text-sm font-heading font-semibold text-foreground-900">{activeCategoryData.name}</h2>
@@ -246,7 +246,7 @@ export default function LearnerKnowledgeBase() {
                   >
                     <div className="flex items-start gap-3">
                       <span className={`w-9 h-9 rounded-xl ${cat?.color || 'bg-background-100'} flex items-center justify-center shrink-0 mt-0.5`}>
-                        <i className={`${cat?.icon || 'ri-file-text-line'} text-sm`}></i>
+                        <AppIcon className={`${cat?.icon || 'ri-file-text-line'} text-sm`}></AppIcon>
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
@@ -260,7 +260,7 @@ export default function LearnerKnowledgeBase() {
                         <h3 className="text-[13px] font-semibold text-foreground-800 group-hover:text-foreground-900 transition-smooth mb-1">{article.title}</h3>
                         <p className="text-[11px] text-foreground-400 leading-relaxed line-clamp-2">{article.excerpt}</p>
                       </div>
-                      <i className={`${selectedArticle?.id === article.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 shrink-0 mt-1 transition-smooth`}></i>
+                      <AppIcon className={`${selectedArticle?.id === article.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 shrink-0 mt-1 transition-smooth`}></AppIcon>
                     </div>
                   </div>
                 );
@@ -268,7 +268,7 @@ export default function LearnerKnowledgeBase() {
               {filteredArticles.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-14 text-center">
                   <div className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mb-3">
-                    <i className="ri-search-line text-foreground-300 text-xl"></i>
+                    <AppIcon className="ri-search-line text-foreground-300 text-xl"></AppIcon>
                   </div>
                   <p className="text-sm text-foreground-500 font-medium">No articles found</p>
                   <p className="text-xs text-foreground-400 mt-1">Try a different search term or browse by category</p>
@@ -304,7 +304,7 @@ export default function LearnerKnowledgeBase() {
                         disabled={filteredArticles.findIndex(a => a.id === selectedArticle.id) === 0}
                         className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                       >
-                        <i className="ri-arrow-up-s-line text-xs"></i>
+                        <AppIcon className="ri-arrow-up-s-line text-xs"></AppIcon>
                       </button>
                       <button
                         onClick={() => {
@@ -314,13 +314,13 @@ export default function LearnerKnowledgeBase() {
                         disabled={filteredArticles.findIndex(a => a.id === selectedArticle.id) === filteredArticles.length - 1}
                         className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
                       >
-                        <i className="ri-arrow-down-s-line text-xs"></i>
+                        <AppIcon className="ri-arrow-down-s-line text-xs"></AppIcon>
                       </button>
                       <button
                         onClick={() => setSelectedArticle(null)}
                         className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer ml-1"
                       >
-                        <i className="ri-close-line text-xs"></i>
+                        <AppIcon className="ri-close-line text-xs"></AppIcon>
                       </button>
                     </div>
                   </div>
@@ -328,8 +328,8 @@ export default function LearnerKnowledgeBase() {
                   <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3 leading-snug">{selectedArticle.title}</h3>
 
                   <div className="flex items-center gap-3 text-[10px] text-foreground-400 mb-4">
-                    <span className="flex items-center gap-1"><i className="ri-time-line"></i> {selectedArticle.readTime} min read</span>
-                    <span className="flex items-center gap-1"><i className="ri-article-line"></i> Knowledge Base</span>
+                    <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {selectedArticle.readTime} min read</span>
+                    <span className="flex items-center gap-1"><AppIcon className="ri-article-line"></AppIcon> Knowledge Base</span>
                   </div>
 
                   <div className="bg-background-100/70 rounded-lg p-3.5 mb-4">
@@ -338,10 +338,10 @@ export default function LearnerKnowledgeBase() {
 
                   <div className="flex items-center gap-2 pt-3 border-t border-background-100">
                     <button className="text-xs text-foreground-400 hover:text-foreground-600 font-medium cursor-pointer flex items-center gap-1.5 transition-smooth">
-                      <i className="ri-thumb-up-line"></i> Helpful
+                      <AppIcon className="ri-thumb-up-line"></AppIcon> Helpful
                     </button>
                     <button className="text-xs text-foreground-400 hover:text-foreground-600 font-medium cursor-pointer flex items-center gap-1.5 transition-smooth">
-                      <i className="ri-thumb-down-line"></i> Not helpful
+                      <AppIcon className="ri-thumb-down-line"></AppIcon> Not helpful
                     </button>
                     <span className="text-xs text-foreground-300 ml-auto">Still stuck?</span>
                     <button
@@ -355,7 +355,7 @@ export default function LearnerKnowledgeBase() {
               ) : (
                 <div className="bg-background-50 rounded-xl border border-background-200/50 p-6 text-center">
                   <div className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-book-open-line text-foreground-300 text-xl"></i>
+                    <AppIcon className="ri-book-open-line text-foreground-300 text-xl"></AppIcon>
                   </div>
                   <p className="text-[13px] text-foreground-500 font-medium">Select an article</p>
                   <p className="text-[11px] text-foreground-300 mt-1">Click any article to read it here</p>
@@ -370,7 +370,7 @@ export default function LearnerKnowledgeBase() {
                           onClick={() => nav(link.href)}
                           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-foreground-600 hover:bg-background-100 hover:text-foreground-800 transition-smooth cursor-pointer"
                         >
-                          <i className={`${link.icon} text-foreground-400 text-sm`}></i>
+                          <AppIcon className={`${link.icon} text-foreground-400 text-sm`}></AppIcon>
                           {link.label}
                         </button>
                       ))}
@@ -390,7 +390,7 @@ export default function LearnerKnowledgeBase() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50 shrink-0">
                 <div className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-xl bg-accent-100 flex items-center justify-center">
-                    <i className="ri-book-2-line text-accent-600 text-lg"></i>
+                    <AppIcon className="ri-book-2-line text-accent-600 text-lg"></AppIcon>
                   </span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Apprenticeship Glossary</h3>
@@ -398,14 +398,14 @@ export default function LearnerKnowledgeBase() {
                   </div>
                 </div>
                 <button onClick={() => setShowGlossary(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
 
               {/* Glossary search */}
               <div className="px-6 py-3 border-b border-background-100 shrink-0">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
                     type="text"
                     value={glossarySearch}
@@ -426,7 +426,7 @@ export default function LearnerKnowledgeBase() {
                   ))}
                   {filteredGlossary.length === 0 && (
                     <div className="text-center py-8">
-                      <i className="ri-search-line text-foreground-200 text-2xl mb-2"></i>
+                      <AppIcon className="ri-search-line text-foreground-200 text-2xl mb-2"></AppIcon>
                       <p className="text-sm text-foreground-400">No glossary terms match your search</p>
                     </div>
                   )}

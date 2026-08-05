@@ -84,7 +84,7 @@ export default function EmployerDashboard() {
         {(pendingOTJH > 0 || pendingEvidence > 0 || pendingSignatures > 0) && (
           <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-              <i className="ri-alert-line text-amber-600 text-base"></i>
+              <AppIcon className="ri-alert-line text-amber-600 text-base"></AppIcon>
             </span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-amber-800">Action Required: {pendingOTJH + pendingEvidence + pendingSignatures} items need your attention</p>
@@ -95,7 +95,7 @@ export default function EmployerDashboard() {
               </p>
             </div>
             <button className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[12px] font-semibold hover:bg-amber-700 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-check-double-line mr-1"></i> Review All
+              <AppIcon className="ri-check-double-line mr-1"></AppIcon> Review All
             </button>
           </div>
         )}
@@ -115,7 +115,7 @@ export default function EmployerDashboard() {
                 activeView === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge && tab.badge > 0 && (
                 <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -217,7 +217,7 @@ export default function EmployerDashboard() {
                       <p className="text-[10px] text-foreground-400">Period: {review.period} · Coach: {review.coach}</p>
                       {review.status === 'Awaiting Employer' && (
                         <button className="mt-2 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap w-full">
-                          <i className="ri-pen-nib-line mr-1"></i> Sign Now
+                          <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Now
                         </button>
                       )}
                     </div>
@@ -234,7 +234,7 @@ export default function EmployerDashboard() {
                 <p className="text-[11px] text-foreground-400">{p.coach.role}</p>
                 <p className="text-[10px] text-foreground-300 mt-1">{p.coach.email}</p>
                 <button className="mt-2 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap w-full">
-                  <i className="ri-mail-line mr-1"></i> Message Coach
+                  <AppIcon className="ri-mail-line mr-1"></AppIcon> Message Coach
                 </button>
               </div>
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium text-center">
@@ -243,7 +243,7 @@ export default function EmployerDashboard() {
                 <p className="text-[11px] text-foreground-400">{p.tutor.role}</p>
                 <p className="text-[10px] text-foreground-300 mt-1">{p.tutor.email}</p>
                 <button className="mt-2 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap w-full">
-                  <i className="ri-mail-line mr-1"></i> Message Tutor
+                  <AppIcon className="ri-mail-line mr-1"></AppIcon> Message Tutor
                 </button>
               </div>
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium text-center">
@@ -252,7 +252,7 @@ export default function EmployerDashboard() {
                 <p className="text-[11px] text-foreground-400">{p.lineManager.role}</p>
                 <p className="text-[10px] text-foreground-300 mt-1">{p.lineManager.email}</p>
                 <button className="mt-2 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap w-full">
-                  <i className="ri-calendar-check-line mr-1"></i> Meeting Notes
+                  <AppIcon className="ri-calendar-check-line mr-1"></AppIcon> Meeting Notes
                 </button>
               </div>
             </div>
@@ -295,15 +295,15 @@ export default function EmployerDashboard() {
                     <div className="flex items-center gap-2 shrink-0">
                       {entry.employerConfirmed ? (
                         <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
-                          <i className="ri-check-line"></i> Confirmed
+                          <AppIcon className="ri-check-line"></AppIcon> Confirmed
                         </span>
                       ) : (
                         <>
                           <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                            <i className="ri-check-line mr-1"></i> Confirm
+                            <AppIcon className="ri-check-line mr-1"></AppIcon> Confirm
                           </button>
                           <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                            <i className="ri-close-line mr-1"></i> Decline
+                            <AppIcon className="ri-close-line mr-1"></AppIcon> Decline
                           </button>
                         </>
                       )}
@@ -314,7 +314,7 @@ export default function EmployerDashboard() {
             </div>
             <div className="mt-4 bg-background-100/50 rounded-xl border border-background-200/30 p-4">
               <div className="flex items-center gap-3">
-                <i className="ri-information-line text-foreground-400"></i>
+                <AppIcon className="ri-information-line text-foreground-400"></AppIcon>
                 <div>
                   <p className="text-[12px] font-medium text-foreground-700">Employer Confirmation Policy</p>
                   <p className="text-[11px] text-foreground-400">By confirming OTJH, you verify that Sophie undertook these learning activities during her normal paid working hours at Tim Hortons UK, in line with the apprenticeship funding rules. False declarations may result in funding clawback.</p>
@@ -398,15 +398,15 @@ export default function EmployerDashboard() {
                   <div className="flex items-center gap-2">
                     {item.employerAction === 'done' ? (
                       <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
-                        <i className="ri-check-double-line text-xs"></i> Validated
+                        <AppIcon className="ri-check-double-line text-xs"></AppIcon> Validated
                       </span>
                     ) : (
                       <>
                         <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-check-line mr-1"></i> {item.employerAction === 'validate' ? 'Validate' : 'Confirm'}
+                          <AppIcon className="ri-check-line mr-1"></AppIcon> {item.employerAction === 'validate' ? 'Validate' : 'Confirm'}
                         </button>
                         <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-file-search-line mr-1"></i> View Detail
+                          <AppIcon className="ri-file-search-line mr-1"></AppIcon> View Detail
                         </button>
                       </>
                     )}
@@ -433,7 +433,7 @@ function EmployerStatCard({ label, value, sub, icon, color, progress }: {
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
       </div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>

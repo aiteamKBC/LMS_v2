@@ -40,8 +40,8 @@ export default function Plr() {
           <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">ULN</label>
           <input value={plr.uln} onChange={(e) => setUln(e.target.value)} placeholder="5757627173" className={`${inputClass} w-48`} />
         </div>
-        <button className={btnPrimary} onClick={getPlr}><i className="ri-download-cloud-line" />Get PLR</button>
-        <button className={btnSecondary} onClick={addManual}><i className="ri-add-line" />Add</button>
+        <button className={btnPrimary} onClick={getPlr}><AppIcon className="ri-download-cloud-line" />Get PLR</button>
+        <button className={btnSecondary} onClick={addManual}><AppIcon className="ri-add-line" />Add</button>
         <div className="ml-auto"><ActionLink label="Export to CSV" icon="ri-file-excel-2-line" /></div>
       </div>
 
@@ -61,8 +61,8 @@ export default function Plr() {
                   <td className="py-2 px-3 text-foreground-600">{r.credits}</td>
                   <td className="py-2 px-3 text-foreground-600">{r.grade}</td>
                   <td className="py-2 px-3 text-foreground-600">{r.recordType}</td>
-                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Edit record"><i className="ri-pencil-line text-sm" /></button></td>
-                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Delete record" onClick={() => remove(r.id)}><i className="ri-delete-bin-line text-sm" /></button></td>
+                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Edit record"><AppIcon className="ri-pencil-line text-sm" /></button></td>
+                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Delete record" onClick={() => remove(r.id)}><AppIcon className="ri-delete-bin-line text-sm" /></button></td>
                 </tr>
               ))}
             </Table>

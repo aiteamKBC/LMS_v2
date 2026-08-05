@@ -51,7 +51,7 @@ function fallbackItems(value = '') {
 function SectionLabel({ icon, label }: { icon: string; label: string }) {
   return (
     <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[#f4f1ff] px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[#5b2dbb]">
-      <i className={icon}></i>
+      <AppIcon className={icon}></AppIcon>
       {label}
     </div>
   );
@@ -62,7 +62,7 @@ function CorrectMark({ visible }: { visible: boolean }) {
 
   return (
     <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 shrink-0">
-      <i className="ri-check-line"></i>
+      <AppIcon className="ri-check-line"></AppIcon>
       Correct
     </span>
   );
@@ -90,7 +90,7 @@ function ChoiceAnswers({ answers, type, compact, showCorrect }: QuestionAnswersV
             >
               {isMultiple ? (
                 <span className={`w-8 h-8 rounded-lg border flex items-center justify-center text-xs font-semibold shrink-0 ${isCorrect ? 'border-emerald-400 bg-white text-emerald-700' : 'border-[#cbd5e1] bg-white text-[#64748b]'}`}>
-                  {isCorrect ? <i className="ri-checkbox-fill text-lg"></i> : <i className="ri-checkbox-blank-line text-lg"></i>}
+                  {isCorrect ? <AppIcon className="ri-checkbox-fill text-lg"></AppIcon> : <AppIcon className="ri-checkbox-blank-line text-lg"></AppIcon>}
                 </span>
               ) : (
                 <span className={`w-8 h-8 rounded-full border flex items-center justify-center text-xs font-semibold shrink-0 ${isCorrect ? 'border-emerald-400 bg-white text-emerald-700' : 'border-[#cbd5e1] bg-white text-[#64748b]'}`}>
@@ -165,10 +165,10 @@ function MatchingAnswers({ answers, type }: QuestionAnswersViewProps) {
                 {pair.left}
               </div>
               <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]">
-                <i className="ri-arrow-right-line text-xl"></i>
+                <AppIcon className="ri-arrow-right-line text-xl"></AppIcon>
               </span>
               <div className="rounded-xl border border-emerald-300 bg-[#ecfdf5] px-3 py-3 text-sm font-medium text-emerald-900 break-words [overflow-wrap:anywhere]">
-                {isImage && <i className="ri-image-line mr-2 text-emerald-700"></i>}
+                {isImage && <AppIcon className="ri-image-line mr-2 text-emerald-700"></AppIcon>}
                 {pair.right || pair.left}
               </div>
             </div>

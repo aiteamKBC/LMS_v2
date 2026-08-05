@@ -296,9 +296,9 @@ export default function CohortDetailPage() {
         {/* ── Breadcrumb ── */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
           <Link to="/curriculum/programmes" className="hover:text-foreground-700 transition-smooth">Programmes</Link>
-          <i className="ri-arrow-right-s-line text-[10px]"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>
           <Link to={`/curriculum/programmes/${data.programmeId}`} className="hover:text-foreground-700 transition-smooth">{data.programme} {data.level}</Link>
-          <i className="ri-arrow-right-s-line text-[10px]"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>
           <span className="text-foreground-900 font-medium">{data.name}</span>
         </div>
 
@@ -315,10 +315,10 @@ export default function CohortDetailPage() {
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
               </Link>
               <button className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line mr-1"></i> Edit Cohort
+                <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit Cohort
               </button>
             </div>
           </div>
@@ -340,7 +340,7 @@ export default function CohortDetailPage() {
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
           {tabs.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer shrink-0 ${tab === t.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-              <i className={`${t.icon} text-[13px]`}></i>
+              <AppIcon className={`${t.icon} text-[13px]`}></AppIcon>
               {t.label}
               {t.count !== undefined && <span className="text-[9px] bg-foreground-200/50 px-1 rounded-full">{t.count}</span>}
             </button>
@@ -361,15 +361,15 @@ export default function CohortDetailPage() {
                   </div>
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-foreground-400"><i className="ri-graduation-cap-line mr-1"></i>Learners</span>
+                      <span className="text-foreground-400"><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>Learners</span>
                       <span className="font-semibold text-foreground-700">{g.learners.length}/{g.maxLearners}</span>
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-foreground-400"><i className="ri-heart-line mr-1"></i>Coach</span>
+                      <span className="text-foreground-400"><AppIcon className="ri-heart-line mr-1"></AppIcon>Coach</span>
                       <span className="text-foreground-700">{g.coach}</span>
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-foreground-400"><i className="ri-user-settings-line mr-1"></i>Tutor</span>
+                      <span className="text-foreground-400"><AppIcon className="ri-user-settings-line mr-1"></AppIcon>Tutor</span>
                       <span className="text-foreground-700">{g.tutor}</span>
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
@@ -413,7 +413,7 @@ export default function CohortDetailPage() {
                         </div>
                         <span className={`w-2 h-2 rounded-full ${riskDots[l.risk]}`}></span>
                       </div>
-                      <i className={`ri-arrow-down-s-line text-foreground-300 transition-smooth ${selectedLearner?.id === l.id ? 'rotate-180' : ''}`}></i>
+                      <AppIcon className={`ri-arrow-down-s-line text-foreground-300 transition-smooth ${selectedLearner?.id === l.id ? 'rotate-180' : ''}`}></AppIcon>
                     </button>
                   ))}
                 </div>
@@ -452,7 +452,7 @@ export default function CohortDetailPage() {
               <div key={g.id} className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
                 <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-50 flex items-center justify-center shrink-0">
-                    <i className={`ri-arrow-down-s-line text-secondary-600 transition-smooth ${expandedGroup === g.id ? 'rotate-180' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-down-s-line text-secondary-600 transition-smooth ${expandedGroup === g.id ? 'rotate-180' : ''}`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -460,10 +460,10 @@ export default function CohortDetailPage() {
                       <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${statusColors[g.status]}`}>{g.status}</span>
                     </div>
                     <div className="flex items-center gap-4 text-[11px] text-foreground-500 mt-0.5 flex-wrap">
-                      <span><i className="ri-graduation-cap-line mr-1 text-[10px]"></i>{g.learners.length}/{g.maxLearners} learners</span>
-                      <span><i className="ri-heart-line mr-1 text-[10px]"></i>Coach: {g.coach}</span>
-                      <span><i className="ri-user-settings-line mr-1 text-[10px]"></i>Tutor: {g.tutor}</span>
-                      <span><i className="ri-calendar-line mr-1 text-[10px]"></i>{g.schedule}</span>
+                      <span><AppIcon className="ri-graduation-cap-line mr-1 text-[10px]"></AppIcon>{g.learners.length}/{g.maxLearners} learners</span>
+                      <span><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>Coach: {g.coach}</span>
+                      <span><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>Tutor: {g.tutor}</span>
+                      <span><AppIcon className="ri-calendar-line mr-1 text-[10px]"></AppIcon>{g.schedule}</span>
                       <span className="text-[10px] bg-background-100 px-2 py-0.5 rounded">{g.mode} · {g.room}</span>
                     </div>
                   </div>
@@ -483,10 +483,10 @@ export default function CohortDetailPage() {
                   <div className="px-4 pb-4 border-t border-background-200/30">
                     {g.learners.length === 0 ? (
                       <div className="p-6 text-center">
-                        <i className="ri-user-add-line text-3xl text-foreground-300 mb-2 block"></i>
+                        <AppIcon className="ri-user-add-line text-3xl text-foreground-300 mb-2 block"></AppIcon>
                         <p className="text-[12px] text-foreground-400 mb-3">No learners assigned to this group yet.</p>
                         <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="inline-block px-4 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                          <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
                         </Link>
                       </div>
                     ) : (
@@ -522,7 +522,7 @@ export default function CohortDetailPage() {
                               <span className={`w-2 h-2 rounded-full ${riskDots[l.risk]}`}></span>
                             </div>
                             <button className="w-7 h-7 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-                              <i className="ri-more-2-fill text-foreground-400 text-xs"></i>
+                              <AppIcon className="ri-more-2-fill text-foreground-400 text-xs"></AppIcon>
                             </button>
                           </div>
                         ))}
@@ -531,10 +531,10 @@ export default function CohortDetailPage() {
 
                     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-background-200/30">
                       <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                        <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
                       </Link>
                       <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-edit-line mr-1"></i> Edit Group
+                        <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit Group
                       </button>
                     </div>
                   </div>
@@ -542,7 +542,7 @@ export default function CohortDetailPage() {
               </div>
             ))}
             <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="block w-full p-4 border-2 border-dashed border-background-200 rounded-xl text-center hover:border-primary-300 hover:bg-primary-50/30 transition-smooth cursor-pointer">
-              <i className="ri-add-line text-foreground-400 text-lg mb-1 block"></i>
+              <AppIcon className="ri-add-line text-foreground-400 text-lg mb-1 block"></AppIcon>
               <p className="text-[12px] font-medium text-foreground-500">Add New Group</p>
             </Link>
           </div>
@@ -554,14 +554,14 @@ export default function CohortDetailPage() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
                 <button onClick={() => setScheduleView('list')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${scheduleView === 'list' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500'}`}>
-                  <i className="ri-list-check mr-1"></i> List
+                  <AppIcon className="ri-list-check mr-1"></AppIcon> List
                 </button>
                 <button onClick={() => setScheduleView('calendar')} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${scheduleView === 'calendar' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500'}`}>
-                  <i className="ri-calendar-2-line mr-1"></i> Calendar
+                  <AppIcon className="ri-calendar-2-line mr-1"></AppIcon> Calendar
                 </button>
               </div>
               <Link to="/curriculum/session-calendar" className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-calendar-schedule-line mr-1"></i> Full Calendar
+                <AppIcon className="ri-calendar-schedule-line mr-1"></AppIcon> Full Calendar
               </Link>
             </div>
 
@@ -611,7 +611,7 @@ export default function CohortDetailPage() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
-                      <i className="ri-stack-line text-sm"></i>
+                      <AppIcon className="ri-stack-line text-sm"></AppIcon>
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-foreground-900">{m.name}</p>
@@ -684,7 +684,7 @@ function StatCard({ icon, value, label, color, sub }: { icon: string; value: num
   return (
     <div className="bg-background-100 rounded-xl p-3">
       <div className="flex items-center gap-2 mb-1">
-        <i className={`${icon} ${colorMap[color] || 'text-foreground-400'} text-xs`}></i>
+        <AppIcon className={`${icon} ${colorMap[color] || 'text-foreground-400'} text-xs`}></AppIcon>
         <span className="text-[10px] text-foreground-400 uppercase">{label}</span>
       </div>
       <p className="text-lg font-bold text-foreground-900">{value}</p>

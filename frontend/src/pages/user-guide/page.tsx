@@ -87,7 +87,7 @@ export default function UserGuidePage() {
               className="absolute top-3 right-3 z-20 w-7 h-7 rounded-full bg-white/15 hover:bg-white/25 backdrop-blur-sm flex items-center justify-center cursor-pointer transition-smooth"
               aria-label="Close video"
             >
-              <i className="ri-close-line text-white text-xs"></i>
+              <AppIcon className="ri-close-line text-white text-xs"></AppIcon>
             </button>
 
             {/* Video Thumbnail */}
@@ -103,7 +103,7 @@ export default function UserGuidePage() {
               {/* Play Button */}
               <button className="absolute inset-0 flex items-center justify-center cursor-pointer group" aria-label="Play Quick Start Video">
                 <span className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center border-2 border-white/30 group-hover:bg-white/30 group-hover:scale-105 transition-all duration-300">
-                  <i className="ri-play-fill text-white text-3xl sm:text-4xl ml-1"></i>
+                  <AppIcon className="ri-play-fill text-white text-3xl sm:text-4xl ml-1"></AppIcon>
                 </span>
               </button>
 
@@ -111,7 +111,7 @@ export default function UserGuidePage() {
               <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className="px-2.5 py-1 rounded-full bg-accent-500/20 backdrop-blur-sm border border-accent-400/30 text-accent-300 text-[11px] font-bold uppercase tracking-wide flex items-center gap-1.5">
-                    <i className="ri-play-circle-line text-xs"></i> Quick Start Video
+                    <AppIcon className="ri-play-circle-line text-xs"></AppIcon> Quick Start Video
                   </span>
                   <span className="text-white/60 text-[11px] hidden sm:inline">Get to know your dashboard in under 4 minutes</span>
                 </div>
@@ -131,7 +131,7 @@ export default function UserGuidePage() {
           </div>
           <div className="relative p-5 sm:p-6 flex flex-col lg:flex-row items-start lg:items-center gap-5">
             <span className="w-12 h-12 rounded-2xl bg-white/12 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-book-read-line text-white text-xl"></i>
+              <AppIcon className="ri-book-read-line text-white text-xl"></AppIcon>
             </span>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-white mb-1.5">Your Complete Dashboard Guide</h2>
@@ -153,7 +153,7 @@ export default function UserGuidePage() {
           <div className="p-5 border-b border-background-200/40">
             <div className="flex items-center gap-3 mb-1">
               <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-                <i className="ri-compass-3-line text-accent-600 text-sm"></i>
+                <AppIcon className="ri-compass-3-line text-accent-600 text-sm"></AppIcon>
               </span>
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">First Time Here? Start With These 3</h3>
@@ -168,7 +168,7 @@ export default function UserGuidePage() {
                   {/* Connector between steps (desktop only) */}
                   {idx < recommendedGuides.length - 1 && (
                     <div className="hidden lg:flex absolute top-8 -right-2 z-10 items-center text-foreground-200">
-                      <i className="ri-arrow-right-line text-lg"></i>
+                      <AppIcon className="ri-arrow-right-line text-lg"></AppIcon>
                     </div>
                   )}
                   <div className="bg-white rounded-xl border border-background-200/60 p-4 h-full hover:border-accent-200/60 transition-smooth">
@@ -179,7 +179,7 @@ export default function UserGuidePage() {
                       </span>
                       {readGuides.has(guide.id) && (
                         <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
-                          <i className="ri-check-line text-[10px]"></i> Read
+                          <AppIcon className="ri-check-line text-[10px]"></AppIcon> Read
                         </span>
                       )}
                     </div>
@@ -192,14 +192,14 @@ export default function UserGuidePage() {
                         onClick={() => navigate(guide.pagePath)}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary-500 text-background-50 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                       >
-                        <i className="ri-arrow-right-line"></i> Open Page
+                        <AppIcon className="ri-arrow-right-line"></AppIcon> Open Page
                       </button>
                       <button
                         onClick={() => toggleGuide(guide.id)}
                         className="w-8 h-8 rounded-lg border border-background-200/60 flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:border-background-300 transition-smooth cursor-pointer"
                         title="Read guide"
                       >
-                        <i className="ri-book-open-line text-xs"></i>
+                        <AppIcon className="ri-book-open-line text-xs"></AppIcon>
                       </button>
                       <button
                         onClick={() => toggleRead(guide.id)}
@@ -210,7 +210,7 @@ export default function UserGuidePage() {
                         }`}
                         title={readGuides.has(guide.id) ? 'Mark as unread' : 'Mark as read'}
                       >
-                        <i className={`${readGuides.has(guide.id) ? 'ri-check-double-line' : 'ri-check-line'} text-xs`}></i>
+                        <AppIcon className={`${readGuides.has(guide.id) ? 'ri-check-double-line' : 'ri-check-line'} text-xs`}></AppIcon>
                       </button>
                     </div>
                   </div>
@@ -226,7 +226,7 @@ export default function UserGuidePage() {
         <section className="bg-background-50 rounded-2xl border border-background-200/50 p-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <i className="ri-book-read-line text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-book-read-line text-foreground-400 text-sm"></AppIcon>
               <span className="text-xs font-semibold text-foreground-700">Your Reading Progress</span>
             </div>
             <span className="text-xs font-bold text-primary-600">{readCount} / {allGuides.length} guides</span>
@@ -244,7 +244,7 @@ export default function UserGuidePage() {
             <span className="text-[10px] text-foreground-400">{progressPercent}% complete</span>
             {progressPercent === 100 && (
               <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-medium bg-emerald-50 px-2 py-0.5 rounded-full">
-                <i className="ri-trophy-line text-[10px]"></i> All guides read!
+                <AppIcon className="ri-trophy-line text-[10px]"></AppIcon> All guides read!
               </span>
             )}
             {progressPercent > 0 && progressPercent < 100 && (
@@ -260,7 +260,7 @@ export default function UserGuidePage() {
           <div className="p-5 border-b border-background-200/40">
             <div className="flex items-center gap-3 mb-1">
               <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                <i className="ri-node-tree text-primary-600 text-sm"></i>
+                <AppIcon className="ri-node-tree text-primary-600 text-sm"></AppIcon>
               </span>
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">How Your Dashboard Is Organised</h3>
@@ -285,7 +285,7 @@ export default function UserGuidePage() {
                   <div key={zone.zone} className="relative">
                     {zi > 0 && (
                       <div className="hidden lg:flex absolute -left-3 top-6 items-center text-foreground-200 z-10">
-                        <i className="ri-arrow-right-s-line text-lg"></i>
+                        <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
                       </div>
                     )}
                     <button
@@ -296,7 +296,7 @@ export default function UserGuidePage() {
                     >
                       <div className="flex items-center gap-2.5 mb-2">
                         <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${isActive ? c.dot + ' text-white' : (zoneComplete ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-500')}`}>
-                          <i className={`${zone.icon} text-xs`}></i>
+                          <AppIcon className={`${zone.icon} text-xs`}></AppIcon>
                         </span>
                         <span className="text-xs font-semibold text-foreground-900 whitespace-nowrap">{zone.label}</span>
                         <span className="text-[9px] font-bold text-foreground-300 ml-auto">{zone.order}</span>
@@ -322,11 +322,11 @@ export default function UserGuidePage() {
                               className="w-full flex items-center gap-1.5 text-[11px] text-foreground-600 hover:text-foreground-900 py-1 transition-smooth cursor-pointer"
                             >
                               {readGuides.has(g.id) && (
-                                <i className="ri-check-line text-[9px] text-emerald-500 shrink-0"></i>
+                                <AppIcon className="ri-check-line text-[9px] text-emerald-500 shrink-0"></AppIcon>
                               )}
-                              <i className={`${g.icon} text-[10px] ${readGuides.has(g.id) ? 'text-emerald-400' : 'text-foreground-300'}`}></i>
+                              <AppIcon className={`${g.icon} text-[10px] ${readGuides.has(g.id) ? 'text-emerald-400' : 'text-foreground-300'}`}></AppIcon>
                               <span className="truncate">{g.title}</span>
-                              <i className="ri-arrow-right-s-line text-foreground-200 ml-auto shrink-0"></i>
+                              <AppIcon className="ri-arrow-right-s-line text-foreground-200 ml-auto shrink-0"></AppIcon>
                             </button>
                           ))}
                         </div>
@@ -352,7 +352,7 @@ export default function UserGuidePage() {
             ].map(stat => (
               <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-3.5 flex items-center gap-3">
                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${stat.bg}`}>
-                  <i className={`${stat.icon} ${stat.text} text-sm`}></i>
+                  <AppIcon className={`${stat.icon} ${stat.text} text-sm`}></AppIcon>
                 </span>
                 <div>
                   <p className="text-lg font-bold text-foreground-900 leading-none">{stat.value}</p>
@@ -394,11 +394,11 @@ export default function UserGuidePage() {
             ══════════════════════════════════════════════════════════ */}
         <div className="flex items-center justify-between pt-3 border-t border-background-200/40 text-[11px] text-foreground-400">
           <div className="flex items-center gap-1.5">
-            <i className="ri-information-line text-secondary-400"></i>
+            <AppIcon className="ri-information-line text-secondary-400"></AppIcon>
             <span>Guides are updated regularly. If something is missing, contact your coach.</span>
           </div>
           <a href="/learner/support" className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
-            <i className="ri-question-line"></i> Need Help?
+            <AppIcon className="ri-question-line"></AppIcon> Need Help?
           </a>
         </div>
       </div>
@@ -446,7 +446,7 @@ function GuideCard({
           <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
             isRead ? 'bg-emerald-100' : 'bg-primary-100'
           }`}>
-            <i className={`${guide.icon} ${isRead ? 'text-emerald-600' : 'text-primary-600'} text-lg`}></i>
+            <AppIcon className={`${guide.icon} ${isRead ? 'text-emerald-600' : 'text-primary-600'} text-lg`}></AppIcon>
           </span>
         </div>
 
@@ -455,12 +455,12 @@ function GuideCard({
             <h4 className="text-sm font-heading font-semibold text-foreground-900">{guide.title}</h4>
             {isRecommended && (
               <span className="inline-flex items-center gap-1 text-[9px] font-bold text-accent-600 bg-accent-50 px-1.5 py-0.5 rounded-full">
-                <i className="ri-star-fill text-[8px]"></i> Recommended
+                <AppIcon className="ri-star-fill text-[8px]"></AppIcon> Recommended
               </span>
             )}
             {isRead && (
               <span className="inline-flex items-center gap-1 text-[9px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">
-                <i className="ri-check-double-line text-[8px]"></i> Read
+                <AppIcon className="ri-check-double-line text-[8px]"></AppIcon> Read
               </span>
             )}
           </div>
@@ -471,12 +471,12 @@ function GuideCard({
             </span>
             {guide.steps.some(s => s.tip) && (
               <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
-                <i className="ri-lightbulb-line mr-0.5"></i>Pro Tips
+                <AppIcon className="ri-lightbulb-line mr-0.5"></AppIcon>Pro Tips
               </span>
             )}
             {guide.steps.some(s => s.action) && (
               <span className="text-[10px] font-medium text-accent-600 bg-accent-50 px-1.5 py-0.5 rounded">
-                <i className="ri-flashlight-line mr-0.5"></i>Actions
+                <AppIcon className="ri-flashlight-line mr-0.5"></AppIcon>Actions
               </span>
             )}
           </div>
@@ -488,7 +488,7 @@ function GuideCard({
             onClick={(e) => { e.stopPropagation(); onNavigate(); }}
             className="hidden sm:inline-flex items-center gap-1 px-3.5 py-2 rounded-lg bg-primary-500 text-background-50 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
           >
-            <i className="ri-arrow-right-line"></i> Open
+            <AppIcon className="ri-arrow-right-line"></AppIcon> Open
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); onToggleRead(); }}
@@ -497,9 +497,9 @@ function GuideCard({
             }`}
             title={isRead ? 'Mark as unread' : 'Mark as read'}
           >
-            <i className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></i>
+            <AppIcon className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></AppIcon>
           </button>
-          <i className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 text-lg`}></i>
+          <AppIcon className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 text-lg`}></AppIcon>
         </div>
       </button>
 
@@ -509,7 +509,7 @@ function GuideCard({
           onClick={(e) => { e.stopPropagation(); onNavigate(); }}
           className="inline-flex items-center gap-1 px-3.5 py-2 rounded-lg bg-primary-500 text-background-50 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-arrow-right-line"></i> Open Page
+          <AppIcon className="ri-arrow-right-line"></AppIcon> Open Page
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onToggleRead(); }}
@@ -517,7 +517,7 @@ function GuideCard({
             isRead ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-background-200/60 text-foreground-500 hover:text-emerald-500'
           }`}
         >
-          <i className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></i>
+          <AppIcon className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></AppIcon>
           {isRead ? 'Read' : 'Done?'}
         </button>
       </div>
@@ -572,7 +572,7 @@ function GuideCard({
                       <div className="flex items-center gap-2 flex-wrap">
                         <h5 className="text-sm font-semibold text-foreground-900">{step.title}</h5>
                         <span className="w-5 h-5 rounded flex items-center justify-center bg-background-50 shrink-0">
-                          <i className={`${step.icon} text-foreground-300 text-[10px]`}></i>
+                          <AppIcon className={`${step.icon} text-foreground-300 text-[10px]`}></AppIcon>
                         </span>
                         {step.action && (
                           <span className="text-[9px] font-bold text-accent-600 bg-accent-50 px-1 py-0 rounded-full">Action</span>
@@ -583,14 +583,14 @@ function GuideCard({
                       </div>
                       <p className="text-xs text-foreground-500 mt-0.5 leading-relaxed">{step.description}</p>
                     </div>
-                    <i className={`${activeStep === stepIdx ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-300 mt-0.5 shrink-0 text-sm`}></i>
+                    <AppIcon className={`${activeStep === stepIdx ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-300 mt-0.5 shrink-0 text-sm`}></AppIcon>
                   </button>
                   {activeStep === stepIdx && (
                     <div className="px-3 pb-3 ml-10 animate-in fade-in duration-150">
                       {step.action && (
                         <div className="bg-accent-50 rounded-lg border border-accent-200/50 p-2.5 mb-2">
                           <div className="flex items-center gap-1.5 mb-1">
-                            <i className="ri-flashlight-line text-accent-500 text-xs"></i>
+                            <AppIcon className="ri-flashlight-line text-accent-500 text-xs"></AppIcon>
                             <p className="text-[10px] font-bold text-accent-700 uppercase tracking-wide">Action Required</p>
                           </div>
                           <p className="text-xs text-accent-700">{step.action}</p>
@@ -599,7 +599,7 @@ function GuideCard({
                       {step.tip && (
                         <div className="bg-amber-50 rounded-lg border border-amber-200/50 p-2.5">
                           <div className="flex items-center gap-1.5 mb-1">
-                            <i className="ri-lightbulb-line text-amber-500 text-xs"></i>
+                            <AppIcon className="ri-lightbulb-line text-amber-500 text-xs"></AppIcon>
                             <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Pro Tip</p>
                           </div>
                           <p className="text-xs text-amber-700">{step.tip}</p>
@@ -622,7 +622,7 @@ function GuideCard({
                 onClick={onNavigate}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-background-50 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-arrow-right-line"></i> Open This Page
+                <AppIcon className="ri-arrow-right-line"></AppIcon> Open This Page
               </button>
               <button
                 onClick={onToggleRead}
@@ -630,7 +630,7 @@ function GuideCard({
                   isRead ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-background-200/60 text-foreground-500 hover:text-emerald-500'
                 }`}
               >
-                <i className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></i>
+                <AppIcon className={`${isRead ? 'ri-check-double-line' : 'ri-check-line'} text-sm`}></AppIcon>
                 {isRead ? 'Marked as Read' : 'Mark as Read'}
               </button>
             </div>

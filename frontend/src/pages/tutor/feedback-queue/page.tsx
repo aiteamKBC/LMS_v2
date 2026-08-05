@@ -54,7 +54,7 @@ export default function TutorFeedbackQueuePage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-chat-3-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-chat-3-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Feedback Queue</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{awaiting} awaiting feedback · {inProgress} in progress · {highPriority} high priority · {totalWords.toLocaleString()} total words</p>
@@ -75,7 +75,7 @@ export default function TutorFeedbackQueuePage() {
             { l: 'Completed', v: String(FEEDBACK_ITEMS.filter(f => f.status === 'Completed').length), i: 'ri-check-double-line', c: 'emerald' },
           ].map(s => (
             <div key={s.l} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'red' ? 'bg-red-100 text-red-600' : s.c === 'primary' ? 'bg-primary-100 text-primary-600' : 'bg-emerald-100 text-emerald-600'}`}><i className={`${s.i} text-sm`}></i></span>
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'red' ? 'bg-red-100 text-red-600' : s.c === 'primary' ? 'bg-primary-100 text-primary-600' : 'bg-emerald-100 text-emerald-600'}`}><AppIcon className={`${s.i} text-sm`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400 mb-1">{s.l}</p>
               <p className="text-2xl font-heading font-semibold text-foreground-900">{s.v}</p>
             </div>
@@ -113,7 +113,7 @@ export default function TutorFeedbackQueuePage() {
                 <div className="flex items-center gap-2 shrink-0 text-[11px] text-foreground-400">
                   <span>Due {item.deadline}</span>
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${item.status === 'Awaiting' ? 'bg-amber-100 text-amber-700' : item.status === 'In Progress' ? 'bg-primary-100 text-primary-700' : 'bg-emerald-100 text-emerald-700'}`}>{item.status}</span>
-                  <i className={expandedId === item.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></i>
+                  <AppIcon className={expandedId === item.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></AppIcon>
                 </div>
               </div>
               {expandedId === item.id && (
@@ -134,11 +134,11 @@ export default function TutorFeedbackQueuePage() {
                   <div className="flex items-center gap-2">
                     {item.status !== 'Completed' && (
                       <>
-                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-send-plane-line mr-1"></i> Submit Feedback</button>
-                        <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-draft-line mr-1"></i> Save Draft</button>
+                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-send-plane-line mr-1"></AppIcon> Submit Feedback</button>
+                        <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-draft-line mr-1"></AppIcon> Save Draft</button>
                       </>
                     )}
-                    <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-file-line mr-1"></i> View Assignment</button>
+                    <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-file-line mr-1"></AppIcon> View Assignment</button>
                   </div>
                 </div>
               )}

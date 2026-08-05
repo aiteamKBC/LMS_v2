@@ -155,7 +155,7 @@ export default function CurriculumStudio() {
             <div className="p-5 text-white md:p-6">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase text-white/75">
-                  <i className="ri-dashboard-3-line" />
+                  <AppIcon className="ri-dashboard-3-line" />
                   LMS command centre
                 </span>
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-[11px] font-bold text-amber-100">
@@ -188,8 +188,8 @@ export default function CurriculumStudio() {
                           : 'border border-white/15 bg-white/10 text-white hover:bg-white/15'
                       }`}
                     >
-                      <span className="inline-flex items-center gap-2"><i className={action.icon} />{action.label}</span>
-                      <i className="ri-arrow-right-line" />
+                      <span className="inline-flex items-center gap-2"><AppIcon className={action.icon} />{action.label}</span>
+                      <AppIcon className="ri-arrow-right-line" />
                     </button>
                   ))}
                 </div>
@@ -201,7 +201,7 @@ export default function CurriculumStudio() {
                       className="flex min-h-20 flex-col items-start justify-between rounded-lg border border-white/10 bg-white/[0.07] p-3 text-left text-[11px] font-bold text-white/80 transition-smooth hover:bg-white/[0.12] focus:outline-none focus:ring-2 focus:ring-primary-300"
                       title={action.label}
                     >
-                      <i className={`${action.icon} text-lg text-amber-100`} />
+                      <AppIcon className={`${action.icon} text-lg text-amber-100`} />
                       <span className="leading-4">{action.label}</span>
                     </button>
                   ))}
@@ -281,7 +281,7 @@ export default function CurriculumStudio() {
               <div className="flex flex-col gap-2 md:flex-row md:items-center">
                 <label className="relative block md:w-72">
                   <span className="sr-only">Search programmes</span>
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" />
                   <input
                     value={programmeSearch}
                     onChange={event => setProgrammeSearch(event.target.value)}
@@ -346,7 +346,7 @@ export default function CurriculumStudio() {
                     recordTab === tab.id ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'
                   }`}
                 >
-                  <i className={tab.icon} />
+                  <AppIcon className={tab.icon} />
                   {tab.label}
                 </button>
               ))}
@@ -504,7 +504,7 @@ function KpiCard({ icon, label, value, detail, loading, progress, tone = 'defaul
   return (
     <div className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200">
       <div className="flex items-start justify-between gap-3">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><i className={icon} /></span>
+        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon} /></span>
         <span className="text-2xl font-bold text-foreground-950">{loading ? '-' : value}</span>
       </div>
       <p className="mt-3 text-xs font-bold text-foreground-800">{label}</p>
@@ -527,13 +527,13 @@ function AttentionCard({ issue }: { issue: AttentionIssue }) {
           <h3 className="mt-1 text-sm font-bold text-foreground-900">{issue.label}</h3>
         </div>
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600">
-          <i className="ri-error-warning-line" />
+          <AppIcon className="ri-error-warning-line" />
         </span>
       </div>
       <p className="mt-2 text-xs leading-5 text-foreground-500">{issue.detail}</p>
       <button onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="mt-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-lg bg-foreground-950 px-3 text-xs font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
         {issue.action}
-        <i className="ri-arrow-right-line" />
+        <AppIcon className="ri-arrow-right-line" />
       </button>
     </article>
   );
@@ -589,7 +589,7 @@ function ProgrammeHealthTable({ loading, rows, hasFilters }: { loading: boolean;
                 <td className="px-3 py-3 pr-4">
                   <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/programmes/${row.programme.id}`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
                     Open
-                    <i className="ri-arrow-right-line" />
+                    <AppIcon className="ri-arrow-right-line" />
                   </button>
                 </td>
               </tr>
@@ -623,7 +623,7 @@ function ModulePipelineRow({ module }: { module: CurriculumModule }) {
       </div>
       <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?module=${encodeURIComponent(String(moduleId))}`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
         Edit
-        <i className="ri-arrow-right-line" />
+        <AppIcon className="ri-arrow-right-line" />
       </button>
     </div>
   );
@@ -714,7 +714,7 @@ function SectionHeader({ title, detail, action, href }: { title: string; detail:
       {action && href && (
         <button onClick={() => window.REACT_APP_NAVIGATE(href)} className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
           {action}
-          <i className="ri-arrow-right-line" />
+          <AppIcon className="ri-arrow-right-line" />
         </button>
       )}
     </div>
@@ -756,7 +756,7 @@ function StatusBadge({ status, compact = false }: { status: string; compact?: bo
 function EmptyState({ icon, title, detail }: { icon: string; title: string; detail: string }) {
   return (
     <div className="p-6 text-center">
-      <i className={`${icon} text-2xl text-foreground-300`} />
+      <AppIcon className={`${icon} text-2xl text-foreground-300`} />
       <p className="mt-2 text-sm font-bold text-foreground-800">{title}</p>
       <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-foreground-500">{detail}</p>
     </div>

@@ -80,7 +80,7 @@ export function LeaderboardTab() {
                 : 'text-foreground-500 hover:text-foreground-700'
             }`}
           >
-            <i className={`${tab.icon} text-xs`}></i>
+            <AppIcon className={`${tab.icon} text-xs`}></AppIcon>
             {tab.label}
           </button>
         ))}
@@ -97,7 +97,7 @@ export function LeaderboardTab() {
           const rankIcons = ['ri-medal-fill text-amber-500 text-xl', 'ri-medal-fill text-slate-400 text-lg', 'ri-medal-fill text-orange-400 text-lg'];
           return (
             <div key={entry.rank} className={`rounded-xl border p-5 text-center ${podiumStyles[i]}`}>
-              <i className={rankIcons[i]}></i>
+              <AppIcon className={rankIcons[i]}></AppIcon>
               <div className="w-14 h-14 rounded-full bg-white border-2 border-white shadow-sm flex items-center justify-center mx-auto mt-3 text-sm font-bold text-foreground-800">
                 {entry.avatar}
               </div>
@@ -149,7 +149,7 @@ export function LeaderboardTab() {
                   <p className="text-[9px] text-foreground-400">{entry.contributions} contributions</p>
                 </div>
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${mv.cls}`}>
-                  <i className={`${mv.icon} text-xs`}></i>
+                  <AppIcon className={`${mv.icon} text-xs`}></AppIcon>
                 </span>
                 <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500 shrink-0 hidden sm:block">
                   {entry.badge}
@@ -165,7 +165,7 @@ export function LeaderboardTab() {
         {/* Points System */}
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
           <h4 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-            <i className="ri-coins-line text-accent-500"></i> How Points Are Earned
+            <AppIcon className="ri-coins-line text-accent-500"></AppIcon> How Points Are Earned
           </h4>
           <div className="space-y-2.5">
             {POINT_RULES.map((rule) => {
@@ -178,7 +178,7 @@ export function LeaderboardTab() {
               return (
                 <div key={rule.id} className="flex items-center gap-2.5">
                   <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${c.bg} ${c.text}`}>
-                    <i className={`${rule.icon} text-xs`}></i>
+                    <AppIcon className={`${rule.icon} text-xs`}></AppIcon>
                   </span>
                   <div>
                     <p className="text-xs font-semibold text-foreground-800">{rule.action}</p>
@@ -194,7 +194,7 @@ export function LeaderboardTab() {
         {/* Points History */}
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
           <h4 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-            <i className="ri-history-line text-primary-500"></i> Points History
+            <AppIcon className="ri-history-line text-primary-500"></AppIcon> Points History
           </h4>
           <div className="space-y-2">
             {POINTS_HISTORY.map((entry) => (
@@ -212,7 +212,7 @@ export function LeaderboardTab() {
         {/* Community Impact */}
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
           <h4 className="text-sm font-heading font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-            <i className="ri-heart-pulse-line text-secondary-500"></i> Your Community Impact
+            <AppIcon className="ri-heart-pulse-line text-secondary-500"></AppIcon> Your Community Impact
           </h4>
           <div className="grid grid-cols-2 gap-3">
             <ImpactStat icon="ri-calendar-check-line" value={COMMUNITY_IMPACT.eventsAttended} label="Events Attended" color="primary" />
@@ -237,7 +237,7 @@ function ImpactStat({ icon, value, label, color }: { icon: string; value: number
   const c = colorMap[color];
   return (
     <div className={`rounded-lg p-3 text-center ${c.bg}`}>
-      <i className={`${icon} text-sm ${c.text} mb-1 block`}></i>
+      <AppIcon className={`${icon} text-sm ${c.text} mb-1 block`}></AppIcon>
       <p className={`text-lg font-bold ${c.val}`}>{value}</p>
       <p className="text-[10px] text-foreground-400">{label}</p>
     </div>

@@ -27,7 +27,7 @@ export default function GatewayNextActions() {
         </div>
         <div className="bg-primary-500/5 border border-primary-500/15 rounded-lg p-4">
           <p className="text-sm font-semibold text-primary-700">
-            <i className="ri-flag-line mr-1" /> {d.gatewayImpact.contribution}
+            <AppIcon className="ri-flag-line mr-1" /> {d.gatewayImpact.contribution}
           </p>
         </div>
       </section>
@@ -39,13 +39,13 @@ export default function GatewayNextActions() {
           {d.nextBestActions.map((action) => (
             <div key={action.id} className="flex items-center gap-3 bg-background-100 rounded-lg border border-background-200/50 p-4 hover:bg-background-200 transition-all cursor-pointer">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${action.priority === 'high' ? 'bg-red-500/10 text-red-500' : action.priority === 'medium' ? 'bg-amber-500/10 text-amber-500' : 'bg-primary-500/10 text-primary-500'}`}>
-                <i className={action.icon} />
+                <AppIcon className={action.icon} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-foreground-900">{action.title}</p>
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${action.priority === 'high' ? 'bg-red-100 text-red-700' : action.priority === 'medium' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700'}`}>{action.priority}</span>
               </div>
-              <i className="ri-arrow-right-line text-foreground-300" />
+              <AppIcon className="ri-arrow-right-line text-foreground-300" />
             </div>
           ))}
         </div>

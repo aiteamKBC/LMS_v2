@@ -57,7 +57,7 @@ export default function DASPage() {
             { label: 'Awaiting Approval', count: DAS_RECORDS.filter(d => d.employerApproval !== 'Approved').length, icon: 'ri-hourglass-line', color: 'bg-amber-100 text-amber-600' },
           ].map(c => (
             <div key={c.label} className="bg-background-50 rounded-xl border border-background-200/50 p-4">
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${c.color}`}><i className={`${c.icon} text-xs`}></i></span>
+              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${c.color}`}><AppIcon className={`${c.icon} text-xs`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400">{c.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{c.count}</p>
             </div>
@@ -91,9 +91,9 @@ export default function DASPage() {
                       <span className="text-[13px] font-medium text-foreground-900 whitespace-nowrap">{d.learner}</span>
                       <p className="text-[10px] text-foreground-400">{d.programme} · {d.employer}</p>
                     </td>
-                    <td className="px-4 py-3">{d.providerAdded ? <i className="ri-check-line text-emerald-600"></i> : <i className="ri-close-line text-red-500"></i>}</td>
+                    <td className="px-4 py-3">{d.providerAdded ? <AppIcon className="ri-check-line text-emerald-600"></AppIcon> : <AppIcon className="ri-close-line text-red-500"></AppIcon>}</td>
                     <td className="px-4 py-3 text-[12px] text-foreground-600 whitespace-nowrap">{d.reservation}</td>
-                    <td className="px-4 py-3">{d.apprenticeDetails ? <i className="ri-check-line text-emerald-600"></i> : <i className="ri-close-line text-red-500"></i>}</td>
+                    <td className="px-4 py-3">{d.apprenticeDetails ? <AppIcon className="ri-check-line text-emerald-600"></AppIcon> : <AppIcon className="ri-close-line text-red-500"></AppIcon>}</td>
                     <td className="px-4 py-3">
                       <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                         d.employerApproval === 'Approved' ? 'bg-emerald-50 text-emerald-700' : d.employerApproval === 'Pending' ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'

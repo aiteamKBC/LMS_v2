@@ -36,7 +36,7 @@ export function LearnerList({ selectedId, onSelect }: LearnerListProps) {
       {/* Filters */}
       <div className="space-y-2 mb-4">
         <div className="relative">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
           <input
             type="text"
             placeholder="Search learners or employers..."
@@ -85,7 +85,7 @@ export function LearnerList({ selectedId, onSelect }: LearnerListProps) {
         {filtered.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="w-10 h-10 rounded-full bg-background-100 flex items-center justify-center mb-3">
-              <i className="ri-search-line text-foreground-300"></i>
+              <AppIcon className="ri-search-line text-foreground-300"></AppIcon>
             </div>
             <p className="text-[13px] text-foreground-500">No learners match your filters</p>
             <button

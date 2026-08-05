@@ -4314,7 +4314,7 @@ export function AddCurriculumStructureWizard({
               </p>
             </div>
             <button type="button" onClick={requestClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background-100 text-foreground-500 transition-smooth hover:bg-background-200" aria-label="Close wizard">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
           <PopupTrail current={step} stepIndex={stepIndex} steps={visibleSteps} onNavigate={setStep} />
@@ -4335,7 +4335,7 @@ export function AddCurriculumStructureWizard({
                       <div className="rounded-2xl border border-primary-100 bg-primary-50/70 px-4 py-3 text-[12px] font-semibold text-primary-800">
                         <div className="flex items-start gap-3">
                           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white">
-                            <i className="ri-folder-add-line"></i>
+                            <AppIcon className="ri-folder-add-line"></AppIcon>
                           </span>
                           <div>
                             <p className="font-heading text-[13px] font-bold">Add module to an existing programme</p>
@@ -4360,7 +4360,7 @@ export function AddCurriculumStructureWizard({
                             >
                               <div className="flex items-start gap-3">
                                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white shadow-sm" style={{ backgroundColor: programme.color || '#6d28d9' }}>
-                                  <i className="ri-book-2-line"></i>
+                                  <AppIcon className="ri-book-2-line"></AppIcon>
                                 </span>
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-[13px] font-heading font-bold">{programme.name || 'Untitled programme'}</p>
@@ -4371,7 +4371,7 @@ export function AddCurriculumStructureWizard({
                                     <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{programme.modules || 0} modules</span>
                                   </div>
                                 </div>
-                                {selected && <i className="ri-check-line shrink-0 text-lg text-primary-600"></i>}
+                                {selected && <AppIcon className="ri-check-line shrink-0 text-lg text-primary-600"></AppIcon>}
                               </div>
                             </button>
                           );
@@ -4399,7 +4399,7 @@ export function AddCurriculumStructureWizard({
                   <div className="rounded-2xl border border-primary-100 bg-primary-50/70 px-4 py-3 text-[12px] font-semibold text-primary-800">
                     <div className="flex items-start gap-3">
                       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white">
-                        <i className="ri-organization-chart"></i>
+                        <AppIcon className="ri-organization-chart"></AppIcon>
                       </span>
                       <div>
                         <p className="font-heading text-[13px] font-bold">Programme delivery flow</p>
@@ -4527,7 +4527,7 @@ export function AddCurriculumStructureWizard({
                     <div className="space-y-3">
                       <EmptyState text="No cohorts are found in the database for this programme." />
                       <button type="button" onClick={addCohortDraft} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-                        <i className="ri-add-line"></i>
+                        <AppIcon className="ri-add-line"></AppIcon>
                         Add cohort
                       </button>
                     </div>
@@ -4558,7 +4558,7 @@ export function AddCurriculumStructureWizard({
                         <div className="mb-4 flex items-center justify-between gap-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cohortForm.color }}>
-                              <i className="ri-calendar-event-line text-lg"></i>
+                              <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
                             </span>
                             <div className="min-w-0">
                               <p className="text-[10px] font-bold uppercase text-foreground-400">Cohort details</p>
@@ -4621,7 +4621,7 @@ export function AddCurriculumStructureWizard({
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div className="flex min-w-0 gap-3">
                             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cohortForm.color || '#10b981' }}>
-                              <i className="ri-calendar-event-line text-lg"></i>
+                              <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
                             </span>
                             <div className="min-w-0">
                               <p className="text-[10px] font-bold uppercase text-foreground-400">Groups in selected cohort</p>
@@ -4640,7 +4640,7 @@ export function AddCurriculumStructureWizard({
                               onClick={() => addGroupDraft()}
                               className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
                             >
-                              <i className="ri-add-line"></i>
+                              <AppIcon className="ri-add-line"></AppIcon>
                               Add group
                             </button>
                           </div>
@@ -4681,7 +4681,7 @@ export function AddCurriculumStructureWizard({
                                     className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:cursor-wait"
                                     aria-label={`Remove ${group.name || `Group ${index + 1}`}`}
                                   >
-                                    <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                                    <AppIcon className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></AppIcon>
                                   </button>
                                   <button
                                     type="button"
@@ -4689,7 +4689,7 @@ export function AddCurriculumStructureWizard({
                                     className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100"
                                     aria-label={`Clone ${group.name || `Group ${index + 1}`}`}
                                   >
-                                    <i className="ri-file-copy-line text-sm"></i>
+                                    <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                                   </button>
                                 </div>
                               );
@@ -4718,7 +4718,7 @@ export function AddCurriculumStructureWizard({
                             <div className="rounded-xl border border-background-200 bg-background-100/50 p-3">
                               <div className="mb-3 flex items-center gap-2">
                                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
-                                  <i className="ri-user-star-line text-sm"></i>
+                                  <AppIcon className="ri-user-star-line text-sm"></AppIcon>
                                 </span>
                                 <div>
                                   <p className="text-[10px] font-bold uppercase text-foreground-400">Group coach</p>
@@ -4729,7 +4729,7 @@ export function AddCurriculumStructureWizard({
                               {activeGroupCoachConflict && (
                                 <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
                                   <div className="flex items-start gap-2">
-                                    <i className="ri-information-line mt-0.5 shrink-0 text-sm"></i>
+                                    <AppIcon className="ri-information-line mt-0.5 shrink-0 text-sm"></AppIcon>
                                     <div>
                                       <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Coach availability hint</p>
                                       <p>
@@ -4810,7 +4810,7 @@ export function AddCurriculumStructureWizard({
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                           <div className="flex min-w-0 gap-3">
                             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white shadow-sm">
-                              <i className="ri-stack-line text-lg"></i>
+                              <AppIcon className="ri-stack-line text-lg"></AppIcon>
                             </span>
                             <div className="min-w-0">
                               <p className="text-[10px] font-bold uppercase text-foreground-400">Free module content</p>
@@ -4823,7 +4823,7 @@ export function AddCurriculumStructureWizard({
                             onClick={() => addModuleDraft({ focusModulesStep: true })}
                             className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
                           >
-                            <i className="ri-add-line"></i>
+                            <AppIcon className="ri-add-line"></AppIcon>
                             Add Module
                           </button>
                         </div>
@@ -4912,7 +4912,7 @@ export function AddCurriculumStructureWizard({
                       >
                         <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[12px] font-semibold text-sky-800">
                           <span className="flex items-start gap-2">
-                            <i className="ri-information-line mt-0.5 text-sm"></i>
+                            <AppIcon className="ri-information-line mt-0.5 text-sm"></AppIcon>
                             <span>Components are managed in Module Builder. This wizard applies cohort and group scheduling before review.</span>
                           </span>
                         </div>
@@ -4970,13 +4970,13 @@ export function AddCurriculumStructureWizard({
         <footer className="border-t border-foreground-200/60 bg-background-50 px-5 sm:px-6 py-4">
           {footerBlocker && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-              <i className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></i>
+              <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></AppIcon>
               <span>{footerBlocker}</span>
             </div>
           )}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <button type="button" onClick={stepIndex === 0 ? requestClose : () => setStep(visibleSteps[stepIndex - 1].key)} disabled={Boolean(saving)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
-            <i className={stepIndex === 0 ? 'ri-close-line' : 'ri-arrow-left-line'}></i>
+            <AppIcon className={stepIndex === 0 ? 'ri-close-line' : 'ri-arrow-left-line'}></AppIcon>
             {stepIndex === 0 ? 'Cancel' : 'Back'}
           </button>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -4987,19 +4987,19 @@ export function AddCurriculumStructureWizard({
             )}
             {(canSaveDraft || saving === 'draft') && (
               <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
-                <i className="ri-save-3-line"></i>
+                <AppIcon className="ri-save-3-line"></AppIcon>
                 {saving === 'draft' ? selectedProgramme ? 'Updating...' : 'Saving...' : selectedProgramme ? 'Update' : 'Save Draft'}
               </button>
             )}
             {step === 'review' ? (
               <button type="button" onClick={() => persistStructure('final')} disabled={Boolean(saving) || !canSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
-                <i className="ri-checkbox-circle-line"></i>
+                <AppIcon className="ri-checkbox-circle-line"></AppIcon>
                 {saving === 'final' ? 'Saving...' : selectedProgramme ? 'Update Programme' : 'Create Programme'}
               </button>
             ) : (
               <button type="button" onClick={() => setStep(nextStepMeta.key)} disabled={!canContinue || Boolean(saving)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
                 {`Next: ${nextStepMeta.label}`}
-                <i className="ri-arrow-right-line"></i>
+                <AppIcon className="ri-arrow-right-line"></AppIcon>
               </button>
             )}
           </div>
@@ -5029,7 +5029,7 @@ export function AddCurriculumStructureWizard({
                     aria-label="Back to Wizard"
                     title="Back to Wizard"
                   >
-                    <i className="ri-arrow-left-line"></i>
+                    <AppIcon className="ri-arrow-left-line"></AppIcon>
                     Back to Wizard
                   </button>
                   <div className="min-w-0 border-l border-background-200 pl-3">
@@ -5044,7 +5044,7 @@ export function AddCurriculumStructureWizard({
                   aria-label="Close Module Builder and return to Wizard"
                   title="Back to Wizard"
                 >
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
               <iframe
@@ -5087,7 +5087,7 @@ function PopupTrail({
               title={canNavigate ? `Go to ${item.label}` : item.label}
               className={`flex h-8 items-center gap-2 rounded-full border px-3 text-[11px] font-bold transition-smooth disabled:cursor-default ${active ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : complete ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100' : 'border-background-200 bg-background-100 text-foreground-400'}`}
             >
-              <i className={`${complete ? 'ri-check-line' : item.icon} text-[12px]`}></i>
+              <AppIcon className={`${complete ? 'ri-check-line' : item.icon} text-[12px]`}></AppIcon>
               {item.label}
             </button>
             {index < trailSteps.length - 1 && <span className={`h-0.5 w-5 rounded-full ${complete ? 'bg-emerald-300' : 'bg-background-200'}`} />}
@@ -5169,7 +5169,7 @@ function NestedPopupBackdrop({
         >
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: card.color }}>
-              <i className={card.icon}></i>
+              <AppIcon className={card.icon}></AppIcon>
             </span>
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase text-foreground-400">{card.label}</p>
@@ -5216,7 +5216,7 @@ function DraftSwitcher({
         </div>
         {onAdd && (
           <button type="button" onClick={onAdd} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-            <i className="ri-add-line"></i>
+            <AppIcon className="ri-add-line"></AppIcon>
             {addLabel || 'Add'}
           </button>
         )}
@@ -5257,7 +5257,7 @@ function DraftSwitcher({
                   aria-label={`Clone ${item.label}`}
                   title={`Clone ${item.label}`}
                 >
-                  <i className="ri-file-copy-line text-sm"></i>
+                  <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                 </button>
               )}
               {onRemoveItem && (
@@ -5269,7 +5269,7 @@ function DraftSwitcher({
                   aria-label={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                   title={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                 >
-                  <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                  <AppIcon className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></AppIcon>
                 </button>
               )}
             </div>
@@ -5305,7 +5305,7 @@ function ScopeCard({
       <div className={`${open ? (compact ? 'mb-3' : 'mb-4') : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
         <div className="flex min-w-0 items-start gap-3">
           <span className={`flex ${compact ? 'h-9 w-9' : 'h-10 w-10'} shrink-0 items-center justify-center rounded-xl text-white shadow-sm`} style={{ backgroundColor: color }}>
-            <i className={`${icon} ${compact ? 'text-base' : 'text-lg'}`}></i>
+            <AppIcon className={`${icon} ${compact ? 'text-base' : 'text-lg'}`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
@@ -5331,7 +5331,7 @@ function ScopeCard({
             aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
             title={open ? 'Collapse section' : 'Expand section'}
           >
-            <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+            <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
           </button>
         </div>
       </div>
@@ -5368,7 +5368,7 @@ function NestedScopeCard({
       <div className={`${open ? (compact ? 'mb-3' : 'mb-4') : ''} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
         <div className="flex min-w-0 items-start gap-3">
           <span className={`flex ${compact ? 'h-9 w-9' : 'h-10 w-10'} shrink-0 items-center justify-center rounded-xl text-white shadow-sm`} style={{ backgroundColor: color }}>
-            <i className={`${icon} ${compact ? 'text-base' : 'text-lg'}`}></i>
+            <AppIcon className={`${icon} ${compact ? 'text-base' : 'text-lg'}`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase" style={{ color }}>{label}</p>
@@ -5396,7 +5396,7 @@ function NestedScopeCard({
             aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
             title={open ? 'Collapse section' : 'Expand section'}
           >
-            <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+            <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
           </button>
         </div>
       </div>
@@ -5428,7 +5428,7 @@ function WeekdayCheckboxes({ label, value, onChange, error, compact }: { label: 
               className={`flex ${compact ? 'h-9 gap-1.5 px-2' : 'h-10 gap-2 px-3'} items-center rounded-lg border text-left text-[11px] font-bold transition-smooth ${checked ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200'}`}
             >
               <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? 'border-primary-500 bg-primary-600 text-white' : 'border-foreground-300 bg-background-50'}`}>
-                {checked && <i className="ri-check-line text-[11px]"></i>}
+                {checked && <AppIcon className="ri-check-line text-[11px]"></AppIcon>}
               </span>
               {day.slice(0, 3)}
             </button>
@@ -5474,7 +5474,7 @@ function CurrentParentBanner({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: color }}>
-            <i className={`${icon} text-lg`}></i>
+            <AppIcon className={`${icon} text-lg`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase text-emerald-700">{label}</p>
@@ -5537,7 +5537,7 @@ function HolidaySelector({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
-              <i className="ri-sun-cloudy-line text-lg"></i>
+              <AppIcon className="ri-sun-cloudy-line text-lg"></AppIcon>
             </span>
             <div>
               <p className="text-sm font-heading font-bold text-foreground-950">Cohort holidays</p>
@@ -5559,7 +5559,7 @@ function HolidaySelector({
           Select in range ({selectableIds.length})
         </button>
         <button type="button" onClick={() => setExpanded(current => !current)} className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100 transition-smooth">
-          <i className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} mr-1`}></i>
+          <AppIcon className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} mr-1`}></AppIcon>
           {expanded ? 'Hide holiday list' : 'Browse holidays'}
         </button>
         {selectedInRangeIds.length > 0 && (
@@ -5568,7 +5568,7 @@ function HolidaySelector({
           </button>
         )}
         <button type="button" onClick={onManage} className="rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700">
-          <i className="ri-settings-3-line mr-1"></i>
+          <AppIcon className="ri-settings-3-line mr-1"></AppIcon>
           Manage holidays
         </button>
         <span className="ml-auto rounded-full bg-background-100 px-3 py-1.5 text-[11px] font-bold text-foreground-600">
@@ -5849,7 +5849,7 @@ function HolidayManagerModal({
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
-                <i className="ri-sun-cloudy-line text-xl"></i>
+                <AppIcon className="ri-sun-cloudy-line text-xl"></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-700">Curriculum Studio</p>
@@ -5858,7 +5858,7 @@ function HolidayManagerModal({
               </div>
             </div>
             <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-700 hover:bg-background-200">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         </header>
@@ -5909,7 +5909,7 @@ function HolidayManagerModal({
                 </div>
                 <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-3 p-3">
                   <span className="flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: draft.color || '#7c3aed' }}>
-                    <i className="ri-calendar-event-line text-lg"></i>
+                    <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
                   </span>
                   <div className="min-w-0">
                     <p className="truncate text-[13px] font-heading font-bold text-foreground-950">{draft.label || 'Unnamed holiday period'}</p>
@@ -5923,7 +5923,7 @@ function HolidayManagerModal({
               </div>
 
               <button type="button" onClick={saveHoliday} disabled={!canSave || saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
-                {saving ? <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <i className="ri-save-3-line"></i>}
+                {saving ? <span className="h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin" /> : <AppIcon className="ri-save-3-line"></AppIcon>}
                 {editing ? 'Save changes' : 'Add period'}
               </button>
             </div>
@@ -5950,7 +5950,7 @@ function HolidayManagerModal({
 
               <div className="mt-3 grid grid-cols-1 gap-2 lg:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="flex h-10 items-center gap-2 rounded-xl border border-background-200 bg-background-50 px-3 focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100">
-                  <i className="ri-search-line text-foreground-400"></i>
+                  <AppIcon className="ri-search-line text-foreground-400"></AppIcon>
                   <input
                     value={holidaySearch}
                     onChange={event => setHolidaySearch(event.target.value)}
@@ -5959,7 +5959,7 @@ function HolidayManagerModal({
                   />
                   {holidaySearch && (
                     <button type="button" onClick={() => setHolidaySearch('')} className="flex h-6 w-6 items-center justify-center rounded-md text-foreground-400 hover:bg-background-100 hover:text-foreground-700" aria-label="Clear holiday search">
-                      <i className="ri-close-line"></i>
+                      <AppIcon className="ri-close-line"></AppIcon>
                     </button>
                   )}
                 </label>
@@ -6003,7 +6003,7 @@ function HolidayManagerModal({
                     >
                       <div className="flex min-w-0 items-center gap-3">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-50 text-foreground-600 shadow-sm">
-                          <i className={`${collapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+                          <AppIcon className={`${collapsed ? 'ri-arrow-right-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
                         </span>
                         <div className="min-w-0">
                           <p className="text-[10px] font-bold uppercase text-foreground-400">Year</p>
@@ -6039,10 +6039,10 @@ function HolidayManagerModal({
                                 </div>
                                 <div className="flex shrink-0 items-center gap-1.5">
                                   <button type="button" onClick={() => editHoliday(holiday)} className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700" aria-label={`Edit ${holiday.label}`}>
-                                    <i className="ri-edit-line"></i>
+                                    <AppIcon className="ri-edit-line"></AppIcon>
                                   </button>
                                   <button type="button" onClick={() => archiveHoliday(holiday)} disabled={busyId === holiday.id} className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-500 hover:bg-red-100 disabled:opacity-50" aria-label={`Archive ${holiday.label}`}>
-                                    {busyId === holiday.id ? <span className="h-3 w-3 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" /> : <i className="ri-delete-bin-line"></i>}
+                                    {busyId === holiday.id ? <span className="h-3 w-3 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" /> : <AppIcon className="ri-delete-bin-line"></AppIcon>}
                                   </button>
                                 </div>
                               </div>
@@ -6112,7 +6112,7 @@ function HolidayTypeLibraryPanel({
           <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">Choose an existing type for this period, or add a reusable type with its colour.</p>
         </div>
         <button type="button" onClick={onAdd} className="shrink-0 rounded-lg bg-primary-600 px-3 py-2 text-[10px] font-bold text-white hover:bg-primary-700">
-          <i className="ri-add-line mr-1"></i>
+          <AppIcon className="ri-add-line mr-1"></AppIcon>
           Add type
         </button>
       </div>
@@ -6185,10 +6185,10 @@ function HolidayTypeLibraryPanel({
                 <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{type.count}</span>
               </button>
               <button type="button" onClick={() => onStartEdit(type)} className="flex h-6 w-6 items-center justify-center rounded-md bg-background-100 text-foreground-500 hover:bg-primary-100 hover:text-primary-700" aria-label={`Edit ${type.name}`}>
-                <i className="ri-edit-line text-[12px]"></i>
+                <AppIcon className="ri-edit-line text-[12px]"></AppIcon>
               </button>
               <button type="button" onClick={() => onRemove(type.name)} disabled={busy} className="flex h-6 w-6 items-center justify-center rounded-md bg-red-50 text-red-500 hover:bg-red-100 disabled:opacity-50" aria-label={`Remove ${type.name}`}>
-                {busy ? <span className="h-3 w-3 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" /> : <i className="ri-delete-bin-line text-[12px]"></i>}
+                {busy ? <span className="h-3 w-3 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" /> : <AppIcon className="ri-delete-bin-line text-[12px]"></AppIcon>}
               </button>
             </div>
           );
@@ -6396,7 +6396,7 @@ function ModulesStepWorkspace({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex min-w-0 gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: groupForm.color || '#334155' }}>
-                <i className={`${freeMode ? 'ri-stack-line' : 'ri-team-line'} text-lg`}></i>
+                <AppIcon className={`${freeMode ? 'ri-stack-line' : 'ri-team-line'} text-lg`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase text-foreground-400">Selected group modules</p>
@@ -6413,7 +6413,7 @@ function ModulesStepWorkspace({
                 onClick={onAddModule}
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
               >
-                <i className="ri-add-line"></i>
+                <AppIcon className="ri-add-line"></AppIcon>
                 Add Module
               </button>
             </div>
@@ -6423,11 +6423,11 @@ function ModulesStepWorkspace({
         <div className="border-b border-background-200 bg-background-50 px-4 py-2.5">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-foreground-500">
             <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1">
-              <i className="ri-user-star-line text-amber-600"></i>
+              <AppIcon className="ri-user-star-line text-amber-600"></AppIcon>
               Group coach: {activeGroup.coach || 'Unassigned'}
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1">
-              <i className="ri-user-line text-primary-600"></i>
+              <AppIcon className="ri-user-line text-primary-600"></AppIcon>
               Select a tutor inside each module
             </span>
           </div>
@@ -6457,7 +6457,7 @@ function ModulesStepWorkspace({
                       aria-label={`Clone ${title}`}
                       title={`Clone ${title}`}
                     >
-                      <i className="ri-file-copy-line text-sm"></i>
+                      <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                     </button>
                     <button
                       type="button"
@@ -6467,7 +6467,7 @@ function ModulesStepWorkspace({
                     aria-label={`Remove ${title}`}
                     title={`Remove ${title}`}
                   >
-                      <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                      <AppIcon className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></AppIcon>
                     </button>
                   </div>
                 );
@@ -6506,12 +6506,12 @@ function ModulesStepWorkspace({
             <div className="flex min-h-[260px] items-center justify-center rounded-xl border border-dashed border-background-300 bg-background-50">
               <div className="max-w-sm px-6 py-8 text-center">
                 <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary-50 text-primary-700">
-                  <i className="ri-stack-line text-xl"></i>
+                  <AppIcon className="ri-stack-line text-xl"></AppIcon>
                 </span>
                 <p className="mt-3 text-sm font-heading font-bold text-foreground-950">Choose or add a module</p>
                 <p className="mt-1 text-[12px] leading-5 text-foreground-500">The module form appears here after a module is selected.</p>
                 <button type="button" onClick={onAddModule} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700">
-                  <i className="ri-add-line"></i>
+                  <AppIcon className="ri-add-line"></AppIcon>
                   Add Module
                 </button>
               </div>
@@ -6548,14 +6548,14 @@ function DeliveryPathPanel({
           aria-label={open ? `Collapse ${title}` : `Expand ${title}`}
           title={open ? 'Collapse section' : 'Expand section'}
         >
-          <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+          <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
         </button>
       </div>
       {open && <div className="mt-3 space-y-2">
         {rows.map(row => (
           <div key={row.label} className="flex items-center gap-2.5 rounded-xl border border-white/80 bg-white/80 px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
             <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${row.tone}`}>
-              <i className={`${row.icon} text-sm`}></i>
+              <AppIcon className={`${row.icon} text-sm`}></AppIcon>
             </span>
             <div className="min-w-0">
               <p className="text-[9px] font-bold uppercase text-foreground-400">{row.label}</p>
@@ -6612,7 +6612,7 @@ function EntityPickerPanel({
         <div className="flex shrink-0 items-center gap-1.5">
           {onAdd && (
             <button type="button" onClick={onAdd} className="inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-background-100 px-2.5 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-primary-50 hover:text-primary-700">
-              <i className="ri-add-line"></i>
+              <AppIcon className="ri-add-line"></AppIcon>
               {addLabel || 'Add'}
             </button>
           )}
@@ -6623,7 +6623,7 @@ function EntityPickerPanel({
             aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
             title={open ? 'Collapse section' : 'Expand section'}
           >
-            <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+            <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
           </button>
         </div>
       </div>
@@ -6660,7 +6660,7 @@ function EntityPickerPanel({
                     aria-label={`Clone ${item.label}`}
                     title={`Clone ${item.label}`}
                   >
-                    <i className="ri-file-copy-line text-sm"></i>
+                    <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                   </button>
                 )}
                 {onRemove && (
@@ -6672,7 +6672,7 @@ function EntityPickerPanel({
                     aria-label={`Remove ${item.label}`}
                     title={`Remove ${item.label}`}
                   >
-                    <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
+                    <AppIcon className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></AppIcon>
                   </button>
                 )}
               </div>
@@ -6806,7 +6806,7 @@ function ModulePlanningPanel({
       <div className="flex flex-col gap-3 border-b border-background-200/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between" style={{ background: `linear-gradient(90deg, ${draft.color}14 0%, #ffffff 68%)` }}>
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: draft.color }}>
-            <i className="ri-book-open-line"></i>
+            <AppIcon className="ri-book-open-line"></AppIcon>
           </span>
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -6826,7 +6826,7 @@ function ModulePlanningPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2 self-start">
           <button type="button" onClick={onRemove} disabled={!canRemove} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-40 transition-smooth">
-            <i className="ri-delete-bin-line mr-1"></i>
+            <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>
             Remove
           </button>
         </div>
@@ -6848,7 +6848,7 @@ function ModulePlanningPanel({
               className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-left transition-smooth ${draft.mode === option.key ? 'border-primary-300 bg-primary-50 text-primary-800 shadow-sm ring-2 ring-primary-100' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-background-100'}`}
             >
               <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${draft.mode === option.key ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-500'}`}>
-                <i className={`${option.icon} text-base`}></i>
+                <AppIcon className={`${option.icon} text-base`}></AppIcon>
               </span>
               <span>
                 <span className="block text-[13px] font-heading font-bold">{option.label}</span>
@@ -6938,7 +6938,7 @@ function ModulePlanningPanel({
             <div className="mt-3 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50/60 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex min-w-0 items-start gap-2.5">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-                  <i className="ri-microsoft-teams-line text-base"></i>
+                  <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
                 </span>
                 <div className="min-w-0">
                   <p className="text-[11px] font-bold text-foreground-900">Microsoft Teams live sessions</p>
@@ -6980,7 +6980,7 @@ function ModulePlanningPanel({
                     }}
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
                   >
-                    <i className={`${teamsSyncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></i>
+                    <AppIcon className={`${teamsSyncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></AppIcon>
                     {teamsSyncing ? 'Syncing...' : 'Sync results'}
                   </button>
                 ) : null}
@@ -7022,7 +7022,7 @@ function ModulePlanningPanel({
                     }}
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
                   >
-                    <i className={`${teamsScheduleSyncing ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}`}></i>
+                    <AppIcon className={`${teamsScheduleSyncing ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}`}></AppIcon>
                     {teamsScheduleSyncing ? 'Updating...' : 'Sync schedule'}
                   </button>
                 ) : null}
@@ -7046,7 +7046,7 @@ function ModulePlanningPanel({
                     }}
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
                   >
-                    <i className={`${teamsSessionsLoading ? 'ri-loader-4-line animate-spin' : 'ri-list-check-2'}`}></i>
+                    <AppIcon className={`${teamsSessionsLoading ? 'ri-loader-4-line animate-spin' : 'ri-list-check-2'}`}></AppIcon>
                     Actual sessions
                   </button>
                 ) : null}
@@ -7060,7 +7060,7 @@ function ModulePlanningPanel({
                   }}
                   className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
                 >
-                  <i className="ri-calendar-event-line"></i>
+                  <AppIcon className="ri-calendar-event-line"></AppIcon>
                   {draft.teamsMeeting ? 'Edit / create another' : 'Teams meeting options'}
                 </button>
               </div>
@@ -7075,7 +7075,7 @@ function ModulePlanningPanel({
                     <p className="text-[10px] font-semibold text-foreground-500">{teamsSessions.length ? `${teamsSessions.length} tracked sessions` : 'No tracked sessions loaded'}</p>
                   </div>
                   <button type="button" onClick={() => setTeamsSessionsOpen(false)} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label="Close actual sessions">
-                    <i className="ri-close-line"></i>
+                    <AppIcon className="ri-close-line"></AppIcon>
                   </button>
                 </div>
                 {teamsSessionsError ? (
@@ -7113,7 +7113,7 @@ function ModulePlanningPanel({
             {tutorConflict ? (
               <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
                 <div className="flex items-start gap-2">
-                  <i className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></i>
+                  <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></AppIcon>
                   <div>
                     <p className="font-bold">Tutor scheduling conflict</p>
                     <p className="mt-0.5 leading-5">{tutorConflict.message}</p>
@@ -7328,29 +7328,29 @@ function WizardTeamsMeetingModal({
       <div role="dialog" aria-modal="true" aria-labelledby="wizard-teams-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
         <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300"><i className="ri-microsoft-teams-line text-xl"></i></span>
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300"><AppIcon className="ri-microsoft-teams-line text-xl"></AppIcon></span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Module scheduling</p>
               <h3 id="wizard-teams-title" className="mt-0.5 text-base font-heading font-bold text-white">Microsoft Teams meeting options</h3>
               <p className="mt-1 text-[11px] font-medium text-white/65">{moduleTitle} · {sessionCount} planned session{sessionCount === 1 ? '' : 's'}</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50" aria-label="Close"><i className="ri-close-line"></i></button>
+          <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50" aria-label="Close"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
           {created ? (
             <div className="mx-auto max-w-2xl space-y-4 py-5 text-center">
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6">
-                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><i className="ri-check-line text-3xl"></i></span>
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><AppIcon className="ri-check-line text-3xl"></AppIcon></span>
                 <h4 className="mt-3 text-base font-heading font-bold text-emerald-900">Teams meeting created for this module</h4>
                 <p className="mt-1 text-[12px] font-semibold text-emerald-700">The link and live-session components are now included in the module draft.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {(created.meeting.joinUrl || created.meeting.webLink) && <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700"><i className="ri-external-link-line"></i>Open meeting</a>}
-                  {created.meeting.meetingOptionsUrl && <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800"><i className="ri-settings-3-line"></i>Meeting options</a>}
+                  {(created.meeting.joinUrl || created.meeting.webLink) && <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700"><AppIcon className="ri-external-link-line"></AppIcon>Open meeting</a>}
+                  {created.meeting.meetingOptionsUrl && <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800"><AppIcon className="ri-settings-3-line"></AppIcon>Meeting options</a>}
                 </div>
               </div>
-              {!!created.warnings?.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">{created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}</div>}
+              {!!created.warnings?.length && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left">{created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><AppIcon className="ri-information-line mr-1"></AppIcon>{warning}</p>)}</div>}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.85fr)]">
@@ -7394,12 +7394,12 @@ function WizardTeamsMeetingModal({
                   <FreeCheckbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
                   <FreeCheckbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
                 </div>
-                {timeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Calendar time zone: {timeZone}</p>}
+                {timeZone && <p className="text-[10px] font-semibold text-foreground-400"><AppIcon className="ri-time-line mr-1"></AppIcon>Calendar time zone: {timeZone}</p>}
               </section>
             </div>
           )}
 
-          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</p>}
+          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><AppIcon className="ri-error-warning-line mr-1"></AppIcon>{error}</p>}
           {!configurationLoading && !graphConfigured && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">Microsoft Graph credentials are missing from the backend environment.</p>}
         </div>
 
@@ -7407,7 +7407,7 @@ function WizardTeamsMeetingModal({
           <p className="text-[10px] font-semibold text-foreground-400">{persistLabel || 'The meeting is attached to this module draft after creation.'}</p>
           <div className="flex items-center gap-2">
             <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
-            {!created && <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[180px] items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>{submitting ? 'Creating meeting...' : 'Create with these options'}</button>}
+            {!created && <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[180px] items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></AppIcon>{submitting ? 'Creating meeting...' : 'Create with these options'}</button>}
           </div>
         </div>
       </div>
@@ -7439,7 +7439,7 @@ function SessionPreview({ draft }: { draft: ModuleDraft }) {
               className="flex h-7 w-7 items-center justify-center rounded-md border border-background-200 bg-background-50 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
               aria-label={open ? 'Collapse session preview' : 'Expand session preview'}
             >
-              <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></i>
+              <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></AppIcon>
             </button>
           </div>
         </div>
@@ -7696,7 +7696,7 @@ function ModuleBuilderContentPreview({
             </span>
             {waitingForActualComponents ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-200">
-                <i className="ri-loader-4-line animate-spin"></i>
+                <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
                 Loading
               </span>
             ) : moduleBuilderMissing ? (
@@ -7731,7 +7731,7 @@ function ModuleBuilderContentPreview({
                 onClick={() => onAddFreeComponent?.(draft.localId, newComponentType)}
                 className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
               >
-                <i className="ri-add-line"></i>
+                <AppIcon className="ri-add-line"></AppIcon>
                 Add Component
               </button>
             </>
@@ -7743,7 +7743,7 @@ function ModuleBuilderContentPreview({
                 disabled={!moduleBuilderUrl}
                 className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-background-200 disabled:text-foreground-400 disabled:shadow-none"
               >
-                <i className="ri-external-link-line"></i>
+                <AppIcon className="ri-external-link-line"></AppIcon>
                 Open Module Builder
               </button>
               <span className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">Read-only</span>
@@ -7756,13 +7756,13 @@ function ModuleBuilderContentPreview({
             aria-label={moduleOpen ? `Collapse ${title}` : `Expand ${title}`}
             title={moduleOpen ? 'Collapse module' : 'Expand module'}
           >
-            <i className={`ri-arrow-down-s-line text-lg transition-transform ${moduleOpen ? 'rotate-180' : ''}`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-lg transition-transform ${moduleOpen ? 'rotate-180' : ''}`}></AppIcon>
           </button>
         </div>
       </div>
       {!freeMode && !waitingForActualComponents && !moduleOpen && (moduleBuilderMissing || moduleBuilderLoadFailed) ? (
         <div className="flex items-start gap-3 border-t border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
-          <i className="ri-error-warning-line mt-0.5 text-base"></i>
+          <AppIcon className="ri-error-warning-line mt-0.5 text-base"></AppIcon>
           <span>
             {moduleBuilderMissing
               ? 'This module does not exist in Module Builder yet. Create or configure it in Module Builder before its components can be shown here.'
@@ -7774,7 +7774,7 @@ function ModuleBuilderContentPreview({
         waitingForActualComponents ? (
           <div className="bg-background-100/40 p-4">
             <div className="flex items-center gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[12px] font-semibold text-sky-800">
-              <i className="ri-loader-4-line animate-spin text-base"></i>
+              <AppIcon className="ri-loader-4-line animate-spin text-base"></AppIcon>
               <span>
                 Loading actual components from Module Builder
                 {waitingSeconds >= 3 ? ` - still working (${waitingSeconds}s)` : '...'}
@@ -7812,12 +7812,12 @@ function ModuleBuilderContentPreview({
         <div className="divide-y divide-background-200/70">
           {moduleBuilderLoadFailed ? (
             <div className="flex items-start gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
-              <i className="ri-error-warning-line mt-0.5 text-base"></i>
+              <AppIcon className="ri-error-warning-line mt-0.5 text-base"></AppIcon>
               <span>Unable to load the actual Module Builder components. Try refreshing this step before editing components.</span>
             </div>
           ) : moduleBuilderMissing ? (
             <div className="flex items-start gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
-              <i className="ri-error-warning-line mt-0.5 text-base"></i>
+              <AppIcon className="ri-error-warning-line mt-0.5 text-base"></AppIcon>
               <span>This module does not exist in Module Builder yet. Open Module Builder to create or configure it, or choose another linked module.</span>
             </div>
           ) : null}
@@ -7840,7 +7840,7 @@ function ModuleBuilderContentPreview({
                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${hasComponents ? 'bg-primary-50 text-primary-700' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
                       {week.components.length} components
                     </span>
-                    <i className={`ri-arrow-down-s-line text-lg transition-transform ${hasComponents ? 'text-foreground-400' : 'text-foreground-300'} ${open ? 'rotate-180' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-down-s-line text-lg transition-transform ${hasComponents ? 'text-foreground-400' : 'text-foreground-300'} ${open ? 'rotate-180' : ''}`}></AppIcon>
                   </span>
                 </button>
                 {open && (
@@ -7916,10 +7916,10 @@ function EditableFreeComponentCard({
             className="flex h-9 w-7 shrink-0 cursor-grab items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-400 active:cursor-grabbing"
             title="Drag to reorder"
           >
-            <i className="ri-draggable text-base"></i>
+            <AppIcon className="ri-draggable text-base"></AppIcon>
           </span>
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
-            <i className={typeMeta?.icon || 'ri-shapes-line'}></i>
+            <AppIcon className={typeMeta?.icon || 'ri-shapes-line'}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="truncate text-[13px] font-bold text-foreground-900">{component.title || typeMeta?.label || 'Component'}</p>
@@ -7934,7 +7934,7 @@ function EditableFreeComponentCard({
             aria-label={expanded ? `Collapse ${component.title || 'component'}` : `Expand ${component.title || 'component'}`}
             title={expanded ? 'Collapse component' : 'Expand component'}
           >
-            <i className={`ri-arrow-down-s-line text-lg transition-transform ${expanded ? 'rotate-180' : ''}`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-lg transition-transform ${expanded ? 'rotate-180' : ''}`}></AppIcon>
           </button>
           <button
             type="button"
@@ -7943,7 +7943,7 @@ function EditableFreeComponentCard({
             aria-label={`Remove ${component.title || 'component'}`}
             title="Remove component"
           >
-            <i className="ri-delete-bin-line"></i>
+            <AppIcon className="ri-delete-bin-line"></AppIcon>
           </button>
         </div>
       </div>
@@ -8013,7 +8013,7 @@ function FreeComponentLmsDetails({
     <section className="mt-3 rounded-xl border border-background-200 bg-background-100/60 p-3">
       <div className="flex items-center justify-between gap-3 text-[12px] font-bold text-foreground-800">
         <span className="inline-flex items-center gap-2">
-          <i className="ri-settings-3-line text-primary-600"></i>
+          <AppIcon className="ri-settings-3-line text-primary-600"></AppIcon>
           LMS details
         </span>
       </div>
@@ -8140,7 +8140,7 @@ function ReadOnlyComponentCard({ component }: { component: ModuleComponent }) {
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700">
-          <i className={typeMeta?.icon || 'ri-shapes-line'}></i>
+          <AppIcon className={typeMeta?.icon || 'ri-shapes-line'}></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
@@ -8178,7 +8178,7 @@ function TutorConflictWarning({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-700">
-            <i className="ri-calendar-close-line text-lg"></i>
+            <AppIcon className="ri-calendar-close-line text-lg"></AppIcon>
           </span>
           <div>
             <p className="text-sm font-heading font-bold text-red-900">Tutor scheduling conflict</p>
@@ -8197,7 +8197,7 @@ function TutorConflictWarning({
             rel="noreferrer"
             className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-[11px] font-bold text-red-700 transition-smooth hover:border-red-300 hover:bg-red-100"
           >
-            <i className="ri-user-add-line"></i>
+            <AppIcon className="ri-user-add-line"></AppIcon>
             Create tutor profile
           </a>
         </div>
@@ -8216,7 +8216,7 @@ function TutorConflictWarning({
                 onClick={() => onResolve(conflict)}
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-red-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-red-700"
               >
-                <i className="ri-arrow-left-line"></i>
+                <AppIcon className="ri-arrow-left-line"></AppIcon>
                 Assign different tutor
               </button>
               <a
@@ -8225,7 +8225,7 @@ function TutorConflictWarning({
                 rel="noreferrer"
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-[11px] font-bold text-red-700 transition-smooth hover:border-red-300 hover:bg-red-100"
               >
-                <i className="ri-user-add-line"></i>
+                <AppIcon className="ri-user-add-line"></AppIcon>
                 New tutor
               </a>
             </div>
@@ -8238,7 +8238,7 @@ function TutorConflictWarning({
           onClick={() => setShowAll(value => !value)}
           className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-red-700 underline decoration-red-400 decoration-2 underline-offset-4 transition-smooth hover:text-red-900"
         >
-          <i className={showAll ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
+          <AppIcon className={showAll ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
           {showAll ? 'Show fewer conflict details' : `Show all ${conflicts.length} conflict details`}
         </button>
       ) : null}
@@ -8332,7 +8332,7 @@ function ReviewSummary({
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 gap-3">
                 <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm" style={{ backgroundColor: programmeColor }}>
-                  <i className="ri-book-2-line text-xl"></i>
+                  <AppIcon className="ri-book-2-line text-xl"></AppIcon>
                 </span>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -8366,9 +8366,9 @@ function ReviewSummary({
                 <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-foreground-500">
                   <span>Programme</span>
-                  <i className="ri-arrow-right-s-line text-foreground-400"></i>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-400"></AppIcon>
                   <span>Custom Modules</span>
-                  <i className="ri-arrow-right-s-line text-foreground-400"></i>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-400"></AppIcon>
                   <span>Components</span>
                 </div>
               </div>
@@ -8435,7 +8435,7 @@ function ReviewSummary({
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 gap-3">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-white shadow-sm" style={{ backgroundColor: programmeColor }}>
-                <i className="ri-book-2-line text-xl"></i>
+                <AppIcon className="ri-book-2-line text-xl"></AppIcon>
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -8472,11 +8472,11 @@ function ReviewSummary({
               <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
               <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-foreground-500">
                 <span>Programme</span>
-                <i className="ri-arrow-right-s-line text-foreground-400"></i>
+                <AppIcon className="ri-arrow-right-s-line text-foreground-400"></AppIcon>
                 <span>Cohorts</span>
-                <i className="ri-arrow-right-s-line text-foreground-400"></i>
+                <AppIcon className="ri-arrow-right-s-line text-foreground-400"></AppIcon>
                 <span>Groups</span>
-                <i className="ri-arrow-right-s-line text-foreground-400"></i>
+                <AppIcon className="ri-arrow-right-s-line text-foreground-400"></AppIcon>
                 <span>Modules</span>
               </div>
             </div>
@@ -8501,7 +8501,7 @@ function ReviewSummary({
                 <div key={cohort.localId} className="relative pl-8">
                   <span className="absolute left-3 top-12 bottom-0 w-px" style={{ backgroundColor: hexToRgba(cohortColor, 0.22) }} aria-hidden="true"></span>
                   <span className="absolute left-0 top-2 flex h-7 w-7 items-center justify-center rounded-full border-4 border-background-50 text-white shadow-sm" style={{ backgroundColor: cohortColor }}>
-                    <i className="ri-calendar-event-line text-sm"></i>
+                    <AppIcon className="ri-calendar-event-line text-sm"></AppIcon>
                   </span>
                   <div
                     className="rounded-2xl border p-3 shadow-sm"
@@ -8540,7 +8540,7 @@ function ReviewSummary({
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                               <div className="flex min-w-0 gap-3">
                                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: groupColor }}>
-                                  <i className="ri-team-line"></i>
+                                  <AppIcon className="ri-team-line"></AppIcon>
                                 </span>
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
@@ -8623,7 +8623,7 @@ function ReviewSummary({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-700">
-              <i className="ri-calendar-close-line text-lg"></i>
+              <AppIcon className="ri-calendar-close-line text-lg"></AppIcon>
             </span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -8675,7 +8675,7 @@ function ReviewReadinessPanel({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-start gap-3">
           <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isWarning ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-            <i className={`${isWarning ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} text-lg`}></i>
+            <AppIcon className={`${isWarning ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} text-lg`}></AppIcon>
           </span>
           <div>
             <p className="text-sm font-heading font-bold text-foreground-950">{title}</p>
@@ -8717,7 +8717,7 @@ function ReviewInsightGrid({
         <div key={item.label} className="rounded-xl border border-background-200 bg-white/80 px-3 py-3 shadow-sm">
           <div className="flex items-start gap-3">
             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${toneClasses[item.tone]}`}>
-              <i className={`${item.icon} text-base`}></i>
+              <AppIcon className={`${item.icon} text-base`}></AppIcon>
             </span>
             <div className="min-w-0">
               <p className="text-[9px] font-bold uppercase text-foreground-400">{item.label}</p>
@@ -8808,7 +8808,7 @@ function SummaryBlock({ icon, label, title, meta, color, compact = false }: { ic
     <div className={`rounded-xl border border-background-200 bg-background-50 ${compact ? 'p-3' : 'p-4'}`}>
       <div className="flex items-start gap-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white" style={{ backgroundColor: color || '#2563eb' }}>
-          <i className={icon}></i>
+          <AppIcon className={icon}></AppIcon>
         </span>
         <div className="min-w-0">
           <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
@@ -8825,7 +8825,7 @@ function ReviewCard({ icon, label, title, meta, color, badges = [] }: { icon: st
     <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: color || '#2563eb' }}>
-          <i className={`${icon} text-base`}></i>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
@@ -8992,9 +8992,9 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
         }}
         className="mt-1 flex w-full items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-left text-[13px] font-semibold text-foreground-900 hover:bg-background-100/60"
       >
-        <i className="ri-user-line text-foreground-400"></i>
+        <AppIcon className="ri-user-line text-foreground-400"></AppIcon>
         <span className="min-w-0 flex-1 truncate">{value || 'Unassigned'}</span>
-        <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
       {open && (
         <div className="absolute left-auto right-0 z-[10030] mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-background-200 bg-background-50 p-2 shadow-2xl">
@@ -9015,7 +9015,7 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
 function InfoStrip({ icon, text }: { icon: string; text: string }) {
   return (
     <div className="lg:col-span-full flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-semibold text-primary-700">
-      <i className={`${icon} text-sm`}></i>
+      <AppIcon className={`${icon} text-sm`}></AppIcon>
       {text}
     </div>
   );
@@ -9066,7 +9066,7 @@ function renderValidationItem(item: string) {
 function PanelTone({ icon, text, tone = 'info' }: { icon: string; text: string; tone?: 'info' | 'error' }) {
   return (
     <div className={`mb-4 flex items-center gap-2 rounded-xl px-4 py-3 text-[12px] font-semibold ${tone === 'error' ? 'border border-red-200 bg-red-50 text-red-700' : 'border border-primary-200 bg-primary-50 text-primary-700'}`}>
-      <i className={`${icon} text-sm`}></i>
+      <AppIcon className={`${icon} text-sm`}></AppIcon>
       {text}
     </div>
   );

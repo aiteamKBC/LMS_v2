@@ -14,7 +14,7 @@ export default function MonthlyCoachingJourneySection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-            <i className="ri-route-line text-primary-700" />
+            <AppIcon className="ri-route-line text-primary-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Monthly Coaching Journey</h2>
         </div>
@@ -29,7 +29,7 @@ export default function MonthlyCoachingJourneySection() {
                 {/* Step */}
                 <div className="flex flex-col items-center text-center flex-1 min-w-0 px-2">
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 ${s.bg}`}>
-                    <i className={`${s.icon} ${s.text} text-lg`} />
+                    <AppIcon className={`${s.icon} ${s.text} text-lg`} />
                   </div>
                   <h3 className={`text-sm font-semibold mb-1 ${
                     stage.status === 'current' ? 'text-accent-700' : stage.status === 'completed' ? 'text-foreground-500' : 'text-foreground-400'
@@ -47,12 +47,12 @@ export default function MonthlyCoachingJourneySection() {
                 {/* Arrow */}
                 {!isLast && (
                   <div className="hidden md:flex items-center justify-center px-2 shrink-0">
-                    <i className="ri-arrow-right-line text-foreground-300 text-xl" />
+                    <AppIcon className="ri-arrow-right-line text-foreground-300 text-xl" />
                   </div>
                 )}
                 {!isLast && (
                   <div className="md:hidden flex items-center justify-center py-2">
-                    <i className="ri-arrow-down-line text-foreground-300 text-xl" />
+                    <AppIcon className="ri-arrow-down-line text-foreground-300 text-xl" />
                   </div>
                 )}
               </div>

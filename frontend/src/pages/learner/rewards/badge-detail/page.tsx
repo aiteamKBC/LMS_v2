@@ -42,7 +42,7 @@ export default function BadgeDetailPage() {
       >
         <div className="p-6 flex flex-col items-center justify-center py-24">
           <span className="w-20 h-20 rounded-3xl bg-foreground-100 flex items-center justify-center mb-6">
-            <i className="ri-emotion-sad-line text-foreground-300 text-3xl"></i>
+            <AppIcon className="ri-emotion-sad-line text-foreground-300 text-3xl"></AppIcon>
           </span>
           <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Badge Not Found</h2>
           <p className="text-sm text-foreground-500 mb-6">We couldn&apos;t find a badge with that identifier.</p>
@@ -50,7 +50,7 @@ export default function BadgeDetailPage() {
             to="/learner/rewards"
             className="px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-all whitespace-nowrap"
           >
-            <i className="ri-arrow-left-line mr-1.5"></i> Back to Rewards
+            <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Back to Rewards
           </Link>
         </div>
       </WorkspaceShell>
@@ -98,7 +98,7 @@ export default function BadgeDetailPage() {
           onClick={() => navigate('/learner/rewards')}
           className="inline-flex items-center gap-1.5 text-sm text-foreground-500 hover:text-foreground-700 transition-all cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-arrow-left-line"></i>
+          <AppIcon className="ri-arrow-left-line"></AppIcon>
           Back to Rewards
         </button>
 
@@ -109,7 +109,7 @@ export default function BadgeDetailPage() {
           <div className="relative p-6 sm:p-8">
             <div className="flex flex-col sm:flex-row items-start gap-5">
               <span className={`w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 ${colors.bg} ${colors.text} ring-4 ring-background-50`}>
-                <i className={`${badge.icon} text-3xl`}></i>
+                <AppIcon className={`${badge.icon} text-3xl`}></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -123,12 +123,12 @@ export default function BadgeDetailPage() {
                 <p className="text-sm text-foreground-500 mt-2 leading-relaxed">{badge.description}</p>
                 <div className="flex items-center gap-3 mt-4 pt-4 border-t border-background-200/60">
                   <div className="flex items-center gap-1.5">
-                    <i className="ri-calendar-check-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-calendar-check-line text-foreground-400 text-sm"></AppIcon>
                     <span className="text-sm text-foreground-600">Earned on <strong>{badge.earnedDate}</strong></span>
                   </div>
                   <span className="text-foreground-200">|</span>
                   <div className="flex items-center gap-1.5">
-                    <i className="ri-medal-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-medal-line text-foreground-400 text-sm"></AppIcon>
                     <span className="text-sm text-foreground-600">Category: <strong>{badge.category}</strong></span>
                   </div>
                 </div>
@@ -147,7 +147,7 @@ export default function BadgeDetailPage() {
             <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 animate-in slide-in-from-bottom-4 duration-400">
               <div className="flex items-center gap-2 mb-4">
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${colors.bg}`}>
-                  <i className="ri-book-open-line text-sm ${colors.text}"></i>
+                  <AppIcon className="ri-book-open-line text-sm ${colors.text}"></AppIcon>
                 </span>
                 <h2 className="text-sm font-heading font-semibold text-foreground-900">Achievement Story</h2>
               </div>
@@ -158,7 +158,7 @@ export default function BadgeDetailPage() {
             <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 animate-in slide-in-from-bottom-4 duration-400" style={{ animationDelay: '100ms' }}>
               <div className="flex items-center gap-2 mb-4">
                 <span className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-100">
-                  <i className="ri-check-double-line text-emerald-600"></i>
+                  <AppIcon className="ri-check-double-line text-emerald-600"></AppIcon>
                 </span>
                 <h2 className="text-sm font-heading font-semibold text-foreground-900">How You Earned This Badge</h2>
               </div>
@@ -169,7 +169,7 @@ export default function BadgeDetailPage() {
                     <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 relative z-10 ${
                       i < badge.unlockCriteria.length ? 'bg-emerald-100 text-emerald-600 ring-2 ring-background-50' : 'bg-background-200 text-foreground-400'
                     }`}>
-                      <i className="ri-check-line text-xs"></i>
+                      <AppIcon className="ri-check-line text-xs"></AppIcon>
                     </span>
                     <span className="text-sm text-foreground-700 pt-0.5">{criterion}</span>
                   </div>
@@ -187,25 +187,25 @@ export default function BadgeDetailPage() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-calendar-line"></i> Earned Date
+                    <AppIcon className="ri-calendar-line"></AppIcon> Earned Date
                   </span>
                   <span className="text-xs font-semibold text-foreground-900">{badge.earnedDate}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-price-tag-3-line"></i> Category
+                    <AppIcon className="ri-price-tag-3-line"></AppIcon> Category
                   </span>
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>{badge.category}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-checkbox-circle-line"></i> Criteria Met
+                    <AppIcon className="ri-checkbox-circle-line"></AppIcon> Criteria Met
                   </span>
                   <span className="text-xs font-semibold text-emerald-600">{badge.unlockCriteria.length}/{badge.unlockCriteria.length}</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-shield-check-line"></i> Status
+                    <AppIcon className="ri-shield-check-line"></AppIcon> Status
                   </span>
                   <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Earned
@@ -213,7 +213,7 @@ export default function BadgeDetailPage() {
                 </div>
                 <div className="flex items-center justify-between py-2">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-medal-2-line"></i> Badge ID
+                    <AppIcon className="ri-medal-2-line"></AppIcon> Badge ID
                   </span>
                   <span className="text-xs font-mono text-foreground-400">#{badge.id}</span>
                 </div>
@@ -228,7 +228,7 @@ export default function BadgeDetailPage() {
                   onClick={() => setShareModal(true)}
                   className="flex-1 py-2 rounded-lg bg-primary-100 text-primary-700 text-xs font-semibold hover:bg-primary-200 transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1"
                 >
-                  <i className="ri-share-forward-line text-sm"></i> Share Card
+                  <AppIcon className="ri-share-forward-line text-sm"></AppIcon> Share Card
                 </button>
                 <button
                   onClick={handleDownloadCard}
@@ -236,9 +236,9 @@ export default function BadgeDetailPage() {
                   className="flex-1 py-2 rounded-lg bg-background-100 border border-background-200/60 text-xs font-semibold text-foreground-600 hover:bg-background-200/60 transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {downloadLoading ? (
-                    <i className="ri-loader-4-line text-sm animate-spin"></i>
+                    <AppIcon className="ri-loader-4-line text-sm animate-spin"></AppIcon>
                   ) : (
-                    <i className="ri-download-line text-sm"></i>
+                    <AppIcon className="ri-download-line text-sm"></AppIcon>
                   )}
                   {downloadLoading ? 'Exporting...' : 'Download'}
                 </button>
@@ -250,7 +250,7 @@ export default function BadgeDetailPage() {
               to="/learner/rewards"
               className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-background-200/60 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-all cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-gallery-line"></i> View All Badges
+              <AppIcon className="ri-gallery-line"></AppIcon> View All Badges
             </Link>
           </div>
         </div>
@@ -268,7 +268,7 @@ export default function BadgeDetailPage() {
             <div className="p-5 border-b border-background-200/50 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center">
-                  <i className="ri-share-forward-line text-primary-600 text-sm"></i>
+                  <AppIcon className="ri-share-forward-line text-primary-600 text-sm"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Share Badge</h3>
@@ -279,7 +279,7 @@ export default function BadgeDetailPage() {
                 onClick={() => setShareModal(false)}
                 className="w-7 h-7 rounded-full bg-background-100 hover:bg-background-200 flex items-center justify-center cursor-pointer transition-all"
               >
-                <i className="ri-close-line text-foreground-500 text-sm"></i>
+                <AppIcon className="ri-close-line text-foreground-500 text-sm"></AppIcon>
               </button>
             </div>
             <div className="p-5">
@@ -309,7 +309,7 @@ export default function BadgeDetailPage() {
                 <button
                   className="py-2.5 rounded-xl bg-[#0077b5] text-white text-xs font-semibold hover:bg-[#006396] transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1"
                 >
-                  <i className="ri-linkedin-box-line text-sm"></i> LinkedIn
+                  <AppIcon className="ri-linkedin-box-line text-sm"></AppIcon> LinkedIn
                 </button>
                 <button
                   onClick={handleDownloadCard}
@@ -317,9 +317,9 @@ export default function BadgeDetailPage() {
                   className="py-2.5 rounded-xl bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {downloadLoading ? (
-                    <i className="ri-loader-4-line text-sm animate-spin"></i>
+                    <AppIcon className="ri-loader-4-line text-sm animate-spin"></AppIcon>
                   ) : (
-                    <i className="ri-download-line text-sm"></i>
+                    <AppIcon className="ri-download-line text-sm"></AppIcon>
                   )}
                   {downloadLoading ? 'Exporting...' : 'Download'}
                 </button>
@@ -327,7 +327,7 @@ export default function BadgeDetailPage() {
                   onClick={handleCopyLink}
                   className="py-2.5 rounded-xl bg-background-100 border border-background-200/60 text-xs font-semibold text-foreground-700 hover:bg-background-200/60 transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1"
                 >
-                  <i className="ri-link text-sm"></i> Copy Link
+                  <AppIcon className="ri-link text-sm"></AppIcon> Copy Link
                 </button>
               </div>
             </div>

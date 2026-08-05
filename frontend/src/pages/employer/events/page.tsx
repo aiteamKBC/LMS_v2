@@ -79,7 +79,7 @@ export default function EmployerEvents() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-calendar-event-line text-white text-2xl"></i>
+              <AppIcon className="ri-calendar-event-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Events</h2>
@@ -98,7 +98,7 @@ export default function EmployerEvents() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search events..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 flex-wrap">
@@ -121,15 +121,15 @@ export default function EmployerEvents() {
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${typeColors[event.type]}`}>{typeLabels[event.type]}</span>
                   {event.attending && (
                     <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                      <i className="ri-check-line text-[8px]"></i> Attending
+                      <AppIcon className="ri-check-line text-[8px]"></AppIcon> Attending
                     </span>
                   )}
                 </div>
                 <p className="text-[12px] text-foreground-500 mb-2 line-clamp-2">{event.description}</p>
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
-                  <span><i className="ri-time-line mr-1"></i> {event.time}</span>
-                  <span><i className="ri-map-pin-line mr-1"></i> {event.location}</span>
-                  <span><i className="ri-group-line mr-1"></i> {event.attendees} attending</span>
+                  <span><AppIcon className="ri-time-line mr-1"></AppIcon> {event.time}</span>
+                  <span><AppIcon className="ri-map-pin-line mr-1"></AppIcon> {event.location}</span>
+                  <span><AppIcon className="ri-group-line mr-1"></AppIcon> {event.attendees} attending</span>
                 </div>
                 {event.relevantApprentices.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1 mt-2">
@@ -143,11 +143,11 @@ export default function EmployerEvents() {
               <div className="flex items-center gap-2 shrink-0">
                 {event.attending ? (
                   <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[11px] font-semibold whitespace-nowrap">
-                    <i className="ri-calendar-check-line mr-1"></i> Registered
+                    <AppIcon className="ri-calendar-check-line mr-1"></AppIcon> Registered
                   </span>
                 ) : (
                   <button onClick={e => { e.stopPropagation(); }} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-add-circle-line mr-1"></i> Register
+                    <AppIcon className="ri-add-circle-line mr-1"></AppIcon> Register
                   </button>
                 )}
               </div>
@@ -161,33 +161,33 @@ export default function EmployerEvents() {
               <div className="sticky top-0 bg-background-50 border-b border-foreground-400/50 px-6 py-4 flex items-center justify-between z-10">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">{selectedEvent.title}</h3>
                 <button onClick={() => setSelectedEvent(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-foreground-500"></i>
+                  <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
                 <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full ${typeColors[selectedEvent.type]}`}>{typeLabels[selectedEvent.type]}</span>
                 <p className="text-[13px] text-foreground-600 leading-relaxed">{selectedEvent.description}</p>
                 <div className="bg-background-100 rounded-xl p-4 space-y-3">
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-calendar-line text-foreground-400"></i><span className="text-foreground-500">Date:</span><span className="font-medium text-foreground-900">{selectedEvent.date}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-time-line text-foreground-400"></i><span className="text-foreground-500">Time:</span><span className="font-medium text-foreground-900">{selectedEvent.time}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-map-pin-line text-foreground-400"></i><span className="text-foreground-500">Location:</span><span className="font-medium text-foreground-900">{selectedEvent.location}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-group-line text-foreground-400"></i><span className="text-foreground-500">Attendees:</span><span className="font-medium text-foreground-900">{selectedEvent.attendees} registered</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="text-foreground-500">Date:</span><span className="font-medium text-foreground-900">{selectedEvent.date}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-time-line text-foreground-400"></AppIcon><span className="text-foreground-500">Time:</span><span className="font-medium text-foreground-900">{selectedEvent.time}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-map-pin-line text-foreground-400"></AppIcon><span className="text-foreground-500">Location:</span><span className="font-medium text-foreground-900">{selectedEvent.location}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-group-line text-foreground-400"></AppIcon><span className="text-foreground-500">Attendees:</span><span className="font-medium text-foreground-900">{selectedEvent.attendees} registered</span></div>
                   {selectedEvent.relevantApprentices.length > 0 && (
-                    <div className="flex items-start gap-2 text-[12px]"><i className="ri-user-line text-foreground-400 mt-0.5"></i><span className="text-foreground-500">Relevant Apprentices:</span><span className="font-medium text-foreground-900">{selectedEvent.relevantApprentices.join(', ')}</span></div>
+                    <div className="flex items-start gap-2 text-[12px]"><AppIcon className="ri-user-line text-foreground-400 mt-0.5"></AppIcon><span className="text-foreground-500">Relevant Apprentices:</span><span className="font-medium text-foreground-900">{selectedEvent.relevantApprentices.join(', ')}</span></div>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   {selectedEvent.attending ? (
                     <button className="flex-1 px-4 py-2 bg-background-100 text-foreground-500 rounded-lg text-[12px] font-medium cursor-not-allowed whitespace-nowrap" disabled>
-                      <i className="ri-check-line mr-1"></i> Already Registered
+                      <AppIcon className="ri-check-line mr-1"></AppIcon> Already Registered
                     </button>
                   ) : (
                     <button className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-add-circle-line mr-1"></i> Register for Event
+                      <AppIcon className="ri-add-circle-line mr-1"></AppIcon> Register for Event
                     </button>
                   )}
                   <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-calendar-2-line mr-1"></i> Add to Calendar
+                    <AppIcon className="ri-calendar-2-line mr-1"></AppIcon> Add to Calendar
                   </button>
                 </div>
               </div>

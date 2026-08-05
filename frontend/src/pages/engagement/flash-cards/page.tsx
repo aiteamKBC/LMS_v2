@@ -359,10 +359,10 @@ export default function FlashCardsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-gift-2-line text-sm"></i> Points Rules
+            <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-thumb-up-line text-sm"></i> Recognition
+            <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
         </div>
 
@@ -377,15 +377,15 @@ export default function FlashCardsPage() {
             ))}
           </div>
           <div className="relative flex-1 w-full sm:max-w-xs">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search title, module, programme..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex-1"></div>
           <button onClick={openAI} className="px-4 py-2 bg-[#0f172a] text-white rounded-lg text-[12px] font-semibold hover:bg-[#111827] transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <i className="ri-sparkling-2-line mr-1"></i> Generate with AI
+            <AppIcon className="ri-sparkling-2-line mr-1"></AppIcon> Generate with AI
           </button>
           <button onClick={openCreateDeck} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <i className="ri-add-line mr-1"></i> New Deck
+            <AppIcon className="ri-add-line mr-1"></AppIcon> New Deck
           </button>
         </div>
 
@@ -393,7 +393,7 @@ export default function FlashCardsPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-flashlight-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-flashlight-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No decks in this view</p>
             <p className="text-[11px] text-foreground-400">Generate one with AI or build it manually.</p>
           </div>
@@ -419,7 +419,7 @@ export default function FlashCardsPage() {
                     <tr key={deck.id} className="border-b border-foreground-200/40 hover:bg-background-100/40 transition-smooth">
                       <td className="px-4 py-3">
                         <p className="text-[13px] font-semibold text-foreground-900">{deck.title}</p>
-                        {deck.aiGenerated && <span className="text-[9px] font-bold uppercase tracking-wide text-accent-600"><i className="ri-sparkling-2-line mr-0.5"></i>AI</span>}
+                        {deck.aiGenerated && <span className="text-[9px] font-bold uppercase tracking-wide text-accent-600"><AppIcon className="ri-sparkling-2-line mr-0.5"></AppIcon>AI</span>}
                       </td>
                       <td className="px-4 py-3">
                         <p className="text-[12px] text-foreground-700">{deck.programme || '—'}</p>
@@ -436,19 +436,19 @@ export default function FlashCardsPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5 justify-end flex-wrap">
                           <button onClick={() => openCardEditor(deck)} title="Edit this deck's cards" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <i className="ri-stack-line"></i> Cards
+                            <AppIcon className="ri-stack-line"></AppIcon> Cards
                           </button>
                           <button onClick={() => { setPreviewDeck(deck); setShowPicker(true); }} title="Preview the learner game" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <i className="ri-gamepad-line"></i> Preview
+                            <AppIcon className="ri-gamepad-line"></AppIcon> Preview
                           </button>
                           <button onClick={() => openEditDeck(deck)} title="Edit title and targeting" className="h-8 px-2.5 rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <i className="ri-settings-3-line"></i> Edit
+                            <AppIcon className="ri-settings-3-line"></AppIcon> Edit
                           </button>
                           <button onClick={() => togglePublish(deck)} title={deck.status === 'published' ? 'Move back to draft' : 'Publish to learners'} className={`h-8 px-2.5 rounded-lg transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap ${deck.status === 'published' ? 'bg-amber-50 text-amber-600 hover:bg-amber-100' : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'}`}>
-                            <i className={deck.status === 'published' ? 'ri-eye-off-line' : 'ri-send-plane-line'}></i> {deck.status === 'published' ? 'Unpublish' : 'Publish'}
+                            <AppIcon className={deck.status === 'published' ? 'ri-eye-off-line' : 'ri-send-plane-line'}></AppIcon> {deck.status === 'published' ? 'Unpublish' : 'Publish'}
                           </button>
                           <button onClick={() => removeDeck(deck)} title="Delete deck" className="h-8 px-2.5 rounded-lg text-red-500 hover:bg-red-50 transition-smooth cursor-pointer flex items-center gap-1.5 text-[11px] font-semibold whitespace-nowrap">
-                            <i className="ri-delete-bin-line"></i> Delete
+                            <AppIcon className="ri-delete-bin-line"></AppIcon> Delete
                           </button>
                         </div>
                       </td>
@@ -468,13 +468,13 @@ export default function FlashCardsPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-flashlight-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-flashlight-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">{editingDeck ? 'Edit Deck' : 'New Deck'}</h3>
                   <p className="text-[11px] text-foreground-400">Target a programme, module and week</p>
                 </div>
               </div>
-              <button onClick={() => setShowDeckForm(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setShowDeckForm(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
@@ -486,7 +486,7 @@ export default function FlashCardsPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setShowDeckForm(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
               <button onClick={saveDeck} disabled={savingDeck} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-wait">
-                <i className={savingDeck ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></i> {editingDeck ? 'Save Changes' : 'Create & Add Cards'}
+                <AppIcon className={savingDeck ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon> {editingDeck ? 'Save Changes' : 'Create & Add Cards'}
               </button>
             </div>
           </div>
@@ -500,13 +500,13 @@ export default function FlashCardsPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3 min-w-0">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0"><i className="ri-stack-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0"><AppIcon className="ri-stack-line text-lg"></AppIcon></span>
                 <div className="min-w-0">
                   <h3 className="text-base font-heading font-semibold text-foreground-900 truncate">{editorDeck.title}</h3>
                   <p className="text-[11px] text-foreground-400">{editorCards.length} card{editorCards.length === 1 ? '' : 's'}</p>
                 </div>
               </div>
-              <button onClick={() => setEditorDeck(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setEditorDeck(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-3">
               {editorLoading && <div className="h-24 rounded-xl bg-background-200 animate-pulse" />}
@@ -524,14 +524,14 @@ export default function FlashCardsPage() {
               ))}
               {!editorLoading && (
                 <button onClick={addCard} className="w-full py-2.5 rounded-xl border border-dashed border-foreground-300 text-foreground-500 text-[12px] font-semibold hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer">
-                  <i className="ri-add-line mr-1"></i> Add card
+                  <AppIcon className="ri-add-line mr-1"></AppIcon> Add card
                 </button>
               )}
             </div>
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setEditorDeck(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
               <button onClick={saveCards} disabled={editorSaving} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-60 disabled:cursor-wait">
-                <i className={editorSaving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></i> Save Cards
+                <AppIcon className={editorSaving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon> Save Cards
               </button>
             </div>
           </div>
@@ -545,13 +545,13 @@ export default function FlashCardsPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-[#0f172a] text-white flex items-center justify-center"><i className="ri-sparkling-2-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-[#0f172a] text-white flex items-center justify-center"><AppIcon className="ri-sparkling-2-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Generate Flash Cards</h3>
                   <p className="text-[11px] text-foreground-400">Review and edit the generated cards before saving them as a draft deck</p>
                 </div>
               </div>
-              <button onClick={() => setShowAI(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setShowAI(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
 
             <div className="flex-1 overflow-y-auto p-5 grid grid-cols-1 xl:grid-cols-[380px_1fr] gap-5">
@@ -587,7 +587,7 @@ export default function FlashCardsPage() {
                 <textarea value={aiInstructions} onChange={e => setAiInstructions(e.target.value)} rows={4} className="w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none font-mono" />
 
                 <button onClick={runGenerate} disabled={generating} className="w-full h-11 rounded-lg bg-[#0f172a] text-white text-sm font-semibold hover:bg-[#111827] disabled:opacity-50 disabled:cursor-wait transition-smooth cursor-pointer flex items-center justify-center gap-2">
-                  <i className={generating ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-2-line'}></i> {generating ? 'Generating…' : generatedCards.length ? 'Regenerate preview' : 'Generate preview'}
+                  <AppIcon className={generating ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-2-line'}></AppIcon> {generating ? 'Generating…' : generatedCards.length ? 'Regenerate preview' : 'Generate preview'}
                 </button>
               </section>
 
@@ -595,21 +595,21 @@ export default function FlashCardsPage() {
               <section className="min-w-0 min-h-[420px] max-h-[calc(92vh-150px)] rounded-2xl border border-[#dbe3ee] bg-[#f8fafc] p-3 sm:p-4 flex flex-col overflow-hidden">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 shrink-0 rounded-xl bg-white border border-[#e2e8f0] px-4 py-3 shadow-sm">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-700 flex items-center justify-center shrink-0"><i className="ri-eye-line"></i></span>
+                    <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-700 flex items-center justify-center shrink-0"><AppIcon className="ri-eye-line"></AppIcon></span>
                     <div className="min-w-0">
                       <h4 className="text-sm font-heading font-bold text-[#0f172a]">Preview & Edit</h4>
                       <p className="text-xs text-[#64748b]">{generatedCards.length ? `${generatedCards.length} cards — edit any card before saving` : 'Generated cards will appear here'}</p>
                     </div>
                   </div>
                   <button onClick={() => void saveGeneratedDeck()} disabled={!generatedCards.length || savingGenerated} className="h-9 px-4 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 w-full sm:w-auto flex items-center justify-center gap-1.5">
-                    <i className={savingGenerated ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></i> {savingGenerated ? 'Saving…' : 'Save as Draft Deck'}
+                    <AppIcon className={savingGenerated ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon> {savingGenerated ? 'Saving…' : 'Save as Draft Deck'}
                   </button>
                 </div>
 
                 {generatedCards.length === 0 ? (
                   <div className="min-h-80 flex flex-col items-center justify-center text-center">
                     <span className="w-12 h-12 rounded-2xl bg-white border border-foreground-200/60 flex items-center justify-center text-foreground-300 mb-3">
-                      <i className="ri-sparkling-2-line text-xl"></i>
+                      <AppIcon className="ri-sparkling-2-line text-xl"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-foreground-700">No generated cards yet</p>
                     <p className="text-xs text-foreground-400 mt-1 max-w-sm">Add a topic, paste lesson content, or upload source files, then generate a preview.</p>
@@ -629,7 +629,7 @@ export default function FlashCardsPage() {
                       />
                     ))}
                     <button onClick={addGeneratedCard} className="w-full py-2.5 rounded-xl border border-dashed border-foreground-300 text-foreground-500 text-[12px] font-semibold hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer">
-                      <i className="ri-add-line mr-1"></i> Add card
+                      <AppIcon className="ri-add-line mr-1"></AppIcon> Add card
                     </button>
                   </div>
                 )}
@@ -687,11 +687,11 @@ function CardEditorRow({ card, index, total, onPatch, onRemove, onMoveUp, onMove
         <div className="ml-auto flex items-center gap-1">
           {(onMoveUp || onMoveDown) && (
             <>
-              <button onClick={onMoveUp} disabled={!onMoveUp || index === 0} className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 hover:text-foreground-700 disabled:opacity-30 transition-smooth cursor-pointer"><i className="ri-arrow-up-line"></i></button>
-              <button onClick={onMoveDown} disabled={!onMoveDown || index === total - 1} className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 hover:text-foreground-700 disabled:opacity-30 transition-smooth cursor-pointer"><i className="ri-arrow-down-line"></i></button>
+              <button onClick={onMoveUp} disabled={!onMoveUp || index === 0} className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 hover:text-foreground-700 disabled:opacity-30 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-up-line"></AppIcon></button>
+              <button onClick={onMoveDown} disabled={!onMoveDown || index === total - 1} className="w-7 h-7 rounded-lg bg-background-100 text-foreground-500 hover:text-foreground-700 disabled:opacity-30 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-down-line"></AppIcon></button>
             </>
           )}
-          <button onClick={onRemove} className="w-7 h-7 rounded-lg text-red-500 hover:bg-red-50 transition-smooth cursor-pointer"><i className="ri-delete-bin-line"></i></button>
+          <button onClick={onRemove} className="w-7 h-7 rounded-lg text-red-500 hover:bg-red-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line"></AppIcon></button>
         </div>
       </div>
       <textarea value={card.question} onChange={e => onPatch({ question: e.target.value })} rows={2} placeholder="Question (front)" className="w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300 resize-none" />

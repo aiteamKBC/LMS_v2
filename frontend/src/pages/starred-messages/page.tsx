@@ -225,7 +225,7 @@ export default function StarredMessagesPage() {
           <div className="flex items-center gap-4 flex-wrap">
             {/* Search */}
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input
                 type="text"
                 placeholder="Search starred messages..."
@@ -270,11 +270,11 @@ export default function StarredMessagesPage() {
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-amber-50 border border-amber-200/50 px-3 py-1.5 rounded-xl">
-              <i className="ri-star-fill text-amber-500 text-sm"></i>
+              <AppIcon className="ri-star-fill text-amber-500 text-sm"></AppIcon>
               <span className="text-xs font-semibold text-amber-700">{starred.length} starred</span>
             </div>
             <div className="flex items-center gap-1.5 bg-accent-50 border border-accent-200/40 px-3 py-1.5 rounded-xl">
-              <i className="ri-lock-line text-accent-600 text-xs"></i>
+              <AppIcon className="ri-lock-line text-accent-600 text-xs"></AppIcon>
               <span className="text-xs text-accent-700 font-medium">Visible only to you</span>
             </div>
           </div>
@@ -285,7 +285,7 @@ export default function StarredMessagesPage() {
           {sorted.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center animate-in fade-in duration-500">
               <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200/50 flex items-center justify-center mb-5">
-                <i className="ri-star-line text-2xl text-amber-400"></i>
+                <AppIcon className="ri-star-line text-2xl text-amber-400"></AppIcon>
               </div>
               <h3 className="text-base font-heading font-semibold text-foreground-500 mb-2">
                 {searchQuery || filterContact !== 'all' ? 'No matching starred messages' : 'No starred messages yet'}
@@ -326,12 +326,12 @@ export default function StarredMessagesPage() {
 
                       {msg.fileType === 'image' ? (
                         <div className="flex items-center gap-2 mb-2 text-foreground-500">
-                          <i className="ri-image-line text-sm"></i>
+                          <AppIcon className="ri-image-line text-sm"></AppIcon>
                           <span className="text-sm italic">{msg.fileName || 'Image'}</span>
                         </div>
                       ) : msg.fileType === 'file' ? (
                         <div className="flex items-center gap-2 mb-2 text-foreground-500">
-                          <i className="ri-file-line text-sm"></i>
+                          <AppIcon className="ri-file-line text-sm"></AppIcon>
                           <span className="text-sm italic">{msg.fileName || 'File'}</span>
                         </div>
                       ) : (
@@ -340,12 +340,12 @@ export default function StarredMessagesPage() {
 
                       <div className="flex items-center gap-3">
                         <div className="flex items-center gap-1.5 text-[10px] text-amber-600">
-                          <i className="ri-star-fill text-amber-400 text-xs"></i>
+                          <AppIcon className="ri-star-fill text-amber-400 text-xs"></AppIcon>
                           <span>Starred {msg.starredAt}</span>
                         </div>
                         <div className="w-1 h-1 rounded-full bg-foreground-200"></div>
                         <span className="text-[10px] text-foreground-400">
-                          <i className="ri-lock-line text-[9px] mr-0.5"></i>
+                          <AppIcon className="ri-lock-line text-[9px] mr-0.5"></AppIcon>
                           Only visible to you
                         </span>
                       </div>
@@ -358,14 +358,14 @@ export default function StarredMessagesPage() {
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-amber-400 hover:text-amber-600 hover:bg-amber-50 transition-smooth cursor-pointer"
                         title="Remove star"
                       >
-                        <i className="ri-star-fill text-sm"></i>
+                        <AppIcon className="ri-star-fill text-sm"></AppIcon>
                       </button>
                       <button
                         onClick={() => navigator.clipboard?.writeText(msg.text)}
                         className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                         title="Copy text"
                       >
-                        <i className="ri-file-copy-line text-sm"></i>
+                        <AppIcon className="ri-file-copy-line text-sm"></AppIcon>
                       </button>
                     </div>
                   </div>

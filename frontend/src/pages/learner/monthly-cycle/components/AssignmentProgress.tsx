@@ -13,7 +13,7 @@ export default function AssignmentProgress() {
   return (
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
       <div className="flex items-center gap-2 mb-1">
-        <i className="ri-file-text-line text-foreground-600 text-sm"></i>
+        <AppIcon className="ri-file-text-line text-foreground-600 text-sm"></AppIcon>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">Monthly Assignment</h3>
       </div>
       <p className="text-xs text-foreground-400 mb-1">Due {d.dueDate} · <span className="text-primary-600 font-semibold bg-primary-50 px-1.5 py-0.5 rounded">Open</span></p>
@@ -38,7 +38,7 @@ export default function AssignmentProgress() {
         {d.evidenceSources.map((src) => (
           <div key={src.label} className="flex items-center gap-2.5 p-2.5 rounded-lg border border-background-200/50 bg-background-50/50">
             <div className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-              <i className={`${src.icon} text-foreground-500 text-sm`}></i>
+              <AppIcon className={`${src.icon} text-foreground-500 text-sm`}></AppIcon>
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">

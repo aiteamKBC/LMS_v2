@@ -17,7 +17,7 @@ export function PortfolioHealthCheck() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-4">
         <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-          <i className="ri-heart-pulse-line text-primary-600"></i>
+          <AppIcon className="ri-heart-pulse-line text-primary-600"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Portfolio Health Score</h3>
@@ -51,7 +51,7 @@ export function PortfolioHealthCheck() {
             <div className="flex items-center justify-between text-xs mb-1">
               <div className="flex items-center gap-2">
                 <span className="w-5 h-5 rounded bg-background-100 flex items-center justify-center">
-                  <i className={`${dim.icon} text-[10px] text-foreground-400`}></i>
+                  <AppIcon className={`${dim.icon} text-[10px] text-foreground-400`}></AppIcon>
                 </span>
                 <span className="text-foreground-600 font-medium">{dim.label}</span>
               </div>

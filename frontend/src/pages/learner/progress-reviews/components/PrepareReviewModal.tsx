@@ -129,7 +129,7 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
             </p>
           </div>
           <button onClick={handleClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-background-100 transition-colors cursor-pointer">
-            <i className="ri-close-line text-foreground-600 text-lg" />
+            <AppIcon className="ri-close-line text-foreground-600 text-lg" />
           </button>
         </div>
 
@@ -139,7 +139,7 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
             /* Success State */
             <div className="text-center py-10">
               <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 flex items-center justify-center mb-4">
-                <i className="ri-check-line text-emerald-600 text-3xl" />
+                <AppIcon className="ri-check-line text-emerald-600 text-3xl" />
               </div>
               <h3 className="text-lg font-heading font-bold text-foreground-950 mb-2">Responses Submitted!</h3>
               <p className="text-sm text-foreground-500 max-w-sm mx-auto">
@@ -148,14 +148,14 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
               <p className="text-xs text-foreground-400 mt-1">Learner: {p.fullName} · Programme: {p.programme}</p>
               <div className="mt-3 space-y-1.5">
                 <div className="inline-flex items-center gap-2 text-xs text-emerald-700 bg-emerald-100 px-3 py-1.5 rounded-full">
-                  <i className="ri-mail-send-line" />
+                  <AppIcon className="ri-mail-send-line" />
                   Email notification sent to {d.nextReview.coach}
                 </div>
                 {submittedAt && (
                   <>
                     <br />
                     <div className="inline-flex items-center gap-2 text-xs text-foreground-500 bg-background-100 px-3 py-1.5 rounded-full mt-1.5">
-                      <i className="ri-time-line" />
+                      <AppIcon className="ri-time-line" />
                       Submitted: {formatSubmittedTime()}
                     </div>
                   </>
@@ -165,7 +165,7 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
                 onClick={handleClose}
                 className="mt-6 inline-flex items-center gap-2 px-6 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-arrow-left-line" /> Back to Progress Reviews
+                <AppIcon className="ri-arrow-left-line" /> Back to Progress Reviews
               </button>
             </div>
           ) : (
@@ -178,7 +178,7 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
               <input type="hidden" name="review_title" value={d.nextReview.title} />
 
               <div className="text-xs text-foreground-400 bg-background-100 rounded-lg px-4 py-2.5 mb-5 flex items-start gap-2">
-                <i className="ri-information-line mt-0.5" />
+                <AppIcon className="ri-information-line mt-0.5" />
                 <span>Your responses will be shared with your coach <strong className="text-foreground-700">{d.nextReview.coach}</strong> before the review. Take time to reflect honestly — this helps make your review more productive.</span>
               </div>
 
@@ -211,7 +211,7 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
                   onClick={handleClose}
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-foreground-600 hover:text-foreground-800 transition-colors cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-arrow-left-line" /> Cancel
+                  <AppIcon className="ri-arrow-left-line" /> Cancel
                 </button>
                 <button
                   type="submit"
@@ -220,11 +220,11 @@ export default function PrepareReviewModal({ open, onClose, onSubmitted }: Props
                 >
                   {submitting ? (
                     <>
-                      <i className="ri-loader-4-line animate-spin" /> Submitting...
+                      <AppIcon className="ri-loader-4-line animate-spin" /> Submitting...
                     </>
                   ) : (
                     <>
-                      <i className="ri-send-plane-line" /> Submit Responses
+                      <AppIcon className="ri-send-plane-line" /> Submit Responses
                     </>
                   )}
                 </button>

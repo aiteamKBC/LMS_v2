@@ -34,10 +34,10 @@ export default function SafeguardingSection({ wellbeingRequest, onToggleWellbein
           onClick={onToggleWellbeing}
           className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold cursor-pointer transition-all whitespace-nowrap ${wellbeingRequest ? 'bg-amber-500 text-white' : 'bg-background-100 text-foreground-700 border border-background-200/50 hover:bg-background-200'}`}
         >
-          <i className="ri-heart-pulse-line" /> {wellbeingRequest ? 'Support Requested' : 'Request Confidential Support'}
+          <AppIcon className="ri-heart-pulse-line" /> {wellbeingRequest ? 'Support Requested' : 'Request Confidential Support'}
         </button>
         <p className="text-xs text-foreground-400">
-          <i className="ri-shield-check-line mr-1" /> Your wellbeing is our priority. All requests are confidential.
+          <AppIcon className="ri-shield-check-line mr-1" /> Your wellbeing is our priority. All requests are confidential.
         </p>
       </div>
     </section>

@@ -57,7 +57,7 @@ export default function AdminReportsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-bar-chart-box-line text-white text-2xl"></i>
+              <AppIcon className="ri-bar-chart-box-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Reports & Analytics Centre</h2>
@@ -85,10 +85,10 @@ export default function AdminReportsPage() {
         {/* Tab Bar */}
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit">
           <button onClick={() => setActiveTab('analytics')} className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-smooth cursor-pointer whitespace-nowrap ${activeTab === 'analytics' ? 'bg-white text-foreground-900' : 'text-foreground-500 hover:text-foreground-700'}`}>
-            <i className="ri-pie-chart-line mr-2"></i>Analytics
+            <AppIcon className="ri-pie-chart-line mr-2"></AppIcon>Analytics
           </button>
           <button onClick={() => setActiveTab('reports')} className={`px-4 py-2 rounded-lg text-[13px] font-medium transition-smooth cursor-pointer whitespace-nowrap ${activeTab === 'reports' ? 'bg-white text-foreground-900' : 'text-foreground-500 hover:text-foreground-700'}`}>
-            <i className="ri-bar-chart-box-line mr-2"></i>Report Builder
+            <AppIcon className="ri-bar-chart-box-line mr-2"></AppIcon>Report Builder
           </button>
         </div>
 
@@ -100,7 +100,7 @@ export default function AdminReportsPage() {
                 <div key={metric.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
                   <div className="flex items-center justify-between mb-2">
                     <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                      <i className={`${metric.icon} text-primary-600 text-sm`}></i>
+                      <AppIcon className={`${metric.icon} text-primary-600 text-sm`}></AppIcon>
                     </span>
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${metric.positive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{metric.change}</span>
                   </div>
@@ -244,7 +244,7 @@ export default function AdminReportsPage() {
               <div className="flex items-center justify-between p-5 border-b border-foreground-400/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Report Metrics — Live Snapshot</h3>
                 <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-download-line mr-1"></i> Export All
+                  <AppIcon className="ri-download-line mr-1"></AppIcon> Export All
                 </button>
               </div>
               <div className="overflow-x-auto">
@@ -285,7 +285,7 @@ export default function AdminReportsPage() {
                                 ))}
                               </div>
                               <span className={`text-[10px] font-semibold ${isUp ? 'text-emerald-600' : 'text-red-500'}`}>
-                                <i className={`${isUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}`}></i> {Math.abs(lastVal - prevVal)}pp
+                                <AppIcon className={`${isUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}`}></AppIcon> {Math.abs(lastVal - prevVal)}pp
                               </span>
                             </div>
                           </td>
@@ -304,7 +304,7 @@ export default function AdminReportsPage() {
           <div className="space-y-5">
             <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
               <div className="relative flex-1 w-full lg:w-auto">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                 <input type="text" placeholder="Search reports..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
               </div>
               <div className="flex items-center gap-2">
@@ -321,7 +321,7 @@ export default function AdminReportsPage() {
                   <option value="Compliance">Compliance</option>
                 </select>
                 <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-add-line mr-1.5"></i> New Report
+                  <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Report
                 </button>
               </div>
             </div>
@@ -331,7 +331,7 @@ export default function AdminReportsPage() {
                 {filtered.map(r => (
                   <div key={r.id} onClick={() => setSelectedReport(r.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedReport === r.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
                     <div className="w-10 h-10 rounded-lg bg-secondary-100 flex items-center justify-center shrink-0">
-                      <i className="ri-bar-chart-box-line text-secondary-600 text-sm"></i>
+                      <AppIcon className="ri-bar-chart-box-line text-secondary-600 text-sm"></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -349,7 +349,7 @@ export default function AdminReportsPage() {
                       </div>
                       <span className="text-[12px] text-foreground-500">{r.runs} runs</span>
                     </div>
-                    <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedReport === r.id ? 'text-primary-500' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedReport === r.id ? 'text-primary-500' : ''}`}></AppIcon>
                   </div>
                 ))}
               </div>
@@ -384,7 +384,7 @@ export default function AdminReportsPage() {
                 ) : (
                   <div className="text-center py-8">
                     <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                      <i className="ri-bar-chart-box-line text-foreground-300 text-xl"></i>
+                      <AppIcon className="ri-bar-chart-box-line text-foreground-300 text-xl"></AppIcon>
                     </div>
                     <p className="text-sm text-foreground-500">Select a report to view details</p>
                   </div>

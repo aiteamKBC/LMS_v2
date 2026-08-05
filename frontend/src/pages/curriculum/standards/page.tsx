@@ -152,7 +152,7 @@ export default function CurriculumStandards() {
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-start gap-4">
                 <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20">
-                  <i className="ri-database-2-line text-2xl" />
+                  <AppIcon className="ri-database-2-line text-2xl" />
                 </span>
                 <div className="max-w-3xl">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -190,7 +190,7 @@ export default function CurriculumStandards() {
         <section className="rounded-xl border border-foreground-300/70 bg-white p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(16rem,1fr)_10rem_13rem_11rem]">
             <label className="relative block">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
               <input
                 type="text"
                 value={search}
@@ -291,7 +291,7 @@ export default function CurriculumStandards() {
                         ))}
                         <div className="flex items-center justify-between pt-1 text-[10px] font-semibold text-foreground-400">
                           <span>{numberText(standard.total)} total KSBs</span>
-                          <span className="flex items-center gap-1 text-primary-600 opacity-0 transition-smooth group-hover:opacity-100">Open <i className="ri-arrow-right-line" /></span>
+                          <span className="flex items-center gap-1 text-primary-600 opacity-0 transition-smooth group-hover:opacity-100">Open <AppIcon className="ri-arrow-right-line" /></span>
                         </div>
                       </div>
                     </div>
@@ -301,7 +301,7 @@ export default function CurriculumStandards() {
 
               {!filtered.length && (
                 <div className="rounded-xl border border-dashed border-foreground-200 bg-background-50 px-5 py-10 text-center">
-                  <i className="ri-search-eye-line text-3xl text-foreground-300" />
+                  <AppIcon className="ri-search-eye-line text-3xl text-foreground-300" />
                   <p className="mt-2 text-sm font-bold text-foreground-800">No standards found</p>
                   <p className="text-[12px] text-foreground-500">Try a different code, route, status or KSB term.</p>
                 </div>

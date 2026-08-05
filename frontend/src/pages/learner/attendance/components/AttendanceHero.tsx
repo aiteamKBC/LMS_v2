@@ -51,13 +51,13 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
               onClick={onReportAbsence}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10"
             >
-              <i className="ri-calendar-close-line text-xs"></i> Report Absence
+              <AppIcon className="ri-calendar-close-line text-xs"></AppIcon> Report Absence
             </button>
             <a href="/learner/catchup" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
-              <i className="ri-timer-flash-line text-xs"></i> Catch-Up Hub
+              <AppIcon className="ri-timer-flash-line text-xs"></AppIcon> Catch-Up Hub
             </a>
             <a href="/learner/profile" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
-              <i className="ri-user-line text-xs"></i> Profile
+              <AppIcon className="ri-user-line text-xs"></AppIcon> Profile
             </a>
           </div>
         </div>

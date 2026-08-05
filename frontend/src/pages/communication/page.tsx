@@ -345,11 +345,11 @@ export default function CommunicationPage() {
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-heading font-semibold text-foreground-900">Messages</h2>
               <button onClick={() => setShowCompose(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line text-[11px]"></i> Compose
+                <AppIcon className="ri-edit-line text-[11px]"></AppIcon> Compose
               </button>
             </div>
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input type="text" placeholder="Search messages..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-100 text-[12px] text-foreground-700 outline-none focus:border-primary-300 transition-smooth" />
             </div>
           </div>
@@ -357,7 +357,7 @@ export default function CommunicationPage() {
           {totalUnread > 0 && (
             <div className="px-4 py-2 border-b border-foreground-300/50 bg-primary-50/50">
               <p className="text-[11px] text-primary-700 font-medium">
-                <i className="ri-mail-unread-line mr-1"></i>
+                <AppIcon className="ri-mail-unread-line mr-1"></AppIcon>
                 {searchQuery ? `${filteredThreads.length} result${filteredThreads.length !== 1 ? 's' : ''}` : `${totalUnread} unread from ${threads.filter(t => t.unread).length} conversations`}
               </p>
             </div>
@@ -385,20 +385,20 @@ export default function CommunicationPage() {
                       <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${catBadgeColors[thread.category] || 'bg-background-100 text-foreground-500'}`}>
                         {highlightText(thread.category, searchQuery)}
                       </span>
-                      {thread.attachments > 0 && <span className="text-[9px] text-foreground-400"><i className="ri-attachment-2 text-[9px]"></i></span>}
+                      {thread.attachments > 0 && <span className="text-[9px] text-foreground-400"><AppIcon className="ri-attachment-2 text-[9px]"></AppIcon></span>}
                     </div>
                     <p className={`text-[11px] truncate mt-0.5 ${thread.unread ? 'text-foreground-700 font-medium' : 'text-foreground-400'}`}>
                       {highlightText(thread.lastMessage, searchQuery)}
                     </p>
                   </div>
                   {thread.unread && <span className="bg-primary-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none shrink-0 mt-1">1</span>}
-                  {thread.starred && <i className="ri-star-fill text-amber-400 text-xs shrink-0 mt-1 ml-1"></i>}
+                  {thread.starred && <AppIcon className="ri-star-fill text-amber-400 text-xs shrink-0 mt-1 ml-1"></AppIcon>}
                 </button>
               );
             })}
             {filteredThreads.length === 0 && searchQuery && (
               <div className="flex flex-col items-center justify-center p-8 text-center">
-                <i className="ri-search-line text-2xl text-foreground-200 mb-2"></i>
+                <AppIcon className="ri-search-line text-2xl text-foreground-200 mb-2"></AppIcon>
                 <p className="text-[12px] text-foreground-400">No conversations match "{searchQuery}"</p>
               </div>
             )}
@@ -430,13 +430,13 @@ export default function CommunicationPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   <button className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className="ri-phone-line text-sm"></i>
+                    <AppIcon className="ri-phone-line text-sm"></AppIcon>
                   </button>
                   <button className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className="ri-video-line text-sm"></i>
+                    <AppIcon className="ri-video-line text-sm"></AppIcon>
                   </button>
                   <button className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className="ri-more-2-fill text-sm"></i>
+                    <AppIcon className="ri-more-2-fill text-sm"></AppIcon>
                   </button>
                 </div>
               </div>
@@ -452,7 +452,7 @@ export default function CommunicationPage() {
                         <div className={`flex items-center gap-2 mt-1 ${msg.mine ? 'justify-end' : 'justify-start'}`}>
                           {msg.attachments.map(att => (
                             <span key={att} className="flex items-center gap-1 px-2 py-1 bg-background-100 border border-background-200/50 rounded-lg text-[10px] text-foreground-500 cursor-pointer">
-                              <i className="ri-file-pdf-line text-red-500 text-xs"></i>{att}
+                              <AppIcon className="ri-file-pdf-line text-red-500 text-xs"></AppIcon>{att}
                             </span>
                           ))}
                         </div>
@@ -468,7 +468,7 @@ export default function CommunicationPage() {
               <div className="px-6 py-4 border-t border-background-200/30 shrink-0">
                 <div className="flex items-center gap-2">
                   <button className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer shrink-0">
-                    <i className="ri-attachment-2 text-lg"></i>
+                    <AppIcon className="ri-attachment-2 text-lg"></AppIcon>
                   </button>
                   <input
                     type="text"
@@ -483,7 +483,7 @@ export default function CommunicationPage() {
                     disabled={!newMessage.trim()}
                     className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-smooth ${newMessage.trim() ? 'bg-primary-500 text-white hover:bg-primary-600 cursor-pointer' : 'bg-background-100 text-foreground-300 cursor-not-allowed'}`}
                   >
-                    <i className="ri-send-plane-fill text-sm"></i>
+                    <AppIcon className="ri-send-plane-fill text-sm"></AppIcon>
                   </button>
                 </div>
               </div>
@@ -491,7 +491,7 @@ export default function CommunicationPage() {
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center px-6">
               <span className="w-20 h-20 rounded-2xl bg-background-100 flex items-center justify-center mb-5">
-                <i className="ri-mail-line text-3xl text-foreground-300"></i>
+                <AppIcon className="ri-mail-line text-3xl text-foreground-300"></AppIcon>
               </span>
               <h3 className="text-base font-heading font-semibold text-foreground-400 mb-2">Your Messages</h3>
               <p className="text-[13px] text-foreground-300 max-w-sm leading-relaxed">
@@ -499,7 +499,7 @@ export default function CommunicationPage() {
                 You have <strong className="text-primary-600">{totalUnread} unread message{totalUnread !== 1 ? 's' : ''}</strong>.
               </p>
               <button onClick={() => setShowCompose(true)} className="mt-6 px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line mr-1.5"></i> Compose
+                <AppIcon className="ri-edit-line mr-1.5"></AppIcon> Compose
               </button>
             </div>
           )}
@@ -513,7 +513,7 @@ export default function CommunicationPage() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">New Message</h3>
               <button onClick={() => { setShowCompose(false); setComposeToId(''); setComposeSubject(''); setComposeBody(''); }} className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500 text-sm"></i>
+                <AppIcon className="ri-close-line text-foreground-500 text-sm"></AppIcon>
               </button>
             </div>
             <div className="px-5 py-4 space-y-3">
@@ -536,12 +536,12 @@ export default function CommunicationPage() {
             </div>
             <div className="flex items-center justify-between px-5 py-3.5 border-t border-foreground-200/60">
               <button className="flex items-center gap-1.5 px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[11px] text-foreground-500 hover:bg-background-200 cursor-pointer whitespace-nowrap">
-                <i className="ri-attachment-2 text-sm"></i>Attach
+                <AppIcon className="ri-attachment-2 text-sm"></AppIcon>Attach
               </button>
               <div className="flex items-center gap-2">
                 <button onClick={() => { setShowCompose(false); setComposeToId(''); setComposeSubject(''); setComposeBody(''); }} className="px-4 py-2 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 cursor-pointer whitespace-nowrap">Discard</button>
                 <button onClick={handleComposeSend} disabled={!composeToId || !composeSubject || !composeBody} className="px-5 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap">
-                  <i className="ri-send-plane-fill mr-1 text-[10px]"></i>Send
+                  <AppIcon className="ri-send-plane-fill mr-1 text-[10px]"></AppIcon>Send
                 </button>
               </div>
             </div>

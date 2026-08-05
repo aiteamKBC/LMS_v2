@@ -103,7 +103,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <div className="mb-6 relative">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center relative z-10 shadow-[0_0_60px_-10px_var(--glow-purple)]">
-              <i className="ri-presentation-line text-3xl text-foreground-950" />
+              <AppIcon className="ri-presentation-line text-3xl text-foreground-950" />
             </div>
           </div>
           <h1 className="text-4xl font-heading font-bold text-foreground-950 mb-3 tracking-tight">{s.content.heading}</h1>
@@ -218,7 +218,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
               <p className="text-xs font-medium text-foreground-400 uppercase tracking-wider mb-2">Achievements</p>
               {(s.content.achievements as string[]).slice(0, 4).map((a: string, i: number) => (
                 <div key={i} className="flex items-start gap-2 py-1.5">
-                  <i className="ri-check-line text-emerald-400 mt-px" />
+                  <AppIcon className="ri-check-line text-emerald-400 mt-px" />
                   <span className="text-sm text-foreground-700">{a}</span>
                 </div>
               ))}
@@ -227,7 +227,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
               <p className="text-xs font-medium text-foreground-400 uppercase tracking-wider mb-2">Improvements</p>
               {(s.content.improvements as string[]).slice(0, 3).map((imp: string, i: number) => (
                 <div key={i} className="flex items-start gap-2 py-1.5">
-                  <i className="ri-arrow-up-line text-primary-400 mt-px" />
+                  <AppIcon className="ri-arrow-up-line text-primary-400 mt-px" />
                   <span className="text-sm text-foreground-700">{imp}</span>
                 </div>
               ))}
@@ -282,7 +282,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
       <div className="relative z-10 flex items-center justify-between px-8 py-5">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center shadow-[0_0_16px_-4px_var(--glow-purple)]">
-            <i className="ri-presentation-line text-sm text-foreground-950" />
+            <AppIcon className="ri-presentation-line text-sm text-foreground-950" />
           </div>
           <div>
             <p className="text-sm font-semibold text-foreground-950">Monthly Coaching Presentation</p>
@@ -291,10 +291,10 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setSlideMode('present')} className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-foreground-950 text-background-50 rounded-xl text-sm font-semibold hover:bg-foreground-900 cursor-pointer transition-all duration-300 whitespace-nowrap shadow-[0_0_30px_-8px_rgba(0,0,0,0.15)]">
-            <i className="ri-play-circle-fill text-base" /> Start Presentation
+            <AppIcon className="ri-play-circle-fill text-base" /> Start Presentation
           </button>
           <button onClick={handleClose} className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-900 hover:bg-foreground-100/50 cursor-pointer transition-all duration-300">
-            <i className="ri-close-line" />
+            <AppIcon className="ri-close-line" />
           </button>
         </div>
       </div>
@@ -322,7 +322,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
                 </div>
                 <div className="h-24 rounded-xl bg-background-100 border border-foreground-200/50 flex items-center justify-center overflow-hidden group-hover:border-foreground-300 transition-all duration-300">
                   {s.type === 'cover' ? (
-                    <i className="ri-presentation-line text-2xl text-foreground-300" />
+                    <AppIcon className="ri-presentation-line text-2xl text-foreground-300" />
                   ) : s.id === 'slide-2' ? (
                     <div className="flex items-end gap-1.5 h-12">
                       {[55, 35, 80, 42, 65, 30].map((h, i) => (
@@ -336,7 +336,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
                       ))}
                     </div>
                   ) : (
-                    <i className={`text-2xl text-foreground-300 ${s.id === 'slide-3' ? 'ri-book-open-line' : s.id === 'slide-4' ? 'ri-building-2-line' : s.id === 'slide-6' ? 'ri-arrow-up-circle-line' : s.id === 'slide-7' ? 'ri-error-warning-line' : 'ri-flag-line'}`} />
+                    <AppIcon className={`text-2xl text-foreground-300 ${s.id === 'slide-3' ? 'ri-book-open-line' : s.id === 'slide-4' ? 'ri-building-2-line' : s.id === 'slide-6' ? 'ri-arrow-up-circle-line' : s.id === 'slide-7' ? 'ri-error-warning-line' : 'ri-flag-line'}`} />
                   )}
                 </div>
               </button>
@@ -385,7 +385,7 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
         <div className="relative z-10 flex items-center justify-between px-8 pb-6 pt-3">
           <div className="flex items-center gap-3">
             <button onClick={() => setSlideMode('overview')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-foreground-500 hover:text-foreground-900 hover:bg-foreground-100/50 cursor-pointer transition-all duration-300 whitespace-nowrap">
-              <i className="ri-layout-grid-line" /> Overview
+              <AppIcon className="ri-layout-grid-line" /> Overview
             </button>
             <div className="h-5 w-px bg-foreground-200/50" />
             <span className="text-xs text-foreground-400 font-mono">
@@ -409,14 +409,14 @@ export default function PresentationPreview({ open, onClose }: PresentationPrevi
           </div>
           <div className="flex items-center gap-2">
             <button onClick={goPrev} disabled={currentSlide === 0 || !!animState} className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-500 hover:text-foreground-900 hover:bg-foreground-100/50 disabled:opacity-15 disabled:cursor-not-allowed cursor-pointer transition-all duration-300">
-              <i className="ri-arrow-left-s-line text-lg" />
+              <AppIcon className="ri-arrow-left-s-line text-lg" />
             </button>
             <button onClick={goNext} disabled={currentSlide === totalSlides - 1 || !!animState} className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-500 hover:text-foreground-900 hover:bg-foreground-100/50 disabled:opacity-15 disabled:cursor-not-allowed cursor-pointer transition-all duration-300">
-              <i className="ri-arrow-right-s-line text-lg" />
+              <AppIcon className="ri-arrow-right-s-line text-lg" />
             </button>
             <div className="h-5 w-px bg-foreground-200/50 ml-1" />
             <button onClick={() => setSlideMode('overview')} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-foreground-500 hover:text-foreground-900 hover:bg-foreground-100/50 cursor-pointer transition-all duration-300 whitespace-nowrap">
-              <i className="ri-fullscreen-exit-line" /> Exit
+              <AppIcon className="ri-fullscreen-exit-line" /> Exit
             </button>
           </div>
         </div>

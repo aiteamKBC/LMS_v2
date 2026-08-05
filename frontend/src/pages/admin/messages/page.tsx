@@ -222,7 +222,7 @@ function VoiceNotePlayer({ url, duration, isFromMe }: { url: string; duration: n
           isFromMe ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-primary-500 text-white hover:bg-primary-600'
         }`}
       >
-        <i className={`${playing ? 'ri-pause-fill' : 'ri-play-fill'} text-sm`}></i>
+        <AppIcon className={`${playing ? 'ri-pause-fill' : 'ri-play-fill'} text-sm`}></AppIcon>
       </button>
       <div className="flex items-center gap-0.5">
         {Array.from({ length: barCount }).map((_, i) => {
@@ -831,7 +831,7 @@ export default function AdminMessagesPage() {
         <div className="w-full lg:w-[360px] border-r border-foreground-200/60 bg-background-50 flex flex-col shrink-0">
           <div className="p-4 border-b border-foreground-300/50">
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input
                 type="text"
                 placeholder="Search messages..."
@@ -844,18 +844,18 @@ export default function AdminMessagesPage() {
 
           <div className="px-4 py-2 border-b border-foreground-300/50 bg-primary-50/50 flex items-center gap-4">
             <p className="text-xs text-primary-700 font-medium">
-              <i className="ri-mail-unread-line mr-1"></i>
+              <AppIcon className="ri-mail-unread-line mr-1"></AppIcon>
               {searchQuery ? `${filteredThreads.length} result${filteredThreads.length !== 1 ? 's' : ''}` : `${totalUnread} unread`}
             </p>
             {!searchQuery && (
               <p className="text-xs text-foreground-400 font-medium">
-                <i className="ri-mail-line mr-1"></i>
+                <AppIcon className="ri-mail-line mr-1"></AppIcon>
                 {THREADS.length} total
               </p>
             )}
             {scheduledCount > 0 && !searchQuery && (
               <p className="text-xs text-secondary-600 font-medium">
-                <i className="ri-time-line mr-1"></i>
+                <AppIcon className="ri-time-line mr-1"></AppIcon>
                 {scheduledCount} scheduled
               </p>
             )}
@@ -887,7 +887,7 @@ export default function AdminMessagesPage() {
                   </div>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 ${channelColors[thread.contact.channel]}`}>
-                      <i className={`${channelIcons[thread.contact.channel]} text-[9px]`}></i>
+                      <AppIcon className={`${channelIcons[thread.contact.channel]} text-[9px]`}></AppIcon>
                       {thread.contact.channel}
                     </span>
                     {thread.tags.map(tag => (
@@ -907,7 +907,7 @@ export default function AdminMessagesPage() {
             ))}
             {filteredThreads.length === 0 && searchQuery && (
               <div className="flex flex-col items-center justify-center p-8 text-center">
-                <i className="ri-search-line text-2xl text-foreground-200 mb-2"></i>
+                <AppIcon className="ri-search-line text-2xl text-foreground-200 mb-2"></AppIcon>
                 <p className="text-sm text-foreground-400">No messages match &quot;{searchQuery}&quot;</p>
               </div>
             )}
@@ -949,19 +949,19 @@ export default function AdminMessagesPage() {
                     }`}
                     title="Search in conversation"
                   >
-                    <i className="ri-search-line text-sm"></i>
+                    <AppIcon className="ri-search-line text-sm"></AppIcon>
                   </button>
                   <button
                     onClick={() => handleStartCall('voice')}
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-primary-500 hover:bg-primary-50 transition-smooth cursor-pointer"
                   >
-                    <i className="ri-phone-line text-sm"></i>
+                    <AppIcon className="ri-phone-line text-sm"></AppIcon>
                   </button>
                   <button
                     onClick={() => handleStartCall('video')}
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-primary-500 hover:bg-primary-50 transition-smooth cursor-pointer"
                   >
-                    <i className="ri-video-line text-sm"></i>
+                    <AppIcon className="ri-video-line text-sm"></AppIcon>
                   </button>
                   <ChatMenu
                     contactName={activeThreadData.contact.name}
@@ -976,7 +976,7 @@ export default function AdminMessagesPage() {
               {showChatSearch && (
                 <div className="px-6 py-2 border-b border-foreground-200/60 bg-background-100/50 animate-in fade-in slide-in-from-top-1 duration-200">
                   <div className="flex items-center gap-2">
-                    <i className="ri-search-line text-foreground-300 text-sm"></i>
+                    <AppIcon className="ri-search-line text-foreground-300 text-sm"></AppIcon>
                     <input
                       type="text"
                       placeholder="Search in this conversation..."
@@ -997,7 +997,7 @@ export default function AdminMessagesPage() {
                       }}
                       className="w-6 h-6 flex items-center justify-center text-foreground-300 hover:text-foreground-500 transition-smooth cursor-pointer"
                     >
-                      <i className="ri-close-line text-xs"></i>
+                      <AppIcon className="ri-close-line text-xs"></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -1006,7 +1006,7 @@ export default function AdminMessagesPage() {
               {pinnedMsg && (
                 <div className="px-6 py-2.5 border-b border-amber-200/30 bg-amber-50/60 flex items-center gap-3 animate-in fade-in slide-in-from-top-1 duration-200">
                   <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                    <i className="ri-pushpin-fill text-amber-500 text-sm"></i>
+                    <AppIcon className="ri-pushpin-fill text-amber-500 text-sm"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0 cursor-pointer" onClick={() => {
                     const el = document.getElementById(`msg-${pinnedMsg.id}`);
@@ -1026,7 +1026,7 @@ export default function AdminMessagesPage() {
                     className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-amber-500 hover:text-amber-700 transition-smooth cursor-pointer shrink-0"
                     title="Unpin message"
                   >
-                    <i className="ri-close-line text-xs"></i>
+                    <AppIcon className="ri-close-line text-xs"></AppIcon>
                   </button>
                 </div>
               )}
@@ -1034,7 +1034,7 @@ export default function AdminMessagesPage() {
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">{/* Same message rendering as coach */}
                 {chatSearchQuery.trim() && chatFilteredMessages.length === 0 && (
                   <div className="flex flex-col items-center justify-center py-8 text-center">
-                    <i className="ri-search-line text-2xl text-foreground-200 mb-2"></i>
+                    <AppIcon className="ri-search-line text-2xl text-foreground-200 mb-2"></AppIcon>
                     <p className="text-sm text-foreground-400">No messages match &quot;{chatSearchQuery}&quot;</p>
                   </div>
                 )}
@@ -1057,7 +1057,7 @@ export default function AdminMessagesPage() {
                         )}
                         <div className="flex items-center justify-center my-2">
                           <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${msg.callStatus === 'missed' ? 'bg-red-50' : 'bg-background-100'}`}>
-                            <i className={`${msg.callType === 'video' ? 'ri-video-on-line' : 'ri-phone-line'} text-xs ${msg.callStatus === 'missed' ? 'text-red-400' : 'text-foreground-400'}`}></i>
+                            <AppIcon className={`${msg.callType === 'video' ? 'ri-video-on-line' : 'ri-phone-line'} text-xs ${msg.callStatus === 'missed' ? 'text-red-400' : 'text-foreground-400'}`}></AppIcon>
                             <span className={`text-xs ${msg.callStatus === 'missed' ? 'text-red-500' : 'text-foreground-400'}`}>
                               {msg.callStatus === 'missed' ? `Missed ${msg.callType} call` : msg.text}
                             </span>
@@ -1078,7 +1078,7 @@ export default function AdminMessagesPage() {
                         <div className={`max-w-[70%] ${msg.from === 'me' ? 'order-1' : ''}`}>
                           {replyToMsg && (
                             <div className={`flex items-center gap-1.5 mb-1 px-2 py-1 rounded-lg bg-background-100/80 border-l-2 border-primary-400 ${msg.from === 'me' ? 'justify-end text-right' : ''}`}>
-                              <i className="ri-reply-line text-[10px] text-primary-400 shrink-0"></i>
+                              <AppIcon className="ri-reply-line text-[10px] text-primary-400 shrink-0"></AppIcon>
                               <span className="text-[10px] text-foreground-400 truncate max-w-[200px]">
                                 {replyToMsg.from === 'me' ? 'You' : activeThreadData?.contact?.name?.split(' ')[0]}: {replyToMsg.text.slice(0, 50)}...
                               </span>
@@ -1099,20 +1099,20 @@ export default function AdminMessagesPage() {
                               ) : msg.fileType === 'image' ? (
                                 <div className="mb-2">
                                   <div className="w-48 h-32 rounded-lg bg-background-200/50 flex items-center justify-center mb-1">
-                                    <i className="ri-image-line text-2xl text-foreground-300"></i>
+                                    <AppIcon className="ri-image-line text-2xl text-foreground-300"></AppIcon>
                                   </div>
                                   <p className="text-xs opacity-80">{msg.fileName}</p>
                                 </div>
                               ) : msg.fileType === 'file' ? (
                                 <div className="flex items-center gap-2 mb-1">
-                                  <i className="ri-file-line text-lg"></i>
+                                  <AppIcon className="ri-file-line text-lg"></AppIcon>
                                   <p className="text-xs opacity-80">{msg.fileName}</p>
                                 </div>
                               ) : (
                                 <p className={`text-sm leading-relaxed ${msg.deletedForEveryone ? 'italic' : ''}`}>
                                   {msg.deletedForEveryone ? (
                                     <span className="flex items-center gap-1.5">
-                                      <i className="ri-delete-bin-line text-xs"></i>
+                                      <AppIcon className="ri-delete-bin-line text-xs"></AppIcon>
                                       {msg.text}
                                     </span>
                                   ) : msg.text}
@@ -1127,7 +1127,7 @@ export default function AdminMessagesPage() {
                                   onClick={() => setShowReactionPicker(showReactionPicker === msg.id ? null : msg.id)}
                                   className="w-6 h-6 rounded-full bg-background-50 border border-background-200 shadow-sm flex items-center justify-center text-foreground-300 hover:text-primary-500 hover:border-primary-300 transition-smooth cursor-pointer"
                                 >
-                                  <i className="ri-emoji-sticker-line text-xs"></i>
+                                  <AppIcon className="ri-emoji-sticker-line text-xs"></AppIcon>
                                 </button>
                                 {showReactionPicker === msg.id && (
                                   <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-background-50 rounded-xl shadow-lg border border-background-200 px-2 py-1.5 flex items-center gap-1 z-50 animate-in fade-in slide-in-from-bottom-2 duration-150 whitespace-nowrap">
@@ -1136,7 +1136,7 @@ export default function AdminMessagesPage() {
                                       className="w-8 h-8 flex items-center justify-center text-foreground-500 hover:bg-background-100 rounded-lg transition-smooth cursor-pointer"
                                       title="Add reaction"
                                     >
-                                      <i className="ri-emotion-line text-sm"></i>
+                                      <AppIcon className="ri-emotion-line text-sm"></AppIcon>
                                     </button>
                                     <div className="w-px h-5 bg-background-200" />
                                     <button
@@ -1144,7 +1144,7 @@ export default function AdminMessagesPage() {
                                       className="w-8 h-8 flex items-center justify-center text-foreground-500 hover:bg-background-100 rounded-lg transition-smooth cursor-pointer"
                                       title="Message info"
                                     >
-                                      <i className="ri-information-line text-sm"></i>
+                                      <AppIcon className="ri-information-line text-sm"></AppIcon>
                                     </button>
                                   </div>
                                 )}
@@ -1159,7 +1159,7 @@ export default function AdminMessagesPage() {
                               className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-foreground-300 hover:text-primary-500 transition-smooth cursor-pointer"
                               title="Reply"
                             >
-                              <i className="ri-reply-line text-xs"></i>
+                              <AppIcon className="ri-reply-line text-xs"></AppIcon>
                             </button>
 
                             <button
@@ -1171,7 +1171,7 @@ export default function AdminMessagesPage() {
                               }`}
                               title={activeThread && pinnedMessages[activeThread] === msg.id ? 'Unpin message' : 'Pin message'}
                             >
-                              <i className={`${activeThread && pinnedMessages[activeThread] === msg.id ? 'ri-pushpin-fill' : 'ri-pushpin-line'} text-xs`}></i>
+                              <AppIcon className={`${activeThread && pinnedMessages[activeThread] === msg.id ? 'ri-pushpin-fill' : 'ri-pushpin-line'} text-xs`}></AppIcon>
                             </button>
 
                             <button
@@ -1179,7 +1179,7 @@ export default function AdminMessagesPage() {
                               className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-foreground-300 hover:text-primary-500 transition-smooth cursor-pointer"
                               title="Forward message"
                             >
-                              <i className="ri-share-forward-line text-xs"></i>
+                              <AppIcon className="ri-share-forward-line text-xs"></AppIcon>
                             </button>
 
                             {!msg.deletedForEveryone && (
@@ -1189,7 +1189,7 @@ export default function AdminMessagesPage() {
                                   className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center text-foreground-300 hover:text-red-400 transition-smooth cursor-pointer"
                                   title="Delete message"
                                 >
-                                  <i className="ri-delete-bin-line text-xs"></i>
+                                  <AppIcon className="ri-delete-bin-line text-xs"></AppIcon>
                                 </button>
                                 {showDeleteConfirm === msg.id && (
                                   <div className={`absolute -top-2 z-50 bg-background-50 rounded-xl shadow-xl border border-background-200 py-1.5 px-1 animate-in fade-in zoom-in-95 duration-150 whitespace-nowrap ${msg.from === 'me' ? 'right-0' : 'left-0'}`}>
@@ -1197,14 +1197,14 @@ export default function AdminMessagesPage() {
                                       onClick={() => handleDeleteMessage(msg.id, 'me')}
                                       className="block w-full text-left px-3 py-1.5 rounded-lg text-xs text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                                     >
-                                      <i className="ri-user-unfollow-line mr-1.5 text-foreground-400"></i>Delete for me
+                                      <AppIcon className="ri-user-unfollow-line mr-1.5 text-foreground-400"></AppIcon>Delete for me
                                     </button>
                                     {msg.from === 'me' && (
                                       <button
                                         onClick={() => handleDeleteMessage(msg.id, 'everyone')}
                                         className="block w-full text-left px-3 py-1.5 rounded-lg text-xs text-red-500 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"
                                       >
-                                        <i className="ri-delete-bin-line mr-1.5"></i>Delete for everyone
+                                        <AppIcon className="ri-delete-bin-line mr-1.5"></AppIcon>Delete for everyone
                                       </button>
                                     )}
                                   </div>
@@ -1235,11 +1235,11 @@ export default function AdminMessagesPage() {
                             {msg.from === 'me' && (
                               <span className="text-[10px] leading-none ml-0.5">
                                 {msg.status === 'read' ? (
-                                  <span className="text-primary-500" title="Read"><i className="ri-check-double-line"></i></span>
+                                  <span className="text-primary-500" title="Read"><AppIcon className="ri-check-double-line"></AppIcon></span>
                                 ) : msg.status === 'delivered' ? (
-                                  <span className="text-foreground-300" title="Delivered"><i className="ri-check-double-line"></i></span>
+                                  <span className="text-foreground-300" title="Delivered"><AppIcon className="ri-check-double-line"></AppIcon></span>
                                 ) : (
-                                  <span className="text-foreground-300" title="Sent"><i className="ri-check-line"></i></span>
+                                  <span className="text-foreground-300" title="Sent"><AppIcon className="ri-check-line"></AppIcon></span>
                                 )}
                               </span>
                             )}
@@ -1276,7 +1276,7 @@ export default function AdminMessagesPage() {
                 {messages.length === 0 && !isTyping && (
                   <div className="flex flex-col items-center justify-center h-full text-center">
                     <span className="w-16 h-16 rounded-2xl bg-background-100 flex items-center justify-center mb-4">
-                      <i className="ri-chat-3-line text-2xl text-foreground-300"></i>
+                      <AppIcon className="ri-chat-3-line text-2xl text-foreground-300"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-foreground-400 mb-1">No messages yet</p>
                     <p className="text-sm text-foreground-300">Start a conversation to see messages here</p>
@@ -1288,7 +1288,7 @@ export default function AdminMessagesPage() {
               {scheduledMessages.filter(s => s.threadId === activeThread).length > 0 && (
                 <div className="px-6 py-2 border-t border-background-200/30 bg-amber-50/50">
                   <p className="text-xs font-semibold text-amber-700 mb-1.5">
-                    <i className="ri-time-line mr-1"></i>Scheduled messages
+                    <AppIcon className="ri-time-line mr-1"></AppIcon>Scheduled messages
                   </p>
                   <div className="space-y-1.5">
                     {scheduledMessages.filter(s => s.threadId === activeThread).map(sm => (
@@ -1303,7 +1303,7 @@ export default function AdminMessagesPage() {
                           onClick={() => cancelScheduled(sm.id)}
                           className="w-6 h-6 flex items-center justify-center text-foreground-300 hover:text-red-400 transition-smooth cursor-pointer shrink-0 ml-2"
                         >
-                          <i className="ri-close-line text-xs"></i>
+                          <AppIcon className="ri-close-line text-xs"></AppIcon>
                         </button>
                       </div>
                     ))}
@@ -1317,7 +1317,7 @@ export default function AdminMessagesPage() {
                   return replyTarget ? (
                     <div className="mb-3 flex items-center justify-between bg-background-100 rounded-lg px-3 py-2 border-l-2 border-primary-400 animate-in fade-in slide-in-from-bottom-2 duration-200">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <i className="ri-reply-line text-primary-500 text-sm shrink-0"></i>
+                        <AppIcon className="ri-reply-line text-primary-500 text-sm shrink-0"></AppIcon>
                         <div className="min-w-0">
                           <p className="text-[10px] font-semibold text-primary-600">
                             Replying to {replyTarget.from === 'me' ? 'yourself' : activeThreadData?.contact?.name?.split(' ')[0]}
@@ -1329,7 +1329,7 @@ export default function AdminMessagesPage() {
                         onClick={cancelReply}
                         className="w-6 h-6 flex items-center justify-center text-foreground-300 hover:text-red-400 transition-smooth cursor-pointer shrink-0 ml-2"
                       >
-                        <i className="ri-close-line text-xs"></i>
+                        <AppIcon className="ri-close-line text-xs"></AppIcon>
                       </button>
                     </div>
                   ) : null;
@@ -1357,7 +1357,7 @@ export default function AdminMessagesPage() {
                         onClick={() => setScheduleMinutes(Math.max(1, scheduleMinutes - 1))}
                         className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer"
                       >
-                        <i className="ri-subtract-line text-xs"></i>
+                        <AppIcon className="ri-subtract-line text-xs"></AppIcon>
                       </button>
                       <div className="flex-1 text-center">
                         <p className="text-sm font-semibold text-foreground-700">{scheduleMinutes} min</p>
@@ -1369,7 +1369,7 @@ export default function AdminMessagesPage() {
                         onClick={() => setScheduleMinutes(Math.min(60, scheduleMinutes + 1))}
                         className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer"
                       >
-                        <i className="ri-add-line text-xs"></i>
+                        <AppIcon className="ri-add-line text-xs"></AppIcon>
                       </button>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1398,13 +1398,13 @@ export default function AdminMessagesPage() {
                   <div className="flex flex-wrap gap-2 mb-3">
                     {attachedFiles.map(file => (
                       <div key={file} className="flex items-center gap-1.5 bg-background-100 px-2 py-1 rounded-lg border border-background-200">
-                        <i className={`${file.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? 'ri-image-line' : 'ri-file-line'} text-foreground-400 text-xs`}></i>
+                        <AppIcon className={`${file.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) ? 'ri-image-line' : 'ri-file-line'} text-foreground-400 text-xs`}></AppIcon>
                         <span className="text-xs text-foreground-600 max-w-[140px] truncate">{file}</span>
                         <button
                           onClick={() => removeFile(file)}
                           className="w-4 h-4 flex items-center justify-center text-foreground-300 hover:text-red-400 transition-smooth cursor-pointer"
                         >
-                          <i className="ri-close-line text-xs"></i>
+                          <AppIcon className="ri-close-line text-xs"></AppIcon>
                         </button>
                       </div>
                     ))}
@@ -1418,7 +1418,7 @@ export default function AdminMessagesPage() {
                       className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-foreground-300 hover:text-red-400 hover:bg-red-50 transition-smooth cursor-pointer"
                       title="Record voice note"
                     >
-                      <i className="ri-mic-line text-lg"></i>
+                      <AppIcon className="ri-mic-line text-lg"></AppIcon>
                     </button>
                   )}
 
@@ -1447,14 +1447,14 @@ export default function AdminMessagesPage() {
                         className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-red-500 hover:bg-red-200 transition-smooth cursor-pointer shrink-0"
                         title="Cancel recording"
                       >
-                        <i className="ri-close-line text-sm"></i>
+                        <AppIcon className="ri-close-line text-sm"></AppIcon>
                       </button>
                       <button
                         onClick={stopRecording}
                         className="w-7 h-7 rounded-full bg-red-500 flex items-center justify-center text-white hover:bg-red-600 transition-smooth cursor-pointer shrink-0"
                         title="Stop recording"
                       >
-                        <i className="ri-stop-fill text-xs"></i>
+                        <AppIcon className="ri-stop-fill text-xs"></AppIcon>
                       </button>
                     </div>
                   )}
@@ -1468,14 +1468,14 @@ export default function AdminMessagesPage() {
                         className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-red-500 hover:bg-red-200 transition-smooth cursor-pointer shrink-0 ml-auto"
                         title="Discard recording"
                       >
-                        <i className="ri-delete-bin-line text-xs"></i>
+                        <AppIcon className="ri-delete-bin-line text-xs"></AppIcon>
                       </button>
                       <button
                         onClick={sendVoiceNote}
                         className="w-7 h-7 rounded-full bg-primary-500 flex items-center justify-center text-white hover:bg-primary-600 transition-smooth cursor-pointer shrink-0"
                         title="Send voice note"
                       >
-                        <i className="ri-send-plane-fill text-xs"></i>
+                        <AppIcon className="ri-send-plane-fill text-xs"></AppIcon>
                       </button>
                     </div>
                   )}
@@ -1488,7 +1488,7 @@ export default function AdminMessagesPage() {
                           showFilePicker ? 'bg-primary-500 text-white' : 'text-foreground-300 hover:text-foreground-600 hover:bg-background-100'
                         } cursor-pointer`}
                       >
-                        <i className="ri-attachment-2 text-lg"></i>
+                        <AppIcon className="ri-attachment-2 text-lg"></AppIcon>
                       </button>
                       <div className="flex-1 relative">
                         <input
@@ -1507,7 +1507,7 @@ export default function AdminMessagesPage() {
                         }`}
                         title="Schedule message"
                       >
-                        <i className="ri-time-line text-lg"></i>
+                        <AppIcon className="ri-time-line text-lg"></AppIcon>
                       </button>
                       <button
                         onClick={handleSend}
@@ -1518,7 +1518,7 @@ export default function AdminMessagesPage() {
                             : 'bg-background-100 text-foreground-300 cursor-not-allowed'
                         }`}
                       >
-                        <i className="ri-send-plane-fill text-sm"></i>
+                        <AppIcon className="ri-send-plane-fill text-sm"></AppIcon>
                       </button>
                     </>
                   )}
@@ -1528,7 +1528,7 @@ export default function AdminMessagesPage() {
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center px-6">
               <span className="w-20 h-20 rounded-2xl bg-background-100 flex items-center justify-center mb-5">
-                <i className="ri-mail-line text-3xl text-foreground-300"></i>
+                <AppIcon className="ri-mail-line text-3xl text-foreground-300"></AppIcon>
               </span>
               <h3 className="text-base font-heading font-semibold text-foreground-400 mb-2">Admin Message Centre</h3>
               <p className="text-sm text-foreground-300 max-w-sm leading-relaxed">
@@ -1569,14 +1569,14 @@ export default function AdminMessagesPage() {
           <div className="relative bg-background-50 rounded-2xl w-full max-w-sm mx-4 shadow-xl border border-background-200 animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60">
               <div className="flex items-center gap-2">
-                <i className="ri-share-forward-line text-primary-500 text-base"></i>
+                <AppIcon className="ri-share-forward-line text-primary-500 text-base"></AppIcon>
                 <h3 className="text-sm font-semibold text-foreground-800">Forward Message</h3>
               </div>
               <button
                 onClick={() => { setShowForwardModal(false); setForwardMsgId(null); }}
                 className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
               >
-                <i className="ri-close-line text-sm"></i>
+                <AppIcon className="ri-close-line text-sm"></AppIcon>
               </button>
             </div>
 
@@ -1605,12 +1605,12 @@ export default function AdminMessagesPage() {
                     <p className="text-sm font-semibold text-foreground-700">{thread.contact.name}</p>
                     <p className="text-xs text-foreground-400">{thread.contact.role}</p>
                   </div>
-                  <i className="ri-arrow-right-s-line text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-300 text-sm"></AppIcon>
                 </button>
               ))}
               {THREADS.filter(t => t.id !== activeThread).length === 0 && (
                 <div className="flex flex-col items-center justify-center py-6 text-center">
-                  <i className="ri-chat-3-line text-xl text-foreground-200 mb-2"></i>
+                  <AppIcon className="ri-chat-3-line text-xl text-foreground-200 mb-2"></AppIcon>
                   <p className="text-xs text-foreground-400">No other conversations available</p>
                 </div>
               )}

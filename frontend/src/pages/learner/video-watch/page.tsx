@@ -222,7 +222,7 @@ export default function ComponentViewPage() {
           onClick={() => navigate(backHref)}
           className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-foreground-500 hover:text-foreground-800 transition-colors cursor-pointer"
         >
-          <i className="ri-arrow-left-line" /> Back to training plan
+          <AppIcon className="ri-arrow-left-line" /> Back to training plan
         </button>
 
         {loading ? (
@@ -300,19 +300,19 @@ export default function ComponentViewPage() {
               <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
                   <span className={`text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
-                    <i className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
+                    <AppIcon className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
                   </span>
                   <h1 className="mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight">{pageTitle}</h1>
                   <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500">
                     {isVideo && realDuration !== null ? (
-                      <span className="inline-flex items-center gap-1"><i className="ri-time-line" />{formatClock(realDuration)}</span>
+                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{formatClock(realDuration)}</span>
                     ) : component.durationMinutes != null && (
-                      <span className="inline-flex items-center gap-1"><i className="ri-time-line" />{component.durationMinutes} min</span>
+                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
                     )}
                     {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-                      <span className="inline-flex items-center gap-1"><i className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
+                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
                     )}
-                    {weekTitle && <span className="inline-flex items-center gap-1"><i className="ri-calendar-line" />{weekTitle}</span>}
+                    {weekTitle && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekTitle}</span>}
                   </div>
                 </div>
 
@@ -321,11 +321,11 @@ export default function ComponentViewPage() {
                     <div className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums ${
                       remaining <= 10 ? 'bg-red-100 text-red-700' : 'bg-background-100 text-foreground-700'
                     }`} title="Time remaining">
-                      <i className="ri-timer-line" /> {formatClock(remaining)}
+                      <AppIcon className="ri-timer-line" /> {formatClock(remaining)}
                     </div>
                   ) : (
                     <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                      <i className="ri-timer-line" /> {formatClock(elapsedSeconds)}
+                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
                     </div>
                   )}
                   <button
@@ -338,7 +338,7 @@ export default function ComponentViewPage() {
                         : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                     }`}
                   >
-                    <i className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
+                    <AppIcon className={criteria && !criteria.met ? 'ri-lock-line' : 'ri-check-line'} />
                     {remaining === 0 ? 'Reflect' : 'Finish & Reflect'}
                   </button>
                 </div>
@@ -356,7 +356,7 @@ export default function ComponentViewPage() {
                   criteria.met ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'
                 }`}>
                   <h2 className="text-[11px] font-semibold uppercase tracking-wider text-foreground-500 mb-2 flex items-center gap-1.5">
-                    <i className={criteria.met ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-information-line text-amber-600'} />
+                    <AppIcon className={criteria.met ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-information-line text-amber-600'} />
                     {criteria.met ? 'Ready to complete' : 'Before you can complete this'}
                   </h2>
                   <ul className="space-y-1.5">
@@ -399,7 +399,7 @@ export default function ComponentViewPage() {
                           }`}
                         >
                           <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
-                            <i className={`${cm.icon} text-[12px] ${cm.color}`} />
+                            <AppIcon className={`${cm.icon} text-[12px] ${cm.color}`} />
                           </span>
                           <span className="flex-1 min-w-0">
                             <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
@@ -415,9 +415,9 @@ export default function ComponentViewPage() {
                             </span>
                           )}
                           {isCurrent ? (
-                            <i className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
+                            <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                           ) : clickable ? (
-                            <i className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
+                            <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
                           ) : null}
                         </button>
                       </li>
@@ -442,7 +442,7 @@ export default function ComponentViewPage() {
                           }`}
                         >
                           <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
-                            <i className="ri-calendar-line text-[12px]" />
+                            <AppIcon className="ri-calendar-line text-[12px]" />
                           </span>
                           <span className="flex-1 min-w-0">
                             <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>
@@ -656,7 +656,7 @@ function LiveSessionResultsCard({
           disabled={syncing}
           className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <i className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
+          <AppIcon className={`${syncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`} />
           {syncing ? 'Syncing…' : 'Sync Teams results'}
         </button>
       </div>
@@ -664,13 +664,13 @@ function LiveSessionResultsCard({
       <div className="p-5">
         {loading ? (
           <p className="inline-flex items-center gap-2 text-xs font-semibold text-foreground-500">
-            <i className="ri-loader-4-line animate-spin" /> Loading Teams results…
+            <AppIcon className="ri-loader-4-line animate-spin" /> Loading Teams results…
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             <div className={`rounded-xl border p-4 ${attendanceMeta.tone}`}>
               <div className="flex items-center gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><i className={`${attendanceMeta.icon} text-lg`} /></span>
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><AppIcon className={`${attendanceMeta.icon} text-lg`} /></span>
                 <div>
                   <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Attendance status</p>
                   <p className="mt-0.5 text-sm font-black">{attendanceMeta.label}</p>
@@ -681,7 +681,7 @@ function LiveSessionResultsCard({
 
             <div className={`rounded-xl border p-4 ${recordings.length ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-background-200 bg-background-100 text-foreground-600'}`}>
               <div className="flex items-center gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><i className="ri-record-circle-line text-lg" /></span>
+                <span className="grid h-9 w-9 place-items-center rounded-lg bg-white/70"><AppIcon className="ri-record-circle-line text-lg" /></span>
                 <div className="min-w-0">
                   <p className="text-[9px] font-black uppercase tracking-wide opacity-70">Session recording</p>
                   <p className="mt-0.5 text-sm font-black">{recordings.length ? 'Recording ready' : 'Not available yet'}</p>
@@ -691,7 +691,7 @@ function LiveSessionResultsCard({
                       href={teamsMeetingArtifactContentUrl(liveSessionId, recording.id)}
                       className="mt-1 inline-flex items-center gap-1 text-[10px] font-black underline"
                     >
-                      <i className="ri-download-cloud-2-line" /> Download recording{recordings.length > 1 ? ` ${index + 1}` : ''}
+                      <AppIcon className="ri-download-cloud-2-line" /> Download recording{recordings.length > 1 ? ` ${index + 1}` : ''}
                     </a>
                   ))}
                 </div>
@@ -732,7 +732,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-violet-50 to-background-50 p-6">
         <div className="flex items-center gap-3 mb-4">
-          <span className="w-11 h-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><i className="ri-headphone-line text-xl" /></span>
+          <span className="w-11 h-11 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center"><AppIcon className="ri-headphone-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
         {directAudio ? (
@@ -752,7 +752,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <p className="text-sm text-foreground-500">No audio was set for this podcast. You can still record your reflection below.</p>
         )}
         {component.audioUrl && (
-          <a href={component.audioUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><i className="ri-external-link-line" />Open in a new tab</a>
+          <a href={component.audioUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
       </div>
     );
@@ -762,7 +762,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
-          <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><i className="ri-book-open-line text-xl" /></span>
+          <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><AppIcon className="ri-book-open-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p></div>
         </div>
         {component.contentHtml ? (
@@ -778,7 +778,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
             <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
               <iframe title={title} src={embeddableDocUrl(component.resourceUrl)} className="w-full h-full" />
             </div>
-            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><i className="ri-external-link-line" />Open in a new tab</a>
+            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
           </>
         ) : (
           <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
@@ -797,7 +797,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl border border-background-300 bg-white p-6">
         <div className="flex items-center gap-3 mb-4">
-          <span className="w-11 h-11 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center"><i className="ri-slideshow-line text-xl" /></span>
+          <span className="w-11 h-11 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center"><AppIcon className="ri-slideshow-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
         </div>
         {component.resourceUrl ? (
@@ -809,9 +809,9 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
         )}
         {component.resourceUrl && (
           <div className="mt-3 flex items-center gap-4">
-            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><i className="ri-external-link-line" />Open in a new tab</a>
+            <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
             {component.downloadAllowed && (
-              <a href={component.resourceUrl} download className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><i className="ri-download-line" />Download slides</a>
+              <a href={component.resourceUrl} download className="inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"><AppIcon className="ri-download-line" />Download slides</a>
             )}
           </div>
         )}
@@ -834,28 +834,28 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-4">
               <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-white/15 ring-1 ring-white/20">
-                <i className="ri-microsoft-teams-line text-2xl" />
+                <AppIcon className="ri-microsoft-teams-line text-2xl" />
               </span>
               <div className="min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.16em] text-white/70">Microsoft Teams live session</p>
                 <p className="mt-1 truncate text-base font-heading font-black">{title}</p>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-semibold text-white/80">
-                  <span><i className="ri-calendar-line mr-1" />{dateLabel}</span>
-                  <span><i className="ri-time-line mr-1" />{timeLabel}</span>
-                  {component.durationMinutes ? <span><i className="ri-timer-line mr-1" />{component.durationMinutes} min</span> : null}
+                  <span><AppIcon className="ri-calendar-line mr-1" />{dateLabel}</span>
+                  <span><AppIcon className="ri-time-line mr-1" />{timeLabel}</span>
+                  {component.durationMinutes ? <span><AppIcon className="ri-timer-line mr-1" />{component.durationMinutes} min</span> : null}
                 </div>
               </div>
             </div>
 
             {component.liveSessionUrl ? (
               <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 text-[12px] font-black text-primary-700 shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-primary-50">
-                <i className="ri-microsoft-teams-line text-base" />
+                <AppIcon className="ri-microsoft-teams-line text-base" />
                 Join live session
-                <i className="ri-external-link-line text-xs" />
+                <AppIcon className="ri-external-link-line text-xs" />
               </a>
             ) : (
               <span className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/80">
-                <i className="ri-calendar-todo-line text-base" />
+                <AppIcon className="ri-calendar-todo-line text-base" />
                 Meeting link not scheduled
               </span>
             )}
@@ -883,7 +883,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl border border-background-300 bg-gradient-to-br from-purple-50 to-background-50 p-6">
         <div className="flex items-center gap-3 mb-3">
-          <span className="w-11 h-11 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center"><i className="ri-brain-line text-xl" /></span>
+          <span className="w-11 h-11 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center"><AppIcon className="ri-brain-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the prompt, then capture your reflection below.</p></div>
         </div>
         {component.reflectionPrompt && (
@@ -900,7 +900,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   return (
     <div className="rounded-2xl border border-background-300 bg-white p-6">
       <div className="flex items-center gap-3 mb-3">
-        <span className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><i className="ri-task-line text-xl" /></span>
+        <span className="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-task-line text-xl" /></span>
         <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Complete this activity, then finish and reflect below.</p></div>
       </div>
       {component.reflectionPrompt && (
@@ -910,7 +910,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
         </div>
       )}
       {component.resourceUrl && (
-        <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 hover:text-emerald-700"><i className="ri-external-link-line" />Open resource</a>
+        <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 hover:text-emerald-700"><AppIcon className="ri-external-link-line" />Open resource</a>
       )}
     </div>
   );
@@ -921,7 +921,7 @@ function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; ti
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium text-center">
       <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-emerald-100">
-        <i className="ri-checkbox-circle-line text-emerald-600 text-2xl" />
+        <AppIcon className="ri-checkbox-circle-line text-emerald-600 text-2xl" />
       </div>
       <h1 className="text-lg font-heading font-bold text-foreground-900 mb-1">{noun.charAt(0).toUpperCase() + noun.slice(1)} complete!</h1>
       <p className="text-sm text-foreground-400 mb-6">{title}</p>
@@ -950,7 +950,7 @@ function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; ti
 function CriterionRow({ met, label, hint, showHint }: { met: boolean; label: string; hint?: string; showHint?: boolean }) {
   return (
     <li className="flex items-start gap-2">
-      <i className={`mt-0.5 text-sm shrink-0 ${met ? 'ri-checkbox-circle-fill text-emerald-600' : 'ri-close-circle-line text-amber-600'}`} />
+      <AppIcon className={`mt-0.5 text-sm shrink-0 ${met ? 'ri-checkbox-circle-fill text-emerald-600' : 'ri-close-circle-line text-amber-600'}`} />
       <span className="min-w-0">
         <span className={`block text-[13px] font-medium ${met ? 'text-foreground-600' : 'text-foreground-800'}`}>{label}</span>
         {hint && showHint && <span className="block text-[11px] text-foreground-400 mt-0.5">{hint}</span>}
@@ -963,7 +963,7 @@ function StatTile({ icon, label, value }: { icon: string; label: string; value: 
   return (
     <div className="rounded-xl border border-background-300 bg-white px-3 py-2.5">
       <div className="flex items-center gap-1.5 text-foreground-400 mb-0.5">
-        <i className={`${icon} text-xs`} />
+        <AppIcon className={`${icon} text-xs`} />
         <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
       </div>
       <p className="text-sm font-bold text-foreground-900 truncate">{value}</p>

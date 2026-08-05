@@ -20,7 +20,7 @@ function AssignOfficerModal({ kase, onClose, onConfirm }: { kase: SafeguardingCa
             <p className="text-sm font-semibold text-foreground-900">Assign Officer</p>
             <p className="text-[11px] text-foreground-500 mt-0.5">{kase.caseRef} · {kase.learnerName}</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-3">
           <p className="text-[12px] text-foreground-600">Currently assigned: <strong className="text-foreground-800">{kase.safeguardingOfficerAssigned}</strong></p>
@@ -47,7 +47,7 @@ function AssignOfficerModal({ kase, onClose, onConfirm }: { kase: SafeguardingCa
               disabled={!selected}
               className="flex-1 px-3 py-2.5 bg-red-500 text-white rounded-lg text-[12px] font-semibold hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-user-received-line mr-1"></i> Assign
+              <AppIcon className="ri-user-received-line mr-1"></AppIcon> Assign
             </button>
           </div>
         </div>
@@ -70,7 +70,7 @@ function EscalateModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase; o
             <p className="text-sm font-semibold text-foreground-900">Escalate Case</p>
             <p className="text-[11px] text-foreground-500 mt-0.5">{kase.caseRef} · {kase.learnerName}</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="bg-red-50 rounded-lg p-3 border border-red-200/50">
@@ -109,7 +109,7 @@ function EscalateModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase; o
               disabled={!reason.trim() || !target}
               className="flex-1 px-3 py-2.5 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-arrow-up-circle-line mr-1"></i> Confirm Escalation
+              <AppIcon className="ri-arrow-up-circle-line mr-1"></AppIcon> Confirm Escalation
             </button>
           </div>
         </div>
@@ -178,7 +178,7 @@ export default function OpenCasesPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-wrap">
           <div className="relative flex-1 max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-xs"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-xs"></AppIcon>
             <input
               type="text" placeholder="Search by learner name or case ref..." value={search}
               onChange={e => setSearch(e.target.value)}
@@ -253,7 +253,7 @@ export default function OpenCasesPage() {
                   <h3 className="text-base font-heading font-semibold text-foreground-900 mt-0.5">{selectedCase.learnerName}</h3>
                 </div>
                 <button onClick={() => setSelectedCase(null)} className="text-foreground-300 hover:text-foreground-500 cursor-pointer">
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
 
@@ -304,25 +304,25 @@ export default function OpenCasesPage() {
                   onClick={() => setAssignTarget(selectedCase)}
                   className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[11px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-user-received-line mr-1"></i> Assign Officer
+                  <AppIcon className="ri-user-received-line mr-1"></AppIcon> Assign Officer
                 </button>
                 <button
                   onClick={() => setEscalateTarget(selectedCase)}
                   className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[11px] font-semibold hover:bg-amber-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-arrow-up-circle-line mr-1"></i> Escalate
+                  <AppIcon className="ri-arrow-up-circle-line mr-1"></AppIcon> Escalate
                 </button>
                 <button
                   onClick={() => handleContactEmployer(selectedCase)}
                   className="px-3 py-1.5 bg-background-100 border border-background-200 rounded-lg text-[11px] text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-building-line mr-1"></i> Contact Employer
+                  <AppIcon className="ri-building-line mr-1"></AppIcon> Contact Employer
                 </button>
                 <button
                   onClick={() => handleViewProfile(selectedCase)}
                   className="px-3 py-1.5 bg-background-100 border border-background-200 rounded-lg text-[11px] text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap ml-auto"
                 >
-                  <i className="ri-user-line mr-1"></i> View Profile
+                  <AppIcon className="ri-user-line mr-1"></AppIcon> View Profile
                 </button>
               </div>
 
@@ -352,7 +352,7 @@ export default function OpenCasesPage() {
                   <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider mb-2">Attachments ({selectedCase.attachments.length})</p>
                   {selectedCase.attachments.map((att, i) => (
                     <div key={i} className="flex items-center gap-2 text-[11px] py-1">
-                      <i className={`${att.type === 'PDF' ? 'ri-file-pdf-line text-red-500' : 'ri-file-text-line text-secondary-500'} text-sm`}></i>
+                      <AppIcon className={`${att.type === 'PDF' ? 'ri-file-pdf-line text-red-500' : 'ri-file-text-line text-secondary-500'} text-sm`}></AppIcon>
                       <span className="text-foreground-600">{att.name}</span>
                       <span className="text-foreground-300 ml-auto text-[10px]">{att.uploadedBy} · {att.date}</span>
                     </div>

@@ -111,7 +111,7 @@ function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
       }`}
     >
       <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-        <i className={`${meta.icon} text-[15px] ${meta.color}`} />
+        <AppIcon className={`${meta.icon} text-[15px] ${meta.color}`} />
         <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background-50 ${style.dot}`} />
       </span>
       <span className="flex-1 min-w-0">
@@ -127,21 +127,21 @@ function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
       </span>
       <span className="shrink-0 flex flex-col items-end gap-1">
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
-          {prog.state === 'passed' && <i className="ri-check-line text-[10px]" />}
-          {prog.state === 'watched' && <i className="ri-check-line text-[10px]" />}
+          {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
+          {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
         {reflection && (
           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
-            <i className={`${reflection.icon} text-[10px]`} />
+            <AppIcon className={`${reflection.icon} text-[10px]`} />
             {reflection.label}
           </span>
         )}
         {c.expectedOtjh != null && c.expectedOtjh > 0 && (
-          <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><i className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
+          <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
       </span>
-      {actionable && <i className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
+      {actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
     </button>
   );
 }
@@ -238,7 +238,7 @@ function RealActivityItem({ entry }: { entry: LearnerActivityEntry }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-3">
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${tint}`}>
-        <i className={`${icon} text-[15px]`} />
+        <AppIcon className={`${icon} text-[15px]`} />
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-[13px] font-semibold text-foreground-900 leading-snug">
@@ -437,7 +437,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   const next = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else { setVm(vm + 1); } };
   const goToday = () => { setVy(now.getFullYear()); setVm(now.getMonth()); };
 
-  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
   if (err) return <EmptyState text={err} />;
 
   return (
@@ -447,8 +447,8 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
         <span className="text-[13px] font-heading font-semibold text-foreground-900">{MINI_MONTHS[vm]} {vy}</span>
         <div className="flex items-center gap-1">
           <button onClick={goToday} className="rounded-lg border border-foreground-100 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600 shadow-sm transition-smooth hover:border-primary-200 hover:text-primary-600 cursor-pointer">Today</button>
-          <button onClick={prev} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-left-s-line" /></button>
-          <button onClick={next} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><i className="ri-arrow-right-s-line" /></button>
+          <button onClick={prev} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><AppIcon className="ri-arrow-left-s-line" /></button>
+          <button onClick={next} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><AppIcon className="ri-arrow-right-s-line" /></button>
         </div>
       </div>
 
@@ -484,7 +484,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
             onClick={() => { setShowBook((v) => !v); setBookErr(null); }}
             className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-smooth cursor-pointer inline-flex items-center gap-1"
           >
-            <i className={showBook ? 'ri-close-line' : 'ri-add-line'} />{showBook ? 'Cancel' : 'Book session'}
+            <AppIcon className={showBook ? 'ri-close-line' : 'ri-add-line'} />{showBook ? 'Cancel' : 'Book session'}
           </button>
         </div>
 
@@ -500,7 +500,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[12px] font-semibold text-foreground-900">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-foreground-400"><i className="ri-time-line mr-1" />{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1" />{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
                 </div>
                 <span className={`h-2 w-2 shrink-0 rounded-full ring-4 ring-background-100 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
               </div>
@@ -528,7 +528,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
                     bookType === t.value ? 'border-primary-400 bg-primary-50/50 text-primary-700' : 'border-foreground-200 text-foreground-600 hover:border-foreground-300'
                   }`}
                 >
-                  <i className={`${t.icon} text-sm`} /><span className="text-[12px] font-semibold">{t.label}</span>
+                  <AppIcon className={`${t.icon} text-sm`} /><span className="text-[12px] font-semibold">{t.label}</span>
                 </button>
               ))}
             </div>
@@ -558,20 +558,20 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
               <textarea value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} rows={2} placeholder="What would you like to cover?"
                 className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
             </label>
-            {bookErr && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{bookErr}</p>}
+            {bookErr && <p className="text-[11px] text-red-600"><AppIcon className="ri-error-warning-line mr-1" />{bookErr}</p>}
             <button
               onClick={submitBooking}
               disabled={submitting || !coach}
               className="w-full py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
             >
-              {submitting ? <><i className="ri-loader-4-line animate-spin" />Booking…</> : <><i className="ri-calendar-check-line" />Confirm booking</>}
+              {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Booking…</> : <><AppIcon className="ri-calendar-check-line" />Confirm booking</>}
             </button>
           </div>
         )}
 
         {toast && (
           <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200/60 px-3 py-2 text-[12px] font-semibold text-emerald-700 inline-flex items-center gap-2">
-            <i className="ri-checkbox-circle-line" />{toast}
+            <AppIcon className="ri-checkbox-circle-line" />{toast}
           </div>
         )}
       </div>
@@ -606,7 +606,7 @@ function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; labe
             strokeDasharray={circ} strokeDashoffset={circ - (Math.min(100, ringPct) / 100) * circ} className="transition-all duration-700 ease-out" />
         </svg>
         <span className={`absolute inset-[6px] rounded-full flex items-center justify-center shadow-sm ${t.bg} ${t.shadow} ${tone === 'current' ? 'animate-pulse-slow' : ''}`}>
-          <i className={`${icon} text-base`} />
+          <AppIcon className={`${icon} text-base`} />
         </span>
       </div>
       <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
@@ -643,7 +643,7 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
 
-  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
   if (loadError) return <EmptyState text={loadError} />;
   if (journey.length === 0) return <EmptyState text="No training plan built for this learner yet." />;
 
@@ -698,13 +698,13 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
           className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
         >
           <div className="flex items-center gap-2 mb-2.5">
-            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><i className="ri-flag-2-fill text-sm" /></span>
+            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
               <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
             </div>
             <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
-            <i className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
+            <AppIcon className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
@@ -714,7 +714,7 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
         </a>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><i className="ri-trophy-fill" /></span>
+          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
           <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
         </div>
       ) : null}
@@ -725,7 +725,7 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
 function JourneyStat({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <div className="rounded-lg bg-background-50 border border-foreground-100 px-2 py-2 text-center">
-      <i className={`${icon} text-primary-500 text-sm`} />
+      <AppIcon className={`${icon} text-primary-500 text-sm`} />
       <p className="text-[13px] font-heading font-bold text-foreground-900 leading-none mt-1">{value}</p>
       <p className="text-[9px] uppercase tracking-wider text-foreground-400 mt-0.5">{label}</p>
     </div>
@@ -972,7 +972,7 @@ export default function LearnerOverview() {
   if (redirectingToOnboarding) {
     return (
       <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
-        <i className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+        <AppIcon className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
       </div>
     );
   }
@@ -1023,7 +1023,7 @@ export default function LearnerOverview() {
               className="absolute top-4 right-4 lg:top-5 lg:right-5 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center transition-all duration-200 hover:scale-110 cursor-pointer group z-10"
               title="My Learning Journey"
             >
-              <i className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></i>
+              <AppIcon className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></AppIcon>
             </a>
             )}
           </section>
@@ -1044,9 +1044,9 @@ export default function LearnerOverview() {
                   href="/learner/training-plan?highlight=overdue"
                   className="flex items-center gap-1.5 text-sm font-bold text-white whitespace-nowrap transition-smooth px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 shadow-sm shadow-red-500/15"
                 >
-                  <i className="ri-error-warning-line text-sm"></i>
+                  <AppIcon className="ri-error-warning-line text-sm"></AppIcon>
                   View Overdue
-                  <i className="ri-arrow-right-line text-xs"></i>
+                  <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
                 </a>
               </div>
               )}
@@ -1205,7 +1205,7 @@ export default function LearnerOverview() {
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Training Plan</h2>
                   {real && journey.length > 0 && (
                   <a href={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View full plan <i className="ri-arrow-right-line ml-0.5"></i>
+                    View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                   )}
                 </div>
@@ -1230,7 +1230,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2.5">
                     <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
-                      <i className="ri-calendar-2-line text-base" />
+                      <AppIcon className="ri-calendar-2-line text-base" />
                     </span>
                     <div>
                       <h2 className="text-base font-heading font-semibold leading-tight text-foreground-900">My Calendar</h2>
@@ -1238,7 +1238,7 @@ export default function LearnerOverview() {
                     </div>
                   </div>
                   <a href="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
-                    Open <i className="ri-arrow-right-line ml-0.5"></i>
+                    Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <MiniCalendar kind={kind} id={id} />
@@ -1267,7 +1267,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
                   <a href={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    Open <i className="ri-arrow-right-line ml-0.5"></i>
+                    Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <MiniJourney
@@ -1289,7 +1289,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4 md:mb-5">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">This Week's Learning Journey</h2>
                   <a href="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View full plan <i className="ri-arrow-right-line ml-0.5"></i>
+                    View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <div className="relative">
@@ -1315,7 +1315,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
                   <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View Calendar <i className="ri-arrow-right-line ml-0.5"></i>
+                    View Calendar <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <div className="space-y-3">
@@ -1333,7 +1333,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
                   <a href="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View All Activity <i className="ri-arrow-right-line ml-0.5"></i>
+                    View All Activity <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <div className="space-y-3">
@@ -1347,7 +1347,7 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
                   <a href="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View Rewards <i className="ri-arrow-right-line ml-0.5"></i>
+                    View Rewards <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </a>
                 </div>
                 <div className="space-y-2.5">
@@ -1408,7 +1408,7 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
       {/* Top row: icon + status badge */}
       <div className="flex items-center justify-between mb-3">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${S.icon}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         {rag ? (
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${rag.bg} ${rag.text}`}>
@@ -1494,11 +1494,11 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
       >
         {isCompleted ? (
           <span className="flex items-center justify-center w-full h-full rounded-full bg-emerald-400 ring-2 ring-emerald-100">
-            <i className={`${animating ? 'ri-check-line' : ''} text-white text-[8px]`}></i>
+            <AppIcon className={`${animating ? 'ri-check-line' : ''} text-white text-[8px]`}></AppIcon>
           </span>
         ) : canMarkComplete ? (
           <span className="flex items-center justify-center w-full h-full rounded-full border-2 border-dashed border-accent-400/60 bg-accent-50 group-hover:border-accent-500 group-hover:bg-accent-100 transition-smooth">
-            <i className="ri-check-line text-accent-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200"></i>
+            <AppIcon className="ri-check-line text-accent-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity duration-200"></AppIcon>
           </span>
         ) : (
           <span className={`w-[10px] h-[10px] rounded-full block ${
@@ -1523,7 +1523,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
           <div className="flex items-start gap-4">
             {/* Type icon */}
             <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ts.iconBg} ${ts.iconText}`}>
-              <i className={`${component.typeIcon} text-lg`}></i>
+              <AppIcon className={`${component.typeIcon} text-lg`}></AppIcon>
             </div>
 
             <div className="flex-1 min-w-0">
@@ -1538,7 +1538,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
                 )}
                 {isCompleted && (
                   <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                    <i className="ri-check-line"></i> Done
+                    <AppIcon className="ri-check-line"></AppIcon> Done
                   </span>
                 )}
                 <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ml-auto ${ss.bg} ${ss.text}`}>
@@ -1552,21 +1552,21 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
 
               {/* Compact meta row */}
               <div className="flex items-center gap-x-4 gap-y-1 text-xs text-foreground-400 flex-wrap">
-                <span className="flex items-center gap-1"><i className="ri-timer-line"></i> {component.duration}</span>
-                <span className="flex items-center gap-1"><i className="ri-time-line"></i> {component.plannedOTJH}h OTJH</span>
+                <span className="flex items-center gap-1"><AppIcon className="ri-timer-line"></AppIcon> {component.duration}</span>
+                <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {component.plannedOTJH}h OTJH</span>
                 {component.actualOTJH > 0 && (
                   <span className="flex items-center gap-1 text-emerald-600">
-                    <i className="ri-check-line"></i> {component.actualOTJH}h logged
+                    <AppIcon className="ri-check-line"></AppIcon> {component.actualOTJH}h logged
                   </span>
                 )}
-                <span className="flex items-center gap-1"><i className="ri-calendar-line"></i> {component.dueDate}</span>
-                <span className="flex items-center gap-1 text-amber-600"><i className="ri-coin-line"></i> {component.points} pts</span>
+                <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line"></AppIcon> {component.dueDate}</span>
+                <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line"></AppIcon> {component.points} pts</span>
               </div>
             </div>
 
             {/* Arrow */}
             <div className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth shrink-0 mt-0.5">
-              <i className="ri-arrow-right-line text-sm"></i>
+              <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
             </div>
           </div>
         </div>
@@ -1602,7 +1602,7 @@ function UpcomingEventCard({ date, title, type, urgent, countdown, icon }: {
           type === 'Assessment' ? 'bg-secondary-100 text-secondary-700' :
           'bg-background-100 text-foreground-500'
         }`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </div>
 
         <div className="flex-1 min-w-0 relative z-[1]">
@@ -1622,7 +1622,7 @@ function UpcomingEventCard({ date, title, type, urgent, countdown, icon }: {
             <span className={`text-xs flex items-center gap-1 ${
               urgent ? 'text-red-500 font-semibold animate-countdown-pulse' : 'text-foreground-400'
             }`}>
-              <i className={`${urgent ? 'ri-timer-flash-line' : 'ri-timer-line'} text-xs`}></i>
+              <AppIcon className={`${urgent ? 'ri-timer-flash-line' : 'ri-timer-line'} text-xs`}></AppIcon>
               {countdown}
             </span>
           </div>
@@ -1679,7 +1679,7 @@ function ActivityFeedItem({ item, index }: { item: any; index: number }) {
       <div className="shrink-0 mt-0.5">
         <div className={`w-10 h-10 rounded-full flex items-center justify-center ${theme.avatar} ring-2 ring-white shadow-sm`}>
           {isUnread ? (
-            <i className={`ri-mail-unread-line ${theme.iconText} text-sm`}></i>
+            <AppIcon className={`ri-mail-unread-line ${theme.iconText} text-sm`}></AppIcon>
           ) : (
             <span className={`text-sm font-bold ${theme.iconText}`}>{item.from.charAt(0)}</span>
           )}
@@ -1766,14 +1766,14 @@ function AchievementBadge({ icon, label, color }: { icon: string; label: string;
 
       {/* Icon */}
       <span className={`w-11 h-11 rounded-xl flex items-center justify-center ${c.iconBg} ${c.iconText} shrink-0 ring-1 ring-inset ring-white/40 shadow-sm`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </span>
 
       {/* Text */}
       <span className={`text-sm font-semibold ${c.text} whitespace-nowrap leading-snug`}>{label}</span>
 
       {/* Subtle arrow on hover */}
-      <i className="ri-arrow-right-s-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ml-auto text-base"></i>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ml-auto text-base"></AppIcon>
     </div>
   );
 }

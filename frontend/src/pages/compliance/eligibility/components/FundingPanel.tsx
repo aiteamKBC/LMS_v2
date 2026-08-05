@@ -29,7 +29,7 @@ export function FundingPanel({ checks }: FundingPanelProps) {
           return (
             <div key={check.id} className="flex items-start gap-3 px-4 py-3 rounded-lg border border-foreground-200/60">
               <span className={`w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5 ${config.iconBg}`}>
-                <i className={`${config.icon} ${config.iconColor} text-xs`}></i>
+                <AppIcon className={`${config.icon} ${config.iconColor} text-xs`}></AppIcon>
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 mb-1">

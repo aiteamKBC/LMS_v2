@@ -91,7 +91,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-mail-line text-primary-500"></i> Communication Contacts
+              <AppIcon className="ri-mail-line text-primary-500"></AppIcon> Communication Contacts
             </h2>
             <span className="text-[11px] text-foreground-400">Live learner context only</span>
           </div>
@@ -119,7 +119,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
                       onClick={() => handleOpenConversation(contact)}
                       className="px-3 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[11px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
                     >
-                      <i className="ri-message-3-line text-xs"></i> Message
+                      <AppIcon className="ri-message-3-line text-xs"></AppIcon> Message
                     </button>
                   </div>
                 </div>
@@ -133,7 +133,7 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-time-line text-accent-500"></i> Communication Snapshot
+              <AppIcon className="ri-time-line text-accent-500"></AppIcon> Communication Snapshot
             </h2>
             <span className="text-[11px] text-foreground-400">{communicationRows.length} dated item(s)</span>
           </div>
@@ -191,7 +191,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
@@ -214,7 +214,7 @@ function DetailCard({
     <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
       <div className="flex items-center gap-2 mb-2">
         <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
-          <i className={`${icon} text-sm text-foreground-600`}></i>
+          <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>
