@@ -102,7 +102,7 @@ export default function MessageContextMenu({
             className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-background-100 transition-colors duration-100 cursor-pointer"
           >
             <div className={`w-5 h-5 flex items-center justify-center ${item.color}`}>
-              <i className={`${item.icon} text-sm`}></i>
+              <AppIcon className={`${item.icon} text-sm`}></AppIcon>
             </div>
             <span className={`text-sm ${item.color}`}>{item.label}</span>
           </button>

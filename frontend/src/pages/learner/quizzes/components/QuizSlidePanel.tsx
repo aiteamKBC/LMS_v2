@@ -38,14 +38,14 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               quiz.isPriority ? 'bg-amber-100' :
               'bg-background-100'
             }`}>
-              <i className={`${
+              <AppIcon className={`${
                 quiz.status === 'Passed' ? 'ri-check-double-line text-emerald-600' :
                 quiz.status === 'Failed' ? 'ri-close-circle-line text-red-500' :
                 quiz.status === 'Retake Required' ? 'ri-refresh-line text-red-400' :
                 quiz.status === 'Locked' ? 'ri-lock-line text-foreground-300' :
                 quiz.isPriority ? 'ri-alert-line text-amber-600' :
                 'ri-questionnaire-line text-foreground-400'
-              } text-lg`}></i>
+              } text-lg`}></AppIcon>
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-heading font-semibold text-foreground-900 truncate">{quiz.title}</h3>
@@ -56,7 +56,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
             onClick={onClose}
             className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer shrink-0"
           >
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
@@ -89,7 +89,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
             )}
             {quiz.dueDate !== 'TBC' && (
               <span className="text-[11px] font-semibold text-foreground-500 bg-background-100 px-2 py-1 rounded-full whitespace-nowrap">
-                <i className="ri-calendar-line text-[10px] mr-1"></i>Due {quiz.dueDate}
+                <AppIcon className="ri-calendar-line text-[10px] mr-1"></AppIcon>Due {quiz.dueDate}
               </span>
             )}
           </div>
@@ -165,7 +165,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               <ul className="space-y-1">
                 {quiz.areasForImprovement.map((area, i) => (
                   <li key={i} className="text-xs text-red-800 flex items-start gap-1.5">
-                    <i className="ri-arrow-right-s-line text-red-400 mt-0.5 shrink-0"></i>
+                    <AppIcon className="ri-arrow-right-s-line text-red-400 mt-0.5 shrink-0"></AppIcon>
                     {area}
                   </li>
                 ))}
@@ -179,15 +179,15 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               <p className="text-xs font-semibold text-foreground-500 mb-2">Unlock Requirements</p>
               <div className="space-y-2">
                 <div className="flex items-start gap-2">
-                  <i className="ri-lock-line text-foreground-400 text-xs mt-0.5 shrink-0"></i>
+                  <AppIcon className="ri-lock-line text-foreground-400 text-xs mt-0.5 shrink-0"></AppIcon>
                   <p className="text-sm text-foreground-700">{quiz.unlockRequirement}</p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <i className="ri-book-open-line text-foreground-400 text-xs mt-0.5 shrink-0"></i>
+                  <AppIcon className="ri-book-open-line text-foreground-400 text-xs mt-0.5 shrink-0"></AppIcon>
                   <p className="text-sm text-foreground-700">{quiz.unlockModule}</p>
                 </div>
                 <div className="flex items-start gap-2">
-                  <i className="ri-calendar-line text-foreground-400 text-xs mt-0.5 shrink-0"></i>
+                  <AppIcon className="ri-calendar-line text-foreground-400 text-xs mt-0.5 shrink-0"></AppIcon>
                   <p className="text-sm text-foreground-700">Expected: {quiz.expectedUnlockDate}</p>
                 </div>
               </div>
@@ -201,7 +201,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
                 onClick={() => setShowingHistory(!showingHistory)}
                 className="flex items-center gap-2 text-xs font-semibold text-foreground-500 mb-2 hover:text-foreground-700 transition-smooth cursor-pointer"
               >
-                <i className={`${showingHistory ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm`}></i>
+                <AppIcon className={`${showingHistory ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-sm`}></AppIcon>
                 Attempt History ({quiz.history.length})
               </button>
               {showingHistory && (
@@ -230,7 +230,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               disabled={!hasQuestions}
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <i className="ri-play-circle-line"></i> Start Quiz
+              <AppIcon className="ri-play-circle-line"></AppIcon> Start Quiz
             </button>
           )}
           {quiz.status === 'In Progress' && (
@@ -239,7 +239,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               disabled={!hasQuestions}
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <i className="ri-play-circle-line"></i> Continue Quiz
+              <AppIcon className="ri-play-circle-line"></AppIcon> Continue Quiz
             </button>
           )}
           {(quiz.status === 'Failed' || quiz.status === 'Retake Required') && (
@@ -248,7 +248,7 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               disabled={!hasQuestions}
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <i className="ri-refresh-line"></i> Retake Quiz
+              <AppIcon className="ri-refresh-line"></AppIcon> Retake Quiz
             </button>
           )}
           {quiz.status === 'Passed' && (
@@ -256,21 +256,21 @@ export function QuizSlidePanel({ quiz, onClose, onStart, onPreview }: QuizSlideP
               onClick={onPreview}
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-background-100 border border-foreground-200/60 text-foreground-600 rounded-lg text-sm font-medium hover:bg-background-200 transition-smooth whitespace-nowrap cursor-pointer"
             >
-              <i className="ri-eye-line"></i> View Feedback
+              <AppIcon className="ri-eye-line"></AppIcon> View Feedback
             </button>
           )}
           <button
             onClick={onPreview}
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-sm font-medium hover:bg-background-100 transition-smooth whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-eye-line"></i> Preview Questions
+            <AppIcon className="ri-eye-line"></AppIcon> Preview Questions
           </button>
           <Link
             to="/learner/ksbs"
             onClick={onClose}
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-sm font-medium hover:bg-background-100 transition-smooth whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-bar-chart-2-line"></i> View KSBs
+            <AppIcon className="ri-bar-chart-2-line"></AppIcon> View KSBs
           </Link>
         </div>
       </div>

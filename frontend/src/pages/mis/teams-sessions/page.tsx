@@ -80,7 +80,7 @@ export default function MisTeamsSessionsPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -91,7 +91,7 @@ export default function MisTeamsSessionsPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search session, tutor, cohort..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -99,7 +99,7 @@ export default function MisTeamsSessionsPage() {
               {['All', 'Scheduled', 'Live', 'Completed', 'Cancelled'].map(s => <option key={s}>{s}</option>)}
             </select>
             <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> Schedule Session
+              <AppIcon className="ri-add-line mr-1"></AppIcon> Schedule Session
             </button>
           </div>
         </div>
@@ -120,24 +120,24 @@ export default function MisTeamsSessionsPage() {
                 <h4 className="text-sm font-semibold text-foreground-900 mb-1">{s.module}</h4>
                 <p className="text-[11px] text-foreground-400 mb-2">{s.cohort} &middot; {s.tutor}</p>
                 <div className="flex items-center gap-3 text-[11px] text-foreground-400">
-                  <span><i className="ri-group-line mr-1 text-[10px]"></i> {s.learners} learners</span>
+                  <span><AppIcon className="ri-group-line mr-1 text-[10px]"></AppIcon> {s.learners} learners</span>
                   {s.status === 'Completed' && (
                     <span className={attendancePct >= 90 ? 'text-emerald-600' : attendancePct >= 75 ? 'text-amber-600' : 'text-rose-600'}>
-                      <i className="ri-user-follow-line mr-1 text-[10px]"></i> {s.attendees}/{s.learners} ({attendancePct}%)
+                      <AppIcon className="ri-user-follow-line mr-1 text-[10px]"></AppIcon> {s.attendees}/{s.learners} ({attendancePct}%)
                     </span>
                   )}
                   {s.recordingUrl && (
                     <span className="text-primary-600">
-                      <i className="ri-record-circle-line mr-1 text-[10px]"></i> Recording
+                      <AppIcon className="ri-record-circle-line mr-1 text-[10px]"></AppIcon> Recording
                     </span>
                   )}
                 </div>
                 <div className="flex items-center gap-2 mt-3">
                   <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-                    <i className="ri-video-line mr-1"></i> Join
+                    <AppIcon className="ri-video-line mr-1"></AppIcon> Join
                   </button>
                   <button className="px-3 py-1.5 border border-background-200 bg-background-50 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap">
-                    <i className="ri-settings-3-line mr-1"></i> Settings
+                    <AppIcon className="ri-settings-3-line mr-1"></AppIcon> Settings
                   </button>
                 </div>
               </div>
@@ -153,7 +153,7 @@ export default function MisTeamsSessionsPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-heading font-semibold text-foreground-900">{showSession.module}</h2>
               <button onClick={() => setShowSession(null)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500"></i>
+                <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
               </button>
             </div>
             <div className="space-y-3 text-[12px] text-foreground-600">
@@ -195,10 +195,10 @@ export default function MisTeamsSessionsPage() {
               )}
               <div className="flex items-center gap-3 mt-4">
                 <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-                  <i className="ri-video-line mr-1"></i> Join Teams
+                  <AppIcon className="ri-video-line mr-1"></AppIcon> Join Teams
                 </button>
                 <button className="flex-1 px-3 py-2 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap">
-                  <i className="ri-file-copy-line mr-1"></i> Copy Link
+                  <AppIcon className="ri-file-copy-line mr-1"></AppIcon> Copy Link
                 </button>
               </div>
             </div>

@@ -215,7 +215,7 @@ export function ReadingPodcastModal({
               <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${
                 mode === 'reading' ? 'bg-primary-100 text-primary-600' : 'bg-secondary-100 text-secondary-600'
               }`}>
-                <i className={`${mode === 'reading' ? 'ri-book-open-line' : 'ri-headphone-line'} text-sm`}></i>
+                <AppIcon className={`${mode === 'reading' ? 'ri-book-open-line' : 'ri-headphone-line'} text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground-900 truncate">{title}</p>
@@ -234,7 +234,7 @@ export function ReadingPodcastModal({
                     }`}
                     title="Toggle sidebar"
                   >
-                    <i className="ri-menu-2-line text-sm"></i>
+                    <AppIcon className="ri-menu-2-line text-sm"></AppIcon>
                   </button>
                   <button
                     onClick={() => setShowTools(!showTools)}
@@ -243,7 +243,7 @@ export function ReadingPodcastModal({
                     }`}
                     title="Reading tools"
                   >
-                    <i className="ri-settings-3-line text-sm"></i>
+                    <AppIcon className="ri-settings-3-line text-sm"></AppIcon>
                   </button>
                 </>
               )}
@@ -251,7 +251,7 @@ export function ReadingPodcastModal({
                 onClick={onClose}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
               >
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
           </div>
@@ -277,7 +277,7 @@ export function ReadingPodcastModal({
                   </div>
                 </div>
                 <button onClick={() => setHighContrast(!highContrast)} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-smooth cursor-pointer ${highContrast ? 'bg-primary-100 text-primary-700' : 'text-foreground-500 hover:bg-background-100'}`}>
-                  <i className="ri-contrast-2-line"></i>
+                  <AppIcon className="ri-contrast-2-line"></AppIcon>
                   <span className="hidden sm:inline">High Contrast</span>
                 </button>
               </div>
@@ -346,9 +346,9 @@ export function ReadingPodcastModal({
                       </div>
                       <h1 className={`text-[18px] md:text-[20px] font-heading font-bold text-foreground-900 mb-3 leading-tight`}>{readingData.title}</h1>
                       <div className="flex items-center gap-3 text-sm text-foreground-400">
-                        <span className="flex items-center gap-1"><i className="ri-user-line text-xs"></i>{readingData.author}</span>
+                        <span className="flex items-center gap-1"><AppIcon className="ri-user-line text-xs"></AppIcon>{readingData.author}</span>
                         <span className="w-1 h-1 rounded-full bg-foreground-300"></span>
-                        <span className="flex items-center gap-1"><i className="ri-time-line text-xs"></i>{readingData.estimatedRead}</span>
+                        <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-xs"></AppIcon>{readingData.estimatedRead}</span>
                       </div>
                     </div>
                     {/* Sections */}
@@ -366,7 +366,7 @@ export function ReadingPodcastModal({
                     {/* Key Takeaways */}
                     <div className={`mt-12 md:mt-16 rounded-xl border p-6 md:p-8 ${cardBg}`}>
                       <h2 className={`text-[16px] md:text-[18px] font-heading font-semibold text-foreground-900 mb-5 flex items-center gap-2`}>
-                        <i className="ri-lightbulb-line text-primary-500"></i>Key Takeaways
+                        <AppIcon className="ri-lightbulb-line text-primary-500"></AppIcon>Key Takeaways
                       </h2>
                       <ul className="space-y-4">
                         {readingData.keyTakeaways.map((t, i) => (
@@ -380,7 +380,7 @@ export function ReadingPodcastModal({
                     {/* Learning Outcomes */}
                     <div className={`mt-8 rounded-xl border p-6 ${cardBg}`}>
                       <h2 className={`text-[16px] md:text-[18px] font-heading font-semibold text-foreground-900 mb-4 flex items-center gap-2`}>
-                        <i className="ri-graduation-cap-line text-accent-500"></i>Learning Outcomes
+                        <AppIcon className="ri-graduation-cap-line text-accent-500"></AppIcon>Learning Outcomes
                       </h2>
                       <ul className="space-y-3">
                         {readingData.learningOutcomes.map((lo, i) => (
@@ -394,7 +394,7 @@ export function ReadingPodcastModal({
                     {articleComplete && (
                       <div className="mt-10 p-5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start gap-3">
                         <span className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                          <i className="ri-check-double-line text-emerald-600 text-lg"></i>
+                          <AppIcon className="ri-check-double-line text-emerald-600 text-lg"></AppIcon>
                         </span>
                         <div>
                           <p className="text-sm font-semibold text-emerald-800">Reading Complete</p>
@@ -415,7 +415,7 @@ export function ReadingPodcastModal({
                     <div className="rounded-2xl bg-gradient-to-br from-secondary-900 to-secondary-950 p-6 md:p-8 mb-8">
                       <div className="flex items-center gap-4 mb-6">
                         <div className="w-16 h-16 rounded-xl bg-white/10 flex items-center justify-center shrink-0">
-                          <i className="ri-headphone-line text-white/70 text-2xl"></i>
+                          <AppIcon className="ri-headphone-line text-white/70 text-2xl"></AppIcon>
                         </div>
                         <div className="min-w-0">
                           <h2 className="text-base font-heading font-bold text-white mb-1">{podcastData.title}</h2>
@@ -435,7 +435,7 @@ export function ReadingPodcastModal({
                             {/* Play/Pause */}
                             <button onClick={togglePodcast}
                               className="w-12 h-12 rounded-full bg-secondary-500 hover:bg-secondary-600 flex items-center justify-center transition-smooth cursor-pointer shadow-lg">
-                              <i className={`text-white text-xl ${playing ? 'ri-pause-fill' : 'ri-play-fill'} ${!playing ? 'ml-0.5' : ''}`}></i>
+                              <AppIcon className={`text-white text-xl ${playing ? 'ri-pause-fill' : 'ri-play-fill'} ${!playing ? 'ml-0.5' : ''}`}></AppIcon>
                             </button>
                             {/* Time */}
                             <div className="text-white">
@@ -447,7 +447,7 @@ export function ReadingPodcastModal({
                           {/* Speed & Volume */}
                           <div className="flex items-center gap-3">
                             <div className="flex items-center gap-2">
-                              <i className="ri-volume-down-line text-white/50 text-sm"></i>
+                              <AppIcon className="ri-volume-down-line text-white/50 text-sm"></AppIcon>
                               <input type="range" min="0" max="1" step="0.1" value={volume}
                                 onChange={(e) => setVolume(parseFloat(e.target.value))}
                                 className="w-16 accent-secondary-400" />
@@ -468,7 +468,7 @@ export function ReadingPodcastModal({
                         {/* Current chapter */}
                         {podcastData.chapters[currentChapter] && (
                           <div className="flex items-center gap-2 text-xs text-white/50">
-                            <i className="ri-bookmark-line"></i>
+                            <AppIcon className="ri-bookmark-line"></AppIcon>
                             <span className="truncate">{podcastData.chapters[currentChapter].title}</span>
                           </div>
                         )}
@@ -478,11 +478,11 @@ export function ReadingPodcastModal({
                     <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 mb-6">
                       <button onClick={() => setActiveTab('chapters')}
                         className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap ${activeTab === 'chapters' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                        <i className="ri-list-check mr-1.5"></i>Chapters ({podcastData.chapters.length})
+                        <AppIcon className="ri-list-check mr-1.5"></AppIcon>Chapters ({podcastData.chapters.length})
                       </button>
                       <button onClick={() => setActiveTab('transcript')}
                         className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap ${activeTab === 'transcript' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                        <i className="ri-file-text-line mr-1.5"></i>Transcript
+                        <AppIcon className="ri-file-text-line mr-1.5"></AppIcon>Transcript
                       </button>
                     </div>
                     {/* Chapters */}
@@ -496,7 +496,7 @@ export function ReadingPodcastModal({
                             <button key={i} onClick={() => { seekTo(ch.startTime); if (!playing) togglePodcast(); }}
                               className={`w-full flex items-center gap-3 p-4 rounded-xl text-left transition-smooth cursor-pointer border ${isActive ? 'bg-secondary-50 border-secondary-200' : 'border-transparent hover:bg-background-100'}`}>
                               <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-xs font-semibold ${isActive ? 'bg-secondary-100 text-secondary-700' : isPast ? 'bg-emerald-100 text-emerald-600' : 'bg-background-200 text-foreground-400'}`}>
-                                {isPast ? <i className="ri-check-line"></i> : i + 1}
+                                {isPast ? <AppIcon className="ri-check-line"></AppIcon> : i + 1}
                               </span>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center justify-between mb-1">
@@ -527,7 +527,7 @@ export function ReadingPodcastModal({
                     {podcastComplete && (
                       <div className="mt-6 p-5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start gap-3">
                         <span className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                          <i className="ri-check-double-line text-emerald-600 text-lg"></i>
+                          <AppIcon className="ri-check-double-line text-emerald-600 text-lg"></AppIcon>
                         </span>
                         <div>
                           <p className="text-sm font-semibold text-emerald-800">Podcast Complete</p>
@@ -601,12 +601,12 @@ export function ReadingPodcastModal({
           {/* ── BOTTOM BAR ── */}
           <div className={`shrink-0 flex items-center justify-between px-4 md:px-6 py-3 border-t ${borderColor}`}>
             <div className="flex items-center gap-3 text-xs text-foreground-400">
-              <span className="flex items-center gap-1"><i className="ri-time-line"></i>{duration}</span>
-              <span className="flex items-center gap-1"><i className="ri-hourglass-line"></i>{plannedOTJH}h OTJH</span>
-              <span className="flex items-center gap-1 text-amber-600"><i className="ri-coin-line"></i>{points} pts</span>
+              <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon>{duration}</span>
+              <span className="flex items-center gap-1"><AppIcon className="ri-hourglass-line"></AppIcon>{plannedOTJH}h OTJH</span>
+              <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line"></AppIcon>{points} pts</span>
               {isComplete && (
                 <span className="flex items-center gap-1 text-emerald-600">
-                  <i className="ri-check-line"></i>
+                  <AppIcon className="ri-check-line"></AppIcon>
                   {mode === 'reading' ? 'Fully Read' : 'Listened'}
                 </span>
               )}
@@ -623,7 +623,7 @@ export function ReadingPodcastModal({
                     ? mode === 'reading' ? 'bg-primary-500 text-white hover:bg-primary-600' : 'bg-secondary-500 text-white hover:bg-secondary-600'
                     : 'bg-background-100 text-foreground-300 cursor-not-allowed'
                 }`}>
-                <i className="ri-check-line"></i>
+                <AppIcon className="ri-check-line"></AppIcon>
                 Mark as Complete
               </button>
             </div>

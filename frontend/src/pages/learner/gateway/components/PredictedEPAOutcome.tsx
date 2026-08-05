@@ -8,7 +8,7 @@ export function PredictedEPAOutcome() {
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-4 card-premium">
       <div className="flex items-start justify-between mb-3">
         <span className="w-9 h-9 rounded-lg bg-accent-50 flex items-center justify-center">
-          <i className="ri-medal-line text-accent-700"></i>
+          <AppIcon className="ri-medal-line text-accent-700"></AppIcon>
         </span>
         <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-accent-100 text-accent-700">
           Prediction
@@ -42,7 +42,7 @@ export function PredictedEPAOutcome() {
         onClick={() => setShowDisclaimer(!showDisclaimer)}
         className="mt-3 text-[9px] text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer flex items-center gap-1"
       >
-        <i className="ri-information-line"></i>
+        <AppIcon className="ri-information-line"></AppIcon>
         {showDisclaimer ? 'Hide disclaimer' : 'Show disclaimer'}
       </button>
       {showDisclaimer && (

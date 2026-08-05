@@ -17,7 +17,7 @@ export function ActivityCard({ activity }: ActivityCardProps) {
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium hover:border-primary-200/50 transition-smooth">
       <div className="flex items-start gap-4 mb-3">
         <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-          <i className={`${activity.icon} text-lg`}></i>
+          <AppIcon className={`${activity.icon} text-lg`}></AppIcon>
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -29,19 +29,19 @@ export function ActivityCard({ activity }: ActivityCardProps) {
               <span className={`w-1.5 h-1.5 rounded-full ${diff.dot}`}></span>
               {activity.difficulty}
             </span>
-            <span><i className="ri-time-line mr-0.5"></i>{activity.estimatedTime}</span>
+            <span><AppIcon className="ri-time-line mr-0.5"></AppIcon>{activity.estimatedTime}</span>
             {activity.evidenceRequired && (
-              <span><i className="ri-camera-line mr-0.5"></i>Evidence Required</span>
+              <span><AppIcon className="ri-camera-line mr-0.5"></AppIcon>Evidence Required</span>
             )}
             {activity.approvalRequired && (
-              <span className="text-amber-500"><i className="ri-shield-check-line mr-0.5"></i>Approval Required</span>
+              <span className="text-amber-500"><AppIcon className="ri-shield-check-line mr-0.5"></AppIcon>Approval Required</span>
             )}
           </div>
           <p className="text-sm text-foreground-500 leading-relaxed mb-3">{activity.description}</p>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-medium text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{activity.category}</span>
             {activity.club !== 'All Clubs' && (
-              <span className="text-xs text-foreground-400"><i className="ri-community-line mr-0.5"></i>{activity.club}</span>
+              <span className="text-xs text-foreground-400"><AppIcon className="ri-community-line mr-0.5"></AppIcon>{activity.club}</span>
             )}
           </div>
         </div>
@@ -50,15 +50,15 @@ export function ActivityCard({ activity }: ActivityCardProps) {
         {activity.joined ? (
           <>
             <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-upload-line mr-1"></i> Submit Evidence
+              <AppIcon className="ri-upload-line mr-1"></AppIcon> Submit Evidence
             </button>
             <button className="px-4 py-2 bg-background-50 border border-background-200/40 rounded-lg text-xs font-medium text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-information-line mr-1"></i> View Requirements
+              <AppIcon className="ri-information-line mr-1"></AppIcon> View Requirements
             </button>
           </>
         ) : (
           <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap opacity-50 pointer-events-none">
-            <i className="ri-lock-line mr-1"></i> Join Club First
+            <AppIcon className="ri-lock-line mr-1"></AppIcon> Join Club First
           </button>
         )}
       </div>

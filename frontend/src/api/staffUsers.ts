@@ -50,6 +50,13 @@ export interface StaffUserRow extends UserListRow {
   position: string;
   phone: string;
   organization: string;
+  title: string;
+  preferredName: string;
+  gender: string;
+  dob: string;
+  caseOwner: string;
+  learningProvider: string;
+  referenceNumber: string;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

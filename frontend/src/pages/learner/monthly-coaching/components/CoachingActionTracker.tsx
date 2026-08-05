@@ -28,7 +28,7 @@ export default function CoachingActionTracker() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-              <i className="ri-task-line text-primary-700" />
+              <AppIcon className="ri-task-line text-primary-700" />
             </div>
             <h2 className="text-lg font-heading font-semibold text-foreground-900">Coaching Action Tracker</h2>
           </div>
@@ -80,10 +80,10 @@ export default function CoachingActionTracker() {
                           {act.priority}
                         </span>
                         <span className="text-xs text-foreground-400 flex items-center gap-1">
-                          <i className="ri-calendar-line" /> {act.dueDate}
+                          <AppIcon className="ri-calendar-line" /> {act.dueDate}
                         </span>
                         <span className="text-xs text-foreground-400 flex items-center gap-1">
-                          <i className="ri-user-line" /> {act.coachAssigned}
+                          <AppIcon className="ri-user-line" /> {act.coachAssigned}
                         </span>
                       </div>
                     </div>

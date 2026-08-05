@@ -34,7 +34,7 @@ export function RPLHeader({ record }: RPLHeaderProps) {
           </span>
           {record.rplDecision.outcome !== 'pending' && (
             <span className={`text-[12px] font-semibold px-3 py-1.5 rounded-full whitespace-nowrap ${decisionConfig.bg} ${decisionConfig.text}`}>
-              <i className={`${decisionConfig.icon} text-[10px] mr-1`}></i>
+              <AppIcon className={`${decisionConfig.icon} text-[10px] mr-1`}></AppIcon>
               {rplPct}% RPL
             </span>
           )}
@@ -65,7 +65,7 @@ export function RPLHeader({ record }: RPLHeaderProps) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-background-200/50">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-200/50">
-            <i className="ri-alert-line text-amber-600 text-sm"></i>
+            <AppIcon className="ri-alert-line text-amber-600 text-sm"></AppIcon>
             <div>
               <p className="text-[11px] text-amber-800 font-medium">Next Action</p>
               <p className="text-[12px] text-amber-700">{record.nextAction}</p>
@@ -79,7 +79,7 @@ export function RPLHeader({ record }: RPLHeaderProps) {
 
       {record.riskReason && (
         <div className={`mt-3 px-3 py-2 rounded-lg border flex items-start gap-2 ${record.riskStatus === 'High' ? 'bg-red-50 border-red-200/50' : 'bg-amber-50 border-amber-200/50'}`}>
-          <i className={record.riskStatus === 'High' ? 'ri-error-warning-line text-red-500' : 'ri-alert-line text-amber-500'}></i>
+          <AppIcon className={record.riskStatus === 'High' ? 'ri-error-warning-line text-red-500' : 'ri-alert-line text-amber-500'}></AppIcon>
           <p className={`text-[12px] ${record.riskStatus === 'High' ? 'text-red-700' : 'text-amber-700'}`}>{record.riskReason}</p>
         </div>
       )}
@@ -91,7 +91,7 @@ function QuickStat({ label, value, icon }: { label: string; value: string; icon:
   return (
     <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-background-50 border border-background-200/40">
       <span className="w-7 h-7 rounded-md bg-background-100 flex items-center justify-center shrink-0">
-        <i className={`${icon} text-[11px] text-foreground-400`}></i>
+        <AppIcon className={`${icon} text-[11px] text-foreground-400`}></AppIcon>
       </span>
       <div className="min-w-0">
         <p className="text-[12px] font-medium text-foreground-800 truncate">{value}</p>
@@ -113,7 +113,7 @@ function DetailItem({ label, value, icon, highlight, risk }: {
   return (
     <div className="flex items-start gap-2.5 min-w-0">
       <span className="w-6 h-6 rounded-md bg-background-100 flex items-center justify-center shrink-0 mt-0.5">
-        <i className={`${icon} text-[11px] text-foreground-400`}></i>
+        <AppIcon className={`${icon} text-[11px] text-foreground-400`}></AppIcon>
       </span>
       <div className="min-w-0">
         <p className="text-[10px] text-foreground-400 uppercase tracking-wider font-medium">{label}</p>

@@ -38,7 +38,7 @@ export default function EngagementTrendsPage() {
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-semibold text-foreground-700">{em.metric}</span>
                 <span className={`text-[14px] ${em.trend === 'up' ? 'text-emerald-500' : em.trend === 'down' ? 'text-red-500' : 'text-amber-500'}`}>
-                  <i className={`${em.trend === 'up' ? 'ri-arrow-up-line' : em.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}`}></i>
+                  <AppIcon className={`${em.trend === 'up' ? 'ri-arrow-up-line' : em.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}`}></AppIcon>
                 </span>
               </div>
               <div className="flex items-end gap-2 mb-2">

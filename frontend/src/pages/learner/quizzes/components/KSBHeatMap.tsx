@@ -71,7 +71,7 @@ export function KSBHeatMap({ knowledgeKsbs, skillKsbs, behaviourKsbs }: KSBHeatM
           <div key={cat.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-3">
               <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${cat.color === 'primary' ? 'bg-primary-100' : cat.color === 'accent' ? 'bg-accent-100' : 'bg-emerald-100'}`}>
-                <i className={`${cat.icon} ${cat.color === 'primary' ? 'text-primary-600' : cat.color === 'accent' ? 'text-accent-600' : 'text-emerald-600'} text-xs`}></i>
+                <AppIcon className={`${cat.icon} ${cat.color === 'primary' ? 'text-primary-600' : cat.color === 'accent' ? 'text-accent-600' : 'text-emerald-600'} text-xs`}></AppIcon>
               </span>
               <span className="text-sm font-semibold text-foreground-900">{cat.label}</span>
               <span className="text-xs text-foreground-400 ml-auto">{cat.count} KSBs</span>
@@ -106,7 +106,7 @@ export function KSBHeatMap({ knowledgeKsbs, skillKsbs, behaviourKsbs }: KSBHeatM
       <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-foreground-200/40">
           <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-            <i className="ri-fire-line text-primary-600 text-sm"></i>
+            <AppIcon className="ri-fire-line text-primary-600 text-sm"></AppIcon>
           </span>
           <div>
             <h3 className="text-sm font-semibold text-foreground-900">KSB Mastery Heat Map</h3>
@@ -128,7 +128,7 @@ export function KSBHeatMap({ knowledgeKsbs, skillKsbs, behaviourKsbs }: KSBHeatM
               <div key={group.group}>
                 <div className="flex items-center gap-2 mb-3">
                   <span className={`w-5 h-5 rounded-md flex items-center justify-center ${group.colorKey === 'primary' ? 'bg-primary-100' : group.colorKey === 'accent' ? 'bg-accent-100' : 'bg-emerald-100'}`}>
-                    <i className={`${group.group === 'Knowledge' ? 'ri-book-open-line' : group.group === 'Skills' ? 'ri-tools-line' : 'ri-heart-line'} ${group.colorKey === 'primary' ? 'text-primary-600' : group.colorKey === 'accent' ? 'text-accent-600' : 'text-emerald-600'} text-[10px]`}></i>
+                    <AppIcon className={`${group.group === 'Knowledge' ? 'ri-book-open-line' : group.group === 'Skills' ? 'ri-tools-line' : 'ri-heart-line'} ${group.colorKey === 'primary' ? 'text-primary-600' : group.colorKey === 'accent' ? 'text-accent-600' : 'text-emerald-600'} text-[10px]`}></AppIcon>
                   </span>
                   <span className="text-xs font-semibold text-foreground-500 uppercase tracking-wider">{group.group}</span>
                   <span className="text-xs text-foreground-400">{group.items.length} KSBs</span>
@@ -149,7 +149,7 @@ export function KSBHeatMap({ knowledgeKsbs, skillKsbs, behaviourKsbs }: KSBHeatM
                         <span className={`text-[10px] font-semibold ${heatText(progress)}`}>{progress}%</span>
                         {isComplete && (
                           <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
-                            <i className="ri-check-line text-white text-[8px]"></i>
+                            <AppIcon className="ri-check-line text-white text-[8px]"></AppIcon>
                           </span>
                         )}
 
@@ -183,7 +183,7 @@ export function KSBHeatMap({ knowledgeKsbs, skillKsbs, behaviourKsbs }: KSBHeatM
           to="/learner/ksbs"
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary-50 text-primary-700 rounded-lg text-sm font-medium hover:bg-primary-100 transition-smooth border border-primary-200/60 whitespace-nowrap cursor-pointer"
         >
-          <i className="ri-bar-chart-2-line"></i> View Full KSBs Page
+          <AppIcon className="ri-bar-chart-2-line"></AppIcon> View Full KSBs Page
         </Link>
       </div>
     </div>

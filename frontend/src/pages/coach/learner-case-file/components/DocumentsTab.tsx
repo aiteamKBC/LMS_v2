@@ -38,7 +38,7 @@ export default function DocumentsTab({ data }: CaseFileTabProps) {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <div>
               <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-                <i className="ri-file-list-3-line text-primary-500"></i> Available Live Records
+                <AppIcon className="ri-file-list-3-line text-primary-500"></AppIcon> Available Live Records
               </h2>
               <p className="text-[12px] text-foreground-500 mt-1">
                 This tab now shows only records that actually exist in the connected APIs.
@@ -49,7 +49,7 @@ export default function DocumentsTab({ data }: CaseFileTabProps) {
                 onClick={handleOpenTrainingPlan}
                 className="px-4 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[12px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
               >
-                <i className="ri-route-line text-sm"></i> Open Training Plan
+                <AppIcon className="ri-route-line text-sm"></AppIcon> Open Training Plan
               </button>
             )}
           </div>
@@ -63,7 +63,7 @@ export default function DocumentsTab({ data }: CaseFileTabProps) {
                   <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     record.status === 'available' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-700'
                   }`}>
-                    <i className={`${record.status === 'available' ? 'ri-check-line' : 'ri-alert-line'} text-base`}></i>
+                    <AppIcon className={`${record.status === 'available' ? 'ri-check-line' : 'ri-alert-line'} text-base`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -89,7 +89,7 @@ export default function DocumentsTab({ data }: CaseFileTabProps) {
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
         <div className="p-5 md:p-6">
           <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2 mb-4">
-            <i className="ri-calendar-line text-accent-500"></i> Key Dates
+            <AppIcon className="ri-calendar-line text-accent-500"></AppIcon> Key Dates
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <DetailCard title="Start Date" value={data.startDate || '--'} detail="Coach caseload snapshot." icon="ri-play-circle-line" />
@@ -183,7 +183,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
@@ -206,7 +206,7 @@ function DetailCard({
     <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
       <div className="flex items-center gap-2 mb-2">
         <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
-          <i className={`${icon} text-sm text-foreground-600`}></i>
+          <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>

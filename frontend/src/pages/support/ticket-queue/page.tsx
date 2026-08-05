@@ -144,7 +144,7 @@ export default function SupportTicketQueue() {
                     onClick={() => setSelectedTicket(null)}
                     className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                   >
-                    <i className="ri-close-line text-xs"></i>
+                    <AppIcon className="ri-close-line text-xs"></AppIcon>
                   </button>
                 </div>
 
@@ -212,14 +212,14 @@ export default function SupportTicketQueue() {
                     onClick={handleSendReply}
                     className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-send-plane-fill"></i>
+                    <AppIcon className="ri-send-plane-fill"></AppIcon>
                   </button>
                 </div>
               </div>
             ) : (
               <div className="bg-background-50 rounded-xl border border-background-200/50 p-6 text-center">
                 <div className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-ticket-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-ticket-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-[13px] text-foreground-500">Select a ticket to view details</p>
                 <p className="text-[11px] text-foreground-300 mt-1">Click any ticket card to expand</p>

@@ -146,6 +146,69 @@ class ChatAPITests(ChatTestMixin, TestCase):
             ).exists()
         )
 
+    def test_same_email_coach_rows_keep_learner_conversations_isolated(self):
+        duplicate_coach = ChatCoach.objects.create(
+            id="coach-test-duplicate",
+            name="Casey Coach",
+            email="COACH@example.com",
+            job_title="Progress Coach",
+        )
+        second_learner = ChatLearner.objects.create(
+            id=2,
+            full_name="Morgan Learner",
+            email="morgan@example.com",
+        )
+        second_learner_user = User.objects.create_user(
+            username="morgan",
+            email="morgan@example.com",
+            password="password123",
+        )
+        second_conversation = Conversation.objects.create(
+            coach=duplicate_coach,
+            learner=second_learner,
+        )
+
+        # The coach is resolved by normalized email, while the exact
+        # conversation chooses the legacy coach row written to the message.
+        message = create_message(second_conversation, self.coach_user, "For Morgan only")
+        self.assertEqual(message.sender_coach_id, duplicate_coach.pk)
+        self.assertTrue(
+            MessageReceipt.objects.filter(
+                message=message,
+                recipient_type="learner",
+                recipient_learner=second_learner,
+            ).exists()
+        )
+
+        self.client.force_authenticate(self.coach_user)
+        coach_response = self.client.get(reverse("chat:conversation-list"))
+        self.assertEqual(
+            {item["id"] for item in coach_response.data},
+            {self.conversation.pk, second_conversation.pk},
+        )
+
+        self.client.force_authenticate(self.learner_user)
+        denied_response = self.client.get(
+            reverse(
+                "chat:conversation-messages",
+                kwargs={"conversation_id": second_conversation.pk},
+            )
+        )
+        self.assertEqual(denied_response.status_code, 404)
+
+        self.client.force_authenticate(second_learner_user)
+        allowed_response = self.client.get(
+            reverse(
+                "chat:conversation-messages",
+                kwargs={"conversation_id": second_conversation.pk},
+            )
+        )
+        self.assertEqual(allowed_response.status_code, 200)
+        self.assertEqual(
+            [item["body"] for item in allowed_response.data["results"]],
+            ["For Morgan only"],
+        )
+
     def test_invalid_message_bodies_are_rejected(self):
         self.client.force_authenticate(self.coach_user)
         url = reverse(

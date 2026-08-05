@@ -66,7 +66,7 @@ export default function AssignmentMarkingPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-edit-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-edit-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Assignment Marking</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{ASSIGNMENTS.length} assignments</strong> — {pending} pending, {marked} marked. AI-assisted scoring avg {aiAvg}%.</p>
@@ -86,7 +86,7 @@ export default function AssignmentMarkingPage() {
               <button key={s} onClick={() => setFilterStatus(s)} className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filterStatus === s ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
             ))}
           </div>
-          <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-robot-line mr-1"></i> AI Batch Mark</button>
+          <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-robot-line mr-1"></AppIcon> AI Batch Mark</button>
         </div>
 
         <div className="flex gap-6">
@@ -190,8 +190,8 @@ export default function AssignmentMarkingPage() {
                       <div className="space-y-2">
                         <textarea placeholder="Write feedback..." className="w-full p-2.5 rounded-lg border border-background-200 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-300 resize-none h-20 focus:outline-none focus:border-primary-300" />
                         <div className="flex items-center gap-2">
-                          <button className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Submit Mark</button>
-                          <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-close-line mr-1"></i> Return</button>
+                          <button className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Submit Mark</button>
+                          <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-close-line mr-1"></AppIcon> Return</button>
                         </div>
                       </div>
                     ) : (
@@ -203,13 +203,13 @@ export default function AssignmentMarkingPage() {
                           <option>Refer (&lt;50%)</option>
                         </select>
                         <input type="number" placeholder="Score (%)" className="w-full p-2 rounded-lg border border-background-200 bg-background-50 text-[11px] text-foreground-700 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300" />
-                        <button className="w-full px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Apply Grade</button>
+                        <button className="w-full px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Apply Grade</button>
                       </div>
                     )}
                   </div>
                 )}
 
-                <button className="w-full mt-3 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i> Download Submission</button>
+                <button className="w-full mt-3 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon> Download Submission</button>
               </div>
             </div>
           )}

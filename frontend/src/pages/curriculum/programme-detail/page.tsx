@@ -1769,7 +1769,7 @@ export default function ProgrammeDetailPage() {
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-start gap-4">
                 <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
-                  <i className="ri-database-2-line text-lg"></i>
+                  <AppIcon className="ri-database-2-line text-lg"></AppIcon>
                 </span>
                 <div>
                   <p className="text-[11px] font-semibold text-primary-600 uppercase tracking-wider mb-1">Live database sync</p>
@@ -1778,7 +1778,7 @@ export default function ProgrammeDetailPage() {
                 </div>
               </div>
               <button disabled className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold cursor-wait whitespace-nowrap flex items-center gap-2">
-                <i className="ri-loader-4-line animate-spin text-sm"></i>
+                <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>
                 Process in progress
               </button>
             </div>
@@ -1813,7 +1813,7 @@ export default function ProgrammeDetailPage() {
         <div className="flex min-h-[65vh] items-center justify-center bg-[linear-gradient(180deg,#fbfcff_0%,#f4f6fa_100%)] p-6">
           <div className="w-full max-w-lg rounded-2xl border border-foreground-200/70 bg-background-50 p-7 text-center shadow-sm">
             <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl ${error ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
-              <i className={`${error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'} text-xl`}></i>
+              <AppIcon className={`${error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'} text-xl`}></AppIcon>
             </span>
             <h1 className="mt-4 text-lg font-heading font-black text-foreground-950">{error ? 'Unable to load programme data' : 'Programme not found'}</h1>
             <p className="mt-2 text-[13px] leading-6 text-foreground-500">
@@ -1821,11 +1821,11 @@ export default function ProgrammeDetailPage() {
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/programmes')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
-                <i className="ri-arrow-left-line"></i> All programmes
+                <AppIcon className="ri-arrow-left-line"></AppIcon> All programmes
               </button>
               {error && (
                 <button onClick={() => void reload()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700">
-                  <i className="ri-refresh-line"></i> Try again
+                  <AppIcon className="ri-refresh-line"></AppIcon> Try again
                 </button>
               )}
             </div>
@@ -1846,7 +1846,7 @@ export default function ProgrammeDetailPage() {
               <div className="min-w-0">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
-                    <i className="ri-database-2-line text-xs"></i>
+                    <AppIcon className="ri-database-2-line text-xs"></AppIcon>
                     Live programme
                   </span>
                   <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
@@ -1865,15 +1865,15 @@ export default function ProgrammeDetailPage() {
                 </div>
                 <div className="flex flex-wrap gap-2 xl:justify-end">
                   <button onClick={() => openStructureWizard({ startStep: 'cohort' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
-                    <i className="ri-add-line text-sm"></i>
+                    <AppIcon className="ri-add-line text-sm"></AppIcon>
                     Add structure
                   </button>
                   <button onClick={() => openStructureWizard({ startStep: 'programme' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-                    <i className="ri-edit-line text-sm"></i>
+                    <AppIcon className="ri-edit-line text-sm"></AppIcon>
                     Edit programme
                   </button>
                   <button onClick={openSkillsStandard} disabled={skillsStandardsLoading && !skillsStandardTarget} title={skillsStandardTarget ? 'Open the linked Skills England standard' : 'No linked Skills England standard found for this programme'} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-wait disabled:opacity-60">
-                    <i className="ri-file-list-3-line text-sm"></i>
+                    <AppIcon className="ri-file-list-3-line text-sm"></AppIcon>
                     {skillsStandardTarget ? 'View Standard' : skillsStandardsLoading ? 'Checking Standard' : 'Browse Standards'}
                   </button>
                 </div>
@@ -1898,7 +1898,7 @@ export default function ProgrammeDetailPage() {
             {tabs.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
                 <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
-                  <i className={`${t.icon} text-[14px]`}></i>
+                  <AppIcon className={`${t.icon} text-[14px]`}></AppIcon>
                 </span>
                 <span>{t.label}</span>
                 {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
@@ -1912,7 +1912,7 @@ export default function ProgrammeDetailPage() {
           </div>
           <div className="ml-auto flex items-center gap-2 border-l border-background-200 pl-2">
             <button onClick={() => openKsbTrace('coverage')} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-              <i className="ri-bar-chart-box-line text-sm"></i>
+              <AppIcon className="ri-bar-chart-box-line text-sm"></AppIcon>
               View KSB coverage details
             </button>
           </div>
@@ -1926,7 +1926,7 @@ export default function ProgrammeDetailPage() {
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                   <input value={cohortSearch} onChange={event => setCohortSearch(event.target.value)} placeholder="Search cohorts, dates, status..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <select value={cohortStatusFilter} onChange={event => setCohortStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
@@ -1942,7 +1942,7 @@ export default function ProgrammeDetailPage() {
 
             {filteredCohorts.length === 0 && (
               <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No cohorts match these filters</p>
               </div>
             )}
@@ -1952,7 +1952,7 @@ export default function ProgrammeDetailPage() {
                 {/* Cohort Header Ã¢â‚¬â€ Clickable */}
                 <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
                   <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expandedCohort === c.id ? 'rotate-180' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expandedCohort === c.id ? 'rotate-180' : ''}`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -1974,7 +1974,7 @@ export default function ProgrammeDetailPage() {
                         </div>
                       );
                     })()}
-                    <span className="text-[12px]"><i className="ri-graduation-cap-line mr-1"></i>{c.learners}</span>
+                    <span className="text-[12px]"><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{c.learners}</span>
                   </div>
                 </button>
 
@@ -1989,10 +1989,10 @@ export default function ProgrammeDetailPage() {
                             <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
                           </div>
                           <div className="grid grid-cols-2 gap-2 mb-3">
-                            <div className="text-[11px] text-foreground-500"><i className="ri-graduation-cap-line mr-1 text-[10px]"></i>{g.learners} learners</div>
-                            <div className="text-[11px] text-foreground-500"><i className="ri-heart-line mr-1 text-[10px]"></i>Coach: {g.coach}</div>
-                            <div className="text-[11px] text-foreground-500"><i className="ri-user-settings-line mr-1 text-[10px]"></i>Tutor: {g.tutor}</div>
-                            <div className="text-[11px] text-foreground-500"><i className="ri-calendar-line mr-1 text-[10px]"></i>{g.schedule}</div>
+                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-graduation-cap-line mr-1 text-[10px]"></AppIcon>{g.learners} learners</div>
+                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>Coach: {g.coach}</div>
+                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>Tutor: {g.tutor}</div>
+                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-calendar-line mr-1 text-[10px]"></AppIcon>{g.schedule}</div>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-[10px] text-foreground-400 bg-background-200/50 px-2 py-0.5 rounded">{g.mode}</span>
@@ -2057,10 +2057,10 @@ export default function ProgrammeDetailPage() {
                     </div>
                     <div className="flex items-center gap-2 mt-3">
                       <button onClick={() => showCurriculumAlert({ title: 'Learner allocation is resource-scoped', text: `${c.name} is live in this programme view. Learner allocation should use the live MIS workflow instead of the legacy mock page.`, icon: 'info' })} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-user-add-line mr-1"></i> Allocate Learners
+                        <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
                       </button>
                       <button onClick={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-add-line mr-1"></i> New Group
+                        <AppIcon className="ri-add-line mr-1"></AppIcon> New Group
                       </button>
                     </div>
                   </div>
@@ -2078,7 +2078,7 @@ export default function ProgrammeDetailPage() {
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                   <input value={groupSearch} onChange={event => setGroupSearch(event.target.value)} placeholder="Search groups, coach, tutor, schedule..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <select value={groupCohortFilter} onChange={event => setGroupCohortFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
@@ -2098,7 +2098,7 @@ export default function ProgrammeDetailPage() {
 
             {filteredGroups.length === 0 && (
               <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No groups match these filters</p>
               </div>
             )}
@@ -2113,7 +2113,7 @@ export default function ProgrammeDetailPage() {
                   <div key={g.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
                     <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4">
                       <div className="w-12 h-12 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                        <i className="ri-team-line text-secondary-700 text-lg"></i>
+                        <AppIcon className="ri-team-line text-secondary-700 text-lg"></AppIcon>
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -2122,11 +2122,11 @@ export default function ProgrammeDetailPage() {
                           <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
                         </div>
                         <div className="flex items-center gap-4 text-[11px] text-foreground-500 mt-1 flex-wrap">
-                          <span><i className="ri-graduation-cap-line mr-1 text-[10px]"></i>{g.learners} learners</span>
-                          <span><i className="ri-heart-line mr-1 text-[10px]"></i>Coach: <strong className="text-foreground-700">{g.coach}</strong></span>
-                          <span><i className="ri-user-settings-line mr-1 text-[10px]"></i>Tutor: <strong className="text-foreground-700">{g.tutor}</strong></span>
-                          <span><i className="ri-calendar-line mr-1 text-[10px]"></i>{g.schedule}</span>
-                          <span><i className="ri-map-pin-line mr-1 text-[10px]"></i>{g.mode}</span>
+                          <span><AppIcon className="ri-graduation-cap-line mr-1 text-[10px]"></AppIcon>{g.learners} learners</span>
+                          <span><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>Coach: <strong className="text-foreground-700">{g.coach}</strong></span>
+                          <span><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>Tutor: <strong className="text-foreground-700">{g.tutor}</strong></span>
+                          <span><AppIcon className="ri-calendar-line mr-1 text-[10px]"></AppIcon>{g.schedule}</span>
+                          <span><AppIcon className="ri-map-pin-line mr-1 text-[10px]"></AppIcon>{g.mode}</span>
                         </div>
                       </div>
                     </div>
@@ -2145,7 +2145,7 @@ export default function ProgrammeDetailPage() {
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                   <input
                     value={moduleSearch}
                     onChange={event => setModuleSearch(event.target.value)}
@@ -2186,7 +2186,7 @@ export default function ProgrammeDetailPage() {
 
             {filteredModules.length === 0 && (
               <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <i className="ri-filter-off-line text-2xl text-foreground-300"></i>
+                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
                 <p className="text-sm font-semibold text-foreground-700 mt-2">No modules match these filters</p>
                 <button onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }} className="mt-3 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth">
                   Clear filters
@@ -2219,7 +2219,7 @@ export default function ProgrammeDetailPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="w-11 h-11 rounded-xl bg-primary-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-                      <i className="ri-stack-line text-sm"></i>
+                      <AppIcon className="ri-stack-line text-sm"></AppIcon>
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2234,7 +2234,7 @@ export default function ProgrammeDetailPage() {
                     className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
                     title="Open this module in Module Builder"
                   >
-                    <i className="ri-tools-line text-sm"></i>
+                    <AppIcon className="ri-tools-line text-sm"></AppIcon>
                     Module Builder
                   </button>
                 </div>
@@ -2264,7 +2264,7 @@ export default function ProgrammeDetailPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex min-w-0 items-start gap-2.5">
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-                          <i className="ri-microsoft-teams-line text-base"></i>
+                          <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
                         </span>
                         <div className="min-w-0">
                           <p className="text-[11px] font-black text-foreground-900">Microsoft Teams results</p>
@@ -2299,7 +2299,7 @@ export default function ProgrammeDetailPage() {
                           }}
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-50"
                         >
-                          <i className={`${teamsSyncingId === teamsLiveSessionId ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></i>
+                          <AppIcon className={`${teamsSyncingId === teamsLiveSessionId ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></AppIcon>
                           {teamsSyncingId === teamsLiveSessionId ? 'Syncing...' : 'Sync results'}
                         </button>
                         <button
@@ -2326,7 +2326,7 @@ export default function ProgrammeDetailPage() {
                           }}
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-50 disabled:cursor-wait disabled:opacity-50"
                         >
-                          <i className={teamsResultsOpen[teamsLiveSessionId] ? 'ri-arrow-up-s-line' : 'ri-eye-line'}></i>
+                          <AppIcon className={teamsResultsOpen[teamsLiveSessionId] ? 'ri-arrow-up-s-line' : 'ri-eye-line'}></AppIcon>
                           {teamsResultsOpen[teamsLiveSessionId] ? 'Hide details' : 'View details'}
                         </button>
                       </div>
@@ -2379,7 +2379,7 @@ export default function ProgrammeDetailPage() {
                               <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
                             {weekTeamsUrl && (
                               <a href={weekTeamsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-primary-700 hover:text-primary-800 hover:underline">
-                                <i className="ri-microsoft-teams-line"></i>
+                                <AppIcon className="ri-microsoft-teams-line"></AppIcon>
                                 Join Teams session
                               </a>
                             )}
@@ -2388,7 +2388,7 @@ export default function ProgrammeDetailPage() {
                               <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
                               <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{weekComponents.length} comp</span>
                               <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[9px] font-bold text-secondary-700">{weekKsbCount} KSB</span>
-                              <i className={`ri-arrow-down-s-line text-sm text-foreground-400 transition-smooth ${isWeekOpen ? 'rotate-180 text-primary-600' : ''}`}></i>
+                              <AppIcon className={`ri-arrow-down-s-line text-sm text-foreground-400 transition-smooth ${isWeekOpen ? 'rotate-180 text-primary-600' : ''}`}></AppIcon>
                             </div>
                           </button>
                           {isWeekOpen && (
@@ -2415,7 +2415,7 @@ export default function ProgrammeDetailPage() {
                                   </div>
                                 )) : (
                                   <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-5 text-center">
-                                    <i className="ri-inbox-line text-lg text-foreground-300"></i>
+                                    <AppIcon className="ri-inbox-line text-lg text-foreground-300"></AppIcon>
                                     <p className="mt-1 text-[11px] font-bold text-foreground-500">No components attached to this week yet.</p>
                                   </div>
                                 )}
@@ -2481,7 +2481,7 @@ export default function ProgrammeDetailPage() {
                       >
                         <div className="flex items-start gap-3">
                           <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-background-50 text-primary-600'}`}>
-                            <i className="ri-stack-line text-sm"></i>
+                            <AppIcon className="ri-stack-line text-sm"></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-[13px] font-black text-foreground-950">{option.name}</p>
@@ -2516,7 +2516,7 @@ export default function ProgrammeDetailPage() {
                     onClick={() => window.REACT_APP_NAVIGATE(moduleBuilderUrl(module, PROGRAMME))}
                     className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
                   >
-                    <i className="ri-tools-line text-sm"></i>
+                    <AppIcon className="ri-tools-line text-sm"></AppIcon>
                     Open Module Builder
                   </button>
                 </div>
@@ -2572,7 +2572,7 @@ export default function ProgrammeDetailPage() {
                               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">{weekKsbCount} KSBs</span>
                             </div>
                           </div>
-                          <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-smooth ${isOpen ? 'rotate-180 text-primary-600' : ''}`}></i>
+                          <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-smooth ${isOpen ? 'rotate-180 text-primary-600' : ''}`}></AppIcon>
                         </button>
                         {isOpen && (
                           <div className="border-t border-background-200 bg-background-100/60 px-4 pb-4 pt-3">
@@ -2595,7 +2595,7 @@ export default function ProgrammeDetailPage() {
                                       </div>
                                       {componentTeamsUrl && (
                                         <a href={componentTeamsUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
-                                          <i className="ri-microsoft-teams-line"></i>
+                                          <AppIcon className="ri-microsoft-teams-line"></AppIcon>
                                           Join Teams session
                                         </a>
                                       )}
@@ -2605,7 +2605,7 @@ export default function ProgrammeDetailPage() {
                                 );
                               }) : (
                                 <div className="lg:col-span-2 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
-                                  <i className="ri-inbox-line text-xl text-foreground-300"></i>
+                                  <AppIcon className="ri-inbox-line text-xl text-foreground-300"></AppIcon>
                                   <p className="mt-2 text-[12px] font-bold text-foreground-500">No components attached to this week yet.</p>
                                 </div>
                               )}
@@ -2630,12 +2630,12 @@ export default function ProgrammeDetailPage() {
             <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex rounded-xl border border-foreground-200/70 bg-background-100 p-1">
                 <button onClick={() => setSessionKind('live')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'live' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
-                  <i className="ri-broadcast-line text-sm"></i>
+                  <AppIcon className="ri-broadcast-line text-sm"></AppIcon>
                   Live
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'live' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{liveSessions.length}</span>
                 </button>
                 <button onClick={() => setSessionKind('recorded')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'recorded' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
-                  <i className="ri-film-line text-sm"></i>
+                  <AppIcon className="ri-film-line text-sm"></AppIcon>
                   Recorded
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'recorded' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{recordedSessions.length}</span>
                 </button>
@@ -2651,7 +2651,7 @@ export default function ProgrammeDetailPage() {
             <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                   <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <select value={sessionModuleFilter} onChange={event => setSessionModuleFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
@@ -2687,12 +2687,12 @@ export default function ProgrammeDetailPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <span className="inline-flex items-center gap-1.5 rounded-full border border-primary-100 bg-white px-3 py-1.5 text-[10px] font-bold text-primary-700">
-                      <i className={sessionKind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></i>
+                      <AppIcon className={sessionKind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></AppIcon>
                       {activeSessions.length} {sessionKind === 'live' ? 'scheduled sessions' : 'recordings'}
                     </span>
                     {sessionKind === 'live' && (
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-white px-3 py-1.5 text-[10px] font-bold text-emerald-700">
-                        <i className="ri-links-line"></i>
+                        <AppIcon className="ri-links-line"></AppIcon>
                         {liveSessions.filter(session => session.url).length} join links ready
                       </span>
                     )}
@@ -2703,13 +2703,13 @@ export default function ProgrammeDetailPage() {
                     <article key={session.id} className="grid gap-4 px-5 py-4 transition-smooth hover:bg-primary-50/30 lg:grid-cols-[minmax(260px,1.5fr)_minmax(180px,1fr)_170px_120px_150px] lg:items-center">
                       <div className="flex min-w-0 items-start gap-3">
                         <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${session.kind === 'live' ? 'bg-primary-600 text-white' : 'bg-sky-100 text-sky-700'}`}>
-                          <i className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></i>
+                          <AppIcon className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></AppIcon>
                         </span>
                         <div className="min-w-0">
                           <p className="truncate text-[13px] font-black text-foreground-950">{session.title}</p>
                           <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {session.kind === 'live' && session.attendanceRequired && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700"><i className="ri-user-follow-line mr-1"></i>Attendance tracked</span>}
-                            {session.kind === 'live' && session.recordingExpected && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-700"><i className="ri-record-circle-line mr-1"></i>Recording enabled</span>}
+                            {session.kind === 'live' && session.attendanceRequired && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700"><AppIcon className="ri-user-follow-line mr-1"></AppIcon>Attendance tracked</span>}
+                            {session.kind === 'live' && session.recordingExpected && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-700"><AppIcon className="ri-record-circle-line mr-1"></AppIcon>Recording enabled</span>}
                             {session.kind === 'recorded' && session.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
                           </div>
                         </div>
@@ -2719,7 +2719,7 @@ export default function ProgrammeDetailPage() {
                         <p className="truncate text-[11px] font-bold text-foreground-800">{session.module}</p>
                         <p className="mt-1 text-[10px] font-semibold text-foreground-400">Week {session.week} Â· {session.weekTitle || `Week ${session.week}`}</p>
                         <p className="mt-1 truncate text-[10px] text-foreground-500">
-                          <i className="ri-group-line mr-1 text-primary-500"></i>
+                          <AppIcon className="ri-group-line mr-1 text-primary-500"></AppIcon>
                           {session.groups.length ? session.groups.join(', ') : 'All assigned groups'}
                         </p>
                       </div>
@@ -2739,16 +2739,16 @@ export default function ProgrammeDetailPage() {
                       </div>
 
                       <div className="flex items-center gap-2 lg:flex-col lg:items-start">
-                        <span className="text-[11px] font-bold text-foreground-700"><i className="ri-time-line mr-1 text-foreground-400"></i>{session.durationMinutes ? `${session.durationMinutes} min` : 'Duration TBC'}</span>
+                        <span className="text-[11px] font-bold text-foreground-700"><AppIcon className="ri-time-line mr-1 text-foreground-400"></AppIcon>{session.durationMinutes ? `${session.durationMinutes} min` : 'Duration TBC'}</span>
                         <span className={`rounded-full border px-2.5 py-1 text-[9px] font-bold capitalize ${componentStatusColors[session.status] || componentStatusColors.draft}`}>{session.status}</span>
                       </div>
 
                       <div className="flex lg:justify-end">
                         {session.url ? (
                           <a href={session.url} target="_blank" rel="noreferrer" className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-smooth hover:bg-primary-700 lg:w-auto">
-                            <i className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'}></i>
+                            <AppIcon className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'}></AppIcon>
                             {session.kind === 'live' ? 'Join meeting' : 'Open recording'}
-                            <i className="ri-external-link-line text-[10px] opacity-80"></i>
+                            <AppIcon className="ri-external-link-line text-[10px] opacity-80"></AppIcon>
                           </a>
                         ) : (
                           <span className="inline-flex h-10 items-center rounded-xl border border-dashed border-background-300 px-3 text-[10px] font-semibold text-foreground-400">Link not available</span>
@@ -2760,17 +2760,17 @@ export default function ProgrammeDetailPage() {
                 <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i className="ri-skip-left-line text-xs"></i>
+                      <AppIcon className="ri-skip-left-line text-xs"></AppIcon>
                     </button>
                     <button onClick={() => setSessionPage(page => Math.max(1, page - 1))} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i className="ri-arrow-left-s-line text-sm"></i>
+                      <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
                     </button>
                     <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
                     <button onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i className="ri-arrow-right-s-line text-sm"></i>
+                      <AppIcon className="ri-arrow-right-s-line text-sm"></AppIcon>
                     </button>
                     <button onClick={() => setSessionPage(sessionPageCount)} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <i className="ri-skip-right-line text-xs"></i>
+                      <AppIcon className="ri-skip-right-line text-xs"></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -2790,7 +2790,7 @@ export default function ProgrammeDetailPage() {
                 <p className="text-[12px] text-foreground-400 mt-1">Rolled up from component KSB mappings into weeks, modules and programme coverage. Empty cells indicate the KSB is not addressed in that module.</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
-                    <i className="ri-bookmark-3-line text-sm"></i>
+                    <AppIcon className="ri-bookmark-3-line text-sm"></AppIcon>
                     {coverageKsbSource.sourceId
                       ? `Showing KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
                       : 'No KSB source applied to this programme'}
@@ -2799,18 +2799,18 @@ export default function ProgrammeDetailPage() {
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?programme=${encodeURIComponent(PROGRAMME.name)}`)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-                  <i className="ri-tools-line text-sm"></i>
+                  <AppIcon className="ri-tools-line text-sm"></AppIcon>
                   Edit component weights
                 </button>
                 <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/ksb-mapping')} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
-                  <i className="ri-list-check-3 text-sm"></i>
+                  <AppIcon className="ri-list-check-3 text-sm"></AppIcon>
                   Global worklist
                 </button>
               </div>
             </div>
             {backendCoverageLoading ? (
               <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600">
-                <i className="ri-loader-4-line mr-2 animate-spin text-primary-600"></i>
+                <AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>
                 Loading backend KSB coverage...
               </div>
             ) : backendCoverageError ? (
@@ -2853,7 +2853,7 @@ export default function ProgrammeDetailPage() {
             <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
               <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center">
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                   <input value={ksbSearch} onChange={event => setKsbSearch(event.target.value)} placeholder="Search KSB code or title..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
                 </div>
                 <button onClick={() => setKsbSearch('')} disabled={!ksbSearch} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
@@ -2929,7 +2929,7 @@ export default function ProgrammeDetailPage() {
                 <div className="border-b border-foreground-200/60 p-5 xl:border-b-0 xl:border-r">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white">
-                      <i className="ri-checkbox-circle-line text-lg"></i>
+                      <AppIcon className="ri-checkbox-circle-line text-lg"></AppIcon>
                     </span>
                     <div>
                       <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary-600">Review</p>
@@ -2978,7 +2978,7 @@ export default function ProgrammeDetailPage() {
                 {PROGRAMME.cohorts.map(cohortItem => (
                   <div key={cohortItem.id} className="rounded-xl border border-primary-100 bg-primary-50/30 p-4">
                     <div className="flex flex-wrap items-center gap-3">
-                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 text-white"><i className="ri-calendar-check-line"></i></span>
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 text-white"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
                       <div>
                         <p className="text-[10px] font-black uppercase text-primary-700">Cohort</p>
                         <p className="text-sm font-heading font-black text-foreground-950">{cohortItem.name}</p>
@@ -2989,7 +2989,7 @@ export default function ProgrammeDetailPage() {
                     <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-amber-800">
-                          <i className="ri-calendar-event-line text-sm"></i>
+                          <AppIcon className="ri-calendar-event-line text-sm"></AppIcon>
                           Applied holidays
                         </span>
                         {cohortItem.holidays?.length ? cohortItem.holidays.map(holiday => (
@@ -3028,7 +3028,7 @@ export default function ProgrammeDetailPage() {
                             <div className="mt-3 flex flex-wrap gap-2">
                               {groupModules.map(mod => (
                                 <span key={mod.id} className="inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-700">
-                                  <i className="ri-stack-line text-primary-600"></i>
+                                  <AppIcon className="ri-stack-line text-primary-600"></AppIcon>
                                   {mod.name}
                                   <span className="text-emerald-700">{formatHours(mod.otjh)}h</span>
                                 </span>
@@ -3105,7 +3105,7 @@ const mappedKsbCodes = [...new Set([
             <form onSubmit={saveProgramme} className="bg-background-50 rounded-2xl w-full max-w-xl shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Edit Programme</h3>
-                <button type="button" onClick={() => setProgrammeFormOpen(false)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
+                <button type="button" onClick={() => setProgrammeFormOpen(false)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-foreground-500"></AppIcon></button>
               </div>
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3173,7 +3173,7 @@ function StatPill({ icon, value, label }: { icon: string; value: number | string
   return (
     <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
       <div>
         <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
@@ -3200,7 +3200,7 @@ function ReviewMetric({ icon, label, value, tone }: { icon: string; label: strin
     <div className={`rounded-xl border p-3 ${tones[tone]}`}>
       <div className="flex items-center gap-2">
         <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/70">
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <p className="text-xl font-black leading-none">{value}</p>
       </div>
@@ -3237,7 +3237,7 @@ function ReviewInfo({ icon, label, value }: { icon: string; label: string; value
   return (
     <div className="grid grid-cols-[24px_82px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
       <span className="flex h-6 w-6 items-center justify-center rounded-md bg-background-50 text-primary-600">
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <span className="text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</span>
       <span className="min-w-0 truncate text-[11px] font-black text-foreground-900">{value || 'Not set'}</span>
@@ -3416,7 +3416,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
                   download
                   className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-100"
                 >
-                  <i className={artifact.artifact_type === 'recording' ? 'ri-download-cloud-2-line' : 'ri-file-text-line'}></i>
+                  <AppIcon className={artifact.artifact_type === 'recording' ? 'ri-download-cloud-2-line' : 'ri-file-text-line'}></AppIcon>
                   {artifact.artifact_type === 'recording' ? 'Download recording' : 'Download transcript'}
                 </a>
               ))}
@@ -3430,7 +3430,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
                   <p className="text-[10px] font-black uppercase text-foreground-700">Meeting transcript</p>
                   <p className="text-[9px] font-semibold text-foreground-400">Speaker-attributed text from Microsoft Teams</p>
                 </div>
-                <i className="ri-file-text-line text-base text-primary-500"></i>
+                <AppIcon className="ri-file-text-line text-base text-primary-500"></AppIcon>
               </div>
               {transcriptErrors[artifact.id] ? (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-[10px] font-semibold text-red-700">{transcriptErrors[artifact.id]}</p>
@@ -3452,7 +3452,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
                 )
               ) : (
                 <p className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500">
-                  <i className="ri-loader-4-line animate-spin"></i>Loading transcript text...
+                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Loading transcript text...
                 </p>
               )}
             </div>
@@ -3477,7 +3477,7 @@ function ModuleCardMetric({ icon, label, value, tone = 'purple' }: { icon: strin
   return (
     <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${tones[tone]}`}>
       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/70">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
       <div className="min-w-0">
         <p className="truncate text-sm font-black leading-tight text-current">{value}</p>
@@ -3491,7 +3491,7 @@ function ModuleDetailLine({ icon, label, value }: { icon: string; label: string;
   return (
     <div className="grid min-w-0 grid-cols-[24px_112px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-background-50 px-2 py-1.5 text-[11px]">
       <span className="grid h-6 w-6 place-items-center rounded-md bg-background-100 text-primary-600">
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <span className="font-black uppercase tracking-wide text-foreground-400">{label}</span>
       <span className="w-fit max-w-full min-w-0 truncate rounded-md border border-background-200 bg-white px-2 py-1 text-left font-black text-foreground-950 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.65)]">{value}</span>
@@ -3550,7 +3550,7 @@ function LoadingStatPill({ label }: { label: string }) {
 function ModuleTooltipMetric({ icon, label, value }: { icon: string; label: string; value: number | string }) {
   return (
     <span className="flex items-center gap-2 rounded-lg bg-background-100 border border-foreground-200/60 px-2.5 py-2">
-      <i className={`${icon} text-primary-500 text-xs`}></i>
+      <AppIcon className={`${icon} text-primary-500 text-xs`}></AppIcon>
       <span className="min-w-0">
         <span className="block text-[9px] font-bold text-foreground-400 uppercase leading-tight">{label}</span>
         <span className="block text-[11px] font-semibold text-foreground-800 truncate leading-tight mt-0.5">{value}</span>
@@ -3975,7 +3975,7 @@ function KsbHeatCell({ value, count, evidence }: { value: number | null | undefi
               {groupedEvidence.map(({ week, items }) => (
                 <div key={week} className="rounded-lg bg-white/70 px-2 py-1">
                   <div className="flex items-center gap-1 text-[9px] font-black uppercase text-foreground-500">
-                    <i className="ri-calendar-check-line"></i>
+                    <AppIcon className="ri-calendar-check-line"></AppIcon>
                     <span className="truncate">{week}</span>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1">
@@ -4085,7 +4085,7 @@ function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTa
               <p className="mt-1 text-[12px] font-semibold text-white/70">{programme.standard || 'Selected KSB profile'}</p>
             </div>
             <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 lg:self-start">
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
         </div>
@@ -4102,7 +4102,7 @@ function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTa
           <div className="mb-4 rounded-2xl border border-background-200 bg-background-100/60 p-4">
             <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_repeat(6,minmax(120px,0.6fr))]">
               <div className="relative">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search KSB, module, week, component, group..." className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none focus:border-primary-300" />
               </div>
               <KsbTraceSelect value={kindFilter} onChange={value => setKindFilter(value as 'all' | KsbKind)} options={['all', 'knowledge', 'skill', 'behaviour']} labels={{ all: 'All types', knowledge: 'Knowledge', skill: 'Skills', behaviour: 'Behaviours' }} />

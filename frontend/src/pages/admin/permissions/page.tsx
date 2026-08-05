@@ -71,7 +71,7 @@ export default function AdminPermissionsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-key-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-key-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Permission Matrix</h2>
@@ -95,15 +95,15 @@ export default function AdminPermissionsPage() {
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search permissions..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setEditing(!editing)} className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap ${editing ? 'bg-accent-500 text-white hover:bg-accent-600' : 'bg-primary-500 text-white hover:bg-primary-600'}`}>
-              <i className={`${editing ? 'ri-save-line' : 'ri-pencil-line'} mr-1.5`}></i> {editing ? 'Save Changes' : 'Edit Matrix'}
+              <AppIcon className={`${editing ? 'ri-save-line' : 'ri-pencil-line'} mr-1.5`}></AppIcon> {editing ? 'Save Changes' : 'Edit Matrix'}
             </button>
             <button className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-download-line mr-1.5"></i> Export
+              <AppIcon className="ri-download-line mr-1.5"></AppIcon> Export
             </button>
           </div>
         </div>
@@ -140,7 +140,7 @@ export default function AdminPermissionsPage() {
                           onClick={() => {}}
                           className={`inline-flex items-center justify-center w-6 h-6 rounded transition-smooth cursor-pointer ${grants[role] ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'} ${editing ? 'hover:ring-2 hover:ring-primary-300/50' : ''}`}
                         >
-                          <i className={`${grants[role] ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></i>
+                          <AppIcon className={`${grants[role] ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></AppIcon>
                         </button>
                       </td>
                     ))}

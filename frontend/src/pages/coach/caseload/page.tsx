@@ -969,7 +969,7 @@ export default function CoachCaseload() {
               <div className="min-w-0">
                 <div className="mb-2.5 flex items-center gap-2 text-[11px] text-white/55">
                   <span>Coach Workspace</span>
-                  <i className="ri-arrow-right-s-line"></i>
+                  <AppIcon className="ri-arrow-right-s-line"></AppIcon>
                   <span className="font-semibold text-white">My Learners</span>
                 </div>
                 <h1 className="text-3xl font-heading font-bold tracking-[-0.03em] text-white">My Learners</h1>
@@ -996,7 +996,7 @@ export default function CoachCaseload() {
                     disabled={selectionMode && (selectedCount === 0 || isExportingPdf)}
                     className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl bg-white px-4 text-[11px] font-bold text-primary-800 shadow-[0_8px_20px_rgba(0,0,0,0.12)] transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}`}></i>
+                    <AppIcon className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}`}></AppIcon>
                     {selectionMode ? (selectedCount > 0 ? `Export Selected (${selectedCount})` : 'Select Learners') : 'Export Learners'}
                   </button>
                   {selectionMode && (
@@ -1007,7 +1007,7 @@ export default function CoachCaseload() {
                         disabled={isExportingPdf || filtered.length === 0}
                         className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-[11px] font-bold text-white/90 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <i className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'}`}></i>
+                        <AppIcon className={`${isExportingPdf ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-2-line'}`}></AppIcon>
                         Current View PDF
                       </button>
                       <button
@@ -1016,7 +1016,7 @@ export default function CoachCaseload() {
                         disabled={isExportingPdf}
                         className="inline-flex min-h-[54px] items-center justify-center gap-2 rounded-xl border border-white/16 bg-black/10 px-4 text-[11px] font-bold text-white/75 transition hover:bg-black/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <i className="ri-close-line"></i>
+                        <AppIcon className="ri-close-line"></AppIcon>
                         Cancel
                       </button>
                     </>
@@ -1038,7 +1038,7 @@ export default function CoachCaseload() {
           <section className="rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
             <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
               <div className="relative w-full xl:max-w-[360px]">
-                <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                 <input
                   type="search"
                   value={search}
@@ -1100,14 +1100,14 @@ export default function CoachCaseload() {
                   onClick={() => setViewMode('cards')}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${viewMode === 'cards' ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-400'}`}
                 >
-                  <i className="ri-layout-grid-line"></i> Card View
+                  <AppIcon className="ri-layout-grid-line"></AppIcon> Card View
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode('table')}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-semibold transition ${viewMode === 'table' ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-400'}`}
                 >
-                  <i className="ri-table-line"></i> Table View
+                  <AppIcon className="ri-table-line"></AppIcon> Table View
                 </button>
               </div>
               <span className="text-[11px] text-foreground-400">
@@ -1168,14 +1168,14 @@ export default function CoachCaseload() {
 
             {loading ? (
               <div className="py-20 text-center">
-                <i className="ri-loader-4-line mb-2 block animate-spin text-3xl text-primary-500"></i>
+                <AppIcon className="ri-loader-4-line mb-2 block animate-spin text-3xl text-primary-500"></AppIcon>
                 <p className="text-sm text-foreground-400">Loading learners...</p>
               </div>
             ) : error ? (
               <div className="py-20 text-center text-sm text-red-600">{error}</div>
             ) : filtered.length === 0 ? (
               <div className="py-20 text-center">
-                <i className="ri-user-search-line mb-2 block text-3xl text-foreground-300"></i>
+                <AppIcon className="ri-user-search-line mb-2 block text-3xl text-foreground-300"></AppIcon>
                 <p className="text-sm text-foreground-400">No learners match your filters.</p>
               </div>
             ) : viewMode === 'cards' ? (
@@ -1254,7 +1254,7 @@ export default function CoachCaseload() {
           <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3 flex-wrap">
             <div className="w-full lg:w-auto lg:min-w-[240px] lg:max-w-[280px]">
               <div className="relative">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} placeholder="Search learners..." className="w-full pl-9 pr-3 py-2 bg-background-100 border border-foreground-200 rounded-lg text-[12px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
               </div>
             </div>
@@ -1300,12 +1300,12 @@ export default function CoachCaseload() {
           )}
           {loading ? (
             <div className="py-12 text-center">
-              <i className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></i>
+              <AppIcon className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></AppIcon>
               <p className="text-sm text-foreground-500">Loading live learner data...</p>
             </div>
           ) : error ? (
             <div className="py-12 text-center">
-              <i className="ri-error-warning-line text-red-500 text-3xl mb-2 block"></i>
+              <AppIcon className="ri-error-warning-line text-red-500 text-3xl mb-2 block"></AppIcon>
               <p className="text-sm text-foreground-600">{error}</p>
               <p className="text-[11px] text-foreground-400 mt-1">{ownerEmail}</p>
             </div>
@@ -1522,7 +1522,7 @@ export default function CoachCaseload() {
                               title="View details"
                               aria-label={`View details for ${learner.name}`}
                             >
-                              <i className={`${isSel ? 'ri-eye-fill' : 'ri-eye-line'} text-sm`}></i>
+                              <AppIcon className={`${isSel ? 'ri-eye-fill' : 'ri-eye-line'} text-sm`}></AppIcon>
                             </button>
                           </td>
                         </tr>
@@ -1534,7 +1534,7 @@ export default function CoachCaseload() {
 
               {filtered.length === 0 && (
                 <div className="py-12 text-center">
-                  <i className="ri-search-line text-foreground-300 text-3xl mb-2 block"></i>
+                  <AppIcon className="ri-search-line text-foreground-300 text-3xl mb-2 block"></AppIcon>
                   <p className="text-sm text-foreground-400">No learners match your filters</p>
                   <button onClick={() => { setSummaryFilter('all'); setProgramStatusFilter('all'); setCohortFilter('all'); setGroupFilter('all'); setCoachRagFilter('all'); setSearch(''); setCurrentPage(1); }} className="mt-2 text-[11px] font-medium text-primary-600 hover:text-primary-700 cursor-pointer">
                     Clear all filters
@@ -1554,7 +1554,7 @@ export default function CoachCaseload() {
                       disabled={safePage <= 1}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
                     >
-                      <i className="ri-arrow-left-s-line text-sm"></i>
+                      <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
                     </button>
 
                     {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
@@ -1572,7 +1572,7 @@ export default function CoachCaseload() {
                       disabled={safePage >= totalPages}
                       className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:bg-background-200/50 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-smooth"
                     >
-                      <i className="ri-arrow-right-s-line text-sm"></i>
+                      <AppIcon className="ri-arrow-right-s-line text-sm"></AppIcon>
                     </button>
                   </div>
 
@@ -1621,7 +1621,7 @@ export default function CoachCaseload() {
               {selectedLearner.riskFlags.length > 0 && (
                 <div className="bg-red-50/50 rounded-xl border border-red-200/30 p-4">
                   <h4 className="text-[11px] font-semibold text-red-700 mb-2 flex items-center gap-1.5">
-                    <i className="ri-alert-line"></i> Risk Flags
+                    <AppIcon className="ri-alert-line"></AppIcon> Risk Flags
                   </h4>
                   <div className="flex flex-wrap gap-1.5">
                     {selectedLearner.riskFlags.map(flag => (
@@ -1715,20 +1715,20 @@ export default function CoachCaseload() {
               <div className="bg-background-100/50 rounded-xl p-3.5 space-y-2">
                 <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">Contact Info</p>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
-                  <i className="ri-mail-line text-foreground-300 text-xs"></i>
+                  <AppIcon className="ri-mail-line text-foreground-300 text-xs"></AppIcon>
                   <span>{selectedLearner.email || 'No learner email available'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
-                  <i className="ri-building-line text-foreground-300 text-xs"></i>
+                  <AppIcon className="ri-building-line text-foreground-300 text-xs"></AppIcon>
                   <span>{selectedLearner.employer}</span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-600">
-                  <i className="ri-mail-send-line text-foreground-300 text-xs"></i>
+                  <AppIcon className="ri-mail-send-line text-foreground-300 text-xs"></AppIcon>
                   <span>{selectedLearner.employerEmail || 'No employer email available'}</span>
                 </div>
                 {selectedLearner.employerPhone && (
                   <div className="flex items-center gap-2 text-[11px] text-foreground-600">
-                    <i className="ri-phone-line text-foreground-300 text-xs"></i>
+                    <AppIcon className="ri-phone-line text-foreground-300 text-xs"></AppIcon>
                     <span>{selectedLearner.employerPhone}</span>
                   </div>
                 )}
@@ -1775,13 +1775,13 @@ export default function CoachCaseload() {
                     onClick={() => { window.print(); }}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-medium hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-download-line text-xs"></i> Download PDF
+                    <AppIcon className="ri-download-line text-xs"></AppIcon> Download PDF
                   </button>
                   <button
                     onClick={() => setShowProgressReport(false)}
                     className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
                   >
-                    <i className="ri-close-line text-sm"></i>
+                    <AppIcon className="ri-close-line text-sm"></AppIcon>
                   </button>
                 </div>
               </div>
@@ -1800,7 +1800,7 @@ export default function CoachCaseload() {
                 {/* Executive Summary */}
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                   <h4 className="text-[13px] font-semibold text-foreground-900 mb-3 flex items-center gap-2">
-                    <i className="ri-file-list-3-line text-primary-500"></i> Executive Summary
+                    <AppIcon className="ri-file-list-3-line text-primary-500"></AppIcon> Executive Summary
                   </h4>
                   <p className="text-[12px] text-foreground-600 leading-relaxed">
                     {selectedLearner.name} is currently enrolled on the <strong>{selectedLearner.cohortName}</strong> cohort
@@ -1843,7 +1843,7 @@ export default function CoachCaseload() {
                 {/* Key Metrics Table */}
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                   <h4 className="text-[13px] font-semibold text-foreground-900 mb-4 flex items-center gap-2">
-                    <i className="ri-bar-chart-box-line text-primary-500"></i> Key Metrics
+                    <AppIcon className="ri-bar-chart-box-line text-primary-500"></AppIcon> Key Metrics
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <MetricRow label="Overall Progress" value={`${selectedLearner.overallProgress}%`} bar={selectedLearner.overallProgress} color={selectedLearner.status === 'at-risk' ? 'red' : selectedLearner.status === 'high' ? 'accent' : 'primary'} />
@@ -1858,14 +1858,14 @@ export default function CoachCaseload() {
                 {/* Issues & Concerns */}
                 <div className="bg-red-50 rounded-xl border border-red-200/30 p-5">
                   <h4 className="text-[13px] font-semibold text-red-800 mb-3 flex items-center gap-2">
-                    <i className="ri-error-warning-line text-red-500"></i> Issues & Concerns
+                    <AppIcon className="ri-error-warning-line text-red-500"></AppIcon> Issues & Concerns
                   </h4>
                   {selectedLearner.riskFlags.length > 0 ? (
                     <div className="space-y-3">
                       {selectedLearner.riskFlags.map((flag, i) => (
                         <div key={i} className="flex items-start gap-3 bg-white rounded-lg p-3 border border-red-100">
                           <span className="w-6 h-6 rounded-lg bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
-                            <i className="ri-alert-line text-red-500 text-xs"></i>
+                            <AppIcon className="ri-alert-line text-red-500 text-xs"></AppIcon>
                           </span>
                           <div>
                             <p className="text-[12px] font-semibold text-red-700">{flag}</p>
@@ -1887,7 +1887,7 @@ export default function CoachCaseload() {
                   ) : (
                     <div className="flex items-center gap-3 bg-white rounded-lg p-3 border border-red-100">
                       <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                        <i className="ri-check-line text-emerald-500 text-xs"></i>
+                        <AppIcon className="ri-check-line text-emerald-500 text-xs"></AppIcon>
                       </span>
                       <p className="text-[12px] text-emerald-700">No current risk flags. Learner is progressing well across all monitored areas.</p>
                     </div>
@@ -1897,7 +1897,7 @@ export default function CoachCaseload() {
                 {/* Strengths & Highlights */}
                 <div className="bg-emerald-50 rounded-xl border border-emerald-200/30 p-5">
                   <h4 className="text-[13px] font-semibold text-emerald-800 mb-3 flex items-center gap-2">
-                    <i className="ri-shining-line text-emerald-500"></i> Strengths & Highlights
+                    <AppIcon className="ri-shining-line text-emerald-500"></AppIcon> Strengths & Highlights
                   </h4>
                   <div className="space-y-2">
                     {selectedLearner.status === 'high' && (
@@ -1935,7 +1935,7 @@ export default function CoachCaseload() {
                 {/* Recent Activity Timeline */}
                 <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
                   <h4 className="text-[13px] font-semibold text-foreground-900 mb-4 flex items-center gap-2">
-                    <i className="ri-time-line text-primary-500"></i> Recent Activity Timeline
+                    <AppIcon className="ri-time-line text-primary-500"></AppIcon> Recent Activity Timeline
                   </h4>
                   <div className="space-y-3">
                     <TimelineItem icon="ri-calendar-check-line" color="emerald" date={selectedLearner.startDate} title="Learner Start" desc="Start date pulled from the learner record" />
@@ -1948,7 +1948,7 @@ export default function CoachCaseload() {
                 {/* Action Plan / Recommendations */}
                 <div className="bg-primary-50 rounded-xl border border-primary-200/30 p-5">
                   <h4 className="text-[13px] font-semibold text-primary-800 mb-3 flex items-center gap-2">
-                    <i className="ri-lightbulb-flash-line text-primary-500"></i> Coach Action Plan
+                    <AppIcon className="ri-lightbulb-flash-line text-primary-500"></AppIcon> Coach Action Plan
                   </h4>
                   <div className="space-y-2">
                     {selectedLearner.status === 'at-risk' && (
@@ -1996,7 +1996,7 @@ export default function CoachCaseload() {
                     onClick={() => { window.print(); }}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-medium hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-download-line text-xs"></i> Download PDF
+                    <AppIcon className="ri-download-line text-xs"></AppIcon> Download PDF
                   </button>
                 </div>
 
@@ -2021,7 +2021,7 @@ function HeaderMetric({ icon, label, value, tone }: { icon: string; label: strin
   };
   return (
     <div className="flex min-h-[54px] min-w-[110px] items-center gap-2.5 rounded-xl border border-white/10 bg-white/10 px-3 py-2 backdrop-blur-sm">
-      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles[tone]}`}><i className={icon}></i></span>
+      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${styles[tone]}`}><AppIcon className={icon}></AppIcon></span>
       <div>
         <p className="whitespace-nowrap text-[9px] font-semibold text-white/60">{label}</p>
         <p className="text-base font-bold text-white">{value}</p>
@@ -2099,7 +2099,7 @@ function ReferenceLearnerCard({
 
         <div className="mt-3 space-y-1.5 text-[10px]">
           {displayValue(learner.employer) !== EMPTY_VALUE && (
-            <p className="truncate font-semibold text-foreground-700"><i className="ri-building-4-line mr-1.5 text-foreground-300"></i>{displayValue(learner.employer)}</p>
+            <p className="truncate font-semibold text-foreground-700"><AppIcon className="ri-building-4-line mr-1.5 text-foreground-300"></AppIcon>{displayValue(learner.employer)}</p>
           )}
           <p className="truncate text-foreground-400">{displayValue(learner.cohortName)} <span className="mx-1.5">·</span> {displayValue(learner.group)}</p>
         </div>
@@ -2138,11 +2138,11 @@ function ReferenceLearnerCard({
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <span className="hidden items-center gap-1 text-[9px] text-foreground-400 sm:flex">
-            <i className="ri-calendar-line"></i>
+            <AppIcon className="ri-calendar-line"></AppIcon>
             Gateway Review: <strong className="font-semibold text-foreground-600">{learner.gatewayReviewDate}</strong>
           </span>
           <button type="button" onClick={onOpen} className="inline-flex items-center gap-1 rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 transition hover:bg-primary-100">
-            <i className="ri-profile-line"></i> Profile
+            <AppIcon className="ri-profile-line"></AppIcon> Profile
           </button>
         </div>
       </footer>
@@ -2238,9 +2238,9 @@ function ReferencePagination({ page, totalPages, total, pageSize, onPage }: { pa
     <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 px-4 py-3 sm:flex-row">
       <p className="text-[10px] text-foreground-400">Showing <strong className="text-foreground-700">{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)}</strong> of {total} learners</p>
       <div className="flex items-center gap-1">
-        <button type="button" disabled={page === 1} onClick={() => onPage(page - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><i className="ri-arrow-left-s-line"></i></button>
+        <button type="button" disabled={page === 1} onClick={() => onPage(page - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
         {pages.slice(Math.max(0, page - 3), Math.max(5, page + 2)).map((item) => <button type="button" key={item} onClick={() => onPage(item)} className={`h-8 min-w-8 rounded-lg px-2 text-[10px] font-bold ${item === page ? 'bg-primary-600 text-white' : 'text-foreground-500 hover:bg-background-100'}`}>{item}</button>)}
-        <button type="button" disabled={page === totalPages} onClick={() => onPage(page + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><i className="ri-arrow-right-s-line"></i></button>
+        <button type="button" disabled={page === totalPages} onClick={() => onPage(page + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 disabled:opacity-30"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
       </div>
       <p className="text-[10px] text-foreground-400">Page {page} of {totalPages}</p>
     </div>
@@ -2479,7 +2479,7 @@ function MetricDetailPanel({ learner, metric, onOpenFullDetails }: { learner: Le
       <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4">
         <div className="flex items-start gap-3">
           <div className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${copy.tone === 'primary' ? 'bg-primary-100 text-primary-700' : copy.tone === 'accent' ? 'bg-accent-50 text-accent-700' : 'bg-emerald-100 text-emerald-700'}`}>
-            <i className={`${copy.icon} text-lg`}></i>
+            <AppIcon className={`${copy.icon} text-lg`}></AppIcon>
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{copy.title}</p>
@@ -2533,7 +2533,7 @@ function MetricDetailPanel({ learner, metric, onOpenFullDetails }: { learner: Le
         onClick={onOpenFullDetails}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-3 text-[13px] font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-700"
       >
-        <i className="ri-external-link-line"></i>
+        <AppIcon className="ri-external-link-line"></AppIcon>
         {copy.tabLabel}
       </button>
     </div>
@@ -2564,7 +2564,7 @@ function MiniStatCard({ label, value, icon, color, active = false, onClick }: { 
       <div className="flex items-center justify-between">
         <span className="text-[10px] text-foreground-400 font-medium">{label}</span>
         <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${c.bg} ${c.text}`}>
-          <i className={`${icon} text-xs`}></i>
+          <AppIcon className={`${icon} text-xs`}></AppIcon>
         </span>
       </div>
       <p className="text-lg font-heading font-bold text-foreground-900 mt-1">{value}</p>
@@ -2666,7 +2666,7 @@ function CoachRagSelector({
           <span className={`h-1.5 w-1.5 rounded-full ${getCoachRagDotClass(selectedLabel)}`}></span>
           {selectedLabel}
         </span>
-        <i className={`text-[11px] ${saving ? 'ri-loader-4-line animate-spin' : isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
+        <AppIcon className={`text-[11px] ${saving ? 'ri-loader-4-line animate-spin' : isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></AppIcon>
       </button>
 
       {isOpen && typeof document !== 'undefined' && createPortal(
@@ -2704,7 +2704,7 @@ function CoachRagSelector({
                   <span className={`h-2 w-2 rounded-full ${getCoachRagDotClass(optionLabel)}`}></span>
                   {option.label}
                 </span>
-                {isSelected && <i className="ri-check-line text-[13px]"></i>}
+                {isSelected && <AppIcon className="ri-check-line text-[13px]"></AppIcon>}
               </button>
             );
           })}
@@ -2783,7 +2783,7 @@ function CaseloadMenuSelect({
             : 'border-foreground-200 text-foreground-600 hover:border-primary-300'
         }`}
       >
-        {icon && <i className={`${icon} text-[12px] text-foreground-400`}></i>}
+        {icon && <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>}
         {prefixLabel && (
           <>
             <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] text-foreground-400">
@@ -2793,7 +2793,7 @@ function CaseloadMenuSelect({
           </>
         )}
         <span className="min-w-0 flex-1 truncate">{selected?.label}</span>
-        <i className={`ri-arrow-down-s-line text-[13px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-[13px] text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && (
@@ -2820,7 +2820,7 @@ function CaseloadMenuSelect({
                 }`}
               >
                 <span className="flex-1">{option.label}</span>
-                {active && <i className="ri-check-line text-[13px]"></i>}
+                {active && <AppIcon className="ri-check-line text-[13px]"></AppIcon>}
               </button>
             );
           })}
@@ -2835,7 +2835,7 @@ function ThSort({ label, sortKey, current, dir, onClick, className = '', content
     <th className={`px-3 py-3 text-[10px] font-semibold text-foreground-400 uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-foreground-600 transition-smooth ${className}`} onClick={onClick}>
       <span className={`flex items-center gap-1 ${contentClassName}`}>
         {label}
-        <i className={`text-[8px] ${current === sortKey ? (dir === 'asc' ? 'ri-arrow-up-line text-primary-500' : 'ri-arrow-down-line text-primary-500') : 'ri-arrow-up-down-line text-foreground-300'}`}></i>
+        <AppIcon className={`text-[8px] ${current === sortKey ? (dir === 'asc' ? 'ri-arrow-up-line text-primary-500' : 'ri-arrow-down-line text-primary-500') : 'ri-arrow-up-down-line text-foreground-300'}`}></AppIcon>
       </span>
     </th>
   );
@@ -2859,7 +2859,7 @@ function ActivityRow({ icon, color, text, subtext }: { icon: string; color: stri
   return (
     <div className="flex items-center gap-3 p-2.5 rounded-lg bg-background-100/50">
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${c}`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <div>
         <p className="text-[12px] font-medium text-foreground-900">{text}</p>
@@ -2928,7 +2928,7 @@ function StrengthItem({ icon, text, subtext }: { icon: string; text: string; sub
   return (
     <div className="flex items-start gap-3 bg-white rounded-lg p-3 border border-emerald-100">
       <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0 mt-0.5">
-        <i className={`${icon} text-emerald-500 text-xs`}></i>
+        <AppIcon className={`${icon} text-emerald-500 text-xs`}></AppIcon>
       </span>
       <div>
         <p className="text-[12px] font-semibold text-emerald-800">{text}</p>
@@ -2944,7 +2944,7 @@ function TimelineItem({ icon, color, date, title, desc }: { icon: string; color:
   return (
     <div className="flex items-center gap-3">
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${c}`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between">
@@ -2963,7 +2963,7 @@ function ActionItem({ icon, color, text }: { icon: string; color: string; text: 
   return (
     <div className="flex items-start gap-3 bg-white rounded-lg p-3 border border-primary-100">
       <span className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${c}`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <p className="text-[12px] text-foreground-700 pt-0.5">{text}</p>
     </div>

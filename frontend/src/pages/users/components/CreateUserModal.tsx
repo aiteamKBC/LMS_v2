@@ -3,8 +3,10 @@ import { useToast } from '@/hooks/useToast';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
 import { createEnrolmentUser } from '@/api/enrolmentUsers';
+import { COUNTRY_OPTIONS as ALL_COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
 import type { UserListRow } from '../types';
 import { Modal } from './Modal';
+import { formatError } from '../wizard/steps/fields';
 import { inputClass, btnPrimary, btnSecondary } from './ui';
 
 // ============================================================================
@@ -56,9 +58,9 @@ const YES_NO = [
 ];
 
 const GENDER_OPTIONS = opts(['Male', 'Female', 'Prefer not to say']);
-// Kept short and UK-first: this is a UK-funded provider, so the vast majority of
-// learners are domestic and "Other" covers the rest without a 200-row list.
-const COUNTRY_OPTIONS = opts(['United Kingdom', 'Ireland', 'Other']);
+// The full country list, shared with the employer and organisation forms. Still
+// UK-first — see src/lib/countries.ts.
+const COUNTRY_OPTIONS = opts(ALL_COUNTRIES);
 const PROVIDER_OPTIONS = opts(['Kent Business College']);
 
 // The form, section by section, in Aptem's order.
@@ -146,7 +148,7 @@ const SECTIONS: SectionDef[] = [
 const INITIAL: Record<string, string> = {
   inviteToPlatform: 'false',
   learningProvider: 'Kent Business College',
-  country: 'United Kingdom',
+  country: DEFAULT_COUNTRY,
 };
 
 /** Fields visible for the chosen destination table. */
@@ -240,6 +242,21 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
     const missing = visibleFields(kind).filter((f) => f.required && !formData[f.name]?.trim());
     if (missing.length > 0) {
       error('Missing details', `Please complete: ${missing.map((f) => f.label).join(', ')}`);
+      return;
+    }
+    // Typed fields must also be well-formed — `type="email"`/`type="tel"` don't
+    // enforce anything on their own, so a single letter would otherwise be saved
+    // as someone's email address.
+    const malformed = visibleFields(kind)
+      .map((f) => {
+        const msg = f.type === 'email' || f.type === 'tel'
+          ? formatError(f.type, formData[f.name] ?? '')
+          : '';
+        return msg ? `${f.label} — ${msg}` : '';
+      })
+      .filter(Boolean);
+    if (malformed.length > 0) {
+      error('Check these details', malformed.join('; '));
       return;
     }
     const name = `${formData.firstName ?? ''} ${formData.lastName ?? ''}`.trim();
@@ -408,7 +425,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Close</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-user-add-line" />Create</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-user-add-line" />Create</>}
           </button>
         </>
       }
@@ -420,18 +437,18 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
           return (
             <section key={section.title} className="rounded-xl border border-foreground-200/70 overflow-hidden">
               <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
-                <i className={`${section.icon} text-primary-500`} />
+                <AppIcon className={`${section.icon} text-primary-500`} />
                 <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">{section.title}</h3>
               </header>
               <div className="divide-y divide-foreground-100">{fields.map(renderField)}</div>
               {section.title === 'Programme' && lookupError && (
                 <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
-                  <i className="ri-error-warning-line mr-1" />Could not load curriculum options: {lookupError}
+                  <AppIcon className="ri-error-warning-line mr-1" />Could not load curriculum options: {lookupError}
                 </p>
               )}
               {section.title === 'Delivery & employer' && staffError && (
                 <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
-                  <i className="ri-error-warning-line mr-1" />Could not load case owners: {staffError}
+                  <AppIcon className="ri-error-warning-line mr-1" />Could not load case owners: {staffError}
                 </p>
               )}
             </section>
@@ -442,7 +459,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
             that decides which table the row is written to. */}
         <section className="rounded-xl border-2 border-primary-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
-            <i className="ri-git-branch-line text-primary-500" />
+            <AppIcon className="ri-git-branch-line text-primary-500" />
             <h3 className="text-[12px] font-semibold uppercase tracking-wider text-primary-700">Learner type</h3>
           </header>
           <div className="p-4 space-y-2.5">

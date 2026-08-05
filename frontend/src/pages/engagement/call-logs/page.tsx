@@ -66,14 +66,14 @@ export default function CallLogsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search calls..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
@@ -95,7 +95,7 @@ export default function CallLogsPage() {
             {filtered.map(call => (
               <div key={call.id} className={`p-4 flex items-start gap-4 ${call.followUpRequired ? 'bg-accent-50/20' : ''}`}>
                 <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                  <i className="ri-phone-line text-sm"></i>
+                  <AppIcon className="ri-phone-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -107,19 +107,19 @@ export default function CallLogsPage() {
                   <div className="flex items-center gap-3 text-[10px] text-foreground-400">
                     <span>From: <strong className="text-foreground-600">{call.caller}</strong> ({call.callerRole})</span>
                     <span>To: <strong className="text-foreground-600">{call.recipient}</strong> ({call.recipientRole})</span>
-                    <span><i className="ri-time-line mr-0.5"></i>{call.duration}</span>
+                    <span><AppIcon className="ri-time-line mr-0.5"></AppIcon>{call.duration}</span>
                     <span>{call.phoneNumber}</span>
                     <span>{call.timestamp}</span>
-                    {call.recordingAvailable && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><i className="ri-mic-line mr-0.5"></i>Recorded</span>}
+                    {call.recordingAvailable && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><AppIcon className="ri-mic-line mr-0.5"></AppIcon>Recorded</span>}
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-file-list-line mr-1"></i> Notes
+                    <AppIcon className="ri-file-list-line mr-1"></AppIcon> Notes
                   </button>
                   {call.recordingAvailable && (
                     <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-play-line mr-1"></i> Play
+                      <AppIcon className="ri-play-line mr-1"></AppIcon> Play
                     </button>
                   )}
                 </div>

@@ -44,7 +44,7 @@ export default function AdminRolesPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-shield-check-line text-white text-2xl"></i>
+              <AppIcon className="ri-shield-check-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Role Management</h2>
@@ -74,11 +74,11 @@ export default function AdminRolesPage() {
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                 <input type="text" placeholder="Search roles..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
               </div>
               <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1.5"></i> New Role
+                <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Role
               </button>
             </div>
 
@@ -88,7 +88,7 @@ export default function AdminRolesPage() {
                 return (
                   <div key={r.id} onClick={() => setSelectedRole(r.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedRole === r.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
                     <span className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${colorBg}`}>
-                      <i className="ri-shield-user-line text-sm"></i>
+                      <AppIcon className="ri-shield-user-line text-sm"></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -98,10 +98,10 @@ export default function AdminRolesPage() {
                       <p className="text-[11px] text-foreground-400 mt-0.5 line-clamp-1">{r.description}</p>
                     </div>
                     <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                      <span><i className="ri-user-line mr-1"></i>{r.users}</span>
-                      <span><i className="ri-key-2-line mr-1"></i>{r.permissions}</span>
+                      <span><AppIcon className="ri-user-line mr-1"></AppIcon>{r.users}</span>
+                      <span><AppIcon className="ri-key-2-line mr-1"></AppIcon>{r.permissions}</span>
                     </div>
-                    <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedRole === r.id ? 'text-primary-500' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedRole === r.id ? 'text-primary-500' : ''}`}></AppIcon>
                   </div>
                 );
               })}
@@ -133,7 +133,7 @@ export default function AdminRolesPage() {
                       <div key={cat} className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-background-100 transition-smooth">
                         <span className="text-[12px] text-foreground-600">{cat}</span>
                         <span className={`w-4 h-4 rounded flex items-center justify-center ${Math.random() > 0.3 ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'}`}>
-                          <i className={`${Math.random() > 0.3 ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></i>
+                          <AppIcon className={`${Math.random() > 0.3 ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></AppIcon>
                         </span>
                       </div>
                     ))}
@@ -147,7 +147,7 @@ export default function AdminRolesPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-shield-user-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-shield-user-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select a role to view details</p>
               </div>

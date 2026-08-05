@@ -138,7 +138,7 @@ export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, previ
       {/* Header */}
       <div className="relative flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
-          <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0"><i className="ri-flashlight-line text-lg text-accent-300"></i></span>
+          <span className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center shrink-0"><AppIcon className="ri-flashlight-line text-lg text-accent-300"></AppIcon></span>
           <div className="min-w-0">
             <p className="text-[13px] font-heading font-semibold truncate flex items-center gap-2">
               {label}
@@ -149,12 +149,12 @@ export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, previ
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/10">
-            <i className="ri-copper-coin-line text-accent-300"></i>
+            <AppIcon className="ri-copper-coin-line text-accent-300"></AppIcon>
             <span key={sessionPoints} className="text-[13px] font-bold" style={{ animation: 'fc-pop-in .4s ease-out' }}>{sessionPoints}</span>
             <span className="text-[10px] text-white/60">earned</span>
           </div>
           {onClose && (
-            <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 text-white/70 hover:text-white hover:bg-white/20 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+            <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 text-white/70 hover:text-white hover:bg-white/20 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
           )}
         </div>
       </div>
@@ -163,14 +163,14 @@ export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, previ
       <div className="relative flex-1 flex flex-col items-center justify-center p-6 overflow-y-auto">
         {phase === 'loading' && (
           <div className="flex flex-col items-center gap-3 text-white/70">
-            <i className="ri-loader-4-line text-3xl animate-spin"></i>
+            <AppIcon className="ri-loader-4-line text-3xl animate-spin"></AppIcon>
             <p className="text-[12px]">Dealing your cards…</p>
           </div>
         )}
 
         {phase === 'error' && (
           <div className="flex flex-col items-center gap-3 text-center">
-            <i className="ri-wifi-off-line text-3xl text-white/50"></i>
+            <AppIcon className="ri-wifi-off-line text-3xl text-white/50"></AppIcon>
             <p className="text-[13px] font-semibold text-white">Couldn't load this deck</p>
             <p className="text-[11px] text-white/60 max-w-xs">{errorMsg}</p>
             <button onClick={load} className="mt-1 px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25 text-[12px] font-semibold transition-smooth cursor-pointer">Try again</button>
@@ -179,7 +179,7 @@ export function FlashCardGame({ deckId, deckTitle, learnerId, learnerName, previ
 
         {phase === 'empty' && (
           <div className="flex flex-col items-center gap-3 text-center">
-            <i className="ri-inbox-line text-3xl text-white/50"></i>
+            <AppIcon className="ri-inbox-line text-3xl text-white/50"></AppIcon>
             <p className="text-[13px] font-semibold text-white">This deck has no cards yet</p>
             <p className="text-[11px] text-white/60 max-w-xs">Add cards to the deck and they'll appear here.</p>
           </div>
@@ -295,7 +295,7 @@ function PlayStage({ card, index, total, cards, busy, burst, awardedNow, isLast,
 
             <div className="relative flex items-center justify-center pb-5">
               <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3.5 py-1.5 rounded-full" style={{ color: hex, background: `${hex}14` }}>
-                <i className="ri-refresh-line"></i> Tap to reveal
+                <AppIcon className="ri-refresh-line"></AppIcon> Tap to reveal
               </span>
             </div>
           </div>
@@ -307,8 +307,8 @@ function PlayStage({ card, index, total, cards, busy, burst, awardedNow, isLast,
           >
             <span className="absolute -right-6 -bottom-16 font-black leading-none select-none pointer-events-none text-white/[.06]" style={{ fontSize: '220px' }}>“</span>
             <div className="relative flex items-center justify-between px-6 pt-5">
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15"><i className="ri-checkbox-circle-line text-emerald-300"></i> Answer</span>
-              <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full"><i className="ri-copper-coin-line text-accent-200"></i>+{awardedNow}</span>
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-white/15"><AppIcon className="ri-checkbox-circle-line text-emerald-300"></AppIcon> Answer</span>
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full"><AppIcon className="ri-copper-coin-line text-accent-200"></AppIcon>+{awardedNow}</span>
             </div>
 
             <div className="relative flex-1 overflow-y-auto px-8 flex items-center">
@@ -332,12 +332,12 @@ function PlayStage({ card, index, total, cards, busy, burst, awardedNow, isLast,
       {/* Controls */}
       {!flipped ? (
         <button onClick={onFlip} className="w-full max-w-[600px] py-3.5 rounded-2xl bg-accent-500 text-white font-semibold text-[13px] shadow-lg shadow-accent-500/30 hover:bg-accent-400 transition-smooth cursor-pointer flex items-center justify-center gap-2">
-          <i className="ri-refresh-line"></i> Flip card
+          <AppIcon className="ri-refresh-line"></AppIcon> Flip card
         </button>
       ) : (
         <button onClick={onNext} className="w-full max-w-[600px] py-3.5 rounded-2xl bg-white text-primary-800 font-semibold text-[13px] shadow-lg hover:bg-primary-50 transition-smooth cursor-pointer flex items-center justify-center gap-2">
-          {isLast ? <><i className="ri-flag-line"></i> Finish</> : <>Next card <i className="ri-arrow-right-line"></i></>}
-          {busy && <i className="ri-loader-4-line animate-spin text-primary-400"></i>}
+          {isLast ? <><AppIcon className="ri-flag-line"></AppIcon> Finish</> : <>Next card <AppIcon className="ri-arrow-right-line"></AppIcon></>}
+          {busy && <AppIcon className="ri-loader-4-line animate-spin text-primary-400"></AppIcon>}
         </button>
       )}
     </div>
@@ -354,7 +354,7 @@ function CompleteStage({ sessionPoints, completedCount, total, preview, onReplay
       <div className="relative mb-5" style={{ animation: 'fc-float 3s ease-in-out infinite' }}>
         <span className="absolute inset-0 rounded-full" style={{ animation: 'fc-ring 1.6s ease-out infinite', boxShadow: '0 0 0 3px rgba(245,158,11,.5)' }} />
         <span className="relative w-20 h-20 rounded-full bg-gradient-to-br from-amber-300 to-amber-500 flex items-center justify-center shadow-xl shadow-amber-500/40">
-          <i className="ri-trophy-fill text-4xl text-white"></i>
+          <AppIcon className="ri-trophy-fill text-4xl text-white"></AppIcon>
         </span>
       </div>
 
@@ -379,7 +379,7 @@ function CompleteStage({ sessionPoints, completedCount, total, preview, onReplay
       <div className="flex items-center gap-2 w-full max-w-xs">
         {onReplay && (
           <button onClick={onReplay} className="flex-1 py-2.5 rounded-xl bg-accent-500 hover:bg-accent-400 text-white font-semibold text-[12px] transition-smooth cursor-pointer flex items-center justify-center gap-1.5">
-            <i className="ri-play-line"></i> Replay
+            <AppIcon className="ri-play-line"></AppIcon> Replay
           </button>
         )}
         {onClose && (

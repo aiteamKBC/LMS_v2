@@ -248,10 +248,10 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
   const visibleKsbs = expanded ? activity.ksbs : activity.ksbs.slice(0, 7);
   const hiddenKsbCount = activity.ksbs.length - visibleKsbs.length;
   return (
-    <article className={`rounded-2xl border border-l-[3px] border-foreground-200/70 ${meta.line} bg-background-50 p-4 shadow-[0_2px_10px_rgba(25,12,56,0.035)] hover:-translate-y-0.5 hover:border-foreground-300 hover:shadow-md transition-all`}>
-      <div className="flex items-start gap-3">
-        <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${meta.soft} ${meta.colour}`}>
-          <i className={`${meta.icon} text-base`}></i>
+    <article className={`rounded-2xl border border-l-[3px] border-foreground-200/70 ${meta.line} bg-background-50 p-3 shadow-[0_2px_10px_rgba(25,12,56,0.035)] hover:-translate-y-0.5 hover:border-foreground-300 hover:shadow-md transition-all sm:p-4`}>
+      <div className="flex items-start gap-2.5 sm:gap-3">
+        <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl sm:h-9 sm:w-9 ${meta.soft} ${meta.colour}`}>
+          <AppIcon className={`${meta.icon} text-base`}></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -262,7 +262,7 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
               </div>
               <h3 className="mt-0.5 text-sm font-semibold text-foreground-900">{activity.title}</h3>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex w-full shrink-0 items-center justify-between gap-2 sm:w-auto sm:justify-start">
               {typeof activity.passed === 'boolean' && (
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${activity.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                   {activity.passed ? 'Passed' : 'Not passed'}
@@ -280,20 +280,20 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
           {activity.detail && <p className="mt-1 text-xs leading-5 text-foreground-500">{activity.detail}</p>}
 
           {hasExtra && (
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-background-200 pt-3 text-xs text-foreground-500">
-              {activity.module && <span><i className="ri-stack-line mr-1 text-foreground-400"></i>{activity.module}</span>}
-              {activity.week && <span><i className="ri-calendar-line mr-1 text-foreground-400"></i>{activity.week}</span>}
-              {activity.duration && <span><i className="ri-timer-line mr-1 text-foreground-400"></i>Actual: {activity.duration}</span>}
-              {activity.reportedTime && <span><i className="ri-time-line mr-1 text-foreground-400"></i>Logged: {activity.reportedTime}</span>}
-              {activity.coach && <span><i className="ri-user-line mr-1 text-foreground-400"></i>{activity.coach}</span>}
+            <div className="mt-3 flex flex-wrap gap-x-3 gap-y-2 border-t border-background-200 pt-3 text-xs text-foreground-500 sm:gap-x-4 sm:gap-y-1.5">
+              {activity.module && <span><AppIcon className="ri-stack-line mr-1 text-foreground-400"></AppIcon>{activity.module}</span>}
+              {activity.week && <span><AppIcon className="ri-calendar-line mr-1 text-foreground-400"></AppIcon>{activity.week}</span>}
+              {activity.duration && <span><AppIcon className="ri-timer-line mr-1 text-foreground-400"></AppIcon>Actual: {activity.duration}</span>}
+              {activity.reportedTime && <span><AppIcon className="ri-time-line mr-1 text-foreground-400"></AppIcon>Logged: {activity.reportedTime}</span>}
+              {activity.coach && <span><AppIcon className="ri-user-line mr-1 text-foreground-400"></AppIcon>{activity.coach}</span>}
               {visibleKsbs.map((ksb) => <span key={ksb} className="rounded-md border border-secondary-100 bg-secondary-50 px-1.5 py-0.5 font-semibold text-secondary-700">{ksb}</span>)}
               {hiddenKsbCount > 0 && (
                 <button onClick={() => setExpanded(true)} className="rounded-md bg-background-100 px-1.5 py-0.5 font-semibold text-foreground-600 hover:bg-background-200">
                   +{hiddenKsbCount} more
                 </button>
               )}
-              {activity.feedback && <span className="basis-full"><i className="ri-chat-quote-line mr-1 text-foreground-400"></i>{activity.feedback}</span>}
-              {activity.notes && <span className="basis-full"><i className="ri-sticky-note-line mr-1 text-foreground-400"></i>{activity.notes}</span>}
+              {activity.feedback && <span className="basis-full"><AppIcon className="ri-chat-quote-line mr-1 text-foreground-400"></AppIcon>{activity.feedback}</span>}
+              {activity.notes && <span className="basis-full"><AppIcon className="ri-sticky-note-line mr-1 text-foreground-400"></AppIcon>{activity.notes}</span>}
             </div>
           )}
 
@@ -303,7 +303,7 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
 
           {activity.meetingLink && activity.status !== 'cancelled' && (
             <a href={activity.meetingLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary-600 hover:text-primary-700">
-              <i className="ri-video-chat-line"></i>Open meeting
+              <AppIcon className="ri-video-chat-line"></AppIcon>Open meeting
             </a>
           )}
         </div>
@@ -415,8 +415,8 @@ export function RealMonthlyCycleView({
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Apprentice` : 'Apprentice'}
     >
-      <main className="w-full space-y-5 p-4 md:p-6">
-        <section className="relative z-20 rounded-3xl bg-gradient-to-br from-[#17052f] via-[#2d0b57] to-[#54208a] p-5 text-white shadow-xl shadow-primary-950/10 md:p-7">
+      <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
+        <section className="relative z-20 rounded-2xl bg-gradient-to-br from-[#17052f] via-[#2d0b57] to-[#54208a] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-5 md:p-7">
           <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-3xl" aria-hidden="true">
             <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-secondary-400/15 blur-2xl"></div>
             <div className="absolute -bottom-24 left-1/3 h-52 w-52 rounded-full bg-primary-400/15 blur-3xl"></div>
@@ -424,12 +424,12 @@ export function RealMonthlyCycleView({
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div className="relative">
               <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-secondary-100 backdrop-blur">
-                <i className="ri-sparkling-2-line text-secondary-300"></i>Student month story
+                <AppIcon className="ri-sparkling-2-line text-secondary-300"></AppIcon>Student month story
               </div>
-              <h1 className="text-2xl font-heading font-bold text-white md:text-3xl">Everything you did in {monthLabel(activeMonth)}</h1>
-              <p className="mt-2 max-w-2xl text-sm text-white/65">One clear timeline for every lesson, attempt, watched video, logged minute, KSB and session.</p>
+              <h1 className="font-heading text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Everything you did in {monthLabel(activeMonth)}</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/65">One clear timeline for every lesson, attempt, watched video, logged minute, KSB and session.</p>
             </div>
-            <div ref={monthMenuRef} className="relative z-20 min-w-56">
+            <div ref={monthMenuRef} className="relative z-20 w-full sm:min-w-56 lg:w-auto">
               <button
                 type="button"
                 aria-haspopup="listbox"
@@ -438,11 +438,11 @@ export function RealMonthlyCycleView({
                 className={`flex h-12 w-full items-center gap-3 rounded-2xl border bg-white px-3.5 text-left text-sm font-bold text-primary-950 shadow-xl shadow-black/10 outline-none transition-all hover:-translate-y-0.5 hover:shadow-2xl focus:ring-4 focus:ring-secondary-300/40 ${monthMenuOpen ? 'border-secondary-300 ring-4 ring-secondary-300/25' : 'border-white/40'}`}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
-                  <i className="ri-calendar-2-line text-base"></i>
+                  <AppIcon className="ri-calendar-2-line text-base"></AppIcon>
                 </span>
                 <span className="min-w-0 flex-1 truncate">{monthLabel(activeMonth)}</span>
                 {activeMonth === currentMonth && <span className="rounded-full bg-emerald-50 px-2 py-1 text-[9px] font-extrabold uppercase tracking-wide text-emerald-700">Current</span>}
-                <i className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform duration-200 ${monthMenuOpen ? 'rotate-180' : ''}`}></i>
+                <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform duration-200 ${monthMenuOpen ? 'rotate-180' : ''}`}></AppIcon>
               </button>
 
               {monthMenuOpen && (
@@ -472,7 +472,7 @@ export function RealMonthlyCycleView({
                             <span className="block text-sm font-semibold">{monthLabel(key)}</span>
                             {current && <span className="block text-[10px] font-medium text-emerald-600">Current month</span>}
                           </span>
-                          {selected && <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-600 text-white"><i className="ri-check-line text-xs"></i></span>}
+                          {selected && <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary-600 text-white"><AppIcon className="ri-check-line text-xs"></AppIcon></span>}
                         </button>
                       );
                     })}
@@ -482,16 +482,16 @@ export function RealMonthlyCycleView({
             </div>
           </div>
 
-          <div className="relative z-0 mt-6 grid grid-cols-2 gap-2 border-t border-white/10 pt-5 sm:grid-cols-4 md:gap-3">
+          <div className="relative z-0 mt-5 grid grid-cols-2 gap-2 border-t border-white/10 pt-4 sm:mt-6 sm:grid-cols-4 sm:pt-5 md:gap-3">
             {[
               { value: monthActivities.length, label: 'Total events', icon: 'ri-pulse-line', accent: 'text-secondary-300' },
               { value: activeDays, label: 'Active days', icon: 'ri-calendar-check-line', accent: 'text-emerald-300' },
               { value: formatMinutes(loggedMinutes), label: 'Time logged', icon: 'ri-time-line', accent: 'text-amber-300' },
               { value: ksbCount, label: 'KSBs evidenced', icon: 'ri-award-line', accent: 'text-pink-300' },
             ].map((stat) => (
-              <div key={stat.label} className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur-sm md:p-4">
-                <span className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 sm:flex ${stat.accent}`}><i className={stat.icon}></i></span>
-                <div><p className="text-xl font-bold text-white md:text-2xl">{stat.value}</p><p className="text-[11px] text-white/55">{stat.label}</p></div>
+              <div key={stat.label} className="flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.08] bg-white/[0.07] p-2.5 backdrop-blur-sm sm:rounded-2xl sm:p-3 md:p-4">
+                <span className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 sm:flex ${stat.accent}`}><AppIcon className={stat.icon}></AppIcon></span>
+                <div className="min-w-0"><p className="text-lg font-bold text-white sm:text-xl md:text-2xl">{stat.value}</p><p className="truncate text-[10px] text-white/60 sm:text-[11px]">{stat.label}</p></div>
               </div>
             ))}
           </div>
@@ -499,14 +499,14 @@ export function RealMonthlyCycleView({
 
         {(busy || loadError) && (
           <div className={`rounded-xl border px-4 py-3 text-sm ${loadError ? 'border-red-200 bg-red-50 text-red-700' : 'border-background-300 bg-background-50 text-foreground-500'}`}>
-            <i className={`${loadError ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin'} mr-2`}></i>
+            <AppIcon className={`${loadError ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin'} mr-2`}></AppIcon>
             {loadError || 'Loading the complete monthly record…'}
           </div>
         )}
 
-        <section className="sticky top-2 z-10 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-3 shadow-[0_8px_30px_rgba(31,14,59,0.08)] backdrop-blur-xl">
+        <section className="z-10 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-3 shadow-[0_8px_30px_rgba(31,14,59,0.08)] backdrop-blur-xl sm:sticky sm:top-2">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex gap-2 overflow-x-auto pb-1 lg:overflow-visible lg:pb-0">
+            <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:overflow-visible lg:pb-0">
               {(['all', 'learning', 'video', 'quiz', 'coaching', 'review'] as const).map((type) => {
                 const label = type === 'all' ? 'All' : TYPE_META[type].label;
                 return (
@@ -514,13 +514,13 @@ export function RealMonthlyCycleView({
                     key={type}
                     onClick={() => setFilter(type)}
                     aria-label={`${label}: ${FILTER_DESCRIPTIONS[type]}`}
-                    className={`group relative flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-all ${filter === type ? 'bg-gradient-to-r from-primary-700 to-secondary-600 text-white shadow-md shadow-primary-500/15' : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
+                    className={`group relative flex snap-start items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-all ${filter === type ? 'bg-gradient-to-r from-primary-700 to-secondary-600 text-white shadow-md shadow-primary-500/15' : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
                   >
                     {label} <span className={filter === type ? 'text-white/70' : 'text-foreground-400'}>{counts[type]}</span>
                     <span className={`flex h-4 w-4 items-center justify-center rounded-full ${filter === type ? 'bg-white/15 text-white/80' : 'bg-white text-foreground-400'}`}>
-                      <i className="ri-information-line text-[10px]"></i>
+                      <AppIcon className="ri-information-line text-[10px]"></AppIcon>
                     </span>
-                    <span role="tooltip" className="pointer-events-none absolute left-1/2 top-[calc(100%+10px)] z-30 hidden w-64 -translate-x-1/2 whitespace-normal rounded-xl bg-foreground-900 px-3 py-2 text-left text-[11px] font-normal leading-4 text-white shadow-xl group-hover:block group-focus-visible:block">
+                    <span role="tooltip" className="pointer-events-none absolute left-1/2 top-[calc(100%+10px)] z-30 hidden w-64 -translate-x-1/2 whitespace-normal rounded-xl bg-foreground-900 px-3 py-2 text-left text-[11px] font-normal leading-4 text-white shadow-xl sm:group-hover:block sm:group-focus-visible:block">
                       {FILTER_DESCRIPTIONS[type]}
                       <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 bg-foreground-900"></span>
                     </span>
@@ -529,7 +529,7 @@ export function RealMonthlyCycleView({
               })}
             </div>
             <label className="relative block lg:w-64">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -539,7 +539,7 @@ export function RealMonthlyCycleView({
             </label>
           </div>
           <div className="mt-2 flex items-start gap-2 rounded-xl bg-primary-50/70 px-3 py-2 text-xs text-primary-800">
-            <i className="ri-information-line mt-0.5 shrink-0 text-primary-600"></i>
+            <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
             <p><span className="font-semibold">{filter === 'all' ? 'All activity' : TYPE_META[filter].label}:</span> {FILTER_DESCRIPTIONS[filter]}</p>
           </div>
         </section>
@@ -547,12 +547,12 @@ export function RealMonthlyCycleView({
         <section aria-label="Monthly timeline">
           {grouped.length === 0 && !busy ? (
             <div className="rounded-2xl border border-dashed border-foreground-300 bg-background-50 px-6 py-16 text-center">
-              <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background-100 text-foreground-400"><i className="ri-calendar-line text-xl"></i></span>
+              <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background-100 text-foreground-400"><AppIcon className="ri-calendar-line text-xl"></AppIcon></span>
               <h2 className="mt-3 text-sm font-semibold text-foreground-800">No matching activity</h2>
               <p className="mt-1 text-xs text-foreground-500">Try another filter, search, or month.</p>
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-5 sm:space-y-6">
               {grouped.map(([day, activities]) => (
                 <div key={day} className="grid gap-3 md:grid-cols-[175px_1fr]">
                   <div className="pt-1 md:sticky md:top-24 md:self-start">
@@ -564,7 +564,7 @@ export function RealMonthlyCycleView({
                       </div>
                     </div>
                   </div>
-                  <div className="relative space-y-3 border-l-2 border-primary-100 pl-4 before:absolute before:-left-[5px] before:top-4 before:h-2 before:w-2 before:rounded-full before:bg-primary-500 before:ring-4 before:ring-primary-100">
+                  <div className="relative space-y-3 border-l-2 border-primary-100 pl-3 before:absolute before:-left-[5px] before:top-4 before:h-2 before:w-2 before:rounded-full before:bg-primary-500 before:ring-4 before:ring-primary-100 sm:pl-4">
                     {activities.map((activity) => <ActivityCard key={activity.id} activity={activity} />)}
                   </div>
                 </div>

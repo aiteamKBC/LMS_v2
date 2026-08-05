@@ -6,7 +6,7 @@ export default function MeetingAgendaSection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-            <i className="ri-calendar-schedule-line text-secondary-700" />
+            <AppIcon className="ri-calendar-schedule-line text-secondary-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Meeting Agenda</h2>
         </div>
@@ -33,7 +33,7 @@ export default function MeetingAgendaSection() {
                 {/* Content */}
                 <div className="flex-1 min-w-0 pb-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <i className={`${item.icon} text-primary-600`} />
+                    <AppIcon className={`${item.icon} text-primary-600`} />
                     <h3 className="text-sm font-semibold text-foreground-900">{item.title}</h3>
                   </div>
                   <p className="text-sm text-foreground-500 leading-relaxed">{item.purpose}</p>

@@ -198,7 +198,7 @@ export default function AttendanceRiskPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
@@ -251,7 +251,7 @@ export default function AttendanceRiskPage() {
         {/* Search + Risk Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input
               type="text" placeholder="Search learner, programme, or coach..." value={search} onChange={e => setSearch(e.target.value)}
               className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300"
@@ -262,7 +262,7 @@ export default function AttendanceRiskPage() {
               const count = f === 'all' ? scored.length : scored.filter(r => r.level === f).length;
               return (
                 <button key={f} onClick={() => setFilter(f)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === f ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                  <i className={`${f === 'all' ? 'ri-list-check' : RISK_CONFIG[f].icon} text-sm`}></i>
+                  <AppIcon className={`${f === 'all' ? 'ri-list-check' : RISK_CONFIG[f].icon} text-sm`}></AppIcon>
                   {f === 'all' ? 'All Risks' : RISK_CONFIG[f].label}
                   <span className={`text-[9px] px-1.5 py-0.5 rounded-full leading-none ${filter === f ? 'bg-background-200 text-foreground-600' : 'bg-background-200/70 text-foreground-500'}`}>{count}</span>
                 </button>
@@ -287,7 +287,7 @@ export default function AttendanceRiskPage() {
               className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-smooth cursor-pointer whitespace-nowrap ${sortKey === opt.key ? 'bg-primary-50 text-primary-700 border border-primary-200/50' : 'text-foreground-500 hover:text-foreground-700 border border-transparent'}`}
             >
               {opt.label}
-              {sortKey === opt.key && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>}
+              {sortKey === opt.key && <AppIcon className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>}
             </button>
           ))}
         </div>
@@ -296,7 +296,7 @@ export default function AttendanceRiskPage() {
         <div className="space-y-3">
           {filtered.length === 0 && (
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-              <i className="ri-search-line text-2xl text-foreground-300"></i>
+              <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
               <p className="text-sm font-semibold text-foreground-700">No learners match this view</p>
               <p className="text-[11px] text-foreground-400">Try clearing the search or switching the risk filter.</p>
             </div>
@@ -327,7 +327,7 @@ export default function AttendanceRiskPage() {
                     <span className="text-foreground-400">risk score</span>
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${rc.bg} ${rc.text}`}>{rc.label.toUpperCase()}</span>
                     <span className={`inline-flex items-center gap-0.5 text-[9px] font-semibold px-2 py-0.5 rounded-full ${tc.bg} ${tc.text}`}>
-                      <i className={tc.icon}></i>{risk.trend}
+                      <AppIcon className={tc.icon}></AppIcon>{risk.trend}
                     </span>
                   </div>
                 </div>
@@ -360,16 +360,16 @@ export default function AttendanceRiskPage() {
                   </div>
                   <div>
                     <p className="text-[10px] text-foreground-400 mb-0.5">Monthly Trend</p>
-                    <span className={`inline-flex items-center gap-0.5 font-semibold ${mc.text}`}><i className={mc.icon}></i>{mc.label}</span>
+                    <span className={`inline-flex items-center gap-0.5 font-semibold ${mc.text}`}><AppIcon className={mc.icon}></AppIcon>{mc.label}</span>
                   </div>
                   <div>
                     <p className="text-[10px] text-foreground-400 mb-0.5">Badges</p>
-                    <p className="font-semibold text-foreground-900 flex items-center gap-1"><i className="ri-medal-line text-accent-500"></i>{risk.badgesCount}</p>
+                    <p className="font-semibold text-foreground-900 flex items-center gap-1"><AppIcon className="ri-medal-line text-accent-500"></AppIcon>{risk.badgesCount}</p>
                   </div>
                 </div>
 
                 <div className="mt-3 bg-background-100/50 rounded-lg p-3 flex items-start gap-2">
-                  <i className={`text-sm mt-0.5 ${risk.level === 'critical' ? 'ri-error-warning-line text-red-600' : 'ri-alert-line text-amber-600'}`}></i>
+                  <AppIcon className={`text-sm mt-0.5 ${risk.level === 'critical' ? 'ri-error-warning-line text-red-600' : 'ri-alert-line text-amber-600'}`}></AppIcon>
                   <div className="flex-1">
                     <p className="text-[11px] font-medium text-foreground-700">{risk.action}</p>
                     <div className="flex items-center gap-3 mt-1 flex-wrap">
@@ -380,10 +380,10 @@ export default function AttendanceRiskPage() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button onClick={() => handleCall(risk)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold shadow-lg shadow-primary-500/20 hover:bg-primary-600 hover:shadow-primary-500/30 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-phone-line mr-1"></i> Call
+                      <AppIcon className="ri-phone-line mr-1"></AppIcon> Call
                     </button>
                     <button onClick={() => handleEmail(risk)} className="px-3 py-1.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-mail-line mr-1"></i> Email
+                      <AppIcon className="ri-mail-line mr-1"></AppIcon> Email
                     </button>
                   </div>
                 </div>
@@ -446,12 +446,12 @@ export default function AttendanceRiskPage() {
               <div className="bg-background-100/50 rounded-lg p-3">
                 <p className="text-[10px] text-foreground-400 mb-1">Monthly Trend</p>
                 <span className={`inline-flex items-center gap-0.5 font-semibold ${MONTHLY_STATUS_CONFIG[selected.monthlyStatus].text}`}>
-                  <i className={MONTHLY_STATUS_CONFIG[selected.monthlyStatus].icon}></i>{MONTHLY_STATUS_CONFIG[selected.monthlyStatus].label}
+                  <AppIcon className={MONTHLY_STATUS_CONFIG[selected.monthlyStatus].icon}></AppIcon>{MONTHLY_STATUS_CONFIG[selected.monthlyStatus].label}
                 </span>
               </div>
               <div className="bg-background-100/50 rounded-lg p-3">
                 <p className="text-[10px] text-foreground-400 mb-1">Badges</p>
-                <p className="font-semibold text-foreground-900 flex items-center gap-1"><i className="ri-medal-line text-accent-500"></i>{selected.badgesCount} <span className="text-[10px] font-normal text-foreground-400">&middot; {selected.topBadge}</span></p>
+                <p className="font-semibold text-foreground-900 flex items-center gap-1"><AppIcon className="ri-medal-line text-accent-500"></AppIcon>{selected.badgesCount} <span className="text-[10px] font-normal text-foreground-400">&middot; {selected.topBadge}</span></p>
               </div>
               <div className="bg-background-100/50 rounded-lg p-3">
                 <p className="text-[10px] text-foreground-400 mb-1">Coach</p>
@@ -470,7 +470,7 @@ export default function AttendanceRiskPage() {
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${RISK_CONFIG[selected.level].bg} ${RISK_CONFIG[selected.level].text}`}>{RISK_CONFIG[selected.level].label.toUpperCase()} RISK</span>
               <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-full ${TREND_CONFIG[selected.trend].bg} ${TREND_CONFIG[selected.trend].text}`}>
-                <i className={TREND_CONFIG[selected.trend].icon}></i>{selected.trend}
+                <AppIcon className={TREND_CONFIG[selected.trend].icon}></AppIcon>{selected.trend}
               </span>
               <span className="text-[10px] text-foreground-400">{selected.employerNotified ? 'Employer notified' : 'Employer not notified'}</span>
             </div>
@@ -483,10 +483,10 @@ export default function AttendanceRiskPage() {
 
             <div className="flex items-center gap-2">
               <button onClick={() => handleCall(selected)} className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold shadow-lg shadow-primary-500/20 hover:bg-primary-600 transition-smooth cursor-pointer">
-                <i className="ri-phone-line mr-1"></i> Log Call
+                <AppIcon className="ri-phone-line mr-1"></AppIcon> Log Call
               </button>
               <button onClick={() => handleEmail(selected)} className="flex-1 px-3 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
-                <i className="ri-mail-line mr-1"></i> Send Email
+                <AppIcon className="ri-mail-line mr-1"></AppIcon> Send Email
               </button>
             </div>
 

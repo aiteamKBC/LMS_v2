@@ -151,7 +151,7 @@ function StatStripCard({ label, value, icon, color }: { label: string; value: nu
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>
@@ -171,7 +171,7 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
     >
       <div className="flex items-start gap-3.5 mb-4">
         <span className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${tp.bg} ${tp.text} transition-transform duration-200 group-hover:scale-105`}>
-          <i className={`${tp.icon} text-lg`}></i>
+          <AppIcon className={`${tp.icon} text-lg`}></AppIcon>
         </span>
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
@@ -190,17 +190,17 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
       </div>
       <div className="flex items-center gap-2 mb-3 text-xs text-foreground-400">
         <span className="flex items-center gap-1">
-          <i className="ri-time-line text-[10px]"></i>
+          <AppIcon className="ri-time-line text-[10px]"></AppIcon>
           {ev.otjh}h OTJH
         </span>
         <span className="text-foreground-200">·</span>
         <span className="flex items-center gap-1">
-          <i className="ri-file-list-line text-[10px]"></i>
+          <AppIcon className="ri-file-list-line text-[10px]"></AppIcon>
           {ev.type}
         </span>
         <span className="text-foreground-200">·</span>
         <span className="flex items-center gap-1">
-          <i className="ri-percent-line text-[10px]"></i>
+          <AppIcon className="ri-percent-line text-[10px]"></AppIcon>
           {ev.progress || 0}%
         </span>
       </div>
@@ -219,7 +219,7 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
           <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`}></span>
           {st.label}
         </span>
-        <i className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth text-sm"></i>
+        <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth text-sm"></AppIcon>
       </div>
     </div>
   );
@@ -235,7 +235,7 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
       className="flex items-center gap-4 p-4 rounded-xl border border-foreground-200/70 bg-background-50 cursor-pointer transition-all duration-200 hover:border-primary-200/50 hover:shadow-sm group"
     >
       <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tp.bg} ${tp.text}`}>
-        <i className={`${tp.icon} text-lg`}></i>
+        <AppIcon className={`${tp.icon} text-lg`}></AppIcon>
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-0.5">
@@ -262,7 +262,7 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
           return <span key={code} className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${kc.bg} ${kc.text}`}>{code}</span>;
         })}
       </div>
-      <i className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0 text-sm"></i>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0 text-sm"></AppIcon>
     </div>
   );
 }
@@ -277,7 +277,7 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
         <div className="flex items-center justify-between gap-4 p-5 border-b border-foreground-200/60">
           <div className="flex items-center gap-3 min-w-0">
             <span className={`w-10 h-10 rounded-xl ${tp.bg} ${tp.text} flex items-center justify-center shrink-0`}>
-              <i className={`${tp.icon} text-lg`}></i>
+              <AppIcon className={`${tp.icon} text-lg`}></AppIcon>
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-heading font-semibold text-foreground-900 truncate">{item.title}</h3>
@@ -285,7 +285,7 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
@@ -301,14 +301,14 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
               {item.documents.map((doc, idx) => (
                 <div key={idx} className="flex items-center gap-3 bg-background-100/60 rounded-xl p-4">
                   <span className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center shrink-0">
-                    <i className="ri-file-text-line text-primary-600 text-lg"></i>
+                    <AppIcon className="ri-file-text-line text-primary-600 text-lg"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground-900 truncate">{doc.name}</p>
                     <p className="text-xs text-foreground-400">{doc.size} · {doc.status}</p>
                   </div>
                   <button className="px-3 py-2 rounded-lg bg-primary-500 text-background-50 dark:text-foreground-950 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-download-line mr-1"></i> Download
+                    <AppIcon className="ri-download-line mr-1"></AppIcon> Download
                   </button>
                 </div>
               ))}
@@ -316,7 +316,7 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
           ) : (
             <div className="text-center py-8">
               <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-file-list-3-line text-foreground-300 text-xl"></i>
+                <AppIcon className="ri-file-list-3-line text-foreground-300 text-xl"></AppIcon>
               </span>
               <p className="text-sm font-medium text-foreground-500">No files uploaded</p>
               <p className="text-xs text-foreground-400 mt-1">Upload a file to see it here</p>
@@ -503,7 +503,7 @@ export default function EvidencePage() {
             <div className="relative p-6 md:p-8 flex flex-col lg:flex-row items-start lg:items-center gap-5 lg:gap-8">
               <div className="flex items-center gap-4 shrink-0">
                 <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                  <i className="ri-folder-upload-line text-white text-2xl"></i>
+                  <AppIcon className="ri-folder-upload-line text-white text-2xl"></AppIcon>
                 </span>
                 <div>
                   <h2 className="text-xl font-heading font-bold text-white">Evidence Library</h2>
@@ -516,7 +516,7 @@ export default function EvidencePage() {
                   onClick={() => setShowUploadModal(true)}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/15 backdrop-blur-sm text-white text-sm font-semibold hover:bg-white/25 transition-smooth cursor-pointer whitespace-nowrap border border-white/20"
                 >
-                  <i className="ri-add-line"></i> Upload Evidence
+                  <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
                 </button>
               </div>
             </div>
@@ -527,7 +527,7 @@ export default function EvidencePage() {
               ══════════════════════════════════════════════════════ */}
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
-              <i className="ri-information-line text-base" />
+              <AppIcon className="ri-information-line text-base" />
             </span>
             <div>
               <p className="text-xs font-semibold">Demo data</p>
@@ -554,7 +554,7 @@ export default function EvidencePage() {
             <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 md:p-5 space-y-4">
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
-                  <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
                     type="text"
                     placeholder="Search title, module, KSB code, or week..."
@@ -564,7 +564,7 @@ export default function EvidencePage() {
                   />
                   {searchQuery && (
                     <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-foreground-200 text-background-50 hover:bg-foreground-300 transition-smooth cursor-pointer">
-                      <i className="ri-close-line text-[10px]"></i>
+                      <AppIcon className="ri-close-line text-[10px]"></AppIcon>
                     </button>
                   )}
                 </div>
@@ -579,7 +579,7 @@ export default function EvidencePage() {
                           : 'bg-background-100 text-foreground-500 border-transparent hover:text-foreground-700 hover:border-foreground-200/40'
                       }`}
                     >
-                      <i className="ri-filter-3-line text-sm"></i>
+                      <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
                       Filters
                       {hasActiveFilters && (
                         <span className="w-2 h-2 rounded-full bg-primary-500"></span>
@@ -636,7 +636,7 @@ export default function EvidencePage() {
                               onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
                               className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 font-semibold cursor-pointer"
                             >
-                              <i className="ri-close-circle-line"></i> Clear all filters
+                              <AppIcon className="ri-close-circle-line"></AppIcon> Clear all filters
                             </button>
                           </div>
                         )}
@@ -645,10 +645,10 @@ export default function EvidencePage() {
                   </div>
                   <div className="flex items-center p-1 bg-background-100 rounded-xl border border-foreground-200/60">
                     <button onClick={() => setViewMode('grid')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'grid' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                      <i className="ri-grid-fill"></i>
+                      <AppIcon className="ri-grid-fill"></AppIcon>
                     </button>
                     <button onClick={() => setViewMode('list')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                      <i className="ri-list-check"></i>
+                      <AppIcon className="ri-list-check"></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -690,7 +690,7 @@ export default function EvidencePage() {
             {filtered.length === 0 && (
               <div className="py-16 text-center bg-background-50 rounded-2xl border border-foreground-200/70">
                 <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
-                  <i className="ri-folder-open-line text-foreground-300 text-2xl"></i>
+                  <AppIcon className="ri-folder-open-line text-foreground-300 text-2xl"></AppIcon>
                 </span>
                 <p className="text-sm text-foreground-500 mb-1">No evidence matches your filters</p>
                 <p className="text-xs text-foreground-400 mb-3">Try adjusting your search or clearing filters</p>
@@ -720,7 +720,7 @@ export default function EvidencePage() {
           <div className="space-y-6">
             <div className="flex items-start gap-3">
               <span className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${TYPE_CONFIG[selectedItem.type]?.bg || 'bg-primary-50'} ${TYPE_CONFIG[selectedItem.type]?.text || 'text-primary-700'}`}>
-                <i className={`${TYPE_CONFIG[selectedItem.type]?.icon || 'ri-file-text-line'} text-xl`}></i>
+                <AppIcon className={`${TYPE_CONFIG[selectedItem.type]?.icon || 'ri-file-text-line'} text-xl`}></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_CONFIG[selectedItem.status].bg} ${STATUS_CONFIG[selectedItem.status].text} border border-current/10`}>
@@ -774,7 +774,7 @@ export default function EvidencePage() {
                   {selectedItem.documents.map((doc, idx) => (
                     <div key={idx} className="flex items-center justify-between bg-background-100/60 rounded-xl px-3 py-2.5">
                       <div className="flex items-center gap-2 min-w-0">
-                        <i className="ri-file-text-line text-foreground-400 text-sm shrink-0"></i>
+                        <AppIcon className="ri-file-text-line text-foreground-400 text-sm shrink-0"></AppIcon>
                         <span className="text-sm text-foreground-700 truncate">{doc.name}</span>
                         <span className="text-xs text-foreground-400 shrink-0">{doc.size}</span>
                       </div>
@@ -791,16 +791,16 @@ export default function EvidencePage() {
               )}
               <div className="flex items-center gap-2 mt-3">
                 <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-add-line"></i> Upload File
+                  <AppIcon className="ri-add-line"></AppIcon> Upload File
                 </button>
                 <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-file-add-line"></i> Add Note
+                  <AppIcon className="ri-file-add-line"></AppIcon> Add Note
                 </button>
               </div>
             </div>
             <div className="bg-background-100/60 rounded-xl p-4">
               <h4 className="text-[11px] font-semibold text-foreground-700 mb-2 flex items-center gap-1.5">
-                <i className="ri-chat-quote-line text-foreground-400"></i> Tutor Feedback
+                <AppIcon className="ri-chat-quote-line text-foreground-400"></AppIcon> Tutor Feedback
               </h4>
               <p className="text-sm text-foreground-500 leading-relaxed">
                 {selectedItem.tutorFeedback || 'No feedback available yet.'}
@@ -814,20 +814,20 @@ export default function EvidencePage() {
                 onClick={() => { setSelectedEvidence(null); setShowFilePreview(selectedItem.id); }}
                 className="w-full px-4 py-2.5 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold cursor-pointer whitespace-nowrap hover:bg-primary-600 transition-smooth"
               >
-                <i className="ri-eye-line mr-1.5"></i> View Full Evidence
+                <AppIcon className="ri-eye-line mr-1.5"></AppIcon> View Full Evidence
               </button>
               {(selectedItem.status === 'Draft') && (
                 <button className="w-full px-4 py-2.5 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium cursor-pointer whitespace-nowrap hover:bg-background-100 transition-smooth">
-                  <i className="ri-send-plane-line mr-1.5"></i> Submit for Review
+                  <AppIcon className="ri-send-plane-line mr-1.5"></AppIcon> Submit for Review
                 </button>
               )}
               {selectedItem.status === 'Needs work' && (
                 <button className="w-full px-4 py-2.5 rounded-xl bg-red-50 border border-red-200/60 text-sm font-medium text-red-700 cursor-pointer whitespace-nowrap hover:bg-red-100 transition-smooth">
-                  <i className="ri-edit-line mr-1.5"></i> Revise Evidence
+                  <AppIcon className="ri-edit-line mr-1.5"></AppIcon> Revise Evidence
                 </button>
               )}
               <button className="w-full px-4 py-2.5 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 cursor-pointer whitespace-nowrap hover:bg-background-100 transition-smooth">
-                <i className="ri-download-line mr-1.5"></i> Download All Files
+                <AppIcon className="ri-download-line mr-1.5"></AppIcon> Download All Files
               </button>
             </div>
           </div>
@@ -945,7 +945,7 @@ function UploadModal({
         <div className="flex items-center justify-between gap-4 p-6 pb-4 border-b border-foreground-200/60">
           <div className="flex items-center gap-3">
             <span className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center shrink-0">
-              <i className="ri-upload-cloud-2-line text-primary-600 text-lg"></i>
+              <AppIcon className="ri-upload-cloud-2-line text-primary-600 text-lg"></AppIcon>
             </span>
             <div>
               <h3 className="text-base font-heading font-semibold text-foreground-900">New Evidence Submission</h3>
@@ -956,7 +956,7 @@ function UploadModal({
             onClick={onClose}
             className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer"
           >
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
@@ -965,7 +965,7 @@ function UploadModal({
           {/* Success banner */}
           {uploadSuccess && (
             <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200/50 flex items-center gap-2 text-sm text-emerald-700">
-              <i className="ri-checkbox-circle-fill text-emerald-500"></i>
+              <AppIcon className="ri-checkbox-circle-fill text-emerald-500"></AppIcon>
               Evidence uploaded successfully!
             </div>
           )}
@@ -1000,7 +1000,7 @@ function UploadModal({
                     </option>
                   ))}
                 </select>
-                <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 pointer-events-none"></i>
+                <AppIcon className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 pointer-events-none"></AppIcon>
               </div>
               {currentWeekModule && (
                 <p className="text-[10px] text-foreground-400 mt-1.5">{currentWeekModule.dateRange}</p>
@@ -1018,7 +1018,7 @@ function UploadModal({
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
-                <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 pointer-events-none"></i>
+                <AppIcon className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 pointer-events-none"></AppIcon>
               </div>
             </div>
           </div>
@@ -1069,7 +1069,7 @@ function UploadModal({
                       onClick={() => toggleKSB(code)}
                     >
                       {code}
-                      <i className="ri-close-line text-[10px]"></i>
+                      <AppIcon className="ri-close-line text-[10px]"></AppIcon>
                     </span>
                   );
                 })}
@@ -1094,15 +1094,15 @@ function UploadModal({
               className="flex items-center gap-2 w-full px-4 py-3 rounded-xl bg-background-100 border border-foreground-200/60 text-sm text-foreground-500 hover:text-foreground-700 hover:border-foreground-300/40 transition-smooth cursor-pointer"
             >
               {showKSBSelector ? (
-                <i className="ri-arrow-up-s-line text-foreground-400"></i>
+                <AppIcon className="ri-arrow-up-s-line text-foreground-400"></AppIcon>
               ) : (
-                <i className="ri-add-line text-foreground-400"></i>
+                <AppIcon className="ri-add-line text-foreground-400"></AppIcon>
               )}
               {showKSBSelector ? 'Hide KSB selector' : 'Select KSBs'}
               {showKSBSelector ? (
-                <i className="ri-arrow-up-s-line ml-auto text-foreground-400"></i>
+                <AppIcon className="ri-arrow-up-s-line ml-auto text-foreground-400"></AppIcon>
               ) : (
-                <i className="ri-arrow-down-s-line ml-auto text-foreground-400"></i>
+                <AppIcon className="ri-arrow-down-s-line ml-auto text-foreground-400"></AppIcon>
               )}
             </button>
 
@@ -1111,7 +1111,7 @@ function UploadModal({
               <div className="mt-3 p-4 rounded-xl bg-background-100 border border-foreground-200/60 space-y-4 animate-in slide-in-from-top-2 duration-200">
                 {/* Search */}
                 <div className="relative">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
                     type="text"
                     value={ksbSearch}
@@ -1215,7 +1215,7 @@ function UploadModal({
                 {files.map((f, idx) => (
                   <div key={idx} className="flex items-center gap-3 bg-background-100 rounded-xl px-3 py-2.5">
                     <span className="w-8 h-8 rounded-lg bg-primary-50 flex items-center justify-center shrink-0">
-                      <i className="ri-file-text-line text-primary-600 text-sm"></i>
+                      <AppIcon className="ri-file-text-line text-primary-600 text-sm"></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-foreground-700 truncate">{f.name}</p>
@@ -1225,7 +1225,7 @@ function UploadModal({
                       onClick={() => removeFile(idx)}
                       className="w-6 h-6 rounded-md flex items-center justify-center text-foreground-400 hover:text-red-500 hover:bg-red-50 transition-smooth cursor-pointer"
                     >
-                      <i className="ri-close-line text-sm"></i>
+                      <AppIcon className="ri-close-line text-sm"></AppIcon>
                     </button>
                   </div>
                 ))}
@@ -1244,7 +1244,7 @@ function UploadModal({
               }`}
             >
               <span className="w-10 h-10 rounded-xl bg-background-50 flex items-center justify-center mx-auto mb-2">
-                <i className="ri-upload-cloud-2-line text-foreground-400 text-lg"></i>
+                <AppIcon className="ri-upload-cloud-2-line text-foreground-400 text-lg"></AppIcon>
               </span>
               <p className="text-sm text-foreground-600 font-medium">
                 Drop files here or <span className="text-primary-600">click to browse</span>
@@ -1271,7 +1271,7 @@ function UploadModal({
                 : 'bg-background-200 text-foreground-400 cursor-not-allowed'
             }`}
           >
-            <i className="ri-check-line"></i>
+            <AppIcon className="ri-check-line"></AppIcon>
             Submit Evidence
           </button>
         </div>

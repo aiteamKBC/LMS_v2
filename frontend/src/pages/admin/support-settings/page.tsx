@@ -55,7 +55,7 @@ export default function AdminSupportSettingsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-customer-service-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-customer-service-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Support Configuration</h2>
@@ -76,7 +76,7 @@ export default function AdminSupportSettingsPage() {
                 activeSection === section.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${section.icon} text-xs`}></i>
+              <AppIcon className={`${section.icon} text-xs`}></AppIcon>
               {section.label}
             </button>
           ))}
@@ -88,7 +88,7 @@ export default function AdminSupportSettingsPage() {
             <div className="flex items-center justify-between">
               <p className="text-[13px] text-foreground-700">Manage ticket categories, SLAs, and visibility</p>
               <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Add Category
+                <AppIcon className="ri-add-line mr-1"></AppIcon> Add Category
               </button>
             </div>
 
@@ -98,7 +98,7 @@ export default function AdminSupportSettingsPage() {
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <span className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-                        <i className="ri-price-tag-3-line text-secondary-600 text-sm"></i>
+                        <AppIcon className="ri-price-tag-3-line text-secondary-600 text-sm"></AppIcon>
                       </span>
                       <div>
                         <p className="text-[13px] font-semibold text-foreground-800">{cat.name}</p>
@@ -140,7 +140,7 @@ export default function AdminSupportSettingsPage() {
             <div className="flex items-center justify-between">
               <p className="text-[13px] text-foreground-700">Define response and resolution times per priority level</p>
               <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Add SLA Rule
+                <AppIcon className="ri-add-line mr-1"></AppIcon> Add SLA Rule
               </button>
             </div>
 
@@ -206,7 +206,7 @@ export default function AdminSupportSettingsPage() {
             <div className="flex items-center justify-between">
               <p className="text-[13px] text-foreground-700">Define rules for automatic ticket assignment</p>
               <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Add Rule
+                <AppIcon className="ri-add-line mr-1"></AppIcon> Add Rule
               </button>
             </div>
 
@@ -214,7 +214,7 @@ export default function AdminSupportSettingsPage() {
               {AUTO_ASSIGN_RULES.map(rule => (
                 <div key={rule.id} className={`bg-background-50 rounded-xl border p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 transition-smooth ${rule.active ? 'border-foreground-200/60' : 'border-background-100 opacity-60'}`}>
                   <div className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center shrink-0">
-                    <i className="ri-user-received-line text-accent-600 text-sm"></i>
+                    <AppIcon className="ri-user-received-line text-accent-600 text-sm"></AppIcon>
                   </div>
 
                   <div className="flex-1 min-w-0">

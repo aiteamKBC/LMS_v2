@@ -76,7 +76,7 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
               <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-                <i className="ri-bar-chart-box-line text-primary-500"></i> KSB Coverage
+                <AppIcon className="ri-bar-chart-box-line text-primary-500"></AppIcon> KSB Coverage
               </h2>
               <p className="text-[12px] text-foreground-500 mt-1">
                 {formatPercent(coveragePercent)} of programme KSBs have at least one learner progress link.
@@ -109,10 +109,10 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-award-line text-accent-500"></i> Programme KSBs
+              <AppIcon className="ri-award-line text-accent-500"></AppIcon> Programme KSBs
             </h2>
             <div className="relative w-full md:w-72">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input
                 type="text"
                 value={searchTerm}
@@ -319,7 +319,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>

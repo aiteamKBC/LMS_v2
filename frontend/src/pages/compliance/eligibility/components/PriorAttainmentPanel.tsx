@@ -32,7 +32,7 @@ export function PriorAttainmentPanel({ records }: PriorAttainmentProps) {
 
       {overqualificationRisk && (
         <div className="mx-4 mt-3 px-3 py-2 rounded-lg border bg-red-50 border-red-200/50 flex items-start gap-2">
-          <i className="ri-error-warning-line text-red-500"></i>
+          <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
           <p className="text-[12px] text-red-700">Level {highestLevel} qualification detected — potential overqualification risk. Review required to ensure programme provides substantial new learning.</p>
         </div>
       )}
@@ -69,12 +69,12 @@ export function PriorAttainmentPanel({ records }: PriorAttainmentProps) {
                 <td className="py-2.5 pr-3">
                   {r.verified ? (
                     <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
-                      <i className="ri-check-line text-xs"></i>
+                      <AppIcon className="ri-check-line text-xs"></AppIcon>
                       Verified
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-[11px] text-red-500 font-medium">
-                      <i className="ri-close-line text-xs"></i>
+                      <AppIcon className="ri-close-line text-xs"></AppIcon>
                       Not Verified
                     </span>
                   )}

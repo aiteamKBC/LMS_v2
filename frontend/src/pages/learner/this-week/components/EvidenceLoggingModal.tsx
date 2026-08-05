@@ -339,7 +339,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3 min-w-0">
                   <span className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-                    <i className="ri-folder-upload-line text-primary-600 text-lg"></i>
+                    <AppIcon className="ri-folder-upload-line text-primary-600 text-lg"></AppIcon>
                   </span>
                   <div className="min-w-0">
                     <h2 id="evidence-modal-title" className="text-[15px] font-heading font-bold text-foreground-900 leading-tight">My Learning Evidence &amp; Reflection</h2>
@@ -351,7 +351,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   onClick={onClose}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer shrink-0 mt-0.5"
                 >
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
 
@@ -362,12 +362,12 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   Sophie Williams
                 </span>
                 <span className="text-foreground-200">|</span>
-                <span className="flex items-center gap-1.5"><i className="ri-graduation-cap-line text-foreground-300"></i> Marketing Executive</span>
+                <span className="flex items-center gap-1.5"><AppIcon className="ri-graduation-cap-line text-foreground-300"></AppIcon> Marketing Executive</span>
                 <span className="text-foreground-200">|</span>
-                <span className="flex items-center gap-1.5"><i className="ri-time-line text-foreground-300"></i> {plannedOTJH}h OTJH</span>
+                <span className="flex items-center gap-1.5"><AppIcon className="ri-time-line text-foreground-300"></AppIcon> {plannedOTJH}h OTJH</span>
                 <span className="text-foreground-200">|</span>
                 <span className="flex items-center gap-1.5">
-                  <i className="ri-focus-3-line text-foreground-300"></i>
+                  <AppIcon className="ri-focus-3-line text-foreground-300"></AppIcon>
                   <span className="flex items-center gap-1">
                     {ksbCodes.map(k => (
                       <span key={k} className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${ksbColor(k)}`}>{k}</span>
@@ -375,7 +375,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                   </span>
                 </span>
                 <span className="text-foreground-200">|</span>
-                <span className="flex items-center gap-1.5"><i className="ri-award-line text-foreground-300"></i> {points} pts</span>
+                <span className="flex items-center gap-1.5"><AppIcon className="ri-award-line text-foreground-300"></AppIcon> {points} pts</span>
               </div>
             </div>
           </div>
@@ -409,9 +409,9 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             : 'bg-background-200 text-foreground-300'
                       }`}>
                         {isCompleted || isPast ? (
-                          <i className="ri-check-line text-[9px]"></i>
+                          <AppIcon className="ri-check-line text-[9px]"></AppIcon>
                         ) : (
-                          <i className={`${tab.icon} text-[9px]`}></i>
+                          <AppIcon className={`${tab.icon} text-[9px]`}></AppIcon>
                         )}
                       </span>
                       {tab.label}
@@ -434,7 +434,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
             <div className="flex-1 overflow-y-auto flex items-center justify-center p-8">
               <div className="max-w-md w-full text-center">
                 <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-5">
-                  <i className="ri-check-double-line text-emerald-600 text-3xl"></i>
+                  <AppIcon className="ri-check-double-line text-emerald-600 text-3xl"></AppIcon>
                 </div>
                 <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Evidence Submitted!</h2>
                 <p className="text-sm text-foreground-500 mb-6">
@@ -457,7 +457,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                         <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[9px] ${
                           step.status === 'complete' ? 'bg-emerald-500 text-white' : 'bg-background-200 text-foreground-400'
                         }`}>
-                          <i className={step.icon}></i>
+                          <AppIcon className={step.icon}></AppIcon>
                         </span>
                         <span className={`text-sm ${step.status === 'complete' ? 'text-emerald-700 font-semibold' : 'text-foreground-400'}`}>{step.label}</span>
                       </div>
@@ -499,7 +499,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                     <div className="bg-red-50 border border-red-200 rounded-xl p-5 mb-6">
                       <div className="flex items-start gap-3">
                         <span className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
-                          <i className="ri-arrow-go-back-line text-red-600 text-sm"></i>
+                          <AppIcon className="ri-arrow-go-back-line text-red-600 text-sm"></AppIcon>
                         </span>
                         <div className="flex-1">
                           <h3 className="text-sm font-semibold text-red-800 mb-1">Previous Submission Referred</h3>
@@ -530,7 +530,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                               recording ? 'bg-red-50 text-red-600 border border-red-300' : 'text-foreground-500 hover:bg-background-100 border border-foreground-200'
                             }`}
                           >
-                            <i className={`${recording ? 'ri-mic-fill animate-pulse' : 'ri-mic-line'} text-sm`}></i>
+                            <AppIcon className={`${recording ? 'ri-mic-fill animate-pulse' : 'ri-mic-line'} text-sm`}></AppIcon>
                             {recording ? 'Recording...' : 'Voice Record'}
                           </button>
                           <button
@@ -540,14 +540,14 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                               aiWriting ? 'opacity-60' : ''
                             }`}
                           >
-                            <i className={`${aiWriting ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></i>
+                            <AppIcon className={`${aiWriting ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></AppIcon>
                             {aiWriting ? 'Writing...' : 'AI Writing Assistant'}
                           </button>
                           <button
                             onClick={() => setDraftSaved(true)}
                             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-smooth cursor-pointer whitespace-nowrap border border-foreground-200 shadow-sm text-foreground-500 hover:bg-background-100"
                           >
-                            <i className="ri-save-line text-sm"></i>
+                            <AppIcon className="ri-save-line text-sm"></AppIcon>
                             {draftSaved ? 'Draft Saved' : 'Save Draft'}
                           </button>
                           <span className={`ml-auto text-xs font-semibold px-2 py-1 rounded-md ${wordCount >= MIN_WORDS ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-400'}`}>
@@ -565,13 +565,13 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
 
                         {wordCount < MIN_WORDS && wordCount > 0 && (
                           <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
-                            <i className="ri-alert-line"></i>
+                            <AppIcon className="ri-alert-line"></AppIcon>
                             You need at least {MIN_WORDS} words. Currently: {wordCount}.
                           </p>
                         )}
                         {wordCount >= MIN_WORDS && (
                           <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
-                            <i className="ri-check-line"></i> Minimum word count met
+                            <AppIcon className="ri-check-line"></AppIcon> Minimum word count met
                           </p>
                         )}
                       </div>
@@ -693,10 +693,10 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             <p className="text-sm font-semibold text-foreground-800 mb-3">Workplace Application Plan</p>
                             <div className="space-y-2 mb-4">
                               <ul className="text-sm text-foreground-500 space-y-1.5 list-none">
-                                <li className="flex items-start gap-2"><i className="ri-question-line text-foreground-300 mt-0.5 text-xs"></i><span>What will you do?</span></li>
-                                <li className="flex items-start gap-2"><i className="ri-question-line text-foreground-300 mt-0.5 text-xs"></i><span>When will you do it?</span></li>
-                                <li className="flex items-start gap-2"><i className="ri-question-line text-foreground-300 mt-0.5 text-xs"></i><span>Who will be involved?</span></li>
-                                <li className="flex items-start gap-2"><i className="ri-question-line text-foreground-300 mt-0.5 text-xs"></i><span>What outcome do you expect?</span></li>
+                                <li className="flex items-start gap-2"><AppIcon className="ri-question-line text-foreground-300 mt-0.5 text-xs"></AppIcon><span>What will you do?</span></li>
+                                <li className="flex items-start gap-2"><AppIcon className="ri-question-line text-foreground-300 mt-0.5 text-xs"></AppIcon><span>When will you do it?</span></li>
+                                <li className="flex items-start gap-2"><AppIcon className="ri-question-line text-foreground-300 mt-0.5 text-xs"></AppIcon><span>Who will be involved?</span></li>
+                                <li className="flex items-start gap-2"><AppIcon className="ri-question-line text-foreground-300 mt-0.5 text-xs"></AppIcon><span>What outcome do you expect?</span></li>
                               </ul>
                             </div>
                             <textarea
@@ -719,7 +719,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                               className="w-full rounded-xl border border-foreground-200 bg-white px-4 py-3 text-sm text-foreground-700 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100/50 resize-none transition-smooth shadow-sm"
                             />
                             <div className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50/60 px-4 py-3 text-sm text-amber-800">
-                              <i className="ri-alert-line mt-0.5 shrink-0"></i>
+                              <AppIcon className="ri-alert-line mt-0.5 shrink-0"></AppIcon>
                               <span>Submitting this will alert your coach so they can discuss the support you need in your next meeting.</span>
                             </div>
                           </div>
@@ -756,7 +756,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.mp4,.mov,.mp3,.txt,.csv"
                           />
                           <div className="w-14 h-14 rounded-full bg-primary-100 flex items-center justify-center mx-auto mb-3">
-                            <i className="ri-upload-cloud-2-line text-primary-600 text-2xl"></i>
+                            <AppIcon className="ri-upload-cloud-2-line text-primary-600 text-2xl"></AppIcon>
                           </div>
                           <p className="text-sm font-medium text-foreground-700 mb-1">Drop files here or <span className="text-primary-600">browse</span></p>
                           <p className="text-xs text-foreground-400">Multiple files supported — up to 25MB each</p>
@@ -767,7 +767,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                           <div className="space-y-2 mt-4">
                             {files.map(f => (
                               <div key={f.id} className="flex items-center gap-3 px-4 py-3 rounded-lg bg-white border border-foreground-200 shadow-sm">
-                                <i className={`${getFileIcon(f.type)} text-primary-600 text-lg`}></i>
+                                <AppIcon className={`${getFileIcon(f.type)} text-primary-600 text-lg`}></AppIcon>
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm text-foreground-700 truncate">{f.name}</p>
                                   <p className="text-xs text-foreground-400">{f.size}</p>
@@ -776,7 +776,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                   onClick={() => removeFile(f.id)}
                                   className="w-7 h-7 rounded-full flex items-center justify-center text-foreground-400 hover:text-red-500 hover:bg-red-50 transition-smooth cursor-pointer shrink-0 border border-foreground-200"
                                 >
-                                  <i className="ri-close-line"></i>
+                                  <AppIcon className="ri-close-line"></AppIcon>
                                 </button>
                               </div>
                             ))}
@@ -807,7 +807,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                         </label>
                         {files.length > 0 && !hasConsent && (
                           <p className="text-xs text-amber-600 mt-2 flex items-center gap-1">
-                            <i className="ri-alert-line"></i>
+                            <AppIcon className="ri-alert-line"></AppIcon>
                             Confirm coach visibility before continuing.
                           </p>
                         )}
@@ -833,7 +833,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                   : 'bg-white text-foreground-600 border-foreground-200 hover:border-primary-300/60'
                               }`}
                             >
-                              {selectedBenefits.includes(tag) && <i className="ri-check-line mr-1"></i>}
+                              {selectedBenefits.includes(tag) && <AppIcon className="ri-check-line mr-1"></AppIcon>}
                               {tag}
                             </button>
                           ))}
@@ -935,7 +935,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                             disabled={aiChecking}
                             className="flex items-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 py-2 text-xs font-medium text-foreground-700 shadow-sm transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            <i className={`${aiChecking ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></i>
+                            <AppIcon className={`${aiChecking ? 'ri-loader-4-line animate-spin' : 'ri-sparkling-line'} text-sm`}></AppIcon>
                             {aiChecking ? 'Checking...' : aiCheckRun ? 'Run again' : 'Run check'}
                           </button>
                         </div>
@@ -950,7 +950,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                               { key: 'otjh', label: 'OTJH record' },
                             ].map(check => (
                               <div key={check.key} className="flex items-center gap-2 text-xs">
-                                <i className={`${aiChecks[check.key] ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-amber-500'}`}></i>
+                                <AppIcon className={`${aiChecks[check.key] ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-amber-500'}`}></AppIcon>
                                 <span className={aiChecks[check.key] ? 'text-foreground-700' : 'text-foreground-500'}>{check.label}</span>
                               </div>
                             ))}
@@ -960,7 +960,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
 
                       <div className="rounded-xl border border-primary-200 bg-primary-50/30 p-4">
                         <div className="flex items-center gap-2 mb-2">
-                          <i className="ri-shield-check-line text-primary-500"></i>
+                          <AppIcon className="ri-shield-check-line text-primary-500"></AppIcon>
                           <h3 className="text-sm font-semibold text-foreground-800">Learner declaration &amp; signature</h3>
                         </div>
                         <p className="text-xs leading-relaxed text-foreground-500 mb-3">
@@ -988,7 +988,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                         <div className="space-y-1.5">
                           {submissionChecklist.map(item => (
                             <div key={item.label} className="flex items-center gap-2 text-xs">
-                              <i className={`${item.complete ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-foreground-500'}`}></i>
+                              <AppIcon className={`${item.complete ? 'ri-checkbox-circle-line text-emerald-500' : 'ri-alert-line text-foreground-500'}`}></AppIcon>
                               <span className={item.complete ? 'text-foreground-700' : 'text-foreground-500'}>{item.label}</span>
                             </div>
                           ))}
@@ -1015,7 +1015,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                                 : 'cursor-not-allowed bg-foreground-300 text-white'
                             }`}
                           >
-                            <i className="ri-edit-line"></i>
+                            <AppIcon className="ri-edit-line"></AppIcon>
                             Submit for tutor review
                           </button>
                         </div>
@@ -1040,7 +1040,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                     activeTab === 'learning' ? 'opacity-30 cursor-not-allowed' : 'text-foreground-500 hover:bg-background-100'
                   }`}
                 >
-                  <i className="ri-arrow-left-line mr-1"></i> Previous
+                  <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Previous
                 </button>
                 <div className="flex items-center gap-2">
                   <button
@@ -1050,7 +1050,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                     }}
                     className="px-4 py-2 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    Next <i className="ri-arrow-right-line ml-1"></i>
+                    Next <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
                   </button>
                 </div>
               </div>

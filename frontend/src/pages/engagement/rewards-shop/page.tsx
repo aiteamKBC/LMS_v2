@@ -20,7 +20,7 @@ function RewardImage({ src, alt }: { src: string; alt: string }) {
   if (failed || !src) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-primary-100 to-secondary-100">
-        <i className="ri-gift-2-line text-3xl text-primary-400"></i>
+        <AppIcon className="ri-gift-2-line text-3xl text-primary-400"></AppIcon>
       </div>
     );
   }
@@ -125,14 +125,14 @@ function RewardForm({
         <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Delivery Type <span className="text-red-500">*</span></label>
         <div className="grid grid-cols-2 gap-2">
           <button type="button" onClick={() => field('deliveryType', 'digital')} className={`flex items-start gap-2 p-3 rounded-lg border text-left transition-smooth cursor-pointer ${form.deliveryType === 'digital' ? 'border-primary-400 bg-primary-50' : 'border-foreground-200/60 bg-background-50 hover:border-foreground-300'}`}>
-            <i className={`ri-mail-send-line text-base mt-0.5 ${form.deliveryType === 'digital' ? 'text-primary-600' : 'text-foreground-400'}`}></i>
+            <AppIcon className={`ri-mail-send-line text-base mt-0.5 ${form.deliveryType === 'digital' ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>
             <span>
               <span className={`block text-[12px] font-semibold ${form.deliveryType === 'digital' ? 'text-primary-700' : 'text-foreground-700'}`}>Digital</span>
               <span className="block text-[10px] text-foreground-400">Sent by email automatically</span>
             </span>
           </button>
           <button type="button" onClick={() => field('deliveryType', 'physical')} className={`flex items-start gap-2 p-3 rounded-lg border text-left transition-smooth cursor-pointer ${form.deliveryType === 'physical' ? 'border-primary-400 bg-primary-50' : 'border-foreground-200/60 bg-background-50 hover:border-foreground-300'}`}>
-            <i className={`ri-box-3-line text-base mt-0.5 ${form.deliveryType === 'physical' ? 'text-primary-600' : 'text-foreground-400'}`}></i>
+            <AppIcon className={`ri-box-3-line text-base mt-0.5 ${form.deliveryType === 'physical' ? 'text-primary-600' : 'text-foreground-400'}`}></AppIcon>
             <span>
               <span className={`block text-[12px] font-semibold ${form.deliveryType === 'physical' ? 'text-primary-700' : 'text-foreground-700'}`}>Physical</span>
               <span className="block text-[10px] text-foreground-400">Fulfilled to the learner's address</span>
@@ -314,20 +314,20 @@ export default function RewardsShopPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-gift-2-line text-sm"></i> Points Rules
+            <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
           <button onClick={() => navigate('/engagement/voucher-claims')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-coupon-line text-sm"></i> Voucher Claims
+            <AppIcon className="ri-coupon-line text-sm"></AppIcon> Voucher Claims
           </button>
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-thumb-up-line text-sm"></i> Recognition
+            <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
         </div>
 
         {/* Search + Category filter */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search rewards..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
@@ -340,7 +340,7 @@ export default function RewardsShopPage() {
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
             {(['all', 'digital', 'physical'] as const).map(t => (
               <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={t === 'all' ? 'ri-list-check' : t === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></i>
+                <AppIcon className={t === 'all' ? 'ri-list-check' : t === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></AppIcon>
                 {t === 'all' ? 'All Types' : t === 'digital' ? 'Digital' : 'Physical'}
               </button>
             ))}
@@ -348,14 +348,14 @@ export default function RewardsShopPage() {
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
             {(['all', 'visible', 'hidden'] as const).map(v => (
               <button key={v} onClick={() => setVisibilityFilter(v)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${visibilityFilter === v ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={v === 'all' ? 'ri-list-check' : v === 'visible' ? 'ri-eye-line' : 'ri-eye-off-line'}></i>
+                <AppIcon className={v === 'all' ? 'ri-list-check' : v === 'visible' ? 'ri-eye-line' : 'ri-eye-off-line'}></AppIcon>
                 {v === 'all' ? 'All' : v === 'visible' ? 'Visible' : 'Hidden'}
               </button>
             ))}
           </div>
           <div className="flex-1"></div>
           <button onClick={openAddModal} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <i className="ri-add-line mr-1"></i> Create Reward
+            <AppIcon className="ri-add-line mr-1"></AppIcon> Create Reward
           </button>
         </div>
 
@@ -370,7 +370,7 @@ export default function RewardsShopPage() {
           ]).map(opt => (
             <button key={opt.key} onClick={() => handleSort(opt.key)} className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-smooth cursor-pointer whitespace-nowrap ${sortKey === opt.key ? 'bg-primary-50 text-primary-700 border border-primary-200/50' : 'text-foreground-500 hover:text-foreground-700 border border-transparent'}`}>
               {opt.label}
-              {sortKey === opt.key && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>}
+              {sortKey === opt.key && <AppIcon className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>}
             </button>
           ))}
         </div>
@@ -379,7 +379,7 @@ export default function RewardsShopPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-search-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No rewards match this view</p>
             <p className="text-[11px] text-foreground-400">Try clearing the search or switching the category/type/visibility filter.</p>
           </div>
@@ -409,7 +409,7 @@ export default function RewardsShopPage() {
                   </button>
                 </div>
                 <span className={`inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full mb-2 ${reward.deliveryType === 'digital' ? 'bg-primary-100 text-primary-700' : 'bg-amber-100 text-amber-700'}`}>
-                  <i className={reward.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></i>
+                  <AppIcon className={reward.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></AppIcon>
                   {reward.deliveryType === 'digital' ? 'Digital · Sent by email' : 'Physical · Fulfilled to learner'}
                 </span>
                 <p className="text-[10px] text-foreground-400 mb-3 line-clamp-2">{reward.description}</p>
@@ -419,10 +419,10 @@ export default function RewardsShopPage() {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <button onClick={() => openEditModal(reward)} className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-edit-line mr-1"></i> Edit
+                    <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit
                   </button>
                   <button onClick={() => setStatsRewardId(reward.id)} className="flex-1 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-bar-chart-line mr-1"></i> Stats
+                    <AppIcon className="ri-bar-chart-line mr-1"></AppIcon> Stats
                   </button>
                 </div>
               </div>
@@ -438,13 +438,13 @@ export default function RewardsShopPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-shopping-bag-3-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-shopping-bag-3-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Create Reward</h3>
                   <p className="text-[11px] text-foreground-400">Add a new item to the rewards catalogue</p>
                 </div>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto">
               <RewardForm form={addForm} errors={addErrors} setForm={setAddForm} setErrors={setAddErrors} categories={categories} />
@@ -452,7 +452,7 @@ export default function RewardsShopPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleAdd} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600">
-                <i className="ri-add-line"></i> Create Reward
+                <AppIcon className="ri-add-line"></AppIcon> Create Reward
               </button>
             </div>
           </div>
@@ -466,13 +466,13 @@ export default function RewardsShopPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><i className="ri-edit-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><AppIcon className="ri-edit-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Edit Reward</h3>
                   <p className="text-[11px] text-foreground-400">Update points, stock, and visibility</p>
                 </div>
               </div>
-              <button onClick={() => setEditRewardId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setEditRewardId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto">
               <RewardForm form={editForm} errors={editErrors} setForm={setEditForm} setErrors={setEditErrors} categories={categories} />
@@ -480,7 +480,7 @@ export default function RewardsShopPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setEditRewardId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleEdit} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-accent-500 text-white hover:bg-accent-600">
-                <i className="ri-save-line"></i> Save Changes
+                <AppIcon className="ri-save-line"></AppIcon> Save Changes
               </button>
             </div>
           </div>
@@ -494,13 +494,13 @@ export default function RewardsShopPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-md w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><i className="ri-bar-chart-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><AppIcon className="ri-bar-chart-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">{statsReward.name}</h3>
                   <p className="text-[11px] text-foreground-400">Reward performance</p>
                 </div>
               </div>
-              <button onClick={() => setStatsRewardId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setStatsRewardId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="overflow-y-auto">
               <div className="p-5 space-y-3">

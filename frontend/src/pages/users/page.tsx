@@ -38,7 +38,7 @@ function MultiSelect({ label, placeholder, options, selected, onChange }: { labe
       <div className="relative" ref={ref}>
         <button type="button" onClick={() => setOpen((o) => !o)} className={`${inputClass} text-left flex items-center justify-between cursor-pointer`}>
           <span className={selected.length ? 'text-foreground-900 truncate' : 'text-foreground-300'}>{selected.length ? selected.join(', ') : placeholder}</span>
-          <i className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
+          <AppIcon className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
         </button>
         {open && (
           <div className="absolute z-20 mt-1 w-full bg-background-50 border border-foreground-200 rounded-lg shadow-lg max-h-56 overflow-y-auto py-1">
@@ -212,7 +212,7 @@ export default function UsersListPage() {
                   onClick={() => setCreateOpen((o) => !o)}
                   className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10"
                 >
-                  <i className="ri-add-line" />Create<i className="ri-arrow-down-s-line" />
+                  <AppIcon className="ri-add-line" />Create<AppIcon className="ri-arrow-down-s-line" />
                 </button>
                 {/* Rendered into document.body: the Hero banner and the stats
                     cards below it both create stacking contexts that paint over
@@ -224,9 +224,9 @@ export default function UsersListPage() {
                     style={{ top: menuPos.top, right: menuPos.right }}
                     className="fixed w-44 bg-background-50 border border-foreground-200 rounded-xl shadow-xl py-1.5 z-[200]"
                   >
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => navigate('/admin/bulk-user-import')}><i className="ri-upload-2-line mr-2 text-foreground-400" />Import users</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><AppIcon className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><AppIcon className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => navigate('/admin/bulk-user-import')}><AppIcon className="ri-upload-2-line mr-2 text-foreground-400" />Import users</button>
                   </div>,
                   document.body
                 )}
@@ -258,8 +258,8 @@ export default function UsersListPage() {
             <TextFilter label="Reference number" value={draft.referenceNumber ?? ''} onChange={(v) => set({ referenceNumber: v })} />
           </div>
           <div className="flex items-center justify-end gap-3 mt-4">
-            <button className={btnSecondary} onClick={reset}><i className="ri-refresh-line" />Reset</button>
-            <button className={btnPrimary} onClick={search}><i className="ri-search-line" />Search</button>
+            <button className={btnSecondary} onClick={reset}><AppIcon className="ri-refresh-line" />Reset</button>
+            <button className={btnPrimary} onClick={search}><AppIcon className="ri-search-line" />Search</button>
           </div>
         </div>
 
@@ -275,11 +275,11 @@ export default function UsersListPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
+                {loading && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
                 {!loading && error && (
                   <tr><td colSpan={8} className="py-10 text-center text-[13px]">
-                    <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>
-                    <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
+                    <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
+                    <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
                 )}
                 {!loading && !error && pageRows.map((row, i) => {
@@ -308,7 +308,7 @@ export default function UsersListPage() {
                     <td className="py-2.5 px-3 text-foreground-600">{row.group}</td>
                     <td className="py-2.5 px-3 whitespace-nowrap">
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
-                      {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
+                      {row.subscriptionStatus ? (row.subscriptionVerified ? <AppIcon className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <AppIcon className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
@@ -319,7 +319,7 @@ export default function UsersListPage() {
                           title={`Open ${row.name}'s learner page`}
                           className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
                         >
-                          <i className="ri-external-link-line text-[13px]" />View
+                          <AppIcon className="ri-external-link-line text-[13px]" />View
                         </button>
                       ) : null}
                     </td>

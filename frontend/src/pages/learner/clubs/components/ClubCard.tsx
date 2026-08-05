@@ -77,7 +77,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
         {/* Header */}
         <div className="flex items-start gap-4 mb-4">
           <span className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${joined ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-400'}`}>
-            <i className={`${club.icon} text-lg`}></i>
+            <AppIcon className={`${club.icon} text-lg`}></AppIcon>
           </span>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -88,8 +88,8 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
             </div>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               <span className={`text-xs font-medium px-1.5 py-0.5 rounded-full ${activityColorMap[club.activity] || 'bg-background-100 text-foreground-500'}`}>{club.activity}</span>
-              <span className="text-xs text-foreground-400"><i className="ri-user-line mr-0.5"></i>{club.members} members</span>
-              <span className="text-xs text-foreground-400"><i className="ri-calendar-line mr-0.5"></i>Est. {club.foundedDate}</span>
+              <span className="text-xs text-foreground-400"><AppIcon className="ri-user-line mr-0.5"></AppIcon>{club.members} members</span>
+              <span className="text-xs text-foreground-400"><AppIcon className="ri-calendar-line mr-0.5"></AppIcon>Est. {club.foundedDate}</span>
             </div>
           </div>
         </div>
@@ -100,7 +100,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
         {/* Category + Ambassador */}
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <span className="text-xs font-medium text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{club.category}</span>
-          <span className="text-xs text-foreground-400"><i className="ri-shield-star-line mr-0.5"></i>Ambassador: {club.ambassador}</span>
+          <span className="text-xs text-foreground-400"><AppIcon className="ri-shield-star-line mr-0.5"></AppIcon>Ambassador: {club.ambassador}</span>
         </div>
 
         {/* Joined-specific info */}
@@ -108,19 +108,19 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
           <div className="space-y-2 mb-3">
             {club.joinDate && (
               <div className="flex items-center gap-2 text-xs text-foreground-400">
-                <i className="ri-calendar-check-line text-primary-500"></i>
+                <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon>
                 <span>Joined {club.joinDate}</span>
               </div>
             )}
             {club.pointsEarned !== undefined && (
               <div className="flex items-center gap-2 text-xs text-foreground-400">
-                <i className="ri-coins-line text-accent-500"></i>
+                <AppIcon className="ri-coins-line text-accent-500"></AppIcon>
                 <span><strong className="text-foreground-600">{club.pointsEarned}</strong> Club Points Earned</span>
               </div>
             )}
             {club.latestDiscussion && (
               <div className="flex items-center gap-2 text-xs text-foreground-400">
-                <i className="ri-chat-1-line text-secondary-500"></i>
+                <AppIcon className="ri-chat-1-line text-secondary-500"></AppIcon>
                 <span>{club.latestDiscussion}</span>
               </div>
             )}
@@ -129,14 +129,14 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
 
         {/* Next event */}
         <div className="flex items-center gap-2 mb-3 text-xs text-foreground-400 bg-background-100/50 rounded-lg px-3 py-2">
-          <i className="ri-calendar-event-line text-primary-500"></i>
+          <AppIcon className="ri-calendar-event-line text-primary-500"></AppIcon>
           <span><strong>{club.nextEvent}</strong> — {club.nextEventDate}</span>
         </div>
 
         {/* Recent activity (joined only) */}
         {joined && club.recentActivity && (
           <div className="flex items-center gap-2 mb-3 text-xs text-foreground-400 bg-background-100/50 rounded-lg px-3 py-2">
-            <i className="ri-flashlight-line text-accent-500"></i>
+            <AppIcon className="ri-flashlight-line text-accent-500"></AppIcon>
             <span>Recent Activity: {club.recentActivity}</span>
           </div>
         )}
@@ -160,14 +160,14 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
               onClick={() => navigate(`/learner/clubs/${club.id}`)}
               className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-folder-open-line mr-1"></i> Open Club
+              <AppIcon className="ri-folder-open-line mr-1"></AppIcon> Open Club
             </button>
           ) : (
             <button
               onClick={() => setShowJoinModal(true)}
               className="px-4 py-2 bg-accent-500 text-foreground-950 rounded-lg text-xs font-semibold hover:bg-accent-400 transition-smooth cursor-pointer whitespace-nowrap shadow-sm shadow-accent-500/15"
             >
-              <i className="ri-add-line mr-1"></i> Join Club
+              <AppIcon className="ri-add-line mr-1"></AppIcon> Join Club
             </button>
           )}
         </div>
@@ -181,7 +181,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
             <div className="sticky top-0 bg-background-50 rounded-t-2xl border-b border-background-200/50 px-6 py-4 flex items-center justify-between z-10">
               <div className="flex items-center gap-3">
                 <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center shrink-0">
-                  <i className={`${club.icon} text-lg`}></i>
+                  <AppIcon className={`${club.icon} text-lg`}></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-bold text-foreground-900">Join {club.title}</h3>
@@ -193,14 +193,14 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"
                 disabled={submitStatus === 'submitting'}
               >
-                <i className="ri-close-line"></i>
+                <AppIcon className="ri-close-line"></AppIcon>
               </button>
             </div>
 
             {/* Club Info Banner */}
             <div className="px-6 py-3 bg-accent-50/50 border-y border-accent-100/50">
               <div className="flex items-center gap-3">
-                <i className="ri-information-line text-accent-600 text-sm"></i>
+                <AppIcon className="ri-information-line text-accent-600 text-sm"></AppIcon>
                 <p className="text-xs text-accent-700">
                   <strong>{club.members} members</strong> · <strong>{club.category}</strong> · Ambassador: <strong>{club.ambassador}</strong>
                 </p>
@@ -251,7 +251,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
               {/* Error state */}
               {submitStatus === 'error' && (
                 <div className="bg-rose-50 border border-rose-200/50 rounded-xl p-3 flex items-center gap-2">
-                  <i className="ri-error-warning-line text-rose-500 text-sm"></i>
+                  <AppIcon className="ri-error-warning-line text-rose-500 text-sm"></AppIcon>
                   <p className="text-xs text-rose-700">Please answer all required questions before submitting.</p>
                 </div>
               )}
@@ -260,7 +260,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
               {submitStatus === 'success' && (
                 <div className="bg-emerald-50 border border-emerald-200/50 rounded-xl p-4 text-center">
                   <span className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-2">
-                    <i className="ri-check-line text-xl"></i>
+                    <AppIcon className="ri-check-line text-xl"></AppIcon>
                   </span>
                   <p className="text-sm font-semibold text-emerald-700">Request Submitted!</p>
                   <p className="text-xs text-emerald-600 mt-1">Your answers have been sent to the club ambassador for review. You will be notified once approved.</p>
@@ -271,7 +271,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
               {submitStatus === 'submitting' && (
                 <div className="text-center py-3">
                   <div className="inline-flex items-center gap-2">
-                    <i className="ri-loader-4-line animate-spin text-accent-600 text-sm"></i>
+                    <AppIcon className="ri-loader-4-line animate-spin text-accent-600 text-sm"></AppIcon>
                     <span className="text-xs font-semibold text-foreground-600">Submitting your request...</span>
                   </div>
                 </div>
@@ -291,7 +291,7 @@ export function ClubCard({ club, joined, onJoin }: ClubCardProps) {
                     type="submit"
                     className="flex-1 px-4 py-2.5 rounded-xl bg-accent-500 text-foreground-950 text-sm font-semibold hover:bg-accent-400 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-send-plane-line mr-1"></i> Submit Request
+                    <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Submit Request
                   </button>
                 </div>
               )}

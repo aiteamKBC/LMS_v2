@@ -172,7 +172,7 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
           <div className="flex items-center justify-between px-6 py-4 border-b border-foreground-200 shrink-0">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-                <i className="ri-questionnaire-line text-primary-600 text-sm"></i>
+                <AppIcon className="ri-questionnaire-line text-primary-600 text-sm"></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground-900 truncate">{quizData.title}</p>
@@ -182,14 +182,14 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
             <div className="flex items-center gap-2">
               {finalPassed && finalScore !== null && (
                 <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full flex items-center gap-1">
-                  <i className="ri-check-line"></i> Completed &middot; {finalScore}%
+                  <AppIcon className="ri-check-line"></AppIcon> Completed &middot; {finalScore}%
                 </span>
               )}
               <button
                 onClick={onClose}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
               >
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
           </div>
@@ -272,7 +272,7 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
                     </div>
                     <div className="mt-4 pt-4 border-t border-foreground-200">
                       <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border ${timerClass}`}>
-                        <i className="ri-time-line"></i>
+                        <AppIcon className="ri-time-line"></AppIcon>
                         <span className="tabular-nums">{formatTime(timeLeft)}</span>
                       </div>
                     </div>
@@ -303,7 +303,7 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
                 </span>
                 {flagged.size > 0 && (
                   <span className="text-xs text-amber-600 flex items-center gap-1">
-                    <i className="ri-flag-fill"></i> {flagged.size} flagged
+                    <AppIcon className="ri-flag-fill"></AppIcon> {flagged.size} flagged
                   </span>
                 )}
               </div>
@@ -314,7 +314,7 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
                     disabled={showFeedback}
                     className="px-3 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-arrow-left-line mr-1"></i> Previous
+                    <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Previous
                   </button>
                 )}
                 {showFeedback && (
@@ -327,9 +327,9 @@ export function QuizModal({ isOpen, onClose, onComplete, quizData }: QuizModalPr
                     }`}
                   >
                     {currentQ < quizData.questions.length - 1 ? (
-                      <>Next <i className="ri-arrow-right-line"></i></>
+                      <>Next <AppIcon className="ri-arrow-right-line"></AppIcon></>
                     ) : (
-                      <>Finish <i className="ri-flag-line"></i></>
+                      <>Finish <AppIcon className="ri-flag-line"></AppIcon></>
                     )}
                   </button>
                 )}
@@ -366,7 +366,7 @@ function IntroScreen({
       <div className="flex-1 p-6 md:p-8 lg:p-10">
         <div className="flex items-center gap-2 mb-4">
           <span className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-            <i className="ri-questionnaire-line text-primary-600 text-lg"></i>
+            <AppIcon className="ri-questionnaire-line text-primary-600 text-lg"></AppIcon>
           </span>
           <div>
             <span className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">Knowledge Check</span>
@@ -400,25 +400,25 @@ function IntroScreen({
           <ul className="space-y-2 text-sm text-foreground-600">
             <li className="flex items-start gap-2.5">
               <span className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center shrink-0 mt-0.5">
-                <i className="ri-check-line text-primary-600 text-xs"></i>
+                <AppIcon className="ri-check-line text-primary-600 text-xs"></AppIcon>
               </span>
               <span>You have <strong className="text-foreground-800">{quizData.timeLimit} minutes</strong> to complete this assessment.</span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center shrink-0 mt-0.5">
-                <i className="ri-check-line text-primary-600 text-xs"></i>
+                <AppIcon className="ri-check-line text-primary-600 text-xs"></AppIcon>
               </span>
               <span>You need <strong className="text-foreground-800">{quizData.passingScore}%</strong> to pass. Your score links to your KSB tracker.</span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center shrink-0 mt-0.5">
-                <i className="ri-check-line text-primary-600 text-xs"></i>
+                <AppIcon className="ri-check-line text-primary-600 text-xs"></AppIcon>
               </span>
               <span>Flag questions for review using the flag button. Navigate freely between questions.</span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center shrink-0 mt-0.5">
-                <i className="ri-check-line text-primary-600 text-xs"></i>
+                <AppIcon className="ri-check-line text-primary-600 text-xs"></AppIcon>
               </span>
               <span>Use keyboard shortcuts <strong className="text-foreground-800">1-4</strong> to select answers quickly.</span>
             </li>
@@ -429,7 +429,7 @@ function IntroScreen({
           onClick={onStart}
           className="w-full sm:w-auto px-8 py-3 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
         >
-          <i className="ri-play-circle-line"></i>
+          <AppIcon className="ri-play-circle-line"></AppIcon>
           Start Assessment
         </button>
       </div>
@@ -489,11 +489,11 @@ function QuizScreen({
                   : 'bg-background-100 text-foreground-400 border border-foreground-200 hover:text-foreground-600'
               }`}
             >
-              <i className={isFlagged ? 'ri-flag-fill' : 'ri-flag-line'}></i>
+              <AppIcon className={isFlagged ? 'ri-flag-fill' : 'ri-flag-line'}></AppIcon>
               {isFlagged ? 'Flagged' : 'Flag'}
             </button>
             <div className={`lg:hidden flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border ${timerClass}`}>
-              <i className="ri-time-line"></i>
+              <AppIcon className="ri-time-line"></AppIcon>
               <span className="tabular-nums">{timerDisplay}</span>
             </div>
           </div>
@@ -550,19 +550,19 @@ function QuizScreen({
             >
               <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm font-semibold transition-all duration-200 ${labelStyle}`}>
                 {showFeedback && i === question.correctIndex ? (
-                  <i className="ri-check-line text-sm"></i>
+                  <AppIcon className="ri-check-line text-sm"></AppIcon>
                 ) : showFeedback && i === selected && i !== question.correctIndex ? (
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 ) : (
                   String.fromCharCode(65 + i)
                 )}
               </span>
               <span className={`text-[15px] leading-relaxed pt-0.5 ${textStyle}`}>{opt}</span>
               {showFeedback && i === question.correctIndex && (
-                <i className="ri-check-line text-emerald-500 ml-auto text-lg shrink-0"></i>
+                <AppIcon className="ri-check-line text-emerald-500 ml-auto text-lg shrink-0"></AppIcon>
               )}
               {showFeedback && i === selected && i !== question.correctIndex && (
-                <i className="ri-close-line text-red-500 ml-auto text-lg shrink-0"></i>
+                <AppIcon className="ri-close-line text-red-500 ml-auto text-lg shrink-0"></AppIcon>
               )}
             </button>
           );
@@ -580,7 +580,7 @@ function QuizScreen({
             <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
               selected === question.correctIndex ? 'bg-emerald-100' : 'bg-amber-100'
             }`}>
-              <i className={`${selected === question.correctIndex ? 'ri-check-double-line text-emerald-600' : 'ri-error-warning-line text-amber-600'} text-lg`}></i>
+              <AppIcon className={`${selected === question.correctIndex ? 'ri-check-double-line text-emerald-600' : 'ri-error-warning-line text-amber-600'} text-lg`}></AppIcon>
             </span>
             <span className={`text-sm font-semibold ${selected === question.correctIndex ? 'text-emerald-800' : 'text-amber-800'}`}>
               {selected === question.correctIndex ? 'Correct Answer' : 'Incorrect Answer'}
@@ -624,7 +624,7 @@ function ResultsScreen({
           <span className={`text-sm font-semibold px-4 py-1.5 rounded-full flex items-center gap-2 border ${
             passed ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
           }`}>
-            <i className={`${passed ? 'ri-check-double-line text-emerald-600' : 'ri-time-line text-amber-600'} text-lg`}></i>
+            <AppIcon className={`${passed ? 'ri-check-double-line text-emerald-600' : 'ri-time-line text-amber-600'} text-lg`}></AppIcon>
             {passed ? 'Assessment Completed — Passed' : 'Assessment Completed — Review Needed'}
           </span>
         </div>
@@ -701,7 +701,7 @@ function ResultsScreen({
               onClick={onRetake}
               className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
             >
-              <i className="ri-refresh-line"></i> Retake Assessment
+              <AppIcon className="ri-refresh-line"></AppIcon> Retake Assessment
             </button>
           )}
           {passed && (
@@ -709,7 +709,7 @@ function ResultsScreen({
               onClick={onClose}
               className="flex-1 px-4 py-2.5 rounded-xl bg-emerald-500 text-white text-sm font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
             >
-              <i className="ri-check-line"></i> Mark as Complete
+              <AppIcon className="ri-check-line"></AppIcon> Mark as Complete
             </button>
           )}
         </div>
@@ -730,7 +730,7 @@ function ResultsScreen({
                   <span className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
                     isCorrect ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'
                   }`}>
-                    {isCorrect ? <i className="ri-check-line"></i> : <i className="ri-close-line"></i>}
+                    {isCorrect ? <AppIcon className="ri-check-line"></AppIcon> : <AppIcon className="ri-close-line"></AppIcon>}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 mb-1">
@@ -741,12 +741,12 @@ function ResultsScreen({
                     <div className="space-y-1">
                       {userAns !== null && !isCorrect && (
                         <div className="flex items-start gap-1.5 text-xs text-red-600">
-                          <i className="ri-close-line text-[10px] mt-0.5 shrink-0"></i>
+                          <AppIcon className="ri-close-line text-[10px] mt-0.5 shrink-0"></AppIcon>
                           <span>Your answer: <strong>{q.options[userAns]}</strong></span>
                         </div>
                       )}
                       <div className="flex items-start gap-1.5 text-xs text-emerald-700">
-                        <i className="ri-check-line text-[10px] mt-0.5 shrink-0"></i>
+                        <AppIcon className="ri-check-line text-[10px] mt-0.5 shrink-0"></AppIcon>
                         <span>Correct: <strong>{q.options[q.correctIndex]}</strong></span>
                       </div>
                     </div>

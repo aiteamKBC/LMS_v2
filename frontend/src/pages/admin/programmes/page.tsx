@@ -42,7 +42,7 @@ export default function AdminProgrammesPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-stack-line text-white text-2xl"></i>
+              <AppIcon className="ri-stack-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Programme Directory</h2>
@@ -70,7 +70,7 @@ export default function AdminProgrammesPage() {
         {/* Filters */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search programmes or standards..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -80,7 +80,7 @@ export default function AdminProgrammesPage() {
               <option value="draft">Draft</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1.5"></i> New Programme
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Programme
             </button>
           </div>
         </div>
@@ -108,13 +108,13 @@ export default function AdminProgrammesPage() {
                     <p className="text-[11px] text-foreground-400 mt-0.5">{p.duration} · {p.ksbMapped}/{p.ksbTotal} KSBs · Ofsted: {p.ofsted}</p>
                   </div>
                   <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                    <span><i className="ri-graduation-cap-line mr-1"></i>{p.learners}</span>
+                    <span><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{p.learners}</span>
                     <div className="w-16 h-1.5 bg-background-200 rounded-full overflow-hidden">
                       <div className="h-full bg-primary-500 rounded-full" style={{ width: `${ksbPct}%` }}></div>
                     </div>
                     <span className="text-[10px]">{ksbPct}%</span>
                   </div>
-                  <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedProgramme === p.id ? 'text-primary-500' : ''}`}></i>
+                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedProgramme === p.id ? 'text-primary-500' : ''}`}></AppIcon>
                 </div>
               );
             })}
@@ -168,7 +168,7 @@ export default function AdminProgrammesPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-stack-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-stack-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select a programme to view details</p>
               </div>

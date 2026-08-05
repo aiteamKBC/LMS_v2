@@ -217,7 +217,7 @@ const BadgeShareCard = forwardRef<HTMLDivElement, BadgeShareCardProps>(
                 justifyContent: 'center',
               }}
             >
-              <i
+              <AppIcon
                 className={badge.icon}
                 style={{
                   fontSize: '44px',
@@ -296,17 +296,17 @@ const BadgeShareCard = forwardRef<HTMLDivElement, BadgeShareCardProps>(
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i className="ri-calendar-check-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
+              <AppIcon className="ri-calendar-check-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
               <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>{badge.earnedDate}</span>
             </div>
             <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.15)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i className="ri-price-tag-3-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
+              <AppIcon className="ri-price-tag-3-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
               <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>{badge.category}</span>
             </div>
             <div style={{ width: '4px', height: '4px', borderRadius: '50%', background: 'rgba(255,255,255,0.15)' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <i className="ri-shield-check-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
+              <AppIcon className="ri-shield-check-line" style={{ fontSize: '14px', color: 'rgba(255,255,255,0.3)' }} />
               <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>Verified</span>
             </div>
           </div>

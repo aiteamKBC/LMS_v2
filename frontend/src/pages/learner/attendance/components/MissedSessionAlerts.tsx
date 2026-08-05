@@ -10,7 +10,7 @@ export default function MissedSessionAlerts() {
     <section>
       <div className="flex items-center gap-3 mb-4">
         <span className="w-9 h-9 rounded-xl bg-red-100 flex items-center justify-center">
-          <i className="ri-error-warning-line text-red-600 text-base"></i>
+          <AppIcon className="ri-error-warning-line text-red-600 text-base"></AppIcon>
         </span>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">Action Required</h3>
       </div>
@@ -40,13 +40,13 @@ export default function MissedSessionAlerts() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap">
                   <button className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-500 text-white text-xs font-semibold hover:bg-red-600 transition-all whitespace-nowrap cursor-pointer">
-                    <i className="ri-play-circle-line"></i> Complete Catch-Up
+                    <AppIcon className="ri-play-circle-line"></AppIcon> Complete Catch-Up
                   </button>
                   <button
                     onClick={() => setShowDetails(isOpen ? null : alert.id)}
                     className="inline-flex items-center gap-1 px-3 py-2 rounded-xl bg-background-50 border border-background-200/50 text-xs font-medium text-foreground-500 hover:bg-background-100 transition-all whitespace-nowrap cursor-pointer"
                   >
-                    <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
+                    <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></AppIcon>
                     {isOpen ? 'Hide' : 'Details'}
                   </button>
                 </div>

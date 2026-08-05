@@ -37,6 +37,10 @@ class CoachCalendarEvent(models.Model):
     meeting_link = models.URLField(max_length=1000, blank=True)
     graph_event_id = models.CharField(max_length=255, blank=True)
     graph_web_link = models.URLField(max_length=1000, blank=True)
+    # Mailbox the Graph event was created on, i.e. its organizer. Learner-booked
+    # sessions organize from the learner's mailbox so the owner gets emailed, so
+    # this is not always owner_email -- reads/deletes must target the right one.
+    graph_organizer_email = models.EmailField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
     review_responses = models.JSONField(default=dict, blank=True)
     review_completed_at = models.DateTimeField(null=True, blank=True)

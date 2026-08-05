@@ -195,11 +195,11 @@ export default function NotificationsPage() {
         {/* Role indicator */}
         <div className="px-6 py-2 flex items-center gap-2">
           <div className="flex items-center gap-2 bg-primary-50 border border-primary-200/50 px-3 py-1.5 rounded-xl">
-            <i className="ri-user-line text-primary-500 text-xs"></i>
+            <AppIcon className="ri-user-line text-primary-500 text-xs"></AppIcon>
             <span className="text-xs font-semibold text-primary-700">Notifications for {nav.label}</span>
           </div>
           <div className="flex items-center gap-2 bg-background-100 border border-foreground-200/60 px-3 py-1.5 rounded-xl">
-            <i className="ri-lock-line text-foreground-400 text-xs"></i>
+            <AppIcon className="ri-lock-line text-foreground-400 text-xs"></AppIcon>
             <span className="text-xs text-foreground-500">Personal — visible only to you</span>
           </div>
         </div>
@@ -248,14 +248,14 @@ export default function NotificationsPage() {
                   onClick={bulkMarkAsRead}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium text-primary-700 bg-primary-50 hover:bg-primary-100 border border-primary-200/50 transition-smooth cursor-pointer"
                 >
-                  <i className="ri-check-double-line text-xs"></i>
+                  <AppIcon className="ri-check-double-line text-xs"></AppIcon>
                   Mark read
                 </button>
                 <button
                   onClick={bulkDelete}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium text-red-700 bg-red-50 hover:bg-red-100 border border-red-200/50 transition-smooth cursor-pointer"
                 >
-                  <i className="ri-delete-bin-line text-xs"></i>
+                  <AppIcon className="ri-delete-bin-line text-xs"></AppIcon>
                   Delete
                 </button>
               </>
@@ -264,7 +264,7 @@ export default function NotificationsPage() {
               onClick={markAllAsRead}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium text-foreground-700 bg-background-100 hover:bg-background-200 border border-foreground-200/60 transition-smooth cursor-pointer"
             >
-              <i className="ri-check-double-line text-xs"></i>
+              <AppIcon className="ri-check-double-line text-xs"></AppIcon>
               Mark all as read
             </button>
           </div>
@@ -275,7 +275,7 @@ export default function NotificationsPage() {
           {filtered.length === 0 ? (
             <div className="text-center py-16 animate-in fade-in duration-500">
               <div className="w-14 h-14 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-4">
-                <i className="ri-notification-off-line text-2xl text-foreground-300"></i>
+                <AppIcon className="ri-notification-off-line text-2xl text-foreground-300"></AppIcon>
               </div>
               <p className="text-sm text-foreground-500 font-medium">No notifications</p>
               <p className="text-xs text-foreground-300 mt-1">You are all caught up!</p>
@@ -304,7 +304,7 @@ export default function NotificationsPage() {
                   <div className={`w-2 h-2 rounded-full mt-2 shrink-0 ${n.unread ? 'bg-primary-500' : 'bg-transparent'}`}></div>
 
                   <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-background-100">
-                    <i className={`${typeIcons[n.type] || 'ri-notification-3-line'} text-sm text-foreground-400`}></i>
+                    <AppIcon className={`${typeIcons[n.type] || 'ri-notification-3-line'} text-sm text-foreground-400`}></AppIcon>
                   </span>
 
                   <div className="flex-1 min-w-0">
@@ -326,7 +326,7 @@ export default function NotificationsPage() {
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer"
                         title="Mark as read"
                       >
-                        <i className="ri-check-line text-sm"></i>
+                        <AppIcon className="ri-check-line text-sm"></AppIcon>
                       </button>
                     )}
                     <button
@@ -334,7 +334,7 @@ export default function NotificationsPage() {
                       className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-red-600 hover:bg-red-50 transition-smooth cursor-pointer"
                       title="Delete"
                     >
-                      <i className="ri-delete-bin-line text-sm"></i>
+                      <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
                     </button>
                     {n.link && (
                       <a
@@ -342,7 +342,7 @@ export default function NotificationsPage() {
                         className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
                         title="Go to"
                       >
-                        <i className="ri-arrow-right-line text-sm"></i>
+                        <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
                       </a>
                     )}
                   </div>

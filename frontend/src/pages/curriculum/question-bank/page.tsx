@@ -260,7 +260,7 @@ export default function QuestionBankPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-database-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-database-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Question Bank</h2>
@@ -290,7 +290,7 @@ export default function QuestionBankPage() {
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-2">
                 <span className="w-9 h-9 rounded-xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center">
-                  <i className="ri-questionnaire-line text-lg"></i>
+                  <AppIcon className="ri-questionnaire-line text-lg"></AppIcon>
                 </span>
                 <p className="text-xs font-bold uppercase tracking-wider text-[#5b2dbb]">Question Bank</p>
               </div>
@@ -299,7 +299,7 @@ export default function QuestionBankPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Link to="/curriculum/quiz-xml" className="h-10 px-4 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] transition-smooth flex items-center">
-                <i className="ri-arrow-left-line mr-1"></i> Quiz Workspace
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Quiz Workspace
               </Link>
             </div>
           </div>
@@ -359,7 +359,7 @@ export default function QuestionBankPage() {
                     />
                     <div className="relative w-full md:w-80">
                       <input value={bankSearch} onChange={event => setBankSearch(event.target.value)} placeholder="Search question bank" className="h-10 w-full rounded-lg bg-white border border-[#d8dde6] pl-4 pr-10 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
-                      <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-[#647083]"></i>
+                      <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-[#647083]"></AppIcon>
                     </div>
                   </div>
                 </div>
@@ -370,7 +370,7 @@ export default function QuestionBankPage() {
               {!bankLoading && (!questionBank || filteredQuestions.length === 0) && (
                 <div className="rounded-2xl border border-[#e2e8f0] bg-white p-10 text-center">
                   <span className="w-14 h-14 rounded-2xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-question-answer-line text-xl"></i>
+                    <AppIcon className="ri-question-answer-line text-xl"></AppIcon>
                   </span>
                   <p className="text-sm font-semibold text-foreground-700">No questions match this view</p>
                   <p className="text-xs text-[#647083] mt-1">
@@ -422,7 +422,7 @@ export default function QuestionBankPage() {
                                         key={linkedQuiz.id}
                                         className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold shadow-sm ${isCurrent ? 'border-[#c4b5fd] bg-[#ede9fe] text-[#43207d]' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
                                       >
-                                        <i className={isCurrent ? 'ri-folder-info-line text-[#5b2dbb]' : 'ri-links-line text-emerald-600'}></i>
+                                        <AppIcon className={isCurrent ? 'ri-folder-info-line text-[#5b2dbb]' : 'ri-links-line text-emerald-600'}></AppIcon>
                                         {isCurrent ? 'Currently in' : 'Also in'}: {linkedQuiz.title}
                                       </span>
                                     );
@@ -434,7 +434,7 @@ export default function QuestionBankPage() {
                                 <span className={`w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md ${statusClasses(question.quizStatus)}`}>{statusLabel(question.quizStatus)}</span>
                                 <span className="w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-[#e8edf4] text-[#526173]">{questionLabel(question.questionType)}</span>
                                 <button onClick={() => openAddToQuiz(question)} className="h-8 px-3 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95] transition-smooth">
-                                  <i className="ri-add-line mr-1"></i>Add to quiz
+                                  <AppIcon className="ri-add-line mr-1"></AppIcon>Add to quiz
                                 </button>
                               </div>
                             </div>
@@ -459,7 +459,7 @@ export default function QuestionBankPage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900">Copy question to an existing quiz</h3>
                 </div>
                 <button onClick={() => setSelectedQuestion(null)} className="w-9 h-9 rounded-xl bg-[#f8fafc] hover:bg-[#f1f5f9] text-[#475569] transition-smooth">
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
 

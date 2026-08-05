@@ -49,22 +49,22 @@ export function EventRow({ event, compact = false }: EventRowProps) {
           <h4 className="text-sm font-semibold text-foreground-900">{event.title}</h4>
           {event.hasQrCode && (
             <span className="text-[9px] font-semibold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full flex items-center gap-1">
-              <i className="ri-qr-code-line text-[9px]"></i> Check-in
+              <AppIcon className="ri-qr-code-line text-[9px]"></AppIcon> Check-in
             </span>
           )}
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
           <span className="text-xs text-foreground-400">{event.club}</span>
           <span className="text-[8px] text-foreground-300">&middot;</span>
-          <span className="text-xs text-foreground-400"><i className="ri-time-line mr-0.5 text-xs"></i>{event.time}</span>
+          <span className="text-xs text-foreground-400"><AppIcon className="ri-time-line mr-0.5 text-xs"></AppIcon>{event.time}</span>
           <span className="text-[8px] text-foreground-300">&middot;</span>
           <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">{event.type}</span>
           <span className="text-[8px] text-foreground-300">&middot;</span>
           <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">{event.format}</span>
         </div>
         <div className="flex items-center gap-3 mt-1 flex-wrap">
-          <span className="text-xs text-foreground-400"><i className="ri-user-line mr-0.5"></i>{event.host} — {event.hostRole}</span>
-          <span className="text-xs text-foreground-400"><i className="ri-map-pin-line mr-0.5"></i>{event.location}</span>
+          <span className="text-xs text-foreground-400"><AppIcon className="ri-user-line mr-0.5"></AppIcon>{event.host} — {event.hostRole}</span>
+          <span className="text-xs text-foreground-400"><AppIcon className="ri-map-pin-line mr-0.5"></AppIcon>{event.location}</span>
           <span className="text-xs font-bold text-accent-600 bg-accent-50 px-2 py-0.5 rounded-full">+{event.points} pts</span>
         </div>
         {/* Capacity bar */}
@@ -80,7 +80,7 @@ export function EventRow({ event, compact = false }: EventRowProps) {
           </span>
           {event.waitlist.length > 0 && (
             <span className="text-[10px] text-amber-600 font-medium">
-              <i className="ri-hourglass-line mr-0.5"></i>{event.waitlist.length} waiting
+              <AppIcon className="ri-hourglass-line mr-0.5"></AppIcon>{event.waitlist.length} waiting
             </span>
           )}
         </div>
@@ -93,12 +93,12 @@ export function EventRow({ event, compact = false }: EventRowProps) {
           <>
             <span className={`text-xs font-semibold px-2 py-1 rounded-full ${status.cls}`}>{status.label}</span>
             <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-calendar-2-line mr-1"></i> Add to Calendar
+              <AppIcon className="ri-calendar-2-line mr-1"></AppIcon> Add to Calendar
             </button>
           </>
         ) : (
           <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-add-line mr-1"></i> Join to Attend
+            <AppIcon className="ri-add-line mr-1"></AppIcon> Join to Attend
           </button>
         )}
       </div>

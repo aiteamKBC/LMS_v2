@@ -152,7 +152,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Close</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-shield-user-line" />Create</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-shield-user-line" />Create</>}
           </button>
         </>
       }
@@ -160,7 +160,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
       <form onSubmit={handleSubmit} className="space-y-5">
         <section className="rounded-xl border border-foreground-200/70 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
-            <i className="ri-shield-user-line text-primary-500" />
+            <AppIcon className="ri-shield-user-line text-primary-500" />
             <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">Identity</h3>
           </header>
           <div className="divide-y divide-foreground-100">
@@ -176,7 +176,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
         {/* Position — asked for at the end of the form, as requested. */}
         <section className="rounded-xl border-2 border-primary-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
-            <i className="ri-briefcase-line text-primary-500" />
+            <AppIcon className="ri-briefcase-line text-primary-500" />
             <h3 className="text-[12px] font-semibold uppercase tracking-wider text-primary-700">
               Position<span className="text-red-500 ml-0.5">*</span>
             </h3>

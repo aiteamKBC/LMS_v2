@@ -233,7 +233,7 @@ export default function CoachMeetings() {
         >
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-xl text-white"><i className="ri-calendar-event-line"></i></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/10 text-xl text-white"><AppIcon className="ri-calendar-event-line"></AppIcon></span>
               <div>
                 <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Coaching Meetings</h1>
                 <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
@@ -246,7 +246,7 @@ export default function CoachMeetings() {
               onClick={() => changeFilter(atRiskEvents.length > 0 ? 'at-risk' : 'this-month')}
               className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
             >
-              <i className={atRiskEvents.length > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-checkbox-circle-line text-emerald-600'}></i>
+              <AppIcon className={atRiskEvents.length > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-checkbox-circle-line text-emerald-600'}></AppIcon>
               {atRiskEvents.length > 0
                 ? `${atRiskEvents.length} overdue meeting${atRiskEvents.length === 1 ? '' : 's'}`
                 : 'Everything is on track'}
@@ -311,16 +311,16 @@ export default function CoachMeetings() {
                       {isDueSoonEvent(event) && <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[9px] font-bold text-amber-700">Due Soon</span>}
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
-                      <span><i className="ri-calendar-line mr-1 text-primary-500"></i>{formatDateLabel(eventDisplayDate(event))}</span>
-                      <span><i className="ri-time-line mr-1 text-primary-500"></i>{formatTimeLabel(event)}</span>
-                      <span><i className="ri-video-chat-line mr-1 text-primary-500"></i>{event.platform || 'Microsoft Teams'}</span>
-                      {event.cohort && <span className="hidden lg:inline"><i className="ri-group-line mr-1 text-primary-500"></i>{event.cohort}</span>}
+                      <span><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{formatDateLabel(eventDisplayDate(event))}</span>
+                      <span><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{formatTimeLabel(event)}</span>
+                      <span><AppIcon className="ri-video-chat-line mr-1 text-primary-500"></AppIcon>{event.platform || 'Microsoft Teams'}</span>
+                      {event.cohort && <span className="hidden lg:inline"><AppIcon className="ri-group-line mr-1 text-primary-500"></AppIcon>{event.cohort}</span>}
                     </div>
                   </div>
                   <div className="hidden shrink-0 items-center gap-2 lg:flex">
                     {url && (
                       <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(event); }} disabled={isBusy} className="cursor-pointer whitespace-nowrap rounded-xl bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:opacity-60">
-                        <i className="ri-video-on-line mr-1.5"></i>Join Meeting
+                        <AppIcon className="ri-video-on-line mr-1.5"></AppIcon>Join Meeting
                       </button>
                     )}
                     <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(event); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50">
@@ -328,7 +328,7 @@ export default function CoachMeetings() {
                     </button>
                   </div>
                   <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-foreground-400 transition-transform ${isOpen ? 'rotate-180 bg-primary-50 text-primary-600' : ''}`}>
-                    <i className="ri-arrow-down-s-line"></i>
+                    <AppIcon className="ri-arrow-down-s-line"></AppIcon>
                   </span>
                 </div>
 
@@ -363,16 +363,16 @@ export default function CoachMeetings() {
                         </div>
                         <div className="flex flex-wrap items-center gap-2 mt-3">
                           <button type="button" onClick={() => handleSchedule(event)} disabled={isBusy} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                            <i className="ri-calendar-check-line mr-1"></i>{event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                            <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{event.status === 'scheduled' || event.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                           </button>
                           {(event.status === 'scheduled' || event.status === 'in-progress') && (
                             <button type="button" onClick={() => handleAction(event, 'start')} disabled={isBusy || !url} className="px-3 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-play-circle-line mr-1"></i>Start
+                              <AppIcon className="ri-play-circle-line mr-1"></AppIcon>Start
                             </button>
                           )}
                           {event.status === 'in-progress' && (
                             <button type="button" onClick={() => openCompletionForm(event)} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-check-double-line mr-1"></i>Complete
+                              <AppIcon className="ri-check-double-line mr-1"></AppIcon>Complete
                             </button>
                           )}
                         </div>
@@ -451,12 +451,12 @@ function MeetingSummaryCard({
         active ? 'border-primary-300 ring-2 ring-primary-100' : 'border-foreground-200/60 hover:border-primary-200'
       }`}
     >
-      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${toneClass}`}><i className={icon}></i></span>
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${toneClass}`}><AppIcon className={icon}></AppIcon></span>
       <span className="min-w-0 flex-1">
         <span className={`block text-xl font-bold ${valueClass}`}>{value}</span>
         <span className="block truncate text-[10px] font-medium text-foreground-500">{label}</span>
       </span>
-      <i className="ri-arrow-right-s-line text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600"></i>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-600"></AppIcon>
     </button>
   );
 }
@@ -486,7 +486,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
           disabled={currentPage === 1}
           className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <i className="ri-arrow-left-s-line"></i>Previous
+          <AppIcon className="ri-arrow-left-s-line"></AppIcon>Previous
         </button>
         {visiblePages.map((page, index) => (
           <div key={page} className="flex items-center gap-1">
@@ -507,7 +507,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
           disabled={currentPage === pageCount}
           className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Next<i className="ri-arrow-right-s-line"></i>
+          Next<AppIcon className="ri-arrow-right-s-line"></AppIcon>
         </button>
       </div>
     </nav>
@@ -603,24 +603,24 @@ function ModernDatePicker({ value, onChange }: { value: string; onChange: (value
         }`}
       >
         <span className={`flex items-center gap-2 ${selectedDate ? 'font-semibold text-foreground-800' : 'text-foreground-400'}`}>
-          <i className="ri-calendar-line text-primary-600"></i>
+          <AppIcon className="ri-calendar-line text-primary-600"></AppIcon>
           {displayValue}
         </span>
-        <i className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && (
         <div className="absolute left-0 top-full z-[80] mt-2 w-[310px] rounded-2xl border border-foreground-200/70 bg-white p-4 shadow-[0_20px_60px_-18px_rgba(30,14,62,0.35)]">
           <div className="mb-4 flex items-center justify-between">
             <button type="button" onClick={() => moveMonth(-1)} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 hover:bg-primary-50 hover:text-primary-700" aria-label="Previous month">
-              <i className="ri-arrow-left-s-line text-lg"></i>
+              <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
             </button>
             <div className="text-center">
               <p className="text-[12px] font-bold text-foreground-900">{viewMonth.toLocaleDateString('en-GB', { month: 'long' })}</p>
               <p className="text-[9px] text-foreground-400">{viewMonth.getFullYear()}</p>
             </div>
             <button type="button" onClick={() => moveMonth(1)} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 hover:bg-primary-50 hover:text-primary-700" aria-label="Next month">
-              <i className="ri-arrow-right-s-line text-lg"></i>
+              <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
             </button>
           </div>
 
@@ -698,13 +698,13 @@ function ModernDurationPicker({ value, onChange }: { value: number; onChange: (v
         }`}
       >
         <span className="flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className="ri-timer-line text-[12px]"></i></span>
+          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><AppIcon className="ri-timer-line text-[12px]"></AppIcon></span>
           <span>
             <span className="block text-[11px] font-semibold text-foreground-800">{selected.label}</span>
             <span className="block text-[8px] text-foreground-400">{selected.hint}</span>
           </span>
         </span>
-        <i className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && (
@@ -727,7 +727,7 @@ function ModernDurationPicker({ value, onChange }: { value: number; onChange: (v
                   <span className="block text-[10px] font-semibold">{option.label}</span>
                   <span className="block text-[8px] text-foreground-400">{option.hint}</span>
                 </span>
-                {active && <i className="ri-check-line text-primary-700"></i>}
+                {active && <AppIcon className="ri-check-line text-primary-700"></AppIcon>}
               </button>
             );
           })}
@@ -741,7 +741,7 @@ function EmptyState({ icon, title }: { icon: string; title: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 p-12 text-center xl:col-span-2">
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
-        <i className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></i>
+        <AppIcon className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></AppIcon>
       </span>
       <p className="mt-3 text-sm font-semibold text-foreground-500">{title}</p>
     </div>

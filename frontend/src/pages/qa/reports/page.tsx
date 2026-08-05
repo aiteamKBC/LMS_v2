@@ -79,7 +79,7 @@ export default function QAReportsPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -99,7 +99,7 @@ export default function QAReportsPage() {
             ))}
           </div>
           <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-add-line mr-1"></i> New Report
+            <AppIcon className="ri-add-line mr-1"></AppIcon> New Report
           </button>
         </div>
 
@@ -110,7 +110,7 @@ export default function QAReportsPage() {
                 <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${statusConfig[report.status].bg} ${statusConfig[report.status].text}`}>
-                      <i className={`${statusConfig[report.status].icon} text-sm`}></i>
+                      <AppIcon className={`${statusConfig[report.status].icon} text-sm`}></AppIcon>
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">

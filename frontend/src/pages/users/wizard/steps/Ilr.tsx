@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useWizard } from '../WizardContext';
 import { useToast } from '@/hooks/useToast';
 import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS, WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
@@ -21,6 +21,30 @@ export default function Ilr() {
   const { success, error } = useToast();
   const ilr = draft.ilr;
   const set = (patch: Partial<typeof ilr>) => setSection('ilr', { ...ilr, ...patch });
+
+  // The learner already signed on Personal details, so reuse that signature here
+  // rather than asking for the same mark twice.
+  //
+  // Copied into the ILR block rather than only displayed: the PDF export and the
+  // "learner signed" flag both read learnerSignature.signatureUrl, so a purely
+  // visual fallback would show a signature on screen but file a blank one. Runs
+  // once, only while this block has no signature of its own — replacing or
+  // clearing it on this step then wins, so a deliberately different declaration
+  // signature is never overwritten.
+  const personalSignature = draft.personalDetails.signature;
+  const usingPersonalSignature = !ilr.learnerSignature.signatureUrl && Boolean(personalSignature);
+
+  useEffect(() => {
+    if (!usingPersonalSignature) return;
+    set({
+      learnerSignature: {
+        ...ilr.learnerSignature,
+        signatureUrl: personalSignature,
+        date: ilr.learnerSignature.date || draft.personalDetails.signatureDate || new Date().toISOString().slice(0, 10),
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usingPersonalSignature, personalSignature]);
 
   // Save the answers and file the PDF together: a filed document that doesn't
   // match the stored answers would be worse than not filing at all.
@@ -87,7 +111,7 @@ export default function Ilr() {
               addLabel="Add evidence"
             />
             <label className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-              <i className="ri-upload-2-line" />Upload file
+              <AppIcon className="ri-upload-2-line" />Upload file
               <input type="file" multiple className="hidden" onChange={(e) => set({ eligibility: { ...ilr.eligibility, evidenceFiles: [...ilr.eligibility.evidenceFiles, ...Array.from(e.target.files ?? []).map((f) => f.name)] } })} />
             </label>
           </div>
@@ -172,6 +196,11 @@ export default function Ilr() {
             value={ilr.learnerSignature.signatureUrl}
             onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, signatureUrl: v || undefined, date: v && !ilr.learnerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.learnerSignature.date } })}
           />
+          {Boolean(personalSignature) && ilr.learnerSignature.signatureUrl === personalSignature && (
+            <p className="text-[11px] text-foreground-400 -mt-1 mb-1">
+              <i className="ri-information-line mr-1" />Using the signature from your Personal details. Replace it here to sign this declaration differently.
+            </p>
+          )}
         </Fieldset>
 
         <Fieldset legend="Provider / Sub-contractor Declaration">
@@ -192,16 +221,16 @@ export default function Ilr() {
             be produced before saving; saving persists to enrolment."Extended_ILR". */}
         <div className="flex flex-wrap items-center gap-3 mb-2">
           <button className={btnPrimary} onClick={() => downloadIlrDocument(ilr, board)}>
-            <i className="ri-file-download-line" />Download ILR document
+            <AppIcon className="ri-file-download-line" />Download ILR document
           </button>
           {/* Plain "Save progress" lives in the wizard footer on every step; this
               one additionally files the PDF into Compliance documents. */}
           <button className={btnSecondary} onClick={saveAndFile} disabled={ilrSaving || ilrFiling}>
-            {ilrFiling ? <><i className="ri-loader-4-line animate-spin" />Filing…</> : <><i className="ri-folder-upload-line" />Save &amp; file document</>}
+            {ilrFiling ? <><AppIcon className="ri-loader-4-line animate-spin" />Filing…</> : <><AppIcon className="ri-folder-upload-line" />Save &amp; file document</>}
           </button>
           {ilrSavedAt && !ilrSaving && !ilrFiling && (
             <span className="text-[12px] text-emerald-600 inline-flex items-center gap-1">
-              <i className="ri-check-line" />Saved
+              <AppIcon className="ri-check-line" />Saved
             </span>
           )}
         </div>

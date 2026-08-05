@@ -250,7 +250,7 @@ function FilterDropdown({ value, onChange, options, allLabel }: { value: string;
         <option value="all">{allLabel}</option>
         {options.map(option => <option key={option} value={option}>{option}</option>)}
       </select>
-      <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></i>
+      <AppIcon className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></AppIcon>
     </div>
   );
 }
@@ -295,7 +295,7 @@ function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { ico
       <span className={`absolute inset-x-0 top-0 h-1 ${colors.accent}`} />
       <div className="flex items-start justify-between gap-3">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${colors.icon}`}>
-          <i className={`${icon} text-lg`}></i>
+          <AppIcon className={`${icon} text-lg`}></AppIcon>
         </span>
         {hint && <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${colors.badge}`}>{hint}</span>}
       </div>
@@ -305,7 +305,7 @@ function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { ico
           <p className="mt-2 truncate text-[10px] font-semibold text-foreground-600">{label}</p>
         </div>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/80 text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition group-hover:translate-x-0.5 group-hover:text-primary-600">
-          <i className="ri-arrow-right-line text-xs"></i>
+          <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
         </span>
       </div>
     </button>
@@ -537,7 +537,7 @@ export default function CoachAttendance() {
             <div>
               <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
                 <span>Coach Workspace</span>
-                <i className="ri-arrow-right-s-line"></i>
+                <AppIcon className="ri-arrow-right-s-line"></AppIcon>
                 <span className="font-semibold text-white">Attendance</span>
               </div>
               <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Learner Attendance</h1>
@@ -550,7 +550,7 @@ export default function CoachAttendance() {
               onClick={() => exportAttendanceCsv(filteredData)}
               className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
             >
-              <i className="ri-download-2-line"></i>
+              <AppIcon className="ri-download-2-line"></AppIcon>
               Export Attendance Report
             </button>
           </div>
@@ -561,7 +561,7 @@ export default function CoachAttendance() {
             <span className="absolute inset-x-0 top-0 h-1 bg-primary-500" />
             <div className="flex items-start justify-between gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
-                <i className="ri-bar-chart-line text-lg"></i>
+                <AppIcon className="ri-bar-chart-line text-lg"></AppIcon>
               </span>
               <div className="h-9 w-24 overflow-hidden rounded-lg bg-white/70 px-1 ring-1 ring-primary-100">
                 <SparklineChart data={attendanceTrendValues.slice(-6)} color={(summary.averageAttendance || 0) >= 90 ? 'emerald' : (summary.averageAttendance || 0) >= 80 ? 'amber' : 'red'} width={88} height={36} showDots={false} showFill={false} />
@@ -573,7 +573,7 @@ export default function CoachAttendance() {
                 <p className="mt-2 text-[10px] font-semibold text-foreground-600">Overall Attendance · All Months</p>
               </div>
               <div className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold ${trendUp ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                <i className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>
+                <AppIcon className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>
                 <span>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
               </div>
             </div>
@@ -604,7 +604,7 @@ export default function CoachAttendance() {
                     : 'border-foreground-200 bg-white text-foreground-600 hover:border-primary-200 hover:text-primary-700'
                 }`}
               >
-                <i className={icon}></i>
+                <AppIcon className={icon}></AppIcon>
                 {label}
                 <span className={`rounded-full px-1.5 py-0.5 text-[8px] ${riskFilter === value ? 'bg-white/20' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
               </button>
@@ -613,7 +613,7 @@ export default function CoachAttendance() {
 
           <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
             <div className="relative min-w-0 flex-1">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
               <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search by learner, email, programme or employer..." className="h-10 w-full rounded-xl border border-foreground-200 bg-background-50 pl-9 pr-3 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100" />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -631,7 +631,7 @@ export default function CoachAttendance() {
         </section>
 
         <div className="flex items-center gap-2 text-[11px] font-semibold text-foreground-700">
-          <i className="ri-arrow-down-s-line"></i>
+          <AppIcon className="ri-arrow-down-s-line"></AppIcon>
           Attendance Analytics
         </div>
 
@@ -688,7 +688,7 @@ export default function CoachAttendance() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                  <i className="ri-alarm-warning-line"></i>
+                  <AppIcon className="ri-alarm-warning-line"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">At-Risk Learners</h3>
@@ -724,7 +724,7 @@ export default function CoachAttendance() {
           <div className="flex items-center justify-between border-b border-primary-100 bg-gradient-to-r from-primary-50/90 via-white to-background-50 px-5 py-4">
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white shadow-md shadow-primary-600/20">
-                <i className="ri-table-line text-base"></i>
+                <AppIcon className="ri-table-line text-base"></AppIcon>
               </span>
               <div>
                 <h3 className="text-[13px] font-heading font-bold text-foreground-900">Learner Attendance</h3>
@@ -773,7 +773,7 @@ export default function CoachAttendance() {
                   <tr>
                     <td colSpan={7} className="py-16 text-center">
                       <div className="inline-flex flex-col items-center gap-2 text-red-600">
-                        <i className="ri-error-warning-line text-2xl"></i>
+                        <AppIcon className="ri-error-warning-line text-2xl"></AppIcon>
                         <span className="text-sm font-semibold">Unable to load live attendance data.</span>
                         <span className="text-xs text-foreground-400">{error}</span>
                       </div>
@@ -826,10 +826,10 @@ export default function CoachAttendance() {
                         ) : (
                           <div className="flex flex-wrap gap-1.5 text-[9px]">
                             <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100">
-                              <i className="ri-check-line"></i> Present <strong>{row.present}</strong>
+                              <AppIcon className="ri-check-line"></AppIcon> Present <strong>{row.present}</strong>
                             </button>
                             <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 font-semibold text-red-700 ring-1 ring-red-100 hover:bg-red-100">
-                              <i className="ri-close-line"></i> Absent <strong>{row.absent}</strong>
+                              <AppIcon className="ri-close-line"></AppIcon> Absent <strong>{row.absent}</strong>
                             </button>
                             <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[9px] font-medium text-foreground-400 hover:text-primary-600">Total sessions: {row.sessions ?? (row.present + row.absent)}</button>
                           </div>
@@ -838,23 +838,23 @@ export default function CoachAttendance() {
                       <td className={`px-4 ${rowPadding}`}>
                         <div className="space-y-1.5 text-[10px] text-foreground-600">
                           <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 font-semibold text-amber-700 ring-1 ring-amber-100">
-                            <i className="ri-history-line"></i> {formatCount(row.catchup)} recorded
+                            <AppIcon className="ri-history-line"></AppIcon> {formatCount(row.catchup)} recorded
                           </span>
                           <p className="truncate text-[9px] text-foreground-400">Next: {displayText(row.nextSession)}</p>
                         </div>
                       </td>
                       <td className={`px-4 ${rowPadding}`}>
                         <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${(row.consecutiveMissed || 0) >= 2 ? 'bg-red-50 text-red-700 ring-1 ring-red-100' : 'bg-background-100 text-foreground-600'}`}>
-                          <i className={(row.consecutiveMissed || 0) >= 2 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></i>
+                          <AppIcon className={(row.consecutiveMissed || 0) >= 2 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
                           {formatCount(row.consecutiveMissed)} current
                         </span>
                         {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1.5 text-[9px] font-medium text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
                       </td>
                       <td className={`px-4 ${rowPadding}`}>
                         <p className="inline-flex items-center gap-1.5 rounded-lg bg-background-100 px-2.5 py-1.5 text-[10px] font-semibold text-foreground-700">
-                          <i className="ri-calendar-check-line text-primary-500"></i>{displayText(row.lastSession)}
+                          <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon>{displayText(row.lastSession)}
                         </p>
-                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">View profile <i className="ri-arrow-right-line"></i></button>
+                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">View profile <AppIcon className="ri-arrow-right-line"></AppIcon></button>
                       </td>
                     </tr>
                   );
@@ -870,8 +870,8 @@ export default function CoachAttendance() {
               <span>Page {currentPage} of {totalPages}</span>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-skip-back-line"></i></button>
-              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-arrow-left-s-line"></i></button>
+              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-skip-back-line"></AppIcon></button>
+              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
               <div className="flex items-center gap-1">
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                   let pageNum: number;
@@ -884,8 +884,8 @@ export default function CoachAttendance() {
                   );
                 })}
               </div>
-              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-arrow-right-s-line"></i></button>
-              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-skip-forward-line"></i></button>
+              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
+              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-skip-forward-line"></AppIcon></button>
             </div>
           </div>
         </div>
@@ -898,7 +898,7 @@ export default function CoachAttendance() {
             <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
               <div className="min-w-0">
                 <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
-                  <i className="ri-calendar-check-line text-xs"></i>
+                  <AppIcon className="ri-calendar-check-line text-xs"></AppIcon>
                   Attendance details
                 </span>
                 <h3 className="truncate text-base font-heading font-bold text-foreground-900">{selectedAttendanceLearner.learner}</h3>
@@ -907,7 +907,7 @@ export default function CoachAttendance() {
                 </p>
               </div>
               <button type="button" onClick={closeAttendanceDetails} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close attendance details">
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
 
@@ -943,7 +943,7 @@ export default function CoachAttendance() {
               {attendanceDetailsLoading ? (
                 <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 text-center">
                   <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-50 text-primary-600">
-                    <i className="ri-loader-4-line animate-spin text-lg"></i>
+                    <AppIcon className="ri-loader-4-line animate-spin text-lg"></AppIcon>
                   </span>
                   <p className="text-[12px] text-foreground-500">Loading attendance sessions...</p>
                 </div>
@@ -980,7 +980,7 @@ export default function CoachAttendance() {
               ) : (
                 <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-foreground-200 bg-background-100/40 p-6 text-center">
                   <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-background-50 text-foreground-400">
-                    <i className="ri-calendar-close-line text-lg"></i>
+                    <AppIcon className="ri-calendar-close-line text-lg"></AppIcon>
                   </span>
                   <p className="text-[13px] font-semibold text-foreground-700">No sessions found</p>
                   <p className="mt-1 max-w-sm text-[11px] text-foreground-400">
@@ -1003,7 +1003,7 @@ export default function CoachAttendance() {
                 <p className="mt-0.5 text-[11px] text-foreground-400">{kpiLearners.length} learner{kpiLearners.length === 1 ? '' : 's'}</p>
               </div>
               <button type="button" onClick={() => setSelectedKpi(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close popup">
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
             <div className="overflow-y-auto p-4">

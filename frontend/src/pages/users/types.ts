@@ -23,11 +23,11 @@ export interface UserListRow {
   reference?: string;
   /**
    * Which table the row came from. The single enrolment section lists
-   * apprenticeship learners, commercial learners and staff/admin accounts, and
-   * their ids live in separate tables — so row actions must be routed by source,
-   * not id alone.
+   * apprenticeship learners, commercial learners, staff/admin accounts and
+   * employer contacts, and their ids live in separate tables — so row actions
+   * must be routed by source, not id alone.
    */
-  source?: 'apprenticeship' | 'commercial' | 'staff';
+  source?: 'apprenticeship' | 'commercial' | 'staff' | 'employer';
 }
 
 export interface UsersFilter {

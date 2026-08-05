@@ -123,7 +123,7 @@ export default function CurriculumReportsPage() {
         {/* Notification */}
         {notification && (
           <div className={`flex items-center gap-2 px-4 py-3 rounded-xl text-[13px] font-medium border ${notification.type === 'success' ? 'bg-emerald-50 border-emerald-200/60 text-emerald-700' : 'bg-primary-50 border-primary-200/60 text-primary-700'}`}>
-            <i className={`${notification.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-mail-send-line'} text-base`}></i>
+            <AppIcon className={`${notification.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-mail-send-line'} text-base`}></AppIcon>
             {notification.text}
           </div>
         )}
@@ -132,7 +132,7 @@ export default function CurriculumReportsPage() {
         <div className="bg-accent-50 border border-accent-200/60 rounded-2xl p-5">
           <div className="flex items-start gap-4">
             <div className="w-10 h-10 bg-accent-100 rounded-xl flex items-center justify-center shrink-0">
-              <i className="ri-send-plane-line text-accent-700 text-base"></i>
+              <AppIcon className="ri-send-plane-line text-accent-700 text-base"></AppIcon>
             </div>
             <div className="flex-1">
               <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-0.5">Send to Leadership / CEO</h3>
@@ -161,7 +161,7 @@ export default function CurriculumReportsPage() {
               {section.items.map(item => (
                 <div key={item.id} className="p-4 flex items-start gap-4 hover:bg-background-100/40 transition-smooth">
                   <div className="w-9 h-9 bg-background-100 rounded-xl flex items-center justify-center shrink-0 border border-foreground-200/60">
-                    <i className={`${item.icon} text-foreground-500 text-sm`}></i>
+                    <AppIcon className={`${item.icon} text-foreground-500 text-sm`}></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start gap-2 flex-wrap">
@@ -181,18 +181,18 @@ export default function CurriculumReportsPage() {
                       disabled={generating === item.id}
                       className="px-3 py-1.5 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <i className="ri-refresh-line mr-1"></i>
+                      <AppIcon className="ri-refresh-line mr-1"></AppIcon>
                       {generating === item.id ? 'Generating...' : 'Generate'}
                     </button>
                     <button
                       onClick={() => { setSendReportId(item.id); setSelectedFormat(item.format[0]); }}
                       className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                     >
-                      <i className="ri-send-plane-line mr-1"></i>
+                      <AppIcon className="ri-send-plane-line mr-1"></AppIcon>
                       Send
                     </button>
                     <button className="w-7 h-7 flex items-center justify-center bg-background-100 border border-background-200 rounded-lg hover:bg-background-200 transition-smooth cursor-pointer">
-                      <i className="ri-download-line text-foreground-500 text-sm"></i>
+                      <AppIcon className="ri-download-line text-foreground-500 text-sm"></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -209,7 +209,7 @@ export default function CurriculumReportsPage() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Send Report</h3>
               <button onClick={() => setSendReportId(null)} className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500 text-sm"></i>
+                <AppIcon className="ri-close-line text-foreground-500 text-sm"></AppIcon>
               </button>
             </div>
 
@@ -267,7 +267,7 @@ export default function CurriculumReportsPage() {
                       disabled={!selectedRecipient}
                       className="flex-1 px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      <i className="ri-send-plane-line mr-1.5"></i>
+                      <AppIcon className="ri-send-plane-line mr-1.5"></AppIcon>
                       Send Report
                     </button>
                     <button

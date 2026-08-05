@@ -31,7 +31,7 @@ export default function PrepareAndActions({ onOpenPrepForm, hasPrepResponses, co
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <i className="ri-draft-line text-primary-600 text-lg" />
+              <AppIcon className="ri-draft-line text-primary-600 text-lg" />
             </div>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Prepare For My Review</h3>
@@ -44,21 +44,21 @@ export default function PrepareAndActions({ onOpenPrepForm, hasPrepResponses, co
                 </span>
                 {hasPrepResponses ? (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                    <i className="ri-check-double-line text-xs" /> Responses Saved
+                    <AppIcon className="ri-check-double-line text-xs" /> Responses Saved
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                    <i className="ri-error-warning-line text-xs" /> Not Yet Completed
+                    <AppIcon className="ri-error-warning-line text-xs" /> Not Yet Completed
                   </span>
                 )}
                 {coachNotified && (
                   <span className="inline-flex items-center gap-1 text-xs font-semibold text-primary-700 bg-primary-100 px-2 py-0.5 rounded-full">
-                    <i className="ri-mail-send-line text-xs" /> Coach Notified
+                    <AppIcon className="ri-mail-send-line text-xs" /> Coach Notified
                   </span>
                 )}
                 {submittedAt && (
                   <span className="inline-flex items-center gap-1 text-xs text-foreground-500">
-                    <i className="ri-time-line text-xs" /> {formatSubmittedAt()}
+                    <AppIcon className="ri-time-line text-xs" /> {formatSubmittedAt()}
                   </span>
                 )}
               </div>
@@ -68,7 +68,7 @@ export default function PrepareAndActions({ onOpenPrepForm, hasPrepResponses, co
             onClick={onOpenPrepForm}
             className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap shrink-0"
           >
-            <i className={hasPrepResponses ? 'ri-edit-line' : 'ri-draft-line'} />
+            <AppIcon className={hasPrepResponses ? 'ri-edit-line' : 'ri-draft-line'} />
             {hasPrepResponses ? 'Edit Responses' : 'Start Review Preparation'}
           </button>
         </div>

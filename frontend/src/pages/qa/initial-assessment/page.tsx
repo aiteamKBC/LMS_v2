@@ -91,7 +91,7 @@ export default function QAInitialAssessmentPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'primary' ? 'bg-primary-100 text-primary-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -123,7 +123,7 @@ export default function QAInitialAssessmentPage() {
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${statusConfig[record.qaStatus].bg} ${statusConfig[record.qaStatus].text}`}>
-                        <i className="ri-clipboard-line text-sm"></i>
+                        <AppIcon className="ri-clipboard-line text-sm"></AppIcon>
                       </span>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -144,7 +144,7 @@ export default function QAInitialAssessmentPage() {
                       <span className="text-[10px] text-foreground-400">{record.submittedDate}</span>
                       <span className="text-[10px] text-foreground-400">{record.qaOfficer}</span>
                       <button onClick={() => setExpandedId(isExpanded ? null : record.id)} className="w-7 h-7 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer transition-smooth">
-                        <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></i>
+                        <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></AppIcon>
                       </button>
                     </div>
                   </div>
@@ -152,7 +152,7 @@ export default function QAInitialAssessmentPage() {
                     <div className="mt-3 ml-11 grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {record.checks.map(check => (
                         <div key={check.label} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] ${check.passed ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-                          <i className={check.passed ? 'ri-check-line' : 'ri-close-line'}></i>
+                          <AppIcon className={check.passed ? 'ri-check-line' : 'ri-close-line'}></AppIcon>
                           <span>{check.label}{check.score ? ` (${check.score})` : ''}</span>
                         </div>
                       ))}

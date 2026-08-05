@@ -145,7 +145,7 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
       {/* Header with search */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-background-200/70 shrink-0">
         <div className="w-4 h-4 flex items-center justify-center text-foreground-400">
-          <i className="ri-search-line text-xs"></i>
+          <AppIcon className="ri-search-line text-xs"></AppIcon>
         </div>
         <input
           ref={searchInputRef}
@@ -160,7 +160,7 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
             onClick={() => setSearchQuery('')}
             className="w-5 h-5 flex items-center justify-center text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer"
           >
-            <i className="ri-close-line text-xs"></i>
+            <AppIcon className="ri-close-line text-xs"></AppIcon>
           </button>
         )}
       </div>
@@ -192,7 +192,7 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
         {filteredEmojis.length === 0 && (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <div className="w-8 h-8 flex items-center justify-center text-foreground-300 mb-2">
-              <i className="ri-emotion-unhappy-line text-lg"></i>
+              <AppIcon className="ri-emotion-unhappy-line text-lg"></AppIcon>
             </div>
             <p className="text-xs text-foreground-400">No emojis found</p>
           </div>
@@ -215,7 +215,7 @@ export default function EmojiPicker({ isOpen, onClose, onEmojiSelect, position }
             }`}
             title={cat.name}
           >
-            <i className={`${cat.icon} text-sm`}></i>
+            <AppIcon className={`${cat.icon} text-sm`}></AppIcon>
           </button>
         ))}
       </div>

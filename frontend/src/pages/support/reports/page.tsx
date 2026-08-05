@@ -40,7 +40,7 @@ export default function SupportReports() {
               <span className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 ${
                 m.color === 'primary' ? 'bg-primary-100 text-primary-600' : m.color === 'emerald' ? 'bg-emerald-100 text-emerald-600' : 'bg-accent-100 text-accent-600'
               }`}>
-                <i className={`${m.icon} text-xs`}></i>
+                <AppIcon className={`${m.icon} text-xs`}></AppIcon>
               </span>
               <p className="text-xl font-heading font-semibold text-foreground-900">{m.value}</p>
               <p className="text-[10px] text-foreground-400 mt-1">{m.label}</p>

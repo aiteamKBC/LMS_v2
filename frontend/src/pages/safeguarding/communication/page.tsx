@@ -37,7 +37,7 @@ export default function CommunicationPage() {
           <div className="space-y-3">
             <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                <i className="ri-lock-line text-red-600 text-lg"></i>
+                <AppIcon className="ri-lock-line text-red-600 text-lg"></AppIcon>
               </div>
               <div>
                 <p className="text-sm font-heading font-semibold text-red-900">Secure Notes — Restricted Access</p>
@@ -55,7 +55,7 @@ export default function CommunicationPage() {
               >
                 <div className="flex items-start gap-3">
                   <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-                    <i className="ri-file-lock-line text-red-600 text-sm"></i>
+                    <AppIcon className="ri-file-lock-line text-red-600 text-sm"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
@@ -87,7 +87,7 @@ export default function CommunicationPage() {
                 <option>High Priority</option>
               </select>
               <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[11px] font-semibold hover:bg-red-600 cursor-pointer whitespace-nowrap ml-auto">
-                <i className="ri-add-line mr-1"></i> New Message
+                <AppIcon className="ri-add-line mr-1"></AppIcon> New Message
               </button>
             </div>
             {SAFEGUARDING_MESSAGES.map(msg => (
@@ -114,7 +114,7 @@ export default function CommunicationPage() {
                     </div>
                   </div>
                   <button className="text-foreground-300 hover:text-red-500 transition-smooth cursor-pointer shrink-0 ml-3">
-                    <i className="ri-mail-open-line"></i>
+                    <AppIcon className="ri-mail-open-line"></AppIcon>
                   </button>
                 </div>
               </div>

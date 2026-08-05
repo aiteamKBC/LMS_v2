@@ -96,22 +96,48 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
 
   // Size the backing store to the element's CSS size × DPR, so strokes are
   // crisp on retina screens and coordinates map 1:1 to what the user sees.
+  //
+  // Re-measured whenever the element's box changes, not just on mount: the pad
+  // is a `w-full` canvas inside dialogs that are still settling when it first
+  // renders (and can be resized afterwards). Measuring once left the backing
+  // store at a stale width, which offsets every stroke from the cursor —
+  // setting canvas.width also wipes the bitmap, so this must not fire mid-draw.
   useEffect(() => {
     if (mode !== 'draw') return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(rect.width * dpr);
-    canvas.height = Math.round(rect.height * dpr);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.scale(dpr, dpr);
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#111827';
-  }, [mode]);
+
+    let lastW = 0;
+    let lastH = 0;
+    const size = () => {
+      // A resize resets the bitmap, so never re-size out from under a stroke
+      // in progress or after the user has drawn something worth keeping.
+      if (drawing.current || hasInk) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (w === 0 || h === 0 || (w === lastW && h === lastH)) return;
+      lastW = w;
+      lastH = h;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      // setTransform, not scale: width/height assignment resets the transform,
+      // but this runs repeatedly and scale() would compound.
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#111827';
+    };
+
+    size();
+    const ro = new ResizeObserver(size);
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, [mode, hasInk]);
 
   const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -194,7 +220,7 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
         mode === m ? 'bg-primary-50 text-primary-700 border-primary-300/60' : 'text-foreground-500 border-transparent hover:bg-background-100'
       }`}
     >
-      <i className={icon} />{label}
+      <AppIcon className={icon} />{label}
     </button>
   );
 
@@ -218,16 +244,16 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
           <p className="text-[11px] text-foreground-400 mt-1.5">Sign inside the box using a mouse, trackpad or finger.</p>
           <div className="flex items-center gap-2 mt-3">
             <button className={btnPrimary} onClick={commitDrawing} disabled={!hasInk}>
-              <i className="ri-check-line" />Use signature
+              <AppIcon className="ri-check-line" />Use signature
             </button>
-            <button className={btnSecondary} onClick={clear} disabled={!hasInk}><i className="ri-eraser-line" />Clear</button>
+            <button className={btnSecondary} onClick={clear} disabled={!hasInk}><AppIcon className="ri-eraser-line" />Clear</button>
             <button className={btnSecondary} onClick={onCancel}>Cancel</button>
           </div>
         </>
       ) : (
         <>
           <label className="w-full h-32 border-2 border-dashed border-foreground-200 rounded-lg bg-background-50 flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500 transition-smooth cursor-pointer">
-            <i className="ri-image-add-line text-2xl mb-1" />
+            <AppIcon className="ri-image-add-line text-2xl mb-1" />
             <span className="text-[12px]">Choose a signature image</span>
             <span className="text-[11px] text-foreground-300 mt-0.5">PNG, JPEG or WebP · max 2 MB</span>
             <input
@@ -248,7 +274,7 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
         </>
       )}
 
-      {err && <p className="text-[12px] text-red-600 mt-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
+      {err && <p className="text-[12px] text-red-600 mt-2"><AppIcon className="ri-error-warning-line mr-1" />{err}</p>}
     </div>
   );
 }

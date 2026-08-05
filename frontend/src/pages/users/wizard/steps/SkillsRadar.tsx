@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useWizard } from '../WizardContext';
-import { PCP_KSBS, PCP_STANDARD, COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
-import type { KsbAssessment, RagLevel } from '../../types';
+import { COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
+import { fetchKsbProfile } from '@/api/curriculum';
+import type { Ksb, KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
@@ -31,9 +32,35 @@ function workingFrom(existing?: KsbAssessment): WorkingAnswer {
 }
 
 export default function SkillsRadar() {
-  const { draft, setSection, readOnly } = useWizard();
+  const { draft, setSection, readOnly, board } = useWizard();
   const sr = draft.skillsRadar;
-  const ksbs = PCP_KSBS;
+
+  // The KSBs come from the profile authored against THIS learner's programme
+  // (curriculum.ksb_profiles), not a fixed standard — a learner must only ever
+  // self-assess against their own programme's competencies.
+  const programme = board.programme.name || '';
+  const [ksbs, setKsbs] = useState<Ksb[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!programme) {
+      setKsbs([]);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    fetchKsbProfile(programme)
+      .then((res) => {
+        if (cancelled) return;
+        setKsbs(res.results as Ksb[]);
+      })
+      .catch((e: Error) => { if (!cancelled) setLoadError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [programme]);
 
   // Index of the question open in the modal; null when closed.
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -85,9 +112,30 @@ export default function SkillsRadar() {
     <div>
       <StepHeading
         title="Skills Radar"
-        subtitle={`${PCP_STANDARD.label} [${ksbs.length}]`}
+        subtitle={programme ? `${programme} [${ksbs.length}]` : 'No programme assigned'}
       />
 
+      {loading && (
+        <p className="text-[13px] text-foreground-400 py-6">
+          <i className="ri-loader-4-line animate-spin mr-2" />Loading your programme’s competencies…
+        </p>
+      )}
+      {!loading && loadError && (
+        <p className="text-[13px] text-red-600 py-6">
+          <i className="ri-error-warning-line mr-1.5" />{loadError}
+        </p>
+      )}
+      {!loading && !loadError && ksbs.length === 0 && (
+        <div className="py-6">
+          <EmptyState text={
+            programme
+              ? `No competencies have been authored for ${programme} yet. Please contact your programme team.`
+              : 'This learner has no programme assigned, so there are no competencies to rate.'
+          } />
+        </div>
+      )}
+
+      {ksbs.length > 0 && (
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <p className="text-[12px] text-foreground-500">
           {readOnly
@@ -96,18 +144,21 @@ export default function SkillsRadar() {
         </p>
         <span className="text-[12px] font-semibold text-foreground-600 shrink-0">{answeredCount} of {ksbs.length} answered</span>
       </div>
+      )}
 
       {/* Progress */}
+      {ksbs.length > 0 && (
       <div className="h-1.5 bg-background-200 rounded-full overflow-hidden mb-5">
         <div className="h-full bg-primary-500 rounded-full transition-all duration-300" style={{ width: `${(answeredCount / ksbs.length) * 100}%` }} />
       </div>
+      )}
 
       {!readOnly && answeredCount < ksbs.length && (
         <button
           className={`${btnPrimary} mb-4`}
           onClick={() => open(ksbs.findIndex((k) => !sr.assessments[k.id]?.level))}
         >
-          <i className="ri-play-line" />{answeredCount === 0 ? 'Start assessment' : 'Continue assessment'}
+          <AppIcon className="ri-play-line" />{answeredCount === 0 ? 'Start assessment' : 'Continue assessment'}
         </button>
       )}
 
@@ -139,7 +190,7 @@ export default function SkillsRadar() {
                 onClick={() => open(i)}
                 className={`${btnSecondary} !py-1 !px-3 !text-[11px] shrink-0`}
               >
-                <i className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
+                <AppIcon className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
               </button>
             </div>
           );
@@ -161,7 +212,7 @@ export default function SkillsRadar() {
               <>
                 <button className={btnSecondary} onClick={() => setOpenIndex(null)}>Cancel</button>
                 <button className={btnPrimary} onClick={confirm} disabled={!work.level}>
-                  <i className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
+                  <AppIcon className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
                 </button>
               </>
             )
@@ -225,7 +276,7 @@ export default function SkillsRadar() {
             <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Upload evidence:</label>
             {!readOnly && (
               <label className="inline-flex items-center gap-2 px-3 py-2 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer mb-2">
-                <i className="ri-folder-open-line" />Select file…
+                <AppIcon className="ri-folder-open-line" />Select file…
                 <input
                   type="file"
                   multiple

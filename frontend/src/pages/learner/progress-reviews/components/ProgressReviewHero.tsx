@@ -13,7 +13,7 @@ export default function ProgressReviewHero() {
         <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
         <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
-            <i className="ri-file-chart-line text-white text-2xl" />
+            <AppIcon className="ri-file-chart-line text-white text-2xl" />
           </span>
           <div className="flex-1">
             <h2 className="text-lg font-heading font-bold text-white mb-1">Progress Reviews</h2>

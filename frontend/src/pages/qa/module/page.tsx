@@ -84,7 +84,7 @@ export default function QAModulePage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'primary' ? 'bg-primary-100 text-primary-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-secondary-100 text-secondary-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -120,7 +120,7 @@ export default function QAModulePage() {
               <div className="grid grid-cols-2 gap-2 mb-3">
                 {module.qaChecks.map(check => (
                   <div key={check.label} className={`flex items-center gap-2 px-3 py-2 rounded-lg text-[11px] bg-background-100`}>
-                    <i className={`${checkConfig[check.status].icon} ${checkConfig[check.status].color} text-sm`}></i>
+                    <AppIcon className={`${checkConfig[check.status].icon} ${checkConfig[check.status].color} text-sm`}></AppIcon>
                     <span className="text-foreground-600">{check.label}</span>
                   </div>
                 ))}

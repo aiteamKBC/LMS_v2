@@ -494,7 +494,7 @@ export default function KSBMapping() {
               </div>
               <button onClick={() => setSourceKind('framework')} className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
                 Inspect by KSB source
-                <i className="ri-arrow-right-line" />
+                <AppIcon className="ri-arrow-right-line" />
               </button>
             </div>
             {loading ? (
@@ -543,7 +543,7 @@ export default function KSBMapping() {
             <div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(16rem,1fr)_9rem_11rem_12rem_12rem_10rem_9rem_auto]">
               <label className="relative block">
                 <span className="sr-only">Search KSBs</span>
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
                 <input
                   value={search}
                   onChange={event => setSearch(event.target.value)}
@@ -589,7 +589,7 @@ export default function KSBMapping() {
             </div>
             <button onClick={() => setActiveView('applied')} className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
               Show applied
-              <i className="ri-arrow-right-line" />
+              <AppIcon className="ri-arrow-right-line" />
             </button>
           </div>
           <div className="grid gap-2 p-3 md:grid-cols-2 xl:grid-cols-5">
@@ -702,7 +702,7 @@ function ProgrammeMappingTable({
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300"
                     >
                       {expanded ? 'Hide details' : 'Details'}
-                      <i className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                      <AppIcon className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
                     </button>
                   </td>
                 </tr>
@@ -753,7 +753,7 @@ function ProgrammeMappingDetails({
           className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-45"
           title={!allProgrammeMappings.some(mapping => mappingId(mapping)) ? 'Cannot remove programme mappings because the API did not return mapping ids.' : 'Remove every returned KSB mapping placement for this programme.'}
         >
-          <i className="ri-delete-bin-line" />
+          <AppIcon className="ri-delete-bin-line" />
           Remove programme mappings
         </button>
       </div>
@@ -821,7 +821,7 @@ function ProgrammeMappingDetails({
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-xs font-bold text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-45"
                       title={!item.mappings.some(mapping => mappingId(mapping)) ? 'Cannot remove these mappings because the API did not return mapping ids.' : 'Remove all placements for this KSB in this programme.'}
                     >
-                      <i className="ri-delete-bin-line" />
+                      <AppIcon className="ri-delete-bin-line" />
                       Remove all
                     </button>
                   </div>
@@ -860,7 +860,7 @@ function PlacementEditMenu({
       <summary className="inline-flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
         Places
         <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[10px]">{numberText(mappings.length)}</span>
-        <i className="ri-arrow-down-s-line transition group-open:rotate-180" />
+        <AppIcon className="ri-arrow-down-s-line transition group-open:rotate-180" />
       </summary>
       <div className="absolute right-0 z-30 mt-2 max-h-72 w-[360px] overflow-auto rounded-lg border border-foreground-200 bg-background-50 p-2 shadow-xl">
         <div className="space-y-1">
@@ -901,7 +901,7 @@ function OpenPlacementButton({ mapping, item, label, compact = false }: { mappin
       })}
       className={`${compact ? 'h-6 px-2 text-[10px]' : 'h-8 px-3 text-xs'} inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-45`}
     >
-      <i className="ri-edit-line" />
+      <AppIcon className="ri-edit-line" />
       {label}
     </button>
   );
@@ -918,7 +918,7 @@ function RemovePlacementButton({ mapping, deletingMappingIds, onDelete, compact 
       onClick={onDelete}
       className={`${compact ? 'h-6 px-2 text-[10px]' : 'h-8 px-3 text-xs'} inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 font-bold text-red-700 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:opacity-45`}
     >
-      <i className={deleting ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} />
+      <AppIcon className={deleting ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} />
       Remove
     </button>
   );
@@ -1130,12 +1130,12 @@ function KsbTable({ items, expandedKey, onToggle }: { items: CurriculumKsbCovera
                     {itemOccurrences(item) > 0 ? (
                       <button onClick={() => onToggle(expanded ? null : key)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
                         {expanded ? 'Hide' : 'View placements'}
-                        <i className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                        <AppIcon className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
                       </button>
                     ) : (
                       <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/module-builder')} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
                         Map KSB
-                        <i className="ri-arrow-right-line" />
+                        <AppIcon className="ri-arrow-right-line" />
                       </button>
                     )}
                   </td>
@@ -1299,7 +1299,7 @@ function uniqueOptions(options: Array<{ value: string; label: string }>) {
 function EmptyState({ title, message, compact = false }: { title: string; message: string; compact?: boolean }) {
   return (
     <div className={`${compact ? 'col-span-full rounded-lg' : 'rounded-lg'} border border-dashed border-background-300 bg-background-50 px-6 py-10 text-center`}>
-      <i className="ri-route-line text-3xl text-foreground-300" />
+      <AppIcon className="ri-route-line text-3xl text-foreground-300" />
       <h3 className="mt-3 text-sm font-heading font-black text-foreground-800">{title}</h3>
       <p className="mt-1 text-sm text-foreground-500">{message}</p>
     </div>

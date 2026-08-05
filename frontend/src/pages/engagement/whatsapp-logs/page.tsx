@@ -62,7 +62,7 @@ export default function WhatsAppLogsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-background-200/50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
@@ -85,13 +85,13 @@ export default function WhatsAppLogsPage() {
             {filtered.map(msg => (
               <div key={msg.id} className="p-4 flex items-start gap-4">
                 <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
-                  <i className="ri-whatsapp-line text-sm"></i>
+                  <AppIcon className="ri-whatsapp-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
                     <span className="text-[12px] font-semibold text-foreground-900">{msg.sender}</span>
                     <span className="text-[8px] text-foreground-400">({msg.senderRole})</span>
-                    <i className="ri-arrow-right-line text-[10px] text-foreground-300"></i>
+                    <AppIcon className="ri-arrow-right-line text-[10px] text-foreground-300"></AppIcon>
                     <span className="text-[12px] font-semibold text-foreground-700">{msg.recipient}</span>
                     <span className="text-[8px] text-foreground-400">({msg.recipientRole})</span>
                     <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-secondary-100 text-secondary-700">{msg.category}</span>
@@ -100,11 +100,11 @@ export default function WhatsAppLogsPage() {
                   <div className="flex items-center gap-3 text-[10px] text-foreground-400">
                     <span>{msg.timestamp}</span>
                     <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${msg.status === 'read' ? 'bg-emerald-100 text-emerald-700' : msg.status === 'replied' ? 'bg-primary-100 text-primary-700' : 'bg-amber-100 text-amber-700'}`}>{msg.status}</span>
-                    {msg.hasMedia && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-100 text-accent-700"><i className="ri-attachment-2 mr-0.5"></i>Media</span>}
+                    {msg.hasMedia && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-accent-100 text-accent-700"><AppIcon className="ri-attachment-2 mr-0.5"></AppIcon>Media</span>}
                   </div>
                 </div>
                 <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                  <i className="ri-reply-line mr-1"></i> Reply
+                  <AppIcon className="ri-reply-line mr-1"></AppIcon> Reply
                 </button>
               </div>
             ))}

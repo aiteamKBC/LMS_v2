@@ -89,7 +89,7 @@ export default function QAOTJHPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-red-100 text-red-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -124,11 +124,11 @@ export default function QAOTJHPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0 text-[10px] text-foreground-400">
                   <span className={`flex items-center gap-1 ${item.attendanceRecord ? 'text-emerald-600' : 'text-red-600'}`}>
-                    <i className={item.attendanceRecord ? 'ri-check-line' : 'ri-close-line'}></i> Attendance
+                    <AppIcon className={item.attendanceRecord ? 'ri-check-line' : 'ri-close-line'}></AppIcon> Attendance
                   </span>
                   <span className="text-foreground-300">|</span>
                   <span className={`flex items-center gap-1 ${item.employerSignOff ? 'text-emerald-600' : 'text-red-600'}`}>
-                    <i className={item.employerSignOff ? 'ri-check-line' : 'ri-close-line'}></i> Employer
+                    <AppIcon className={item.employerSignOff ? 'ri-check-line' : 'ri-close-line'}></AppIcon> Employer
                   </span>
                   <span className="text-foreground-300">|</span>
                   <span>{item.verifiedBy !== '—' ? `Verified: ${item.verifiedBy}` : 'Unverified'}</span>

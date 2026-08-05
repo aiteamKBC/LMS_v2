@@ -65,6 +65,9 @@ export default defineConfig(({ mode }) => ({
         {
           "react-i18next": ["useTranslation", "Trans"],
         },
+        {
+          "@/components/feature/AppIcon": ["AppIcon"],
+        },
       ],
       dts: true,
     }),
