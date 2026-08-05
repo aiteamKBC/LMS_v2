@@ -1,4 +1,6 @@
-const API_URL = (import.meta.env.VITE_AUDIT_API_URL as string | undefined)?.replace(/\/$/, "") ?? "/audit_api/ledger";
+// The REAL (auditor-copy) workspace reads Audit.learner_match.programme_structure
+// via the match-ledger endpoints, not the Audit.mre ledger the FAKE tab uses.
+const API_URL = "/audit_api/match-ledger";
 
 export type LearnerActivity = {
   id: string;
@@ -13,17 +15,16 @@ export type LearnerActivity = {
   activity_period: string | null;
   time_from_to: string | null;
   actual_lms_hours: number | null;
-  week_sequence: string;
   activity_category: string;
   activity_unit: string;
-  activity_description: string;
+  activity_description: string | null;
   delivery_method: string;
   planned_hours: number | null;
-  key_ksbs: string | null;
-  expected_evidence: string | null;
   source_course: string | null;
   source_url: string | null;
   source_basis: string | null;
+  created_at: string | null;
+  configured_duration: string | null;
 };
 
 export type LearnerActivitiesResponse = {
@@ -82,6 +83,42 @@ export function getLearnerActivities(params: {
   if (params.category) query.set("category", params.category);
   if (params.period) query.set("period", params.period);
   return getJson<LearnerActivitiesResponse>(`/learner-activities?${query}`);
+}
+
+export function getActivityLearners(params: { component: string; search?: string }) {
+  const query = new URLSearchParams({ component: params.component });
+  if (params.search) query.set("search", params.search);
+  return getJson<LearnerActivitiesResponse>(`/activity-learners?${query}`);
+}
+
+export type ActivityAnnotation = {
+  component_id?: string;
+  planned_hours: number | null;
+  mapped_ksbs: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+export function getActivityAnnotation(component: string) {
+  return getJson<ActivityAnnotation>(`/activity-annotation?component=${encodeURIComponent(component)}`);
+}
+
+export async function saveActivityAnnotation(payload: {
+  component_id: string;
+  planned_hours: number | null;
+  mapped_ksbs: string | null;
+  updated_by?: string | null;
+}): Promise<ActivityAnnotation> {
+  const response = await fetch(`${API_URL}/activity-annotation/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(error?.error ?? `Save failed (${response.status})`);
+  }
+  return response.json() as Promise<ActivityAnnotation>;
 }
 
 export function getLearners(params: { period?: string; search?: string; position?: string } = {}) {

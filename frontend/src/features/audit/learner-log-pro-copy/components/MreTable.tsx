@@ -5,18 +5,22 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Database, FileText, Search } from "lucide-react";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getLearnerActivities } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { getActivityLearners, getLearnerActivities } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 const pageSize = 20;
 
-export function MreTable({ learner }: { learner?: string }) {
+export function MreTable({ learner, component }: { learner?: string; component?: string }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const byComponent = Boolean(component);
   const query = useQuery({
-    queryKey: ["mre", learner, search, page],
-    queryFn: () => getLearnerActivities({ learner, search, offset: page * pageSize, limit: pageSize }),
+    queryKey: ["mre", learner, component, search, page],
+    queryFn: () =>
+      byComponent
+        ? getActivityLearners({ component: component as string, search })
+        : getLearnerActivities({ learner, search, offset: page * pageSize, limit: pageSize }),
   });
-  const totalPages = Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
+  const totalPages = byComponent ? 1 : Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
 
   return (
     <section className="rounded-lg border border-border bg-card shadow-panel">
@@ -27,7 +31,9 @@ export function MreTable({ learner }: { learner?: string }) {
             <h2 className="font-serif text-lg text-foreground">Learner activity records</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {learner
+            {byComponent
+              ? "All learners who have this activity, with their own log entry on it."
+              : learner
               ? `Live Neon activity records for ${learner}.`
               : "Student columns from Neon are converted into one real activity row per learner."}
           </p>
@@ -78,7 +84,13 @@ export function MreTable({ learner }: { learner?: string }) {
                   <TableCell className="font-mono text-xs text-muted-foreground">{activity.time_from_to ?? "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{activity.activity_category}</TableCell>
                   <TableCell className="max-w-md text-sm text-foreground">
-                    <span className="font-medium">{activity.activity_unit}</span>
+                    <Link
+                      to="/activity"
+                      search={{ learner: activity.learner.toLowerCase(), activity: activity.plan_id }}
+                      className="font-medium hover:text-primary hover:underline"
+                    >
+                      {activity.activity_unit}
+                    </Link>
                     {activity.activity_description && <span className="mt-0.5 block text-xs text-muted-foreground">{activity.activity_description}</span>}
                   </TableCell>
                   <TableCell className="text-right font-mono text-sm text-muted-foreground">{activity.planned_hours ?? "—"}</TableCell>
