@@ -48,18 +48,18 @@ export function LearnerPickerModal({ open, onClose, onSelect, selectedId, status
       <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[85vh] overflow-hidden flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-user-search-line text-lg"></i></span>
+            <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-user-search-line text-lg"></AppIcon></span>
             <div>
               <h3 className="text-base font-heading font-semibold text-foreground-900">Select a Learner</h3>
               <p className="text-[11px] text-foreground-400">{filtered.length} of {sortedLearners.length} learners</p>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>
 
         <div className="p-4 border-b border-foreground-200/60 space-y-3 shrink-0">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input
               type="text"
               autoFocus
@@ -75,7 +75,7 @@ export function LearnerPickerModal({ open, onClose, onSelect, selectedId, status
         <div className="overflow-y-auto p-3 space-y-1.5 flex-1">
           {filtered.length === 0 && (
             <div className="flex flex-col items-center justify-center text-center gap-2 py-10">
-              <i className="ri-user-search-line text-2xl text-foreground-300"></i>
+              <AppIcon className="ri-user-search-line text-2xl text-foreground-300"></AppIcon>
               <p className="text-sm font-semibold text-foreground-700">No learners match</p>
               <p className="text-[11px] text-foreground-400">Try a different name, cohort, or programme filter.</p>
             </div>
@@ -105,7 +105,7 @@ export function LearnerPickerModal({ open, onClose, onSelect, selectedId, status
                 </div>
                 {statuses && (
                   status?.done ? (
-                    <span className="shrink-0 inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><i className="ri-check-double-line"></i>Done today</span>
+                    <span className="shrink-0 inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700"><AppIcon className="ri-check-double-line"></AppIcon>Done today</span>
                   ) : status && status.usedToday > 0 ? (
                     <span className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{status.usedToday}/{status.usedToday + status.remainingToday} today</span>
                   ) : (
@@ -113,7 +113,7 @@ export function LearnerPickerModal({ open, onClose, onSelect, selectedId, status
                   )
                 )}
                 <span className="shrink-0 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-secondary-50 text-secondary-700">{l.programmeCode}</span>
-                {active && <i className="ri-check-line text-primary-500 shrink-0"></i>}
+                {active && <AppIcon className="ri-check-line text-primary-500 shrink-0"></AppIcon>}
               </button>
             );
           })}

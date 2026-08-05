@@ -59,7 +59,7 @@ export default function LearnerProgressPage() {
                     </div>
                   )}
                 </div>
-                {i < LEARNER_JOURNEY.length - 1 && <div className="flex justify-center mt-2 text-foreground-300"><i className="ri-arrow-right-line text-sm"></i></div>}
+                {i < LEARNER_JOURNEY.length - 1 && <div className="flex justify-center mt-2 text-foreground-300"><AppIcon className="ri-arrow-right-line text-sm"></AppIcon></div>}
               </div>
             ))}
           </div>

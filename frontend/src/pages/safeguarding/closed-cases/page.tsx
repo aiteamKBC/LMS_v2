@@ -48,7 +48,7 @@ export default function ClosedCasesPage() {
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                   kase.status === 'Archived' ? 'bg-foreground-100 text-foreground-500' : 'bg-emerald-100 text-emerald-600'
                 }`}>
-                  <i className={`${kase.status === 'Archived' ? 'ri-archive-line' : 'ri-check-double-line'} text-lg`}></i>
+                  <AppIcon className={`${kase.status === 'Archived' ? 'ri-archive-line' : 'ri-check-double-line'} text-lg`}></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between">

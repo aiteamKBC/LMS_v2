@@ -5,7 +5,7 @@ export function EmployerReadiness() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-4">
         <span className="w-9 h-9 rounded-lg bg-secondary-100 flex items-center justify-center shrink-0">
-          <i className="ri-building-2-line text-secondary-700"></i>
+          <AppIcon className="ri-building-2-line text-secondary-700"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Employer Readiness</h3>
@@ -21,11 +21,11 @@ export function EmployerReadiness() {
               item.status === 'in-progress' ? 'bg-amber-100 text-amber-600' :
               'bg-background-100 text-foreground-300'
             }`}>
-              <i className={`${
+              <AppIcon className={`${
                 item.status === 'complete' ? 'ri-check-line' :
                 item.status === 'in-progress' ? 'ri-time-line' :
                 'ri-subtract-line'
-              } text-sm`}></i>
+              } text-sm`}></AppIcon>
             </span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between gap-2">
@@ -41,7 +41,7 @@ export function EmployerReadiness() {
               </div>
               <p className="text-xs text-foreground-400 mt-0.5 leading-relaxed">{item.detail}</p>
               <div className="flex items-center gap-1 mt-1">
-                <i className="ri-calendar-line text-[9px] text-foreground-300"></i>
+                <AppIcon className="ri-calendar-line text-[9px] text-foreground-300"></AppIcon>
                 <span className="text-[9px] text-foreground-400">{item.deadline}</span>
               </div>
             </div>
@@ -51,7 +51,7 @@ export function EmployerReadiness() {
 
       <div className="mt-3 bg-secondary-50 rounded-lg p-3 border border-secondary-200/50">
         <p className="text-xs text-secondary-700">
-          <i className="ri-information-line mr-1"></i>
+          <AppIcon className="ri-information-line mr-1"></AppIcon>
           <strong>Tip:</strong> Start conversations with your line manager early. Employer paperwork is the most common cause of Gateway delays.
         </p>
       </div>

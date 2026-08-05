@@ -5,7 +5,7 @@ export function EPAComponentReadiness() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-4">
         <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-          <i className="ri-award-line text-primary-600"></i>
+          <AppIcon className="ri-award-line text-primary-600"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">EPA Component Readiness</h3>
@@ -35,7 +35,7 @@ export function EPAComponentReadiness() {
               <p className="text-[9px] font-semibold text-foreground-700 uppercase tracking-wide">Recommendations:</p>
               {comp.recommendations.map((rec, i) => (
                 <div key={i} className="flex items-start gap-1.5 text-xs text-foreground-500">
-                  <i className="ri-checkbox-blank-circle-fill text-[5px] text-primary-400 mt-1.5 shrink-0"></i>
+                  <AppIcon className="ri-checkbox-blank-circle-fill text-[5px] text-primary-400 mt-1.5 shrink-0"></AppIcon>
                   <span>{rec}</span>
                 </div>
               ))}

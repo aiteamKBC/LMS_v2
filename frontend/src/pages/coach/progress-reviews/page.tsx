@@ -843,7 +843,7 @@ export default function CoachProgressReviews() {
             <div>
               <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
                 <span>Coach Workspace</span>
-                <i className="ri-arrow-right-s-line"></i>
+                <AppIcon className="ri-arrow-right-s-line"></AppIcon>
                 <span className="font-semibold text-white">Progress Reviews</span>
               </div>
               <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Progress Reviews</h1>
@@ -856,7 +856,7 @@ export default function CoachProgressReviews() {
               onClick={() => changeTab(overdue > 0 ? 'overdue' : 'this-month')}
               className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
             >
-              <i className={overdue > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-checkbox-circle-line text-emerald-600'}></i>
+              <AppIcon className={overdue > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-checkbox-circle-line text-emerald-600'}></AppIcon>
               {overdue > 0
                 ? `${overdue} overdue review${overdue === 1 ? '' : 's'}`
                 : 'Everything is on track'}
@@ -880,7 +880,7 @@ export default function CoachProgressReviews() {
               <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center xl:w-auto">
                 <label className="relative block w-full sm:w-[320px]">
                   <span className="sr-only">Search progress reviews by learner name</span>
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                   <input
                     type="search"
                     value={searchTerm}
@@ -895,7 +895,7 @@ export default function CoachProgressReviews() {
                       className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-foreground-400 transition hover:bg-background-100 hover:text-foreground-700"
                       aria-label="Clear learner search"
                     >
-                      <i className="ri-close-line"></i>
+                      <AppIcon className="ri-close-line"></AppIcon>
                     </button>
                   )}
                 </label>
@@ -940,15 +940,15 @@ export default function CoachProgressReviews() {
                         {isAtRiskProgressReview(review) && <span className="rounded-full bg-red-50 px-2.5 py-1 text-[9px] font-bold text-red-700">Overdue</span>}
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400">
-                        <span><i className="ri-book-open-line mr-1 text-primary-500"></i>{review.programme || '--'}</span>
-                        <span><i className="ri-calendar-line mr-1 text-primary-500"></i>{formatDateLabel(eventDisplayDate(review))}</span>
-                        <span><i className="ri-time-line mr-1 text-primary-500"></i>{formatTimeLabel(review)}</span>
+                        <span><AppIcon className="ri-book-open-line mr-1 text-primary-500"></AppIcon>{review.programme || '--'}</span>
+                        <span><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{formatDateLabel(eventDisplayDate(review))}</span>
+                        <span><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{formatTimeLabel(review)}</span>
                       </div>
                     </div>
                     <div className="hidden shrink-0 items-center gap-2 md:flex">
                       {joinAvailable && (
                         <button type="button" onClick={(e) => { e.stopPropagation(); handleJoin(review); }} disabled={isBusy} className="cursor-pointer whitespace-nowrap rounded-xl bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:opacity-60">
-                          <i className="ri-video-on-line mr-1.5"></i>Join Meeting
+                          <AppIcon className="ri-video-on-line mr-1.5"></AppIcon>Join Meeting
                         </button>
                       )}
                       <button
@@ -958,7 +958,7 @@ export default function CoachProgressReviews() {
                         title={!review.learnerId ? 'Learner id missing for this review' : 'Generate a 12-week slide deck for this learner'}
                         className="cursor-pointer whitespace-nowrap rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[11px] font-bold text-amber-800 shadow-sm transition-smooth hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        <i className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1.5`}></i>
+                        <AppIcon className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1.5`}></AppIcon>
                         {isSlidesBusy ? 'Creating slides' : 'Create slides'}
                       </button>
                       <button type="button" onClick={(e) => { e.stopPropagation(); toggleExpanded(review); }} className="cursor-pointer whitespace-nowrap rounded-xl border border-primary-600 bg-primary-600 px-4 py-2.5 text-[11px] font-bold text-white shadow-sm transition-smooth hover:border-primary-700 hover:bg-primary-700">
@@ -966,7 +966,7 @@ export default function CoachProgressReviews() {
                       </button>
                     </div>
                     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background-100 text-foreground-400 transition-transform ${isOpen ? 'rotate-180 bg-primary-50 text-primary-600' : ''}`}>
-                      <i className="ri-arrow-down-s-line"></i>
+                      <AppIcon className="ri-arrow-down-s-line"></AppIcon>
                     </span>
                   </div>
 
@@ -1006,7 +1006,7 @@ export default function CoachProgressReviews() {
                           <div className="flex flex-wrap items-center gap-2 mt-3">
                             {joinAvailable && (
                               <button type="button" onClick={() => handleJoin(review)} disabled={isBusy} className="whitespace-nowrap rounded-lg bg-emerald-600 px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-60">
-                                <i className="ri-video-on-line mr-1"></i>Join Meeting
+                                <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join Meeting
                               </button>
                             )}
                             <button
@@ -1016,15 +1016,15 @@ export default function CoachProgressReviews() {
                               title={!review.learnerId ? 'Learner id missing for this review' : 'Generate a 12-week slide deck for this learner'}
                               className="whitespace-nowrap rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-800 shadow-sm transition hover:border-amber-300 hover:bg-amber-100 hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              <i className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1`}></i>
+                              <AppIcon className={`${isSlidesBusy ? 'ri-loader-4-line animate-spin' : 'ri-slideshow-line'} mr-1`}></AppIcon>
                               {isSlidesBusy ? 'Creating slides' : 'Create slides'}
                             </button>
                             <button type="button" onClick={() => handleSchedule(review)} disabled={isBusy} className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-calendar-check-line mr-1"></i>{review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
+                              <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>{review.status === 'scheduled' || review.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
                             </button>
                             {review.status === 'in-progress' && (
                               <button type="button" onClick={() => openCompletionForm(review)} disabled={isBusy} className="px-3 py-2 bg-secondary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-secondary-600 disabled:opacity-60 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-                                <i className="ri-send-plane-line mr-1"></i>Submit Review
+                                <AppIcon className="ri-send-plane-line mr-1"></AppIcon>Submit Review
                               </button>
                             )}
                           </div>
@@ -1033,14 +1033,14 @@ export default function CoachProgressReviews() {
                       {review.status === 'awaiting-signature' && (
                         <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-                            <i className="ri-pen-nib-line"></i>
+                            <AppIcon className="ri-pen-nib-line"></AppIcon>
                           </span>
                           <div className="flex-1">
                             <p className="text-xs font-bold text-violet-900">Waiting for line manager signature</p>
                             <p className="mt-1 text-[11px] text-violet-700">The coach review is saved. Confirm the manager signature to finish this review.</p>
                           </div>
                           <button type="button" onClick={() => handleAction(review, 'sign')} disabled={isBusy} className="whitespace-nowrap rounded-xl bg-violet-700 px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-violet-800 disabled:opacity-60">
-                            <i className="ri-quill-pen-line mr-1.5"></i>Confirm Manager Signature
+                            <AppIcon className="ri-quill-pen-line mr-1.5"></AppIcon>Confirm Manager Signature
                           </button>
                         </div>
                       )}
@@ -1137,7 +1137,7 @@ function ProgressReviewCompletionModal({
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg text-secondary-200">
-                <i className="ri-file-edit-line"></i>
+                <AppIcon className="ri-file-edit-line"></AppIcon>
               </span>
               <div>
                 <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-secondary-200">Submit progress review</p>
@@ -1146,7 +1146,7 @@ function ProgressReviewCompletionModal({
               </div>
             </div>
             <button type="button" onClick={onClose} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 disabled:opacity-50" aria-label="Close form">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
           <div className="mt-4 flex items-center gap-3">
@@ -1159,7 +1159,7 @@ function ProgressReviewCompletionModal({
 
         <div className="flex-1 space-y-3 overflow-y-auto bg-[#f7f6fb] p-4 sm:p-6">
           <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3 text-xs leading-5 text-primary-800">
-            <i className="ri-information-line mr-2"></i>
+            <AppIcon className="ri-information-line mr-2"></AppIcon>
             These answers will be saved to this review and shown to the learner in their Progress Review record.
           </div>
 
@@ -1190,7 +1190,7 @@ function ProgressReviewCompletionModal({
               <section key={section.id} className={`overflow-hidden rounded-2xl border bg-background-50 transition-all ${isOpen ? 'border-primary-300 shadow-sm' : 'border-background-200'}`}>
                 <button type="button" onClick={() => setOpenSection(isOpen ? '' : section.id)} className="flex w-full items-center gap-3 p-4 text-left sm:px-5">
                   <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isOpen ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700'}`}>
-                    <i className={section.icon}></i>
+                    <AppIcon className={section.icon}></AppIcon>
                     <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-primary-900 px-1 text-[8px] font-bold text-white">{sectionIndex + 1}</span>
                   </span>
                   <span className="min-w-0 flex-1">
@@ -1198,8 +1198,8 @@ function ProgressReviewCompletionModal({
                     <span className="mt-0.5 block text-sm font-bold text-foreground-900">{section.title}</span>
                     <span className="mt-1 hidden text-[10px] text-foreground-400 sm:block">{section.description}</span>
                   </span>
-                  {sectionComplete && <i className="ri-checkbox-circle-fill text-lg text-emerald-500"></i>}
-                  <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}><i className="ri-arrow-down-s-line"></i></span>
+                  {sectionComplete && <AppIcon className="ri-checkbox-circle-fill text-lg text-emerald-500"></AppIcon>}
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}><AppIcon className="ri-arrow-down-s-line"></AppIcon></span>
                 </button>
                 {isOpen && (
                   <div className="space-y-3 border-t border-primary-100 bg-white p-4 sm:p-5">
@@ -1239,7 +1239,7 @@ function ProgressReviewCompletionModal({
                                     : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'
                                 }`}
                               >
-                                <i className={icon}></i>{value}
+                                <AppIcon className={icon}></AppIcon>{value}
                               </button>
                             ))}
                           </div>
@@ -1272,7 +1272,7 @@ function ProgressReviewCompletionModal({
                                     : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'
                                 }`}
                               >
-                                <i className={`mr-2 ${responses[question.id] === option ? 'ri-checkbox-circle-fill' : 'ri-checkbox-blank-circle-line'}`}></i>
+                                <AppIcon className={`mr-2 ${responses[question.id] === option ? 'ri-checkbox-circle-fill' : 'ri-checkbox-blank-circle-line'}`}></AppIcon>
                                 {option}
                               </button>
                             ))}
@@ -1286,7 +1286,7 @@ function ProgressReviewCompletionModal({
                               ['Red', 'border-red-500 bg-red-500 text-white', 'bg-red-50 text-red-700'],
                             ].map(([value, activeClass, idleClass]) => (
                               <button key={value} type="button" onClick={() => updateResponse(question.id, value)} className={`rounded-xl border px-4 py-2.5 text-xs font-bold transition ${responses[question.id] === value ? activeClass : `border-transparent ${idleClass}`}`}>
-                                <i className="ri-circle-fill mr-1.5 text-[8px]"></i>{value}
+                                <AppIcon className="ri-circle-fill mr-1.5 text-[8px]"></AppIcon>{value}
                               </button>
                             ))}
                           </div>
@@ -1301,7 +1301,7 @@ function ProgressReviewCompletionModal({
 
           {(validationError || error) && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
-              <i className="ri-error-warning-line mr-2"></i>{validationError || error}
+              <AppIcon className="ri-error-warning-line mr-2"></AppIcon>{validationError || error}
             </div>
           )}
         </div>
@@ -1309,7 +1309,7 @@ function ProgressReviewCompletionModal({
         <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
           <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-xl px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
           <button type="button" onClick={submit} disabled={busy} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60">
-            <i className={busy ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></i>
+            <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {busy ? 'Submitting review...' : 'Submit for Manager Signature'}
           </button>
         </footer>
@@ -1355,7 +1355,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
       </p>
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1} className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40">
-          <i className="ri-arrow-left-s-line"></i>Previous
+          <AppIcon className="ri-arrow-left-s-line"></AppIcon>Previous
         </button>
         {visiblePages.map((page, index) => (
           <div key={page} className="flex items-center gap-1">
@@ -1366,7 +1366,7 @@ function Pagination({ currentPage, pageCount, totalItems, onPageChange }: { curr
           </div>
         ))}
         <button type="button" onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === pageCount} className="flex h-9 items-center gap-1 rounded-xl border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-40">
-          Next<i className="ri-arrow-right-s-line"></i>
+          Next<AppIcon className="ri-arrow-right-s-line"></AppIcon>
         </button>
       </div>
     </nav>
@@ -1395,7 +1395,7 @@ function EmptyState({ icon, title }: { icon: string; title: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 p-12 text-center">
       <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-500">
-        <i className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></i>
+        <AppIcon className={`${icon} text-xl ${icon.includes('loader') ? 'animate-spin' : ''}`}></AppIcon>
       </span>
       <p className="mt-3 text-sm font-semibold text-foreground-500">{title}</p>
     </div>

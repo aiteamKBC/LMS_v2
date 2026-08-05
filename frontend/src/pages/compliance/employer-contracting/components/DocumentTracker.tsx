@@ -39,7 +39,7 @@ export function DocumentTracker({ record }: DocumentTrackerProps) {
           >
             {/* Status icon */}
             <span className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${getDocIconBg(doc.status)}`}>
-              <i className={`${getDocIcon(doc.status)} text-sm`}></i>
+              <AppIcon className={`${getDocIcon(doc.status)} text-sm`}></AppIcon>
             </span>
 
             {/* Doc info */}
@@ -72,7 +72,7 @@ export function DocumentTracker({ record }: DocumentTrackerProps) {
 
             {/* Action */}
             <button className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer" title="View document">
-              <i className="ri-arrow-right-s-line"></i>
+              <AppIcon className="ri-arrow-right-s-line"></AppIcon>
             </button>
           </div>
         ))}
@@ -80,7 +80,7 @@ export function DocumentTracker({ record }: DocumentTrackerProps) {
 
       {/* Upload button */}
       <button className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-background-300/60 text-[12px] text-foreground-400 hover:text-primary-600 hover:border-primary-300/60 hover:bg-primary-50/50 transition-smooth cursor-pointer">
-        <i className="ri-upload-cloud-2-line"></i>
+        <AppIcon className="ri-upload-cloud-2-line"></AppIcon>
         Upload or Request Document
       </button>
     </div>

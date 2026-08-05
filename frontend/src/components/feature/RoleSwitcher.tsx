@@ -54,9 +54,9 @@ export function RoleSwitcher() {
         className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-amber-300/40 bg-amber-50/60 text-[11px] text-amber-800 font-medium hover:bg-amber-100/70 transition-smooth cursor-pointer whitespace-nowrap"
         title="Demo Role Switcher"
       >
-        <i className="ri-exchange-line text-xs"></i>
+        <AppIcon className="ri-exchange-line text-xs"></AppIcon>
         <span>{currentRole?.label || 'Switch Role'}</span>
-        <i className={`ri-arrow-down-s-line text-[10px] transition-transform ${isOpen ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-[10px] transition-transform ${isOpen ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {isOpen && (
@@ -79,11 +79,11 @@ export function RoleSwitcher() {
                 <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                   currentRoleSlug === role.slug ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-400'
                 }`}>
-                  <i className={`${role.icon} text-xs`}></i>
+                  <AppIcon className={`${role.icon} text-xs`}></AppIcon>
                 </span>
                 <span>{role.label}</span>
                 {currentRoleSlug === role.slug && (
-                  <i className="ri-check-line text-primary-600 ml-auto text-sm"></i>
+                  <AppIcon className="ri-check-line text-primary-600 ml-auto text-sm"></AppIcon>
                 )}
               </button>
             ))}

@@ -108,7 +108,7 @@ export default function AdminDashboard() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4 md:p-5">
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-                <i className="ri-robot-line text-primary-600 text-xl"></i>
+                <AppIcon className="ri-robot-line text-primary-600 text-xl"></AppIcon>
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Global AI Control</h3>
@@ -121,7 +121,7 @@ export default function AdminDashboard() {
                   onClick={() => setShowKillConfirm(true)}
                   className="px-4 py-2.5 bg-red-500 text-white rounded-xl text-[13px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5 shadow-sm shadow-red-500/20"
                 >
-                  <i className="ri-shut-down-line"></i> Disable AI Globally
+                  <AppIcon className="ri-shut-down-line"></AppIcon> Disable AI Globally
                 </button>
               </div>
             </div>
@@ -130,7 +130,7 @@ export default function AdminDashboard() {
           <div className="bg-red-50/90 rounded-2xl border-2 border-red-300 p-4 md:p-5">
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center shrink-0 animate-pulse-slow">
-                <i className="ri-shut-down-line text-red-600 text-xl"></i>
+                <AppIcon className="ri-shut-down-line text-red-600 text-xl"></AppIcon>
               </div>
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-heading font-semibold text-red-900">AI DISABLED GLOBALLY</h3>
@@ -158,7 +158,7 @@ export default function AdminDashboard() {
                 }}
                 className="px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5 shadow-sm shadow-emerald-500/20 shrink-0"
               >
-                <i className="ri-restart-line"></i> Re-enable AI Globally
+                <AppIcon className="ri-restart-line"></AppIcon> Re-enable AI Globally
               </button>
             </div>
           </div>
@@ -169,7 +169,7 @@ export default function AdminDashboard() {
           <div className="fixed top-4 right-4 z-[100] animate-slide-in-right max-w-md w-full">
             <div className="bg-red-600 rounded-2xl shadow-2xl shadow-red-600/30 border border-red-500 p-4 flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-700 flex items-center justify-center shrink-0">
-                <i className="ri-shut-down-line text-white text-lg"></i>
+                <AppIcon className="ri-shut-down-line text-white text-lg"></AppIcon>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -180,11 +180,11 @@ export default function AdminDashboard() {
                   All AI features disabled across {killSwitchTenants.length > 0 ? killSwitchTenants.length : tenants.length} tenant(s). Audit log entry created.
                 </p>
                 <p className="text-[10px] text-red-200 mt-1.5">
-                  <i className="ri-history-line mr-1"></i> Logged in audit trail · All tenants forced to Manual Mode
+                  <AppIcon className="ri-history-line mr-1"></AppIcon> Logged in audit trail · All tenants forced to Manual Mode
                 </p>
               </div>
               <button onClick={() => setShowKillNotification(false)} className="text-red-200 hover:text-white transition-smooth cursor-pointer shrink-0">
-                <i className="ri-close-line"></i>
+                <AppIcon className="ri-close-line"></AppIcon>
               </button>
             </div>
           </div>
@@ -194,7 +194,7 @@ export default function AdminDashboard() {
             <div className="bg-background-50 rounded-2xl border border-background-200 max-w-lg w-full p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                  <i className="ri-error-warning-line text-red-600 text-2xl"></i>
+                  <AppIcon className="ri-error-warning-line text-red-600 text-2xl"></AppIcon>
                 </div>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-red-900">Disable AI Globally?</h3>
@@ -206,19 +206,19 @@ export default function AdminDashboard() {
                 <p className="text-[12px] font-semibold text-red-800">This will immediately:</p>
                 <ul className="space-y-1.5">
                   <li className="text-[11px] text-red-700 flex items-start gap-2">
-                    <i className="ri-close-circle-line text-red-500 mt-0.5"></i>
+                    <AppIcon className="ri-close-circle-line text-red-500 mt-0.5"></AppIcon>
                     Disable AI across <strong>all {tenants.length} tenants</strong> simultaneously
                   </li>
                   <li className="text-[11px] text-red-700 flex items-start gap-2">
-                    <i className="ri-close-circle-line text-red-500 mt-0.5"></i>
+                    <AppIcon className="ri-close-circle-line text-red-500 mt-0.5"></AppIcon>
                     Force every tenant into <strong>Manual Mode</strong> — no AI suggestions, no AI marking, no AI features
                   </li>
                   <li className="text-[11px] text-red-700 flex items-start gap-2">
-                    <i className="ri-close-circle-line text-red-500 mt-0.5"></i>
+                    <AppIcon className="ri-close-circle-line text-red-500 mt-0.5"></AppIcon>
                     Hide all AI buttons and UI elements from <strong>every user</strong>
                   </li>
                   <li className="text-[11px] text-red-700 flex items-start gap-2">
-                    <i className="ri-close-circle-line text-red-500 mt-0.5"></i>
+                    <AppIcon className="ri-close-circle-line text-red-500 mt-0.5"></AppIcon>
                     Log this action in the <strong>audit trail</strong>
                   </li>
                 </ul>
@@ -265,7 +265,7 @@ export default function AdminDashboard() {
                   }}
                   className="flex-1 px-4 py-2.5 bg-red-500 text-white rounded-xl text-[13px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-shut-down-line mr-1.5"></i> Confirm — Disable AI
+                  <AppIcon className="ri-shut-down-line mr-1.5"></AppIcon> Confirm — Disable AI
                 </button>
                 <button
                   onClick={() => { setShowKillConfirm(false); setKillSwitchTenants([]); }}
@@ -283,7 +283,7 @@ export default function AdminDashboard() {
         {/* ================================================================ */}
         <div className="space-y-2">
           <div className="bg-red-50 border border-red-200/60 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-start gap-3 cursor-pointer" onClick={() => setExpandedAlert(expandedAlert === 'critical' ? null : 'critical')}>
-            <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0"><i className="ri-error-warning-fill text-red-600 text-sm"></i></span>
+            <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0"><AppIcon className="ri-error-warning-fill text-red-600 text-sm"></AppIcon></span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-red-900">Critical: {auditCriticalCount} audit events require platform review</p>
               <p className="text-[11px] text-red-700 mt-1 line-clamp-2">User account suspended (j.bloggs@external.co.uk), admin override on evidence approval (Mia Robinson). Review immediately in Audit Logs.</p>
@@ -299,7 +299,7 @@ export default function AdminDashboard() {
           </div>
 
           <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-start gap-3 cursor-pointer" onClick={() => setExpandedAlert(expandedAlert === 'warning' ? null : 'warning')}>
-            <span className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><i className="ri-alert-line text-amber-600 text-sm"></i></span>
+            <span className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><AppIcon className="ri-alert-line text-amber-600 text-sm"></AppIcon></span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-amber-900">Configuration Attention: 3 items need review</p>
               <p className="text-[11px] text-amber-700 mt-1 line-clamp-2">Power BI dataset refresh delayed, CRM Bridge auth token expiring in 48h, automation rule modified — Document Signature Reminder.</p>
@@ -339,7 +339,7 @@ export default function AdminDashboard() {
             <section>
               <div className="flex items-center justify-between mb-3 md:mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Tenant Health Overview</h2>
-                <a href="/admin/tenants" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Manage Tenants <i className="ri-arrow-right-line text-[10px] ml-0.5"></i></a>
+                <a href="/admin/tenants" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Manage Tenants <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon></a>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {allTenants.map(tenant => {
@@ -352,7 +352,7 @@ export default function AdminDashboard() {
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tenant.status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
-                            <i className="ri-building-4-line text-lg"></i>
+                            <AppIcon className="ri-building-4-line text-lg"></AppIcon>
                           </span>
                           <div>
                             <p className="text-sm font-heading font-semibold text-foreground-900">{tenant.name}</p>
@@ -403,7 +403,7 @@ export default function AdminDashboard() {
             <section>
               <div className="flex items-center justify-between mb-3 md:mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">User & Access Summary</h2>
-                <a href="/admin/users" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">View All Users <i className="ri-arrow-right-line text-[10px] ml-0.5"></i></a>
+                <a href="/admin/users" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">View All Users <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon></a>
               </div>
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
                 <div className="overflow-x-auto">
@@ -471,7 +471,7 @@ export default function AdminDashboard() {
                         : int.status === 'degraded' ? 'bg-amber-100 text-amber-600'
                         : 'bg-red-100 text-red-600'
                     }`}>
-                      <i className={`${int.icon} text-xs`}></i>
+                      <AppIcon className={`${int.icon} text-xs`}></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
@@ -497,7 +497,7 @@ export default function AdminDashboard() {
               {globalAiKilled ? (
                 <div className="bg-red-50 rounded-lg p-4 text-center">
                   <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-2">
-                    <i className="ri-forbid-line text-red-500 text-lg"></i>
+                    <AppIcon className="ri-forbid-line text-red-500 text-lg"></AppIcon>
                   </div>
                   <p className="text-[12px] font-semibold text-red-800">AI Disabled Globally</p>
                   <p className="text-[10px] text-red-600 mt-1">All {tenants.length} tenants forced into Manual Mode</p>
@@ -542,7 +542,7 @@ export default function AdminDashboard() {
             <section className="bg-emerald-50/80 rounded-xl border border-emerald-200/50 p-4 md:p-5">
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center shadow-sm shadow-emerald-500/20">
-                  <i className="ri-check-line text-white text-sm"></i>
+                  <AppIcon className="ri-check-line text-white text-sm"></AppIcon>
                 </div>
                 <div>
                   <p className="text-sm font-heading font-semibold text-emerald-900">Platform Healthy</p>
@@ -659,7 +659,7 @@ function HeroKpiCard({ icon, label, value, total, color, delay }: { icon: string
   return (
     <div className={`flex items-center gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-xl bg-black/30 backdrop-blur-md border border-white/10 ${delay} animate-hero-fade-in-up-small`}>
       <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-        <i className={`${icon} ${iconColorMap[color]} text-sm`}></i>
+        <AppIcon className={`${icon} ${iconColorMap[color]} text-sm`}></AppIcon>
       </div>
       <div className="w-20 md:w-24">
         <div className="flex items-center justify-between mb-1">
@@ -686,7 +686,7 @@ function MiniStat({ label, value, sub, icon, color }: { label: string; value: st
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium">
       <span className={`w-7 md:w-8 h-7 md:h-8 rounded-lg flex items-center justify-center ${bgMap[color] || bgMap.primary} mb-2 md:mb-3`}>
-        <i className={`${icon} text-xs md:text-sm`}></i>
+        <AppIcon className={`${icon} text-xs md:text-sm`}></AppIcon>
       </span>
       <p className="text-xl md:text-2xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[10px] md:text-[11px] text-foreground-400 mt-1">{label}</p>

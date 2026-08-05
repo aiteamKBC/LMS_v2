@@ -70,7 +70,7 @@ export default function EmployerCommunityActivity() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-heart-line text-white text-2xl"></i>
+              <AppIcon className="ri-heart-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Community Activity</h2>
@@ -92,7 +92,7 @@ export default function EmployerCommunityActivity() {
             <div key={activity.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 card-premium hover:border-primary-200/50 transition-smooth">
               <div className="flex items-start gap-3 mb-3">
                 <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border ${typeColors[activity.type]}`}>
-                  <i className={`${typeIcons[activity.type]} text-sm`}></i>
+                  <AppIcon className={`${typeIcons[activity.type]} text-sm`}></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-semibold text-foreground-900 leading-snug">{activity.title}</h3>
@@ -105,7 +105,7 @@ export default function EmployerCommunityActivity() {
               <p className="text-[12px] text-foreground-500 leading-relaxed mb-3">{activity.description}</p>
               {activity.apprentice !== '—' && (
                 <div className="flex items-center gap-2 mb-3">
-                  <i className="ri-user-line text-foreground-400 text-[10px]"></i>
+                  <AppIcon className="ri-user-line text-foreground-400 text-[10px]"></AppIcon>
                   <span className="text-[11px] text-foreground-600">{activity.apprentice}</span>
                 </div>
               )}
@@ -115,26 +115,26 @@ export default function EmployerCommunityActivity() {
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-background-100">
                 <div className="flex items-center gap-3 text-[11px] text-foreground-400">
                   <span className="flex items-center gap-1 cursor-pointer hover:text-accent-600 transition-smooth">
-                    <i className="ri-heart-line"></i> {activity.likes}
+                    <AppIcon className="ri-heart-line"></AppIcon> {activity.likes}
                   </span>
                   <span className="flex items-center gap-1 cursor-pointer hover:text-primary-600 transition-smooth">
-                    <i className="ri-chat-1-line"></i> {activity.comments}
+                    <AppIcon className="ri-chat-1-line"></AppIcon> {activity.comments}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {activity.type === 'recognition' && (
                     <button className="px-3 py-1.5 bg-accent-500 text-white rounded-lg text-[10px] font-semibold hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-thumb-up-line mr-1"></i> Endorse
+                      <AppIcon className="ri-thumb-up-line mr-1"></AppIcon> Endorse
                     </button>
                   )}
                   {activity.type === 'contribution' && (
                     <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-add-line mr-1"></i> Contribute
+                      <AppIcon className="ri-add-line mr-1"></AppIcon> Contribute
                     </button>
                   )}
                   {activity.type === 'discussion' && (
                     <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-chat-1-line mr-1"></i> Join Discussion
+                      <AppIcon className="ri-chat-1-line mr-1"></AppIcon> Join Discussion
                     </button>
                   )}
                 </div>
@@ -145,7 +145,7 @@ export default function EmployerCommunityActivity() {
 
         <div className="bg-background-100/50 rounded-xl border border-background-200/30 p-4">
           <div className="flex items-start gap-3">
-            <i className="ri-information-line text-foreground-400 mt-0.5"></i>
+            <AppIcon className="ri-information-line text-foreground-400 mt-0.5"></AppIcon>
             <div>
               <p className="text-[12px] font-medium text-foreground-700">Community Visibility</p>
               <p className="text-[11px] text-foreground-400">You are viewing employer-facing community content only. Private learner discussions, internal tutor notes, safeguarding information, and non-approved content are not visible in this space. If you have questions about community activity, message the coach or engagement team.</p>

@@ -51,9 +51,9 @@ function MockMonthlyCyclePage() {
 
         {/* ── Assignment reminder ── */}
         <div className="bg-background-50 rounded-xl border border-foreground-200/50 p-4 flex items-center gap-3">
-          <i className="ri-information-line text-secondary-600 text-lg shrink-0"></i>
+          <AppIcon className="ri-information-line text-secondary-600 text-lg shrink-0"></AppIcon>
           <p className="text-sm text-foreground-700">
-            <i className="ri-calendar-check-line mr-1 text-secondary-600"></i>
+            <AppIcon className="ri-calendar-check-line mr-1 text-secondary-600"></AppIcon>
             Your <strong>monthly assignment</strong> is due on the 20th.
           </p>
         </div>
@@ -66,7 +66,7 @@ function MockMonthlyCyclePage() {
           {/* Monthly Assignment */}
           <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
             <div className="flex items-center gap-2 mb-2">
-              <i className="ri-file-text-line text-foreground-600 text-sm"></i>
+              <AppIcon className="ri-file-text-line text-foreground-600 text-sm"></AppIcon>
               <span className="text-sm font-semibold text-foreground-900">Monthly assignment</span>
             </div>
             <p className="text-xs text-foreground-400 mb-1">Due 20/06/2026 · <span className="text-primary-600 font-semibold bg-primary-50 px-1.5 py-0.5 rounded">Open</span></p>
@@ -83,7 +83,7 @@ function MockMonthlyCyclePage() {
           {/* Checkpoint Quiz */}
           <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
             <div className="flex items-center gap-2 mb-2">
-              <i className="ri-questionnaire-line text-foreground-600 text-sm"></i>
+              <AppIcon className="ri-questionnaire-line text-foreground-600 text-sm"></AppIcon>
               <span className="text-sm font-semibold text-foreground-900">Checkpoint quiz</span>
             </div>
             <p className="text-xs mb-2"><span className="text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded">Not open yet</span></p>
@@ -104,7 +104,7 @@ function MockMonthlyCyclePage() {
           {/* Coaching Meeting */}
           <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
             <div className="flex items-center gap-2 mb-2">
-              <i className="ri-calendar-check-line text-foreground-600 text-sm"></i>
+              <AppIcon className="ri-calendar-check-line text-foreground-600 text-sm"></AppIcon>
               <span className="text-sm font-semibold text-foreground-900">Coaching meeting</span>
             </div>
             <p className="text-xs text-foreground-400 mb-1">

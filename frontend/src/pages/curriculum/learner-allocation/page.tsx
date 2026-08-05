@@ -172,18 +172,18 @@ export default function LearnerAllocationPage() {
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-[12px] text-foreground-400">
           <Link to="/curriculum/programmes" className="hover:text-foreground-700 transition-smooth">Programmes</Link>
-          <i className="ri-arrow-right-s-line text-[10px]"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>
           <Link to={`/curriculum/programmes/${data.programmeId}`} className="hover:text-foreground-700 transition-smooth">{data.programme}</Link>
-          <i className="ri-arrow-right-s-line text-[10px]"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>
           <Link to={`/curriculum/cohorts/${data.id}`} className="hover:text-foreground-700 transition-smooth">{data.name}</Link>
-          <i className="ri-arrow-right-s-line text-[10px]"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>
           <span className="text-foreground-900 font-medium">Allocate Learners</span>
         </div>
 
         {/* Notification */}
         {notification && (
           <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-[12px] font-medium ${notification.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' : 'bg-red-50 text-red-700 border border-red-200/50'}`}>
-            <i className={`${notification.type === 'success' ? 'ri-check-line' : 'ri-close-line'} text-sm`}></i>
+            <AppIcon className={`${notification.type === 'success' ? 'ri-check-line' : 'ri-close-line'} text-sm`}></AppIcon>
             {notification.message}
           </div>
         )}
@@ -194,14 +194,14 @@ export default function LearnerAllocationPage() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-heading font-semibold text-foreground-900">
-                <i className="ri-user-add-line mr-1.5 text-accent-600"></i>
+                <AppIcon className="ri-user-add-line mr-1.5 text-accent-600"></AppIcon>
                 Unassigned Learners
                 <span className="text-[10px] font-normal text-foreground-400 ml-2">({filteredUnassigned.length})</span>
               </h2>
             </div>
 
             <div className="relative mb-3">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input
                 type="text"
                 value={searchQuery}
@@ -214,7 +214,7 @@ export default function LearnerAllocationPage() {
             <div className="space-y-2 max-h-[550px] overflow-y-auto pr-1">
               {filteredUnassigned.length === 0 ? (
                 <div className="p-8 text-center bg-background-50 rounded-xl border border-foreground-200/60">
-                  <i className="ri-check-double-line text-3xl text-emerald-300 mb-2 block"></i>
+                  <AppIcon className="ri-check-double-line text-3xl text-emerald-300 mb-2 block"></AppIcon>
                   <p className="text-[13px] text-foreground-500">All learners have been assigned!</p>
                   <p className="text-[11px] text-foreground-400 mt-1">No unassigned learners remaining.</p>
                 </div>
@@ -268,7 +268,7 @@ export default function LearnerAllocationPage() {
                           </div>
                         )}
                       </div>
-                      <i className={`ri-arrow-down-s-line text-foreground-300 transition-smooth ${selectedLearner?.id === l.id ? 'rotate-180' : ''}`}></i>
+                      <AppIcon className={`ri-arrow-down-s-line text-foreground-300 transition-smooth ${selectedLearner?.id === l.id ? 'rotate-180' : ''}`}></AppIcon>
                     </div>
                   </div>
                 ))
@@ -280,12 +280,12 @@ export default function LearnerAllocationPage() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-heading font-semibold text-foreground-900">
-                <i className="ri-team-line mr-1.5 text-primary-600"></i>
+                <AppIcon className="ri-team-line mr-1.5 text-primary-600"></AppIcon>
                 Groups
                 <span className="text-[10px] font-normal text-foreground-400 ml-2">({groups.length})</span>
               </h2>
               <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> New Group
+                <AppIcon className="ri-add-line mr-1"></AppIcon> New Group
               </button>
             </div>
 
@@ -306,8 +306,8 @@ export default function LearnerAllocationPage() {
                           <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
                         </div>
                         <div className="flex items-center gap-3 text-[11px] text-foreground-400 mt-0.5 flex-wrap">
-                          <span><i className="ri-heart-line mr-1 text-[10px]"></i>{g.coach}</span>
-                          <span><i className="ri-user-settings-line mr-1 text-[10px]"></i>{g.tutor}</span>
+                          <span><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>{g.coach}</span>
+                          <span><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>{g.tutor}</span>
                           <span className="bg-background-100 px-1.5 py-0.5 rounded text-[10px]">{g.mode}</span>
                         </div>
                       </div>
@@ -337,7 +337,7 @@ export default function LearnerAllocationPage() {
                               <span className="text-[11px] font-medium text-foreground-700">{name}</span>
                             </div>
                             <button onClick={() => handleRemoveFromGroup(g.id, name)} className="w-6 h-6 rounded-md bg-background-50 border border-background-200 flex items-center justify-center hover:bg-red-50 hover:border-red-200 hover:text-red-500 transition-smooth cursor-pointer">
-                              <i className="ri-close-line text-[10px]"></i>
+                              <AppIcon className="ri-close-line text-[10px]"></AppIcon>
                             </button>
                           </div>
                         ))}

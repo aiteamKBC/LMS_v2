@@ -56,7 +56,7 @@ export default function ManualModeSettings() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-tools-line text-white text-2xl"></i>
+              <AppIcon className="ri-tools-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Manual Mode Settings</h2>
@@ -127,7 +127,7 @@ export default function ManualModeSettings() {
               <div key={role} className="flex items-center justify-between bg-background-100 rounded-lg border border-foreground-200/60 p-3 hover:border-background-300/60 transition-smooth">
                 <div className="flex items-center gap-2">
                   <span className="w-7 h-7 rounded-md bg-primary-100 text-primary-600 flex items-center justify-center">
-                    <i className="ri-shield-user-line text-xs"></i>
+                    <AppIcon className="ri-shield-user-line text-xs"></AppIcon>
                   </span>
                   <span className="text-[12px] font-medium text-foreground-900">{role}</span>
                 </div>
@@ -171,7 +171,7 @@ export default function ManualModeSettings() {
                   </div>
                   <div className="flex items-center gap-3 mt-2">
                     <span className={`text-[10px] font-medium ${override.requiresApproval ? 'text-amber-600' : 'text-foreground-400'}`}>
-                      <i className={`${override.requiresApproval ? 'ri-shield-check-line text-amber-500' : 'ri-information-line'} mr-0.5`}></i>
+                      <AppIcon className={`${override.requiresApproval ? 'ri-shield-check-line text-amber-500' : 'ri-information-line'} mr-0.5`}></AppIcon>
                       {override.requiresApproval ? 'Requires secondary approval' : 'No secondary approval needed'}
                     </span>
                   </div>
@@ -187,7 +187,7 @@ export default function ManualModeSettings() {
         {/* Save Button */}
         <div className="flex items-center gap-3 pt-2">
           <button className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-save-line mr-1.5"></i> Save Configuration
+            <AppIcon className="ri-save-line mr-1.5"></AppIcon> Save Configuration
           </button>
           <button className="px-5 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
             Reset to Defaults

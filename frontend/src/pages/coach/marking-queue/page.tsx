@@ -112,7 +112,7 @@ function DetailSection({
   return (
     <section className="rounded-2xl border border-foreground-200 bg-white p-4">
       <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-900">
-        <i className={`${icon} text-primary-600`} /> {title}
+        <AppIcon className={`${icon} text-primary-600`} /> {title}
       </h4>
       {children}
     </section>
@@ -220,7 +220,7 @@ export default function CoachMarkingQueue() {
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
             <div className="flex flex-1 items-start gap-4">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15">
-                <i className="ri-file-list-3-line text-2xl" />
+                <AppIcon className="ri-file-list-3-line text-2xl" />
               </span>
               <div>
                 <h1 className="text-xl font-bold">Learner Reflection Reviews</h1>
@@ -262,7 +262,7 @@ export default function CoachMarkingQueue() {
             ))}
           </div>
           <button onClick={() => void loadQueue()} className="inline-flex items-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 py-2 text-xs font-semibold text-foreground-700">
-            <i className="ri-refresh-line" /> Refresh
+            <AppIcon className="ri-refresh-line" /> Refresh
           </button>
         </div>
 
@@ -272,12 +272,12 @@ export default function CoachMarkingQueue() {
             <span>Submitted</span><span>Status</span><span className="text-right">Action</span>
           </div>
           {loading ? (
-            <div className="p-16 text-center text-sm text-foreground-400"><i className="ri-loader-4-line mr-2 animate-spin" />Loading submissions...</div>
+            <div className="p-16 text-center text-sm text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading submissions...</div>
           ) : error && !selected ? (
             <div className="p-16 text-center text-sm text-red-600">{error}</div>
           ) : filtered.length === 0 ? (
             <div className="p-16 text-center">
-              <i className="ri-checkbox-circle-line text-3xl text-emerald-500" />
+              <AppIcon className="ri-checkbox-circle-line text-3xl text-emerald-500" />
               <p className="mt-2 text-sm font-semibold text-foreground-700">No submissions in this view</p>
             </div>
           ) : (
@@ -323,7 +323,7 @@ export default function CoachMarkingQueue() {
                 <h2 className="mt-1 text-xl font-bold text-foreground-950">{selected.learner}</h2>
                 <p className="mt-1 text-xs text-foreground-500">{selected.activityTitle} · {selected.submittedDisplay}</p>
               </div>
-              <button onClick={() => setSelected(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-background-100 text-foreground-600"><i className="ri-close-line text-xl" /></button>
+              <button onClick={() => setSelected(null)} className="flex h-9 w-9 items-center justify-center rounded-full bg-background-100 text-foreground-600"><AppIcon className="ri-close-line text-xl" /></button>
             </div>
 
             <div className="space-y-4 p-6">
@@ -369,11 +369,11 @@ export default function CoachMarkingQueue() {
               <DetailSection title="Evidence" icon="ri-attachment-2">
                 {selected.evidenceFiles.length ? (
                   <div className="flex flex-wrap gap-2">
-                    {selected.evidenceFiles.map(file => <span key={file} className="rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700"><i className="ri-file-line mr-1" />{file}</span>)}
+                    {selected.evidenceFiles.map(file => <span key={file} className="rounded-lg bg-background-100 px-3 py-2 text-xs text-foreground-700"><AppIcon className="ri-file-line mr-1" />{file}</span>)}
                   </div>
                 ) : <p className="text-sm text-foreground-400">No evidence file was attached.</p>}
                 <p className={`mt-3 text-xs ${selected.evidenceConsentConfirmed ? 'text-emerald-700' : 'text-foreground-400'}`}>
-                  <i className={selected.evidenceConsentConfirmed ? 'ri-checkbox-circle-line' : 'ri-information-line'} /> Evidence consent {selected.evidenceConsentConfirmed ? 'confirmed' : 'not required'}
+                  <AppIcon className={selected.evidenceConsentConfirmed ? 'ri-checkbox-circle-line' : 'ri-information-line'} /> Evidence consent {selected.evidenceConsentConfirmed ? 'confirmed' : 'not required'}
                 </p>
               </DetailSection>
 
@@ -407,10 +407,10 @@ export default function CoachMarkingQueue() {
                 {error && <p className="mt-2 text-xs font-medium text-red-600">{error}</p>}
                 <div className="mt-4 flex flex-wrap justify-end gap-2">
                   <button disabled={reviewing} onClick={() => void submitDecision('referred')} className="rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-sm font-semibold text-amber-700 disabled:opacity-50">
-                    <i className="ri-arrow-go-back-line mr-1" /> Refer back
+                    <AppIcon className="ri-arrow-go-back-line mr-1" /> Refer back
                   </button>
                   <button disabled={reviewing} onClick={() => void submitDecision('accepted')} className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
-                    <i className={reviewing ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-checkbox-circle-line mr-1'} /> Accept submission
+                    <AppIcon className={reviewing ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-checkbox-circle-line mr-1'} /> Accept submission
                   </button>
                 </div>
               </section>

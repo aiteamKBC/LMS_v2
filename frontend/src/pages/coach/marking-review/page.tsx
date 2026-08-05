@@ -210,7 +210,7 @@ export default function CoachMarkingReviewPage() {
     >
       <div className="mx-auto w-full max-w-[1680px] p-5 md:p-8 lg:px-12">
         <button onClick={() => navigate('/coach/marking-queue')} className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-foreground-600 hover:text-primary-700">
-          <i className="ri-arrow-left-line" /> Back to marking queue
+          <AppIcon className="ri-arrow-left-line" /> Back to marking queue
         </button>
 
         <header className="mb-8 border-b border-foreground-200 pb-7">
@@ -222,7 +222,7 @@ export default function CoachMarkingReviewPage() {
         </header>
 
         {loading ? (
-          <div className="p-20 text-center text-foreground-400"><i className="ri-loader-4-line mr-2 animate-spin" />Loading review...</div>
+          <div className="p-20 text-center text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading review...</div>
         ) : error && !selected ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
         ) : !selected ? (
@@ -291,7 +291,7 @@ export default function CoachMarkingReviewPage() {
                 </div>
 
                 <div className="mt-6 rounded-xl border border-primary-200 bg-primary-50/40 p-6">
-                  <p className="text-sm font-semibold text-primary-700"><i className="ri-sparkling-line mr-2" />AI-assisted suggestion · requires coach validation</p>
+                  <p className="text-sm font-semibold text-primary-700"><AppIcon className="ri-sparkling-line mr-2" />AI-assisted suggestion · requires coach validation</p>
                   <p className="mt-4 text-base leading-7 text-foreground-800"><strong>Submission summary:</strong> {suggestion}</p>
                   <p className="mt-3 text-base leading-7 text-foreground-800">
                     <strong>Suggested action:</strong> Review the KSB explanations, workplace application and uploaded evidence, then accept or request resubmission.
@@ -355,7 +355,7 @@ export default function CoachMarkingReviewPage() {
                     <ReviewBlock title="Uploaded evidence" icon="ri-attachment-2">
                       {evidenceLoading && (
                         <div className="flex items-center gap-2 rounded-xl bg-background-100 px-3 py-3 text-xs text-foreground-500">
-                          <i className="ri-loader-4-line animate-spin" /> Loading uploaded evidence...
+                          <AppIcon className="ri-loader-4-line animate-spin" /> Loading uploaded evidence...
                         </div>
                       )}
                       {!evidenceLoading && submissionEvidenceRecords.map(record => {
@@ -374,7 +374,7 @@ export default function CoachMarkingReviewPage() {
                             }`}
                           >
                             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${canOpen ? 'bg-white text-primary-700 shadow-sm' : 'bg-background-200 text-foreground-400'}`}>
-                              <i className={isOpening ? 'ri-loader-4-line animate-spin' : 'ri-file-line'} />
+                              <AppIcon className={isOpening ? 'ri-loader-4-line animate-spin' : 'ri-file-line'} />
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-xs font-semibold text-foreground-800">{record.filename}</span>
@@ -384,7 +384,7 @@ export default function CoachMarkingReviewPage() {
                             </span>
                             {canOpen && (
                               <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-bold text-primary-700 shadow-sm">
-                                View <i className="ri-external-link-line" />
+                                View <AppIcon className="ri-external-link-line" />
                               </span>
                             )}
                           </button>
@@ -392,7 +392,7 @@ export default function CoachMarkingReviewPage() {
                       })}
                       {!evidenceLoading && unresolvedEvidenceFiles.map(file => (
                         <div key={file} className="mb-2 flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-amber-600 shadow-sm"><i className="ri-file-warning-line" /></span>
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-amber-600 shadow-sm"><AppIcon className="ri-file-warning-line" /></span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs font-semibold text-foreground-800">{file}</span>
                             <span className="mt-0.5 block text-[10px] text-amber-700">The file record could not be found.</span>
@@ -450,19 +450,19 @@ export default function CoachMarkingReviewPage() {
                 {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
                 <div className="mt-4 flex flex-wrap items-center gap-2.5">
                   <button disabled={saving} onClick={() => void saveDecision('accepted')} className="rounded-xl bg-[#102d52] px-5 py-3 text-base font-semibold text-white shadow-sm disabled:opacity-50">
-                    <i className="ri-check-line mr-2" />Accept &amp; award KSBs
+                    <AppIcon className="ri-check-line mr-2" />Accept &amp; award KSBs
                   </button>
                   <button disabled={saving} onClick={() => void saveDecision('partial')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <i className="ri-edit-line mr-2" />Partial award
+                    <AppIcon className="ri-edit-line mr-2" />Partial award
                   </button>
                   <button disabled={saving} onClick={() => void saveDecision('referred')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <i className="ri-arrow-go-back-line mr-2" />Request resubmission
+                    <AppIcon className="ri-arrow-go-back-line mr-2" />Request resubmission
                   </button>
                   <button disabled={saving} onClick={() => void saveDecision('escalated')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
-                    <i className="ri-shield-line mr-2" />Escalate
+                    <AppIcon className="ri-shield-line mr-2" />Escalate
                   </button>
                   <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-xl px-4 py-3 text-base font-semibold text-red-600 disabled:opacity-50">
-                    <i className="ri-close-line mr-2" />Reject
+                    <AppIcon className="ri-close-line mr-2" />Reject
                   </button>
                 </div>
                 <p className="mt-4 text-xs text-foreground-400">
@@ -480,7 +480,7 @@ export default function CoachMarkingReviewPage() {
 function ReviewBlock({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-foreground-200 bg-background-50 p-4">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-900"><i className={`${icon} text-primary-600`} />{title}</h3>
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-900"><AppIcon className={`${icon} text-primary-600`} />{title}</h3>
       {children}
     </div>
   );

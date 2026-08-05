@@ -72,13 +72,13 @@ export default function EmailLogsPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search emails..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
             {(['all', 'automated', 'manual'] as const).map(t => (
               <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={`${t === 'automated' ? 'ri-robot-line' : t === 'manual' ? 'ri-user-line' : 'ri-list-check'} text-sm`}></i>
+                <AppIcon className={`${t === 'automated' ? 'ri-robot-line' : t === 'manual' ? 'ri-user-line' : 'ri-list-check'} text-sm`}></AppIcon>
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
@@ -97,7 +97,7 @@ export default function EmailLogsPage() {
               return (
                 <div key={email.id} className="p-4 flex items-start gap-4">
                   <div className="w-10 h-10 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                    <i className="ri-mail-line text-sm"></i>
+                    <AppIcon className="ri-mail-line text-sm"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -111,11 +111,11 @@ export default function EmailLogsPage() {
                       <span>To: <strong className="text-foreground-600">{email.to}</strong> ({email.toRole})</span>
                       <span>{email.timestamp}</span>
                       <span className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.color}`}>{email.status}</span>
-                      {email.attachments > 0 && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"><i className="ri-attachment-2 mr-0.5"></i>{email.attachments}</span>}
+                      {email.attachments > 0 && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700"><AppIcon className="ri-attachment-2 mr-0.5"></AppIcon>{email.attachments}</span>}
                     </div>
                   </div>
                   <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-                    <i className="ri-eye-line mr-1"></i> View
+                    <AppIcon className="ri-eye-line mr-1"></AppIcon> View
                   </button>
                 </div>
               );

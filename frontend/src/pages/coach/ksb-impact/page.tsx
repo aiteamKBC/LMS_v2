@@ -285,7 +285,7 @@ function KsbMetricCard({
   return (
     <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
-        <i className={`${icon} text-xl`} />
+        <AppIcon className={`${icon} text-xl`} />
       </span>
       <div className="min-w-0">
         <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
@@ -334,7 +334,7 @@ function KsbValue({
 function KsbTableMessage({ icon, message }: { icon: string; message: string }) {
   return (
     <div className="px-5 py-14 text-center">
-      <i className={`${icon} text-2xl text-slate-400`} />
+      <AppIcon className={`${icon} text-2xl text-slate-400`} />
       <p className="mt-2 text-xs font-semibold text-slate-500">{message}</p>
     </div>
   );
@@ -368,7 +368,7 @@ function KsbPagination({
             onClick={() => onChange(currentPage - 1)}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <i className="ri-arrow-left-s-line" />
+            <AppIcon className="ri-arrow-left-s-line" />
           </button>
           {Array.from({ length: pageCount }, (_, index) => index + 1).map(page => (
             <button
@@ -389,7 +389,7 @@ function KsbPagination({
             onClick={() => onChange(currentPage + 1)}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <i className="ri-arrow-right-s-line" />
+            <AppIcon className="ri-arrow-right-s-line" />
           </button>
         </div>
       )}
@@ -503,7 +503,7 @@ export default function CoachKsbImpact() {
             <div>
               <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/55">
                 <span>Coach Workspace</span>
-                <i className="ri-arrow-right-s-line text-sm" />
+                <AppIcon className="ri-arrow-right-s-line text-sm" />
                 <span className="text-white">KSB Impact</span>
               </div>
               <h1 className="font-heading text-2xl font-bold tracking-tight md:text-[28px]">Monthly KSB Impact</h1>
@@ -517,7 +517,7 @@ export default function CoachKsbImpact() {
               className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur-sm transition hover:bg-white/15 md:self-auto"
             >
               <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.highRisk ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
-                <i className={stats.highRisk ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
+                <AppIcon className={stats.highRisk ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
               </span>
               <span>
                 <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-white/55">

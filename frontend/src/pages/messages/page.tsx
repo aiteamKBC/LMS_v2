@@ -139,6 +139,8 @@ export default function MessagesPage() {
   const [socketState, setSocketState] = useState<'connecting' | 'connected' | 'offline'>('offline');
   const socketRef = useRef<WebSocket | null>(null);
   const hiddenMessageIdsRef = useRef<Set<number>>(new Set());
+  const conversationSyncInFlightRef = useRef(false);
+  const messageSyncInFlightRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -202,9 +204,14 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!chatReady) return;
 
+    let cancelled = false;
+
     const syncConversationList = async () => {
+      if (cancelled || conversationSyncInFlightRef.current) return;
+      conversationSyncInFlightRef.current = true;
       try {
         const data = await fetchChatConversations();
+        if (cancelled) return;
         if (!Array.isArray(data)) return;
         setConversations(data);
         setActiveConversationId(current => (
@@ -212,11 +219,16 @@ export default function MessagesPage() {
         ));
       } catch {
         // The initial load displays the error; background refreshes stay quiet.
+      } finally {
+        conversationSyncInFlightRef.current = false;
       }
     };
 
     const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
-    return () => window.clearInterval(conversationTimer);
+    return () => {
+      cancelled = true;
+      window.clearInterval(conversationTimer);
+    };
   }, [chatReady]);
 
   useEffect(() => {
@@ -335,11 +347,15 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!chatReady || activeConversationId === null) return;
 
+    let cancelled = false;
     shouldStickToBottomRef.current = true;
 
     const syncMessages = async () => {
+      if (cancelled || messageSyncInFlightRef.current) return;
+      messageSyncInFlightRef.current = true;
       try {
         const page = await fetchAllChatMessages(activeConversationId);
+        if (cancelled) return;
         const unread = page.results.filter(message => !message.is_mine && !message.read_at);
         setMessages(current => mergeFetchedMessages(current, page.results, hiddenMessageIdsRef.current));
 
@@ -362,12 +378,16 @@ export default function MessagesPage() {
         }
       } catch {
         // The WebSocket and the initial request still handle the normal path.
+      } finally {
+        messageSyncInFlightRef.current = false;
       }
     };
 
-    void syncMessages();
-    const pollTimer = window.setInterval(() => { void syncMessages(); }, 1000);
-    return () => window.clearInterval(pollTimer);
+    const pollTimer = window.setInterval(() => { void syncMessages(); }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollTimer);
+    };
   }, [activeConversationId, chatReady]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
@@ -522,10 +542,10 @@ export default function MessagesPage() {
     >
       <div className="w-full min-w-0 min-h-[calc(100vh-140px)] bg-background-100 px-4 pb-6 md:px-6">
         <div className="flex items-center gap-2 py-3 text-xs text-foreground-400">
-          <i className="ri-home-4-line" />
-          <i className="ri-arrow-right-s-line text-foreground-300" />
+          <AppIcon className="ri-home-4-line" />
+          <AppIcon className="ri-arrow-right-s-line text-foreground-300" />
           <span>{isCoach ? 'Coach Workspace' : nav.label}</span>
-          <i className="ri-arrow-right-s-line text-foreground-300" />
+          <AppIcon className="ri-arrow-right-s-line text-foreground-300" />
           <span className="font-medium text-foreground-700">{isCoach ? 'Learner Messages' : 'Messages'}</span>
         </div>
 
@@ -550,7 +570,7 @@ export default function MessagesPage() {
                 ].map(stat => (
                   <div key={stat.label} className="min-h-[58px] rounded-xl border border-foreground-200 bg-background-100/60 px-3 py-2.5 flex items-center gap-2.5">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${stat.iconTone}`}>
-                      <i className={`${stat.icon} text-sm`} />
+                      <AppIcon className={`${stat.icon} text-sm`} />
                     </span>
                     <p className="text-[11px] font-medium text-foreground-600 leading-tight">{stat.label}</p>
                   </div>
@@ -577,7 +597,7 @@ export default function MessagesPage() {
             </div>
 
             <div className="relative mt-5">
-              <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300" />
+              <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300" />
               <input
                 value={searchQuery}
                 onChange={event => setSearchQuery(event.target.value)}
@@ -644,7 +664,7 @@ export default function MessagesPage() {
                       aria-label="Back"
                       className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-full border border-foreground-200 text-foreground-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 transition-smooth cursor-pointer"
                     >
-                      <i className="ri-arrow-left-line text-base" />
+                      <AppIcon className="ri-arrow-left-line text-base" />
                     </button>
                     <button
                       onClick={() => navigate(isCoach ? `/coach/learner-case-file?id=${encodeURIComponent(participant.id)}` : `/learner/profile?learner=${encodeURIComponent(participant.id)}`)}
@@ -660,7 +680,7 @@ export default function MessagesPage() {
                     </div>
                     <div className="ml-auto shrink-0">
                       <button onClick={() => navigate(isCoach ? `/coach/learner-case-file?id=${encodeURIComponent(participant.id)}` : `/learner/profile?learner=${encodeURIComponent(participant.id)}`)} className="inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-xl bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-user-line" /><span className="hidden sm:inline">Open Profile</span>
+                        <AppIcon className="ri-user-line" /><span className="hidden sm:inline">Open Profile</span>
                       </button>
                     </div>
                     </div>
@@ -687,7 +707,7 @@ export default function MessagesPage() {
                     {!loadingMessages && messages.length === 0 && (
                       <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center">
                         <div className="w-16 h-16 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center mb-4">
-                          <i className="ri-message-3-line text-2xl" />
+                          <AppIcon className="ri-message-3-line text-2xl" />
                         </div>
                         <p className="text-sm font-semibold text-foreground-800">Start the first conversation</p>
                         <p className="text-xs text-foreground-400 mt-2 max-w-sm">Send a message to start the conversation with your coach.</p>
@@ -729,7 +749,7 @@ export default function MessagesPage() {
                                       <div className="flex justify-end gap-2 mt-2">
                                         <button onClick={cancelEdit} disabled={savingEdit} className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-foreground-500 hover:bg-background-100 cursor-pointer disabled:opacity-50">Cancel</button>
                                         <button onClick={() => void handleEdit()} disabled={!editingBody.trim() || savingEdit} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-                                          <i className={savingEdit ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> Save
+                                          <AppIcon className={savingEdit ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> Save
                                         </button>
                                       </div>
                                     </div>
@@ -739,7 +759,7 @@ export default function MessagesPage() {
                                         <p className={`text-[13px] leading-snug break-words whitespace-pre-wrap ${message.is_deleted ? 'italic' : ''}`}>{message.is_deleted ? 'Message deleted' : message.body}</p>
                                         <div className={`mt-1 flex items-center gap-1.5 text-[10px] ${message.is_mine ? 'justify-end text-white/80' : 'text-foreground-400'}`}>
                                           <span>{formatTime(message.created_at)}{message.edited_at && <span> · Edited</span>}</span>
-                                          {message.is_mine && <i className={`${message.read_at ? 'ri-check-double-line text-primary-100' : 'ri-check-line'} text-xs`} />}
+                                          {message.is_mine && <AppIcon className={`${message.read_at ? 'ri-check-double-line text-primary-100' : 'ri-check-line'} text-xs`} />}
                                         </div>
                                       </div>
                                       <div className={`relative mb-1 ${messageMenuId === message.id ? 'z-20' : ''}`}>
@@ -749,16 +769,16 @@ export default function MessagesPage() {
                                           aria-label="Message actions"
                                           className="w-7 h-7 rounded-lg border border-foreground-200 bg-background-50 text-foreground-400 hover:text-primary-600 hover:border-primary-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-smooth cursor-pointer flex items-center justify-center"
                                         >
-                                          <i className={deletingMessageId === message.id ? 'ri-loader-4-line animate-spin text-xs' : 'ri-more-2-fill text-xs'} />
+                                          <AppIcon className={deletingMessageId === message.id ? 'ri-loader-4-line animate-spin text-xs' : 'ri-more-2-fill text-xs'} />
                                         </button>
                                         {messageMenuId === message.id && deletingMessageId !== message.id && (
                                           <div className={`absolute bottom-9 w-44 rounded-xl border border-foreground-200 bg-background-50 p-1.5 shadow-lg ${message.is_mine ? 'right-0' : 'left-0'}`}>
                                             {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
-                                              <button onClick={() => beginEdit(message)} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-primary-50 hover:text-primary-700 cursor-pointer"><i className="ri-edit-line" /> Edit message</button>
+                                              <button onClick={() => beginEdit(message)} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-primary-50 hover:text-primary-700 cursor-pointer"><AppIcon className="ri-edit-line" /> Edit message</button>
                                             )}
-                                            <button onClick={() => void handleDelete(message, 'me')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-background-100 cursor-pointer"><i className="ri-delete-bin-line" /> Delete for me</button>
+                                            <button onClick={() => void handleDelete(message, 'me')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-delete-bin-line" /> Delete for me</button>
                                             {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
-                                              <button onClick={() => void handleDelete(message, 'everyone')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-600 hover:bg-red-50 cursor-pointer"><i className="ri-delete-bin-6-line" /> Delete for everyone</button>
+                                              <button onClick={() => void handleDelete(message, 'everyone')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-600 hover:bg-red-50 cursor-pointer"><AppIcon className="ri-delete-bin-6-line" /> Delete for everyone</button>
                                             )}
                                             {message.is_mine && !message.is_deleted && !isWithinMessageActionWindow(message) && <p className="px-2.5 py-1.5 text-[10px] leading-snug text-foreground-400">Edit and delete for everyone expire after 15 minutes.</p>}
                                           </div>
@@ -793,7 +813,7 @@ export default function MessagesPage() {
                           disabled={!newMessage.trim() || sending}
                           className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth ${newMessage.trim() && !sending ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer' : 'bg-background-200 text-foreground-300 cursor-not-allowed'}`}
                         >
-                          <i className={sending ? 'ri-loader-4-line animate-spin mr-1.5' : 'ri-send-plane-fill mr-1.5'} />{sending ? 'Sending...' : 'Send'}
+                          <AppIcon className={sending ? 'ri-loader-4-line animate-spin mr-1.5' : 'ri-send-plane-fill mr-1.5'} />{sending ? 'Sending...' : 'Send'}
                         </button>
                       </div>
                     </div>
@@ -802,7 +822,7 @@ export default function MessagesPage() {
               ) : (
                 <div className="flex-1 min-h-[360px] flex flex-col items-center justify-center text-center px-6">
                   <div className="w-20 h-20 rounded-3xl bg-background-100 text-foreground-300 flex items-center justify-center mb-4">
-                    <i className="ri-mail-open-line text-3xl" />
+                    <AppIcon className="ri-mail-open-line text-3xl" />
                   </div>
                   <h2 className="text-lg font-heading font-semibold text-foreground-800">Select a conversation</h2>
                   <p className="text-sm text-foreground-400 mt-2 max-w-md">Choose a conversation from the left to read the thread and send a message.</p>
@@ -832,7 +852,7 @@ export default function MessagesPage() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-auto">
                       <button onClick={() => navigate(`/learner/profile?learner=${participant.id}`)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-smooth cursor-pointer">
-                        <i className="ri-user-line" /> Open Profile
+                        <AppIcon className="ri-user-line" /> Open Profile
                       </button>
                     </div>
                   </div>
@@ -881,7 +901,7 @@ export default function MessagesPage() {
                                     <div className="flex justify-end gap-2 mt-2">
                                       <button onClick={cancelEdit} disabled={savingEdit} className="px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-foreground-500 hover:bg-background-100 cursor-pointer disabled:opacity-50">Cancel</button>
                                       <button onClick={() => void handleEdit()} disabled={!editingBody.trim() || savingEdit} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
-                                        <i className={savingEdit ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> Save
+                                        <AppIcon className={savingEdit ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} /> Save
                                       </button>
                                     </div>
                                   </div>
@@ -899,21 +919,21 @@ export default function MessagesPage() {
                                         aria-label="Message actions"
                                         className="w-7 h-7 rounded-lg border border-foreground-200 bg-background-50 text-foreground-400 hover:text-primary-600 hover:border-primary-300 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-smooth cursor-pointer flex items-center justify-center"
                                       >
-                                        <i className={deletingMessageId === message.id ? 'ri-loader-4-line animate-spin text-xs' : 'ri-more-2-fill text-xs'} />
+                                        <AppIcon className={deletingMessageId === message.id ? 'ri-loader-4-line animate-spin text-xs' : 'ri-more-2-fill text-xs'} />
                                       </button>
                                       {messageMenuId === message.id && deletingMessageId !== message.id && (
                                         <div className={`absolute bottom-9 w-44 rounded-xl border border-foreground-200 bg-background-50 p-1.5 shadow-lg ${message.is_mine ? 'right-0' : 'left-0'}`}>
                                           {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
                                             <button onClick={() => beginEdit(message)} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-primary-50 hover:text-primary-700 cursor-pointer">
-                                              <i className="ri-edit-line" /> Edit message
+                                              <AppIcon className="ri-edit-line" /> Edit message
                                             </button>
                                           )}
                                           <button onClick={() => void handleDelete(message, 'me')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-foreground-600 hover:bg-background-100 cursor-pointer">
-                                            <i className="ri-delete-bin-line" /> Delete for me
+                                            <AppIcon className="ri-delete-bin-line" /> Delete for me
                                           </button>
                                           {message.is_mine && !message.is_deleted && isWithinMessageActionWindow(message) && (
                                             <button onClick={() => void handleDelete(message, 'everyone')} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-red-600 hover:bg-red-50 cursor-pointer">
-                                              <i className="ri-delete-bin-6-line" /> Delete for everyone
+                                              <AppIcon className="ri-delete-bin-6-line" /> Delete for everyone
                                             </button>
                                           )}
                                           {message.is_mine && !message.is_deleted && !isWithinMessageActionWindow(message) && (
@@ -926,7 +946,7 @@ export default function MessagesPage() {
                                 )}
                                 {isLastInGroup && <div className={`flex items-center gap-1 mt-1 text-[9px] text-foreground-400 ${message.is_mine ? 'justify-end' : 'justify-start'}`}>
                                   <span>{formatTime(message.created_at)}{message.edited_at && <span> · edited</span>}</span>
-                                  {message.is_mine && <i className={`${message.read_at ? 'ri-check-double-line text-primary-500' : 'ri-check-line'} text-xs`} />}
+                                  {message.is_mine && <AppIcon className={`${message.read_at ? 'ri-check-double-line text-primary-500' : 'ri-check-line'} text-xs`} />}
                                 </div>}
                               </div>
                             </div>
@@ -954,7 +974,7 @@ export default function MessagesPage() {
                           disabled={!newMessage.trim() || sending}
                           className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-smooth ${newMessage.trim() && !sending ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer' : 'bg-background-200 text-foreground-400 cursor-not-allowed'}`}
                         >
-                          <i className={sending ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} /> Send
+                          <AppIcon className={sending ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} /> Send
                         </button>
                       </div>
                     </div>
@@ -963,7 +983,7 @@ export default function MessagesPage() {
               ) : (
                 <div className="flex-1 flex items-center justify-center text-center px-6">
                   <div>
-                    <span className="w-20 h-20 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-5"><i className="ri-mail-line text-3xl text-foreground-300" /></span>
+                    <span className="w-20 h-20 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-5"><AppIcon className="ri-mail-line text-3xl text-foreground-300" /></span>
                     <h3 className="text-base font-heading font-semibold text-foreground-500 mb-2">Select a conversation</h3>
                     <p className="text-sm text-foreground-400 max-w-sm">Choose a learner or coach from the list to view the conversation.</p>
                   </div>

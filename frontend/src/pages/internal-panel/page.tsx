@@ -247,7 +247,7 @@ export default function InternalPanelPage() {
           className="w-[52px] h-[52px] flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer"
           title="Close sidebar"
         >
-          <i className="ri-close-line text-xl"></i>
+          <AppIcon className="ri-close-line text-xl"></AppIcon>
         </button>
 
         <button
@@ -255,7 +255,7 @@ export default function InternalPanelPage() {
           className="w-[52px] h-[52px] flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer"
           title="Home Grid"
         >
-          <i className="ri-apps-line text-lg"></i>
+          <AppIcon className="ri-apps-line text-lg"></AppIcon>
         </button>
 
         <button
@@ -263,13 +263,13 @@ export default function InternalPanelPage() {
           className={`w-[52px] h-[52px] flex items-center justify-center transition-smooth cursor-pointer ${showCustomPages ? 'text-white bg-white/10' : 'text-white/60 hover:text-white hover:bg-white/10'}`}
           title="Custom Pages"
         >
-          <i className="ri-file-add-line text-lg"></i>
+          <AppIcon className="ri-file-add-line text-lg"></AppIcon>
         </button>
 
         <div className="flex-1"></div>
 
         <button className="w-[52px] h-[52px] flex items-center justify-center text-white/60 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer">
-          <i className="ri-logout-box-line text-lg"></i>
+          <AppIcon className="ri-logout-box-line text-lg"></AppIcon>
         </button>
       </div>
 
@@ -278,7 +278,7 @@ export default function InternalPanelPage() {
           onClick={() => setSidebarOpen(true)}
           className="fixed left-0 top-1/2 -translate-y-1/2 w-[32px] h-[48px] bg-[#4A5568] rounded-r-lg flex items-center justify-center text-white/60 hover:text-white hover:bg-[#5A6578] transition-smooth cursor-pointer shadow-md z-50"
         >
-          <i className="ri-arrow-right-s-line text-lg"></i>
+          <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
         </button>
       )}
     </>
@@ -299,12 +299,12 @@ export default function InternalPanelPage() {
           onClick={openCreateModal}
           className="hidden sm:flex items-center gap-1.5 text-[12px] font-medium text-white bg-[#1B8A8C] hover:bg-[#167a7c] px-3 py-2 rounded-lg transition-smooth cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-add-line text-sm"></i>
+          <AppIcon className="ri-add-line text-sm"></AppIcon>
           Create Page
         </button>
 
         <div className="relative hidden sm:block">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
           <input
             type="text"
             value={searchQuery}
@@ -318,12 +318,12 @@ export default function InternalPanelPage() {
           onClick={() => setHowToModalOpen(true)}
           className="hidden md:flex items-center gap-1.5 text-[12px] text-foreground-500 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-book-open-line text-sm"></i>
+          <AppIcon className="ri-book-open-line text-sm"></AppIcon>
           How to use
         </button>
 
         <button className="w-9 h-9 rounded-full border border-background-200/50 flex items-center justify-center text-foreground-500 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer relative">
-          <i className="ri-notification-3-line text-sm"></i>
+          <AppIcon className="ri-notification-3-line text-sm"></AppIcon>
           <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500 border border-white"></span>
         </button>
 
@@ -348,12 +348,12 @@ export default function InternalPanelPage() {
                   onClick={() => { setUserMenuOpen(false); goBackToGrid(); }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] text-foreground-600 hover:bg-background-100 hover:text-foreground-900 transition-smooth cursor-pointer text-left"
                 >
-                  <i className="ri-settings-4-line text-sm text-foreground-400"></i>
+                  <AppIcon className="ri-settings-4-line text-sm text-foreground-400"></AppIcon>
                   Panel Settings
                 </button>
                 <div className="border-t border-foreground-200/60 my-1"></div>
                 <button className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[13px] text-foreground-500 hover:text-red-600 hover:bg-red-50 transition-smooth cursor-pointer text-left">
-                  <i className="ri-logout-box-r-line text-sm text-foreground-400"></i>
+                  <AppIcon className="ri-logout-box-r-line text-sm text-foreground-400"></AppIcon>
                   Logout
                 </button>
               </div>
@@ -375,7 +375,7 @@ export default function InternalPanelPage() {
           >
             <div className="flex items-center gap-2 mb-2">
               <span className="w-7 h-7 rounded-lg flex items-center justify-center bg-[#4A5568]/10 text-[#4A5568]">
-                <i className={`${stat.icon} text-xs`}></i>
+                <AppIcon className={`${stat.icon} text-xs`}></AppIcon>
               </span>
               <p className="text-[11px] text-foreground-400 font-medium">{stat.label}</p>
             </div>
@@ -397,7 +397,7 @@ export default function InternalPanelPage() {
             onClick={openCreateModal}
             className="flex items-center gap-1 text-[11px] font-medium text-[#1B8A8C] hover:text-[#167a7c] transition-smooth cursor-pointer"
           >
-            <i className="ri-add-line"></i>
+            <AppIcon className="ri-add-line"></AppIcon>
             Add New
           </button>
         </div>
@@ -411,7 +411,7 @@ export default function InternalPanelPage() {
             >
               <div className="flex items-center justify-between mb-3">
                 <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${page.color}15` }}>
-                  <i className={`${page.icon} text-lg`} style={{ color: page.color }}></i>
+                  <AppIcon className={`${page.icon} text-lg`} style={{ color: page.color }}></AppIcon>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
@@ -419,7 +419,7 @@ export default function InternalPanelPage() {
                     className="w-6 h-6 rounded-full flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer opacity-0 group-hover:opacity-100"
                     title="Edit page"
                   >
-                    <i className="ri-pencil-line text-xs"></i>
+                    <AppIcon className="ri-pencil-line text-xs"></AppIcon>
                   </button>
                 </div>
               </div>
@@ -456,7 +456,7 @@ export default function InternalPanelPage() {
                   className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
                   style={{ backgroundColor: `${group.color}20` }}
                 >
-                  <i className={`${group.icon} text-base`} style={{ color: group.color }}></i>
+                  <AppIcon className={`${group.icon} text-base`} style={{ color: group.color }}></AppIcon>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[12px] font-semibold text-foreground-900 leading-tight truncate">{group.header}</p>
@@ -471,13 +471,13 @@ export default function InternalPanelPage() {
                     className="w-6 h-6 rounded-full flex items-center justify-center text-foreground-300 hover:text-[#1B8A8C] hover:bg-[#1B8A8C]/10 transition-smooth cursor-pointer"
                     title="Read aloud"
                   >
-                    <i className="ri-volume-up-line text-xs"></i>
+                    <AppIcon className="ri-volume-up-line text-xs"></AppIcon>
                   </button>
                   <button
                     onClick={() => setExpandedGroup(expandedGroup === group.id ? null : group.id)}
                     className="w-6 h-6 rounded-full flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                   >
-                    <i className={`${expandedGroup === group.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs`}></i>
+                    <AppIcon className={`${expandedGroup === group.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs`}></AppIcon>
                   </button>
                 </div>
               </div>
@@ -490,9 +490,9 @@ export default function InternalPanelPage() {
                     onClick={() => openSubPage(group.header, group.color, tile, group.tiles)}
                     className="w-full flex items-center gap-2.5 px-2 py-2 rounded-md hover:bg-background-100 transition-smooth cursor-pointer group text-left"
                   >
-                    <i className={`${tile.icon} text-[11px] text-foreground-300 group-hover:text-[#4A5568] transition-smooth shrink-0`}></i>
+                    <AppIcon className={`${tile.icon} text-[11px] text-foreground-300 group-hover:text-[#4A5568] transition-smooth shrink-0`}></AppIcon>
                     <span className="text-[11px] text-foreground-600 group-hover:text-foreground-900 transition-smooth truncate">{tile.label}</span>
-                    <i className="ri-arrow-right-s-line text-[10px] text-foreground-200 ml-auto group-hover:text-foreground-400 transition-smooth shrink-0"></i>
+                    <AppIcon className="ri-arrow-right-s-line text-[10px] text-foreground-200 ml-auto group-hover:text-foreground-400 transition-smooth shrink-0"></AppIcon>
                   </button>
                 ))}
                 {expandedGroup !== group.id && group.tiles.length > 3 && (
@@ -501,7 +501,7 @@ export default function InternalPanelPage() {
                     className="w-full flex items-center justify-center gap-1 py-1.5 text-[10px] text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer"
                   >
                     <span>+{group.tiles.length - 3} more</span>
-                    <i className="ri-arrow-down-s-line text-[10px]"></i>
+                    <AppIcon className="ri-arrow-down-s-line text-[10px]"></AppIcon>
                   </button>
                 )}
               </div>
@@ -524,12 +524,12 @@ export default function InternalPanelPage() {
             onClick={goBackToGrid}
             className="flex items-center gap-1 text-[12px] text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer"
           >
-            <i className="ri-arrow-left-s-line text-sm"></i>
+            <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
             <span>Home</span>
           </button>
-          <i className="ri-arrow-right-s-line text-[10px] text-foreground-200"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px] text-foreground-200"></AppIcon>
           <span className="text-[12px] text-foreground-500">{groupHeader}</span>
-          <i className="ri-arrow-right-s-line text-[10px] text-foreground-200"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px] text-foreground-200"></AppIcon>
           <span className="text-[12px] font-medium text-foreground-900">{tile.label}</span>
         </div>
 
@@ -540,7 +540,7 @@ export default function InternalPanelPage() {
               className="w-14 h-14 rounded-xl flex items-center justify-center shrink-0"
               style={{ backgroundColor: `${groupColor}15` }}
             >
-              <i className={`${tile.icon} text-2xl`} style={{ color: groupColor }}></i>
+              <AppIcon className={`${tile.icon} text-2xl`} style={{ color: groupColor }}></AppIcon>
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-foreground-900 mb-1">{tile.label}</h2>
@@ -550,12 +550,12 @@ export default function InternalPanelPage() {
                   onClick={() => speak(`${tile.label}. ${tile.description}`)}
                   className="flex items-center gap-1.5 text-[11px] text-foreground-400 hover:text-[#1B8A8C] transition-smooth cursor-pointer"
                 >
-                  <i className="ri-volume-up-line text-sm"></i>
+                  <AppIcon className="ri-volume-up-line text-sm"></AppIcon>
                   Listen
                 </button>
                 <span className="text-[11px] text-foreground-300">|</span>
                 <span className="text-[11px] text-foreground-400">
-                  <i className="ri-time-line text-xs mr-1"></i>
+                  <AppIcon className="ri-time-line text-xs mr-1"></AppIcon>
                   {groupHeader}
                 </span>
               </div>
@@ -567,21 +567,21 @@ export default function InternalPanelPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
           <div className="bg-white rounded-lg border border-[#e2e4e8] p-4 hover:border-[#c8cdd4] transition-all duration-200 cursor-pointer group">
             <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center mb-3">
-              <i className="ri-add-circle-line text-emerald-600"></i>
+              <AppIcon className="ri-add-circle-line text-emerald-600"></AppIcon>
             </div>
             <p className="text-[13px] font-semibold text-foreground-900 mb-1">Create New</p>
             <p className="text-[11px] text-foreground-400">Add a new entry or record to this section</p>
           </div>
           <div className="bg-white rounded-lg border border-[#e2e4e8] p-4 hover:border-[#c8cdd4] transition-all duration-200 cursor-pointer group">
             <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center mb-3">
-              <i className="ri-search-line text-amber-600"></i>
+              <AppIcon className="ri-search-line text-amber-600"></AppIcon>
             </div>
             <p className="text-[13px] font-semibold text-foreground-900 mb-1">View All</p>
             <p className="text-[11px] text-foreground-400">Browse all records in this section</p>
           </div>
           <div className="bg-white rounded-lg border border-[#e2e4e8] p-4 hover:border-[#c8cdd4] transition-all duration-200 cursor-pointer group">
             <div className="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center mb-3">
-              <i className="ri-bar-chart-line text-violet-600"></i>
+              <AppIcon className="ri-bar-chart-line text-violet-600"></AppIcon>
             </div>
             <p className="text-[13px] font-semibold text-foreground-900 mb-1">Reports</p>
             <p className="text-[11px] text-foreground-400">Generate reports for this section</p>
@@ -603,13 +603,13 @@ export default function InternalPanelPage() {
                   className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                   style={{ backgroundColor: `${groupColor}12` }}
                 >
-                  <i className={`${st.icon} text-sm`} style={{ color: groupColor }}></i>
+                  <AppIcon className={`${st.icon} text-sm`} style={{ color: groupColor }}></AppIcon>
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-[12px] font-medium text-foreground-800 group-hover:text-foreground-950 transition-smooth">{st.label}</p>
                   <p className="text-[10px] text-foreground-400 truncate">{st.description}</p>
                 </div>
-                <i className="ri-arrow-right-s-line text-foreground-200 group-hover:text-foreground-400 transition-smooth shrink-0"></i>
+                <AppIcon className="ri-arrow-right-s-line text-foreground-200 group-hover:text-foreground-400 transition-smooth shrink-0"></AppIcon>
               </button>
             ))}
         </div>
@@ -629,10 +629,10 @@ export default function InternalPanelPage() {
             onClick={goBackToGrid}
             className="flex items-center gap-1 text-[12px] text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer"
           >
-            <i className="ri-arrow-left-s-line text-sm"></i>
+            <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
             <span>Home</span>
           </button>
-          <i className="ri-arrow-right-s-line text-[10px] text-foreground-200"></i>
+          <AppIcon className="ri-arrow-right-s-line text-[10px] text-foreground-200"></AppIcon>
           <span className="text-[12px] font-medium text-foreground-900">{page.title}</span>
         </div>
 
@@ -642,7 +642,7 @@ export default function InternalPanelPage() {
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{ backgroundColor: `${page.color}15` }}>
-                  <i className={`${page.icon} text-lg`} style={{ color: page.color }}></i>
+                  <AppIcon className={`${page.icon} text-lg`} style={{ color: page.color }}></AppIcon>
                 </div>
                 <div>
                   <h2 className="text-base font-heading font-semibold text-foreground-900">{page.title}</h2>
@@ -655,14 +655,14 @@ export default function InternalPanelPage() {
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                   title="Edit page"
                 >
-                  <i className="ri-pencil-line"></i>
+                  <AppIcon className="ri-pencil-line"></AppIcon>
                 </button>
                 <button
                   onClick={() => handleDeletePage(page.id)}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-red-500 hover:bg-red-50 transition-smooth cursor-pointer"
                   title="Delete page"
                 >
-                  <i className="ri-delete-bin-line"></i>
+                  <AppIcon className="ri-delete-bin-line"></AppIcon>
                 </button>
               </div>
             </div>
@@ -715,7 +715,7 @@ export default function InternalPanelPage() {
               onClick={() => { setCreatePageModalOpen(false); setEditingPage(null); }}
               className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer"
             >
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
 
@@ -826,7 +826,7 @@ export default function InternalPanelPage() {
                   onClick={addField}
                   className="flex items-center gap-1 text-[11px] font-medium text-[#1B8A8C] hover:text-[#167a7c] transition-smooth cursor-pointer"
                 >
-                  <i className="ri-add-line text-xs"></i>
+                  <AppIcon className="ri-add-line text-xs"></AppIcon>
                   Add Field
                 </button>
               </div>
@@ -868,7 +868,7 @@ export default function InternalPanelPage() {
                       onClick={() => removeField(idx)}
                       className="w-7 h-7 rounded-md flex items-center justify-center text-foreground-300 hover:text-red-500 hover:bg-red-50 transition-smooth cursor-pointer shrink-0 mt-1"
                     >
-                      <i className="ri-close-line text-sm"></i>
+                      <AppIcon className="ri-close-line text-sm"></AppIcon>
                     </button>
                   </div>
                 ))}
@@ -887,7 +887,7 @@ export default function InternalPanelPage() {
                   onClick={() => { handleDeletePage(editingPage!.id); setCreatePageModalOpen(false); setEditingPage(null); }}
                   className="px-3 py-2 rounded-lg text-[13px] text-red-500 hover:bg-red-50 transition-smooth cursor-pointer mr-auto"
                 >
-                  <i className="ri-delete-bin-line text-sm mr-1"></i>
+                  <AppIcon className="ri-delete-bin-line text-sm mr-1"></AppIcon>
                   Delete
                 </button>
               )}
@@ -923,7 +923,7 @@ export default function InternalPanelPage() {
               onClick={() => setHowToModalOpen(false)}
               className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer"
             >
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
           <div className="p-5 space-y-4">

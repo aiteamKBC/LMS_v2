@@ -107,7 +107,7 @@ export default function EnrolmentDashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <span className="w-8 h-8 rounded-full bg-red-500 flex items-center justify-center shrink-0">
-                  <i className="ri-alert-fill text-white text-sm"></i>
+                  <AppIcon className="ri-alert-fill text-white text-sm"></AppIcon>
                 </span>
                 <div>
                   <p className="text-sm font-heading font-semibold text-red-800">{summary.redAlerts} Critical Blockers Requiring Immediate Action</p>
@@ -118,7 +118,7 @@ export default function EnrolmentDashboard() {
                 onClick={() => setExpandedAlert(!expandedAlert)}
                 className="text-[12px] text-red-700 hover:text-red-800 font-medium whitespace-nowrap flex items-center gap-1 cursor-pointer"
               >
-                {expandedAlert ? 'Collapse' : 'View All'} {expandedAlert ? <i className="ri-arrow-up-s-line"></i> : <i className="ri-arrow-down-s-line"></i>}
+                {expandedAlert ? 'Collapse' : 'View All'} {expandedAlert ? <AppIcon className="ri-arrow-up-s-line"></AppIcon> : <AppIcon className="ri-arrow-down-s-line"></AppIcon>}
               </button>
             </div>
             {expandedAlert && (
@@ -145,7 +145,7 @@ export default function EnrolmentDashboard() {
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
             <div className="flex items-center gap-3">
               <span className="w-8 h-8 rounded-full bg-amber-500 flex items-center justify-center shrink-0">
-                <i className="ri-error-warning-fill text-white text-sm"></i>
+                <AppIcon className="ri-error-warning-fill text-white text-sm"></AppIcon>
               </span>
               <div>
                 <p className="text-sm font-heading font-semibold text-amber-800">{summary.amberAlerts} Items Needing Attention</p>
@@ -172,7 +172,7 @@ export default function EnrolmentDashboard() {
                   <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                     hasBlocked ? 'bg-red-100 text-red-600' : hasPending ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'
                   }`}>
-                    <i className={`${section.icon} text-xs`}></i>
+                    <AppIcon className={`${section.icon} text-xs`}></AppIcon>
                   </span>
                   {hasBlocked && <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0"></span>}
                   {hasPending && !hasBlocked && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>}
@@ -198,7 +198,7 @@ export default function EnrolmentDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">14 learners progressing through 15-stage onboarding journey</p>
               </div>
               <a href="/compliance/pre-active" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
-                Full Journey <i className="ri-arrow-right-line ml-1"></i>
+                Full Journey <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
               </a>
             </div>
             <div className="space-y-2">
@@ -244,13 +244,13 @@ export default function EnrolmentDashboard() {
                     act.type === 'new' ? 'bg-blue-100 text-blue-600' :
                     'bg-primary-100 text-primary-600'
                   }`}>
-                    <i className={`${
+                    <AppIcon className={`${
                       act.type === 'approved' ? 'ri-check-line' :
                       act.type === 'rejected' ? 'ri-close-line' :
                       act.type === 'action' ? 'ri-alert-line' :
                       act.type === 'new' ? 'ri-add-line' :
                       'ri-file-list-3-line'
-                    } text-[10px]`}></i>
+                    } text-[10px]`}></AppIcon>
                   </span>
                   <div className="min-w-0">
                     <p className="text-[12px] font-medium text-foreground-900 leading-tight">
@@ -270,7 +270,7 @@ export default function EnrolmentDashboard() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <span className="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                <i className="ri-mail-unread-line text-sm"></i>
+                <AppIcon className="ri-mail-unread-line text-sm"></AppIcon>
               </span>
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Messages Requiring Enrolment Team Action</h3>
@@ -278,7 +278,7 @@ export default function EnrolmentDashboard() {
               </div>
             </div>
             <a href="/messages" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
-              Open Messages <i className="ri-arrow-right-line ml-1"></i>
+              Open Messages <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
             </a>
           </div>
           <div className="space-y-2">

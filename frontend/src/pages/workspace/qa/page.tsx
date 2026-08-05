@@ -132,7 +132,7 @@ export default function QADashboard() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge != null && tab.badge > 0 && (
                 <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -164,7 +164,7 @@ export default function QADashboard() {
                         item.qaStatus === 'Escalated' ? 'bg-red-100 text-red-700' :
                         'bg-amber-100 text-amber-700'
                       }`}>
-                        <i className="ri-file-search-line text-sm"></i>
+                        <AppIcon className="ri-file-search-line text-sm"></AppIcon>
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13px] font-medium text-foreground-900 truncate">{item.title}</p>
@@ -260,7 +260,7 @@ export default function QADashboard() {
                   <div key={item.id} className={`p-3.5 flex flex-col sm:flex-row sm:items-center gap-3 ${item.risk === 'high' ? 'bg-red-50/30' : ''}`}>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <span className="w-9 h-9 rounded-lg bg-secondary-100 text-secondary-700 flex items-center justify-center shrink-0">
-                        <i className="ri-bar-chart-2-line text-sm"></i>
+                        <AppIcon className="ri-bar-chart-2-line text-sm"></AppIcon>
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13px] font-medium text-foreground-900">{item.ksbRef}</p>
@@ -321,13 +321,13 @@ export default function QADashboard() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-[10px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-close-circle-line mr-1"></i> Uphold Rejection
+                      <AppIcon className="ri-close-circle-line mr-1"></AppIcon> Uphold Rejection
                     </button>
                     <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-check-line mr-1"></i> Override Accept
+                      <AppIcon className="ri-check-line mr-1"></AppIcon> Override Accept
                     </button>
                     <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-message-2-line mr-1"></i> Message Learner
+                      <AppIcon className="ri-message-2-line mr-1"></AppIcon> Message Learner
                     </button>
                   </div>
                 </div>
@@ -345,7 +345,7 @@ export default function QADashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">Structured sampling for Ofsted readiness — 10-38% sample rates across categories</p>
               </div>
               <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> New Sample
+                <AppIcon className="ri-add-line mr-1"></AppIcon> New Sample
               </button>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -399,7 +399,7 @@ export default function QADashboard() {
               key={link.label}
               className="flex items-center gap-2 px-3 py-2.5 bg-background-50 rounded-xl border border-foreground-200/60 text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-700 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className={`${link.icon} text-sm`}></i>
+              <AppIcon className={`${link.icon} text-sm`}></AppIcon>
               {link.label}
             </button>
           ))}
@@ -418,7 +418,7 @@ function QAStatCard({ label, value, sub, icon, color }: { label: string; value: 
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
       </div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>

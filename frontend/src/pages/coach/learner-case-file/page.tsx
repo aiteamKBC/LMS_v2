@@ -198,7 +198,7 @@ export default function LearnerCaseFile() {
             onClick={() => navigate('/coach/caseload')}
             className="inline-flex items-center gap-2 text-[11px] font-semibold text-foreground-400 transition hover:text-primary-700"
           >
-            <i className="ri-arrow-left-line"></i>
+            <AppIcon className="ri-arrow-left-line"></AppIcon>
             My Learners
             <span className="text-foreground-300">/</span>
             <span className="text-foreground-700">{pageTitle}</span>
@@ -224,14 +224,14 @@ export default function LearnerCaseFile() {
                       <span className={`rounded-full border px-3 py-1.5 text-[10px] font-semibold ${statusBadgeClass(data)}`}>{statusLabel(data)}</span>
                     </div>
                     <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-2 text-[12px] text-white/75">
-                      {data?.email && <span className="inline-flex items-center gap-1.5"><i className="ri-mail-line"></i>{data.email}</span>}
-                      {data?.detail?.phone && <span className="inline-flex items-center gap-1.5"><i className="ri-phone-line"></i>{data.detail.phone}</span>}
+                      {data?.email && <span className="inline-flex items-center gap-1.5"><AppIcon className="ri-mail-line"></AppIcon>{data.email}</span>}
+                      {data?.detail?.phone && <span className="inline-flex items-center gap-1.5"><AppIcon className="ri-phone-line"></AppIcon>{data.detail.phone}</span>}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => navigate('/coach/timetable')} className="inline-flex h-11 items-center gap-2 rounded-xl bg-white px-5 text-[12px] font-bold text-primary-700 shadow-sm transition hover:bg-primary-50">
-                    <i className="ri-calendar-line"></i> Schedule
+                    <AppIcon className="ri-calendar-line"></AppIcon> Schedule
                   </button>
                 </div>
               </div>
@@ -260,7 +260,7 @@ export default function LearnerCaseFile() {
                       activeTab === tab.id ? 'text-primary-700' : 'text-foreground-400 hover:text-foreground-700'
                     }`}
                   >
-                    <i className={tab.icon}></i>
+                    <AppIcon className={tab.icon}></AppIcon>
                     {tab.label}
                     {activeTab === tab.id && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary-600"></span>}
                   </button>
@@ -307,7 +307,7 @@ export default function LearnerCaseFile() {
                   onClick={handleOpenTrainingPlan}
                   className="px-3 py-1.5 rounded-full bg-background-100 text-foreground-700 text-[11px] font-semibold hover:bg-background-200 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1"
                 >
-                  <i className="ri-route-line text-xs"></i> Training Plan
+                  <AppIcon className="ri-route-line text-xs"></AppIcon> Training Plan
                 </button>
               )}
             </div>
@@ -356,25 +356,25 @@ export default function LearnerCaseFile() {
                     <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-[12px] text-white/70 md:justify-start">
                       {data?.cohort && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-group-line text-white/50"></i>
+                          <AppIcon className="ri-group-line text-white/50"></AppIcon>
                           Cohort {data.cohort}
                         </span>
                       )}
                       {data?.group && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-team-line text-white/50"></i>
+                          <AppIcon className="ri-team-line text-white/50"></AppIcon>
                           Group {data.group}
                         </span>
                       )}
                       {data?.startDate && data.startDate !== '--' && (
                         <span className="inline-flex items-center gap-1">
-                          <i className="ri-calendar-line text-white/50"></i>
+                          <AppIcon className="ri-calendar-line text-white/50"></AppIcon>
                           Started {data.startDate}
                         </span>
                       )}
                       {data?.email && (
                         <span className="inline-flex min-w-0 items-center gap-1">
-                          <i className="ri-mail-line text-white/50"></i>
+                          <AppIcon className="ri-mail-line text-white/50"></AppIcon>
                           <span className="truncate">{data.email}</span>
                         </span>
                       )}
@@ -402,7 +402,7 @@ export default function LearnerCaseFile() {
                           : 'text-white/70 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      <i className={`${tab.icon} text-sm ${activeTab === tab.id ? 'text-primary-700' : 'text-white/60'}`}></i>
+                      <AppIcon className={`${tab.icon} text-sm ${activeTab === tab.id ? 'text-primary-700' : 'text-white/60'}`}></AppIcon>
                       {tab.label}
                     </button>
                   ))}
@@ -414,7 +414,7 @@ export default function LearnerCaseFile() {
                       onClick={handleOpenTrainingPlan}
                       className="inline-flex items-center justify-center gap-1.5 rounded-full border border-white/20 bg-white px-4 py-2.5 text-[13px] font-semibold text-foreground-950 shadow-sm transition-all hover:bg-white/90"
                     >
-                      <i className="ri-route-line text-sm"></i> View Plan
+                      <AppIcon className="ri-route-line text-sm"></AppIcon> View Plan
                     </button>
                   )}
                 </div>
@@ -505,7 +505,7 @@ export default function LearnerCaseFile() {
               <SidebarCard title="Assessment Snapshot">
                 <div className="text-center">
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-amber-400 to-amber-500 flex items-center justify-center mb-3 shadow-sm">
-                    <i className="ri-question-answer-line text-white text-2xl"></i>
+                    <AppIcon className="ri-question-answer-line text-white text-2xl"></AppIcon>
                   </div>
                   <p className="text-2xl font-heading font-bold text-foreground-900">
                     {data?.detail?.quizAttempts.length || 0}
@@ -569,7 +569,7 @@ function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) 
         </ReferencePanel>
         <ReferencePanel title="Alerts & Actions" icon="ri-alarm-warning-line" tone="red">
           {risks.length === 0 ? (
-            <p className="flex items-center gap-2 text-[11px] font-medium text-emerald-600"><i className="ri-checkbox-circle-line"></i>No risk factors identified</p>
+            <p className="flex items-center gap-2 text-[11px] font-medium text-emerald-600"><AppIcon className="ri-checkbox-circle-line"></AppIcon>No risk factors identified</p>
           ) : risks.map((risk) => (
             <div key={risk.label} className="mb-2 rounded-xl border border-amber-100 bg-amber-50/60 p-3">
               <p className="text-[11px] font-bold text-amber-800">{risk.label}</p>
@@ -581,7 +581,7 @@ function ReferenceOverviewContent({ data }: { data: CoachLearnerCaseFileData }) 
       <ReferencePanel title="Recent Activity" icon="ri-history-line" tone="muted">
         {activities.length === 0 ? <ProfileEmpty text="No recent activity is available." /> : activities.map((item) => (
           <div key={item.id} className="flex gap-3 border-b border-foreground-100 py-2.5 last:border-0">
-            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${overviewToneClasses(item.tone)}`}><i className="ri-history-line text-xs"></i></span>
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${overviewToneClasses(item.tone)}`}><AppIcon className="ri-history-line text-xs"></AppIcon></span>
             <div className="min-w-0 flex-1"><p className="text-[11px] font-bold text-foreground-800">{item.event}</p><p className="truncate text-[10px] text-foreground-400">{item.detail || 'No details available.'}</p></div>
             <span className="text-[9px] text-foreground-300">{item.date}</span>
           </div>
@@ -736,7 +736,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-primary-700 shadow-sm">
-                          <i className="ri-filter-3-line text-sm"></i>
+                          <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
                         </span>
                         <div>
                           <p className="text-[12px] font-bold text-foreground-900">Filter KSB list</p>
@@ -769,7 +769,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                   </div>
 
                   <div className="relative">
-                    <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                    <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                     <input
                       type="text"
                       value={ksbSearch}
@@ -894,7 +894,7 @@ function KsbOverviewCard({
   return (
     <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
       <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p>
       <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">{label}</p>
@@ -1102,7 +1102,7 @@ function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
       {items.map((item) => (
         <div key={item.id} className="flex items-start gap-3 border-b border-foreground-100 py-4 last:border-0">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
-            <i className="ri-calendar-event-line"></i>
+            <AppIcon className="ri-calendar-event-line"></AppIcon>
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -1127,7 +1127,7 @@ function ReviewMeetingList({ items }: { items: CaseFileReviewMeeting[] }) {
 
 function ReferencePanel({ title, icon, tone, children }: { title: string; icon: string; tone: 'primary' | 'emerald' | 'red' | 'muted'; children: React.ReactNode }) {
   const toneClass = { primary: 'bg-primary-50 text-primary-600', emerald: 'bg-emerald-50 text-emerald-600', red: 'bg-red-50 text-red-600', muted: 'bg-background-100 text-foreground-500' }[tone];
-  return <section className="rounded-2xl border border-foreground-200/60 bg-white p-5"><h3 className="mb-4 flex items-center gap-2 text-[12px] font-bold text-foreground-900"><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneClass}`}><i className={icon}></i></span>{title}</h3>{children}</section>;
+  return <section className="rounded-2xl border border-foreground-200/60 bg-white p-5"><h3 className="mb-4 flex items-center gap-2 text-[12px] font-bold text-foreground-900"><span className={`flex h-8 w-8 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon}></AppIcon></span>{title}</h3>{children}</section>;
 }
 
 function ProfileInfo({ label, value }: { label: string; value?: string | null }) {
@@ -1239,7 +1239,7 @@ function SignalCard({
     <div className="rounded-2xl border border-white/10 bg-white/10 p-3 shadow-[0_14px_32px_rgba(0,0,0,0.12)] backdrop-blur-md">
       <div className="flex items-center gap-2">
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border ${toneMap[tone]}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <div className="min-w-0">
           <p className="whitespace-nowrap text-[9px] font-bold text-white/60">{label}</p>
@@ -1255,7 +1255,7 @@ function SidebarCard({ title, children }: { title: string; children: React.React
     <div className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-[0_10px_30px_rgba(31,14,59,0.05)]">
       <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/45 px-4 py-3">
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-background-50 text-primary-600 ring-1 ring-background-200">
-          <i className={`${sidebarIcon(title)} text-sm`}></i>
+          <AppIcon className={`${sidebarIcon(title)} text-sm`}></AppIcon>
         </span>
         <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-foreground-500">{title}</h3>
       </div>

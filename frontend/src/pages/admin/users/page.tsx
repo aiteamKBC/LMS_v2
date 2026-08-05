@@ -57,7 +57,7 @@ export default function AdminUsersPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-user-settings-line text-white text-2xl"></i>
+              <AppIcon className="ri-user-settings-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">User Directory</h2>
@@ -85,7 +85,7 @@ export default function AdminUsersPage() {
         {/* Filters + Actions */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search users by name or email..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -103,7 +103,7 @@ export default function AdminUsersPage() {
               <option value="inactive">Inactive</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-user-add-line mr-1.5"></i> Invite User
+              <AppIcon className="ri-user-add-line mr-1.5"></AppIcon> Invite User
             </button>
           </div>
         </div>
@@ -164,13 +164,13 @@ export default function AdminUsersPage() {
                     <td className="py-3 px-4 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer" title="Edit">
-                          <i className="ri-pencil-line text-sm"></i>
+                          <AppIcon className="ri-pencil-line text-sm"></AppIcon>
                         </button>
                         <button className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer" title="View Profile">
-                          <i className="ri-eye-line text-sm"></i>
+                          <AppIcon className="ri-eye-line text-sm"></AppIcon>
                         </button>
                         <button className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-foreground-400 hover:text-red-500 transition-smooth cursor-pointer" title="Deactivate">
-                          <i className="ri-forbid-line text-sm"></i>
+                          <AppIcon className="ri-forbid-line text-sm"></AppIcon>
                         </button>
                       </div>
                     </td>
@@ -182,7 +182,7 @@ export default function AdminUsersPage() {
           {filtered.length === 0 && (
             <div className="p-8 text-center">
               <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-search-line text-foreground-300 text-xl"></i>
+                <AppIcon className="ri-search-line text-foreground-300 text-xl"></AppIcon>
               </div>
               <p className="text-sm text-foreground-500">No users match your filters</p>
             </div>

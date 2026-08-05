@@ -64,7 +64,7 @@ export default function EmployerReviewActions() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-file-chart-line text-white text-2xl"></i>
+              <AppIcon className="ri-file-chart-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Review Actions</h2>
@@ -87,7 +87,7 @@ export default function EmployerReviewActions() {
 
         {urgent > 0 && (
           <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0"><i className="ri-alert-line text-red-600 text-base"></i></span>
+            <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0"><AppIcon className="ri-alert-line text-red-600 text-base"></AppIcon></span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-red-800">{urgent} urgent actions need your attention</p>
               <p className="text-[12px] text-red-600 mt-0.5">Overdue or approaching deadline — complete these as soon as possible</p>
@@ -112,7 +112,7 @@ export default function EmployerReviewActions() {
           {filtered.map(action => (
             <div key={action.id} className={`bg-background-50 rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${action.priority === 'urgent' ? 'border-red-200/50 bg-red-50/10' : action.priority === 'high' ? 'border-amber-200/50 bg-amber-50/10' : 'border-foreground-200/60'}`}>
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${action.priority === 'urgent' ? 'bg-red-100 text-red-600' : action.priority === 'high' ? 'bg-amber-100 text-amber-600' : 'bg-background-100 text-foreground-400'}`}>
-                <i className={`${typeIcons[action.type]} text-sm`}></i>
+                <AppIcon className={`${typeIcons[action.type]} text-sm`}></AppIcon>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -123,13 +123,13 @@ export default function EmployerReviewActions() {
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground-400">
                   <span className="font-medium text-foreground-600">{action.apprentice}</span>
                   <span>{action.programme}</span>
-                  <span className="flex items-center gap-1"><i className="ri-calendar-line text-[10px]"></i> Due: {action.dueDate}</span>
+                  <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line text-[10px]"></AppIcon> Due: {action.dueDate}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">{typeLabels[action.type]}</span>
                 <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-check-line mr-1"></i> {action.type === 'sign-review' ? 'Review' : action.type === 'validate-evidence' ? 'Validate' : action.type === 'confirm-attendance' ? 'Confirm' : action.type === 'schedule-meeting' ? 'Schedule' : 'Respond'}
+                  <AppIcon className="ri-check-line mr-1"></AppIcon> {action.type === 'sign-review' ? 'Review' : action.type === 'validate-evidence' ? 'Validate' : action.type === 'confirm-attendance' ? 'Confirm' : action.type === 'schedule-meeting' ? 'Schedule' : 'Respond'}
                 </button>
               </div>
             </div>

@@ -62,7 +62,7 @@ export function EvidenceTracker({ learner }: EvidenceTrackerProps) {
                 item.status === 'partial' ? 'bg-amber-100 text-amber-600' :
                 item.required ? 'bg-red-50 text-red-400' : 'bg-background-100 text-foreground-300'
               }`}>
-                <i className={`${item.status === 'uploaded' ? 'ri-check-line' : item.status === 'partial' ? 'ri-time-line' : 'ri-close-line'} text-xs`}></i>
+                <AppIcon className={`${item.status === 'uploaded' ? 'ri-check-line' : item.status === 'partial' ? 'ri-time-line' : 'ri-close-line'} text-xs`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-[12px] font-medium text-foreground-700 truncate">{item.label}</p>

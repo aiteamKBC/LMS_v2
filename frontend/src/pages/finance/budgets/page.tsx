@@ -52,14 +52,14 @@ export default function BudgetsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><i className="ri-pie-chart-2-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className="ri-pie-chart-2-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Total Budget</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalBudget.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><i className="ri-arrow-down-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><AppIcon className="ri-arrow-down-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Spent</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalSpent.toLocaleString()}</p>
@@ -67,14 +67,14 @@ export default function BudgetsPage() {
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><i className="ri-arrow-up-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-arrow-up-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Remaining</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalRemaining.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><i className="ri-error-warning-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><AppIcon className="ri-error-warning-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Over Budget</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">{BUDGETS.filter(b => b.status === 'Over Budget').length}</p>
@@ -83,7 +83,7 @@ export default function BudgetsPage() {
 
         {/* Search */}
         <div className="relative max-w-sm">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input type="text" placeholder="Search budgets..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
         </div>
 

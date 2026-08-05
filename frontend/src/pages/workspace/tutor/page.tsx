@@ -121,7 +121,7 @@ export default function TutorDashboard() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge != null && tab.badge > 0 && (
                 <span className="bg-primary-100 text-primary-700 text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -139,7 +139,7 @@ export default function TutorDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">Your upcoming and scheduled sessions — Cohort A (BA)</p>
               </div>
               <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Create Session
+                <AppIcon className="ri-add-line mr-1"></AppIcon> Create Session
               </button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -157,15 +157,15 @@ export default function TutorDashboard() {
                   </div>
                   <h4 className="text-sm font-semibold text-foreground-900 mb-2">{s.module}</h4>
                   <div className="space-y-1 text-[11px] text-foreground-400 mb-3">
-                    <p><i className="ri-time-line mr-1 text-[10px]"></i> {s.time}</p>
-                    <p><i className="ri-group-line mr-1 text-[10px]"></i> {s.cohort} — {s.learners} learners</p>
+                    <p><AppIcon className="ri-time-line mr-1 text-[10px]"></AppIcon> {s.time}</p>
+                    <p><AppIcon className="ri-group-line mr-1 text-[10px]"></AppIcon> {s.cohort} — {s.learners} learners</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex-1">
-                      <i className="ri-video-line mr-1"></i> Join Teams
+                      <AppIcon className="ri-video-line mr-1"></AppIcon> Join Teams
                     </button>
                     <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-settings-3-line"></i>
+                      <AppIcon className="ri-settings-3-line"></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -236,7 +236,7 @@ export default function TutorDashboard() {
                       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                         item.status === 'reviewed' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
                       }`}>
-                        <i className="ri-file-search-line text-sm"></i>
+                        <AppIcon className="ri-file-search-line text-sm"></AppIcon>
                       </span>
                       <div className="min-w-0">
                         <p className="text-[13px] font-medium text-foreground-900 truncate">{item.title}</p>
@@ -303,7 +303,7 @@ export default function TutorDashboard() {
                       }`}>{item.status === 'marked' ? 'Marked' : 'Pending'}</span>
                       {item.status === 'pending' && (
                         <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-edit-line mr-1"></i> Mark
+                          <AppIcon className="ri-edit-line mr-1"></AppIcon> Mark
                         </button>
                       )}
                     </div>
@@ -374,7 +374,7 @@ export default function TutorDashboard() {
               key={link.label}
               className="flex items-center gap-2 px-3 py-2.5 bg-background-50 rounded-xl border border-foreground-200/60 text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-700 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className={`${link.icon} text-sm`}></i>
+              <AppIcon className={`${link.icon} text-sm`}></AppIcon>
               {link.label}
             </button>
           ))}
@@ -393,7 +393,7 @@ function TutorStatCard({ label, value, sub, icon, color }: { label: string; valu
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
       </div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>

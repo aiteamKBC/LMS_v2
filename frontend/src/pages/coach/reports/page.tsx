@@ -2096,7 +2096,7 @@ function PreviewStatusCard({ section }: { section: ReportSection }) {
     <article className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
       <div className="flex items-start gap-3">
         <span className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
-          <i className="ri-alert-line text-lg"></i>
+          <AppIcon className="ri-alert-line text-lg"></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-amber-900">{section.title}</h3>
@@ -2264,7 +2264,7 @@ function PreviewSectionCard({
         <div className="grid gap-4 xl:grid-cols-2">
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4">
             <div className="mb-3 flex items-center gap-2 text-emerald-800">
-              <i className="ri-checkbox-circle-line text-lg"></i>
+              <AppIcon className="ri-checkbox-circle-line text-lg"></AppIcon>
               <h4 className="text-sm font-semibold">Counts as OTJH</h4>
             </div>
             <ul className="space-y-2 text-sm leading-6 text-foreground-700">
@@ -2279,7 +2279,7 @@ function PreviewSectionCard({
 
           <div className="rounded-2xl border border-red-200 bg-red-50/60 p-4">
             <div className="mb-3 flex items-center gap-2 text-red-700">
-              <i className="ri-error-warning-line text-lg"></i>
+              <AppIcon className="ri-error-warning-line text-lg"></AppIcon>
               <h4 className="text-sm font-semibold">Does not count as OTJH</h4>
             </div>
             <ul className="space-y-2 text-sm leading-6 text-foreground-700">
@@ -2336,7 +2336,7 @@ function PreviewSectionCard({
                 }`}
               >
                 {action.kind === 'download-pdf' && approvalBusy ? (
-                  <i className="ri-loader-4-line mr-2 animate-spin"></i>
+                  <AppIcon className="ri-loader-4-line mr-2 animate-spin"></AppIcon>
                 ) : null}
                 {action.label}
               </button>
@@ -2374,7 +2374,7 @@ function ExportChip({
           : 'border-foreground-200 bg-white text-foreground-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
       }`}
     >
-      <i className={`${busy ? 'ri-loader-4-line animate-spin' : meta.icon}`}></i>
+      <AppIcon className={`${busy ? 'ri-loader-4-line animate-spin' : meta.icon}`}></AppIcon>
       {meta.label}
     </button>
   );
@@ -2746,7 +2746,7 @@ export default function CoachReports() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-3">
                     <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-xl backdrop-blur-sm">
-                      <i className="ri-file-chart-line"></i>
+                      <AppIcon className="ri-file-chart-line"></AppIcon>
                     </span>
                     <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/85">
                       Compliance & Evidence
@@ -2793,13 +2793,13 @@ export default function CoachReports() {
                       className="flex w-full items-center justify-between gap-3 rounded-xl border border-foreground-200 bg-white px-4 py-3 text-left text-[15px] text-foreground-900 shadow-sm outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
                     >
                       <span className="truncate">{selectedLearnerOption?.label || 'Select learner'}</span>
-                      <i className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform ${learnerMenuOpen ? 'rotate-180' : ''}`}></i>
+                      <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform ${learnerMenuOpen ? 'rotate-180' : ''}`}></AppIcon>
                     </button>
 
                     {learnerMenuOpen && (
                       <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 rounded-2xl border border-foreground-200/70 bg-white p-2 shadow-xl shadow-foreground-950/10">
                         <div className="relative mb-2">
-                          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+                          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                           <input
                             ref={learnerSearchInputRef}
                             type="text"
@@ -2831,7 +2831,7 @@ export default function CoachReports() {
                                 }`}
                               >
                                 <span className="truncate">{option.label}</span>
-                                {active ? <i className="ri-check-line text-base"></i> : null}
+                                {active ? <AppIcon className="ri-check-line text-base"></AppIcon> : null}
                               </button>
                             );
                           })}
@@ -2962,7 +2962,7 @@ export default function CoachReports() {
                   disabled={loading || buildingReport || dateRangeInvalid || !caseloadLearners.length}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <i className={loading || buildingReport ? 'ri-loader-4-line animate-spin' : 'ri-file-chart-line'}></i>
+                  <AppIcon className={loading || buildingReport ? 'ri-loader-4-line animate-spin' : 'ri-file-chart-line'}></AppIcon>
                   {loading ? 'Loading OTJH sources' : buildingReport ? 'Generating OTJH report' : 'Generate OTJH evidence report'}
                 </button>
               </div>
@@ -2972,7 +2972,7 @@ export default function CoachReports() {
               {!generatedReport ? (
                 <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-primary-200 bg-primary-50/25 px-6 py-12 text-center">
                   <span className="flex h-24 w-24 items-center justify-center rounded-full bg-primary-100 text-primary-500">
-                    <i className="ri-file-transfer-line text-5xl"></i>
+                    <AppIcon className="ri-file-transfer-line text-5xl"></AppIcon>
                   </span>
                   <h2 className="mt-8 text-3xl font-heading font-semibold text-foreground-950">{reportTypeMeta.title}</h2>
                   <p className="mt-4 max-w-2xl text-base leading-8 text-foreground-500">
@@ -3020,9 +3020,9 @@ export default function CoachReports() {
                   </div>
 
                   <div className="mb-5 flex flex-wrap items-center gap-2 text-[11px] text-foreground-500">
-                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><i className="ri-user-line mr-1 text-primary-500"></i>{generatedReport.coach}</span>
-                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><i className="ri-calendar-line mr-1 text-primary-500"></i>{generatedReport.period}</span>
-                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><i className="ri-time-line mr-1 text-primary-500"></i>{generatedReport.generatedAt}</span>
+                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{generatedReport.coach}</span>
+                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{generatedReport.period}</span>
+                    <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{generatedReport.generatedAt}</span>
                   </div>
 
                   <div className="flex-1 space-y-4 overflow-y-auto pr-1">

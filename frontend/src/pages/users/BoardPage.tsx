@@ -67,11 +67,11 @@ function HeroProgrammeStatus({ learnerId, initial }: { learnerId: string; initia
             disabled={saving}
             className="inline-flex items-center gap-1.5 px-3 py-2 bg-white text-primary-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
           >
-            {saving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save</>}
+            {saving ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-save-line" />Save</>}
           </button>
         )}
       </div>
-      {err && <span className="text-[11px] text-red-200"><i className="ri-error-warning-line mr-1" />{err}</span>}
+      {err && <span className="text-[11px] text-red-200"><AppIcon className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -110,7 +110,7 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
   if (done) {
     return (
       <span className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/20 border border-emerald-300/40 text-[12px] font-semibold text-white">
-        <i className="ri-check-double-line" />Enrolment complete
+        <AppIcon className="ri-check-double-line" />Enrolment complete
       </span>
     );
   }
@@ -124,7 +124,7 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
             disabled={busy}
             className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-emerald-500 text-white rounded-xl text-[12px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer disabled:opacity-60 shadow-lg shadow-black/10"
           >
-            {busy ? <><i className="ri-loader-4-line animate-spin" />Finishing…</> : <><i className="ri-check-line" />Confirm</>}
+            {busy ? <><AppIcon className="ri-loader-4-line animate-spin" />Finishing…</> : <><AppIcon className="ri-check-line" />Confirm</>}
           </button>
           <button
             onClick={() => { setConfirming(false); setErr(null); }}
@@ -140,11 +140,11 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
           title="Move this learner into the live learner tables and set them Active"
           className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer shadow-lg shadow-black/10"
         >
-          <i className="ri-graduation-cap-line" />Finish enrolment
+          <AppIcon className="ri-graduation-cap-line" />Finish enrolment
         </button>
       )}
       {confirming && !err && <span className="text-[11px] text-white/70 max-w-[220px]">Starts this learner&apos;s journey and sets them Active.</span>}
-      {err && <span className="text-[11px] text-red-200 max-w-[220px]"><i className="ri-error-warning-line mr-1" />{err}</span>}
+      {err && <span className="text-[11px] text-red-200 max-w-[220px]"><AppIcon className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -202,15 +202,15 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
   return (
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
-      {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-      {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
+      {err && <p className="text-[12px] text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1" />{err}</p>}
+      {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><AppIcon className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
       {docs !== null && docs.length === 0 && <EmptyState text="No documents" />}
       {docs !== null && docs.length > 0 && (
         <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
           {docs.map((d) => (
             <div key={d.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
-                <i className="ri-file-pdf-line text-red-500 shrink-0" />
+                <AppIcon className="ri-file-pdf-line text-red-500 shrink-0" />
                 <span className="truncate">{d.docLabel}</span>
                 {d.signed && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>}
               </span>
@@ -252,11 +252,11 @@ export default function BoardPage() {
     return (
       <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle="" userName="Enrolment Officer" userRole="Enrolment Officer">
         <div className="p-6 max-w-5xl mx-auto">
-          {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading profile…</div>}
+          {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading profile…</div>}
           {!loading && error && (
             <div className="py-20 text-center text-[13px]">
-              <p className="text-red-600 mb-3"><i className="ri-error-warning-line mr-1.5" />{error}</p>
-              <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
+              <p className="text-red-600 mb-3"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
+              <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
             </div>
           )}
         </div>
@@ -295,7 +295,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
                 <HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />
                 <HeroStat value={board.programme.onboardingStatus} label="Onboarding" />
                 <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
-                  <i className="ri-magic-line" />Show Wizard
+                  <AppIcon className="ri-magic-line" />Show Wizard
                 </button>
                 <FinishEnrolment learnerId={userId} status={board.programme.status || ''} onFinished={onReload} />
               </>
@@ -338,7 +338,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             <div className="border border-foreground-100 rounded-lg p-3 mb-3">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-[12px] font-semibold text-foreground-800">Programme Details</p>
-                <button className={iconBtn} aria-label="Edit programme"><i className="ri-pencil-line text-sm" /></button>
+                <button className={iconBtn} aria-label="Edit programme"><AppIcon className="ri-pencil-line text-sm" /></button>
               </div>
               <FieldRow readonly label="Programme Type" value={board.programme.type} />
               <FieldRow readonly label="Programme" value={board.programme.name} />
@@ -433,7 +433,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
               {contactRows.map((c) => (
                 <tr key={c.id} className="border-b border-foreground-100 last:border-0">
                   <td className="py-2 px-3"><a href="#" className="text-primary-600 hover:underline">{c.name}</a></td><td className="py-2 px-3 text-foreground-600">{c.type}</td><td className="py-2 px-3 text-foreground-600">{c.phone || '—'}</td><td className="py-2 px-3 text-foreground-600">{c.email}</td><td className="py-2 px-3 text-foreground-600">{c.role || '—'}</td><td className="py-2 px-3 text-foreground-600">{c.notes || '—'}</td>
-                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Edit contact"><i className="ri-pencil-line text-sm" /></button></td><td className="py-2 px-3"><button className={iconBtn} aria-label="Delete contact"><i className="ri-delete-bin-line text-sm" /></button></td>
+                  <td className="py-2 px-3"><button className={iconBtn} aria-label="Edit contact"><AppIcon className="ri-pencil-line text-sm" /></button></td><td className="py-2 px-3"><button className={iconBtn} aria-label="Delete contact"><AppIcon className="ri-delete-bin-line text-sm" /></button></td>
                 </tr>
               ))}
             </Table>
@@ -449,7 +449,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
               <button className="px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg cursor-pointer">Reset</button>
             </div>
             <div className="flex items-center justify-between mb-3 text-[12px] text-foreground-600">
-              <div className="flex items-center gap-2"><span>Today</span><button className={iconBtn} aria-label="Previous"><i className="ri-arrow-left-s-line" /></button><button className={iconBtn} aria-label="Next"><i className="ri-arrow-right-s-line" /></button><span className="text-foreground-400">01/07/2026 → 31/07/2026</span></div>
+              <div className="flex items-center gap-2"><span>Today</span><button className={iconBtn} aria-label="Previous"><AppIcon className="ri-arrow-left-s-line" /></button><button className={iconBtn} aria-label="Next"><AppIcon className="ri-arrow-right-s-line" /></button><span className="text-foreground-400">01/07/2026 → 31/07/2026</span></div>
               <div className="flex items-center gap-1">{['Day', 'Week', 'Month', 'agenda'].map((v) => <button key={v} className="px-2 py-1 text-[11px] rounded-md border border-foreground-200 text-foreground-500 hover:bg-background-100 cursor-pointer">{v}</button>)}</div>
             </div>
             {board.activities.length === 0 ? <EmptyState text="No activities" /> : <Table headers={['Date', 'Time and status', 'Event']}>{board.activities.map((a) => <tr key={a.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{a.date}</td><td className="py-2 px-3">{a.timeAndStatus}</td><td className="py-2 px-3">{a.event}</td></tr>)}</Table>}
@@ -468,7 +468,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
                 <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
                   {g.reviews.map((r) => (
                     <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                      <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5"><i className="ri-file-list-3-line text-foreground-400" />{r.label}</span>
+                      <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5"><AppIcon className="ri-file-list-3-line text-foreground-400" />{r.label}</span>
                       {r.action === 'create' && <ActionLink label="Create" />}
                       {r.action === 'needs-signing' && <span className="flex items-center gap-2"><span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200/50 px-2 py-0.5 rounded-full">needs signing</span><ActionLink label="Reset" /><ActionLink label="Update" /></span>}
                     </div>

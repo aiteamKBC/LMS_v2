@@ -53,7 +53,7 @@ export default function EmployerGatewayEPA() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-flag-line text-white text-2xl"></i>
+              <AppIcon className="ri-flag-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Gateway & EPA</h2>
@@ -75,7 +75,7 @@ export default function EmployerGatewayEPA() {
         </div>
 
         <div className="relative sm:max-w-sm">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search apprentices..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
         </div>
 
@@ -117,10 +117,10 @@ export default function EmployerGatewayEPA() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {gw.employerSignOff ? (
-                      <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700"><i className="ri-check-line"></i> Signed Off</span>
+                      <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-emerald-100 text-emerald-700"><AppIcon className="ri-check-line"></AppIcon> Signed Off</span>
                     ) : (
                       <button onClick={e => { e.stopPropagation(); }} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-pen-nib-line mr-1"></i> Sign Off
+                        <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Off
                       </button>
                     )}
                     {gw.blockers.length > 0 && (
@@ -143,7 +143,7 @@ export default function EmployerGatewayEPA() {
                   </div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{selected.apprentice}</h3>
                 </div>
-                <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><i className="ri-close-line text-foreground-500"></i></button>
+                <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-foreground-500"></AppIcon></button>
               </div>
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -153,9 +153,9 @@ export default function EmployerGatewayEPA() {
                   <div className="bg-background-100 rounded-lg p-3 text-center"><p className="text-lg font-heading font-semibold text-foreground-900">{selected.epaOrganisation}</p><p className="text-[10px] text-foreground-400">EPA Org</p></div>
                 </div>
                 <div className="bg-background-100 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-calendar-line text-foreground-400"></i><span className="text-foreground-500">Estimated Gateway:</span><span className="font-medium text-foreground-900">{selected.estimatedGateway}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-calendar-check-line text-foreground-400"></i><span className="text-foreground-500">Estimated EPA:</span><span className="font-medium text-foreground-900">{selected.estimatedEPA}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-pen-nib-line text-foreground-400"></i><span className="text-foreground-500">Employer Sign-off:</span><span className={`font-medium ${selected.employerSignOff ? 'text-emerald-600' : 'text-amber-600'}`}>{selected.employerSignOff ? 'Completed' : 'Pending'}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="text-foreground-500">Estimated Gateway:</span><span className="font-medium text-foreground-900">{selected.estimatedGateway}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-calendar-check-line text-foreground-400"></AppIcon><span className="text-foreground-500">Estimated EPA:</span><span className="font-medium text-foreground-900">{selected.estimatedEPA}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-pen-nib-line text-foreground-400"></AppIcon><span className="text-foreground-500">Employer Sign-off:</span><span className={`font-medium ${selected.employerSignOff ? 'text-emerald-600' : 'text-amber-600'}`}>{selected.employerSignOff ? 'Completed' : 'Pending'}</span></div>
                 </div>
                 <div className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
                   <p className="text-[12px] font-semibold text-amber-800 mb-1">Coach Recommendation</p>
@@ -172,7 +172,7 @@ export default function EmployerGatewayEPA() {
                   </div>
                 )}
                 <button className="w-full px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-eye-line mr-1"></i> Full Gateway Assessment
+                  <AppIcon className="ri-eye-line mr-1"></AppIcon> Full Gateway Assessment
                 </button>
               </div>
             </div>

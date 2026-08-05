@@ -45,7 +45,7 @@ export default function EmployerApprenticeRisk() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-alert-line text-white text-2xl"></i>
+              <AppIcon className="ri-alert-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Apprentice Risk</h2>
@@ -69,14 +69,14 @@ export default function EmployerApprenticeRisk() {
         {highRisk > 0 && (
           <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-              <i className="ri-error-warning-line text-red-600 text-base"></i>
+              <AppIcon className="ri-error-warning-line text-red-600 text-base"></AppIcon>
             </span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-red-800">{highRisk} apprentice{highRisk > 1 ? 's' : ''} at high risk — action required</p>
               <p className="text-[12px] text-red-600 mt-0.5">These apprentices may be at risk of failing to complete their apprenticeship without intervention</p>
             </div>
             <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-alert-line mr-1"></i> Review All
+              <AppIcon className="ri-alert-line mr-1"></AppIcon> Review All
             </button>
           </div>
         )}
@@ -112,10 +112,10 @@ export default function EmployerApprenticeRisk() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button onClick={e => { e.stopPropagation(); }} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-eye-line mr-1"></i> View
+                      <AppIcon className="ri-eye-line mr-1"></AppIcon> View
                     </button>
                     <button onClick={e => { e.stopPropagation(); }} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-chat-1-line mr-1"></i> Discuss
+                      <AppIcon className="ri-chat-1-line mr-1"></AppIcon> Discuss
                     </button>
                   </div>
                 </div>
@@ -135,7 +135,7 @@ export default function EmployerApprenticeRisk() {
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{selected.name}</h3>
                 </div>
                 <button onClick={() => setSelected(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-foreground-500"></i>
+                  <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
@@ -149,9 +149,9 @@ export default function EmployerApprenticeRisk() {
                   <p className="text-[12px] text-red-700">{selected.actionRequired}</p>
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-user-heart-line text-foreground-400"></i><span className="text-foreground-500">Coach:</span><span className="font-medium text-foreground-900">{selected.coach}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-calendar-line text-foreground-400"></i><span className="text-foreground-500">Last Review:</span><span className="font-medium text-foreground-900">{selected.lastReview}</span></div>
-                  <div className="flex items-center gap-2 text-[12px]"><i className="ri-timer-line text-foreground-400"></i><span className="text-foreground-500">Days Since Flagged:</span><span className="font-medium text-foreground-900">{selected.daysSinceFlagged}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-user-heart-line text-foreground-400"></AppIcon><span className="text-foreground-500">Coach:</span><span className="font-medium text-foreground-900">{selected.coach}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="text-foreground-500">Last Review:</span><span className="font-medium text-foreground-900">{selected.lastReview}</span></div>
+                  <div className="flex items-center gap-2 text-[12px]"><AppIcon className="ri-timer-line text-foreground-400"></AppIcon><span className="text-foreground-500">Days Since Flagged:</span><span className="font-medium text-foreground-900">{selected.daysSinceFlagged}</span></div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Message Coach</button>

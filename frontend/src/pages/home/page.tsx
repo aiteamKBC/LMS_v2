@@ -94,7 +94,7 @@ function MyProgressCard() {
     <div className={`${HERO_CARD_BASE} p-4`}>
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium text-white/75">My progress</p>
-        <i className="ri-line-chart-line text-accent-300" />
+        <AppIcon className="ri-line-chart-line text-accent-300" />
       </div>
       <div className="my-4 flex justify-center">
         <div
@@ -139,7 +139,7 @@ function KsbProgressCard() {
         ))}
       </div>
       <div className="mt-5 flex items-center gap-2 rounded-xl border border-accent-300/15 bg-accent-300/5 px-3 py-2 text-[10px] text-accent-100/80">
-        <i className="ri-arrow-up-line text-accent-300" />
+        <AppIcon className="ri-arrow-up-line text-accent-300" />
         <span>+8% since last review</span>
       </div>
     </div>
@@ -152,7 +152,7 @@ function CurrentModuleCard() {
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-primary-300/20 bg-primary-500/20 text-primary-200">
-            <i className="ri-book-open-line" />
+            <AppIcon className="ri-book-open-line" />
           </span>
           <div className="min-w-0">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">Current module</p>
@@ -205,7 +205,7 @@ function NextMilestoneCard() {
     <div className={`${HERO_CARD_BASE} border-accent-300/15 bg-accent-300/[0.08] p-4`}>
       <p className="text-[10px] uppercase tracking-[0.16em] text-accent-200/60">Next milestone</p>
       <div className="mt-3 flex items-center gap-2.5">
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-500/30 text-primary-200"><i className="ri-shield-check-line" /></span>
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-500/30 text-primary-200"><AppIcon className="ri-shield-check-line" /></span>
         <div>
           <p className="text-xs font-semibold text-white">Submit campaign plan</p>
           <p className="mt-0.5 text-[10px] text-accent-200">Due in 5 days</p>
@@ -220,7 +220,7 @@ function RecentActivityCard() {
     <div className={`${HERO_CARD_BASE} p-4`}>
       <p className="text-[10px] uppercase tracking-[0.16em] text-white/40">Recent activity</p>
       <div className="mt-3 flex items-start gap-2.5">
-        <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-primary-300/30 bg-primary-500/15 text-primary-200"><i className="ri-check-line text-xs" /></span>
+        <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-primary-300/30 bg-primary-500/15 text-primary-200"><AppIcon className="ri-check-line text-xs" /></span>
         <div>
           <p className="text-xs font-medium text-white/80">Evidence uploaded</p>
           <p className="mt-0.5 text-[10px] text-white/40">2 hours ago</p>
@@ -293,7 +293,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background-200">
+    <div className="public-home min-h-screen bg-background-200">
       {/* ============ HERO SECTION ============ */}
       <section className="relative min-h-[680px] overflow-hidden sm:min-h-[700px] xl:h-[clamp(700px,100svh,840px)]">
         {/* Background image — London skyline with learner dashboard overlays */}
@@ -375,7 +375,7 @@ export default function Home() {
                 onClick={scrollToWorkspaces}
                 className="group inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-xl bg-primary-500 px-8 py-3.5 text-[14px] font-semibold text-white shadow-lg shadow-primary-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary-600 hover:shadow-primary-500/30"
               >
-                <i className="ri-grid-line text-[15px]" />
+                <AppIcon className="ri-grid-line text-[15px]" />
                 Explore your portal
               </button>
             </div>
@@ -383,19 +383,19 @@ export default function Home() {
             {/* Quick trust badges */}
             <div className="mt-10 flex max-w-[590px] flex-wrap items-center gap-x-5 gap-y-3 text-[11px] text-white/45 animate-hero-fade-in-up-small delay-900 xl:mt-12">
               <span className="flex items-center gap-1.5">
-                <i className="ri-shield-check-line text-primary-300/80" />
+                <AppIcon className="ri-shield-check-line text-primary-300/80" />
                 ISO 27001
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-lock-2-line text-primary-300/80" />
+                <AppIcon className="ri-lock-2-line text-primary-300/80" />
                 UK GDPR Compliant
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-award-line text-primary-300/80" />
+                <AppIcon className="ri-award-line text-primary-300/80" />
                 ESFA Aligned
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-graduation-cap-line text-primary-300/80" />
+                <AppIcon className="ri-graduation-cap-line text-primary-300/80" />
                 Ofsted Ready
               </span>
             </div>
@@ -417,25 +417,25 @@ export default function Home() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
             <div className="text-center">
               <div className="w-10 h-10 rounded-xl bg-accent-50 border border-accent-200/40 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-route-line text-accent-600 text-[16px]" />
+                <AppIcon className="ri-route-line text-accent-600 text-[16px]" />
               </div>
               <CountUpStat end={31} label="Journey Stages" />
             </div>
             <div className="text-center">
               <div className="w-10 h-10 rounded-xl bg-primary-50 border border-primary-200/40 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-stack-line text-primary-600 text-[16px]" />
+                <AppIcon className="ri-stack-line text-primary-600 text-[16px]" />
               </div>
               <CountUpStat end={4} label="Phases" />
             </div>
             <div className="text-center">
               <div className="w-10 h-10 rounded-xl bg-secondary-50 border border-secondary-200/40 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-time-line text-secondary-600 text-[16px]" />
+                <AppIcon className="ri-time-line text-secondary-600 text-[16px]" />
               </div>
               <CountUpStat end={12} suffix="-18" label="Months" />
             </div>
             <div className="text-center">
               <div className="w-10 h-10 rounded-xl bg-accent-50 border border-accent-200/40 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-verified-badge-line text-accent-600 text-[16px]" />
+                <AppIcon className="ri-verified-badge-line text-accent-600 text-[16px]" />
               </div>
               <CountUpStat end={100} suffix="%" label="Compliance" />
             </div>
@@ -469,7 +469,7 @@ export default function Home() {
             >
               {section.highlighted && (
                 <span className="absolute top-2 right-2 inline-flex items-center gap-1 text-[9px] font-semibold text-primary-700 bg-primary-100 border border-primary-300/50 px-1.5 py-0.5 rounded-full">
-                  <i className="ri-star-fill text-[8px]" />
+                  <AppIcon className="ri-star-fill text-[8px]" />
                   Available
                 </span>
               )}
@@ -478,7 +478,7 @@ export default function Home() {
                   ? 'bg-primary-100 border-primary-300/50 group-hover:bg-primary-200'
                   : 'bg-primary-50 border-primary-200/40 group-hover:bg-primary-100'
               }`}>
-                <i className={`${section.icon} text-[20px] ${section.highlighted ? 'text-primary-700' : 'text-primary-600'}`} />
+                <AppIcon className={`${section.icon} text-[20px] ${section.highlighted ? 'text-primary-700' : 'text-primary-600'}`} />
               </span>
               <span className={`text-[13px] font-heading font-semibold ${section.highlighted ? 'text-primary-900' : 'text-foreground-800'}`}>{section.label}</span>
             </button>
@@ -501,7 +501,7 @@ export default function Home() {
           {/* Feature 1 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200/40 flex items-center justify-center mb-5 group-hover:bg-emerald-100 transition-colors duration-300">
-              <i className="ri-shield-check-line text-emerald-600 text-[18px]" />
+              <AppIcon className="ri-shield-check-line text-emerald-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">Pre-Active Compliance</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -512,7 +512,7 @@ export default function Home() {
           {/* Feature 2 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-primary-50 border border-primary-200/40 flex items-center justify-center mb-5 group-hover:bg-primary-100 transition-colors duration-300">
-              <i className="ri-lightbulb-line text-primary-600 text-[18px]" />
+              <AppIcon className="ri-lightbulb-line text-primary-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">Active Learning</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -523,7 +523,7 @@ export default function Home() {
           {/* Feature 3 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-secondary-50 border border-secondary-200/40 flex items-center justify-center mb-5 group-hover:bg-secondary-100 transition-colors duration-300">
-              <i className="ri-checkbox-circle-line text-secondary-600 text-[18px]" />
+              <AppIcon className="ri-checkbox-circle-line text-secondary-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">Gateway Readiness</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -534,7 +534,7 @@ export default function Home() {
           {/* Feature 4 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-primary-50 border border-primary-200/40 flex items-center justify-center mb-5 group-hover:bg-primary-100 transition-colors duration-300">
-              <i className="ri-trophy-line text-primary-600 text-[18px]" />
+              <AppIcon className="ri-trophy-line text-primary-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">End Point Assessment</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -545,7 +545,7 @@ export default function Home() {
           {/* Feature 5 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-indigo-50 border border-indigo-200/40 flex items-center justify-center mb-5 group-hover:bg-indigo-100 transition-colors duration-300">
-              <i className="ri-sparkling-2-line text-indigo-600 text-[18px]" />
+              <AppIcon className="ri-sparkling-2-line text-indigo-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">AI-Powered Tools</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -556,7 +556,7 @@ export default function Home() {
           {/* Feature 6 */}
           <div className="group bg-background-50 rounded-2xl border border-foreground-200 p-6 transition-all duration-300 hover:border-background-300/80 hover:shadow-lg hover:shadow-foreground-950/5 card-premium">
             <div className="w-11 h-11 rounded-xl bg-secondary-50 border border-secondary-200/40 flex items-center justify-center mb-5 group-hover:bg-secondary-100 transition-colors duration-300">
-              <i className="ri-line-chart-line text-secondary-600 text-[18px]" />
+              <AppIcon className="ri-line-chart-line text-secondary-600 text-[18px]" />
             </div>
             <h3 className="text-[16px] font-heading font-semibold text-foreground-900 mb-2">Real-Time Analytics</h3>
             <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -574,19 +574,19 @@ export default function Home() {
             <BrandLockup size="compact" />
             <div className="flex items-center gap-6 text-[11px] text-foreground-400 flex-wrap justify-center">
               <span className="flex items-center gap-1.5">
-                <i className="ri-shield-check-line text-primary-500" />
+                <AppIcon className="ri-shield-check-line text-primary-500" />
                 ISO 27001
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-lock-2-line text-primary-500" />
+                <AppIcon className="ri-lock-2-line text-primary-500" />
                 UK GDPR
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-award-line text-primary-500" />
+                <AppIcon className="ri-award-line text-primary-500" />
                 ESFA Aligned
               </span>
               <span className="flex items-center gap-1.5">
-                <i className="ri-graduation-cap-line text-primary-500" />
+                <AppIcon className="ri-graduation-cap-line text-primary-500" />
                 Ofsted Ready
               </span>
             </div>
@@ -612,7 +612,7 @@ export default function Home() {
                 aria-label="Close"
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer shrink-0"
               >
-                <i className="ri-close-line text-[18px]" />
+                <AppIcon className="ri-close-line text-[18px]" />
               </button>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -621,7 +621,7 @@ export default function Home() {
                 className="group flex flex-col items-start text-left gap-3 rounded-2xl border border-foreground-200 p-5 hover:border-primary-300/70 hover:shadow-lg hover:shadow-primary-500/5 transition-all duration-300 cursor-pointer"
               >
                 <span className="w-11 h-11 rounded-xl bg-primary-50 border border-primary-200/40 flex items-center justify-center group-hover:bg-primary-100 transition-colors duration-300">
-                  <i className="ri-graduation-cap-line text-primary-600 text-[18px]" />
+                  <AppIcon className="ri-graduation-cap-line text-primary-600 text-[18px]" />
                 </span>
                 <span className="text-[14px] font-heading font-semibold text-foreground-900">Onboarding</span>
                 <span className="text-[12px] text-foreground-400 leading-relaxed">Full apprenticeship journey — users, wizard and compliance board.</span>
@@ -631,7 +631,7 @@ export default function Home() {
                 className="group flex flex-col items-start text-left gap-3 rounded-2xl border border-emerald-200/70 p-5 bg-emerald-50/35 hover:border-emerald-300 hover:bg-emerald-50/70 hover:shadow-lg hover:shadow-emerald-500/10 transition-all duration-300 cursor-pointer"
               >
                 <span className="w-11 h-11 rounded-xl bg-emerald-50 border border-emerald-200/60 flex items-center justify-center group-hover:bg-emerald-100 transition-colors duration-300">
-                  <i className="ri-briefcase-4-line text-emerald-600 text-[18px]" />
+                  <AppIcon className="ri-briefcase-4-line text-emerald-600 text-[18px]" />
                 </span>
                 <span className="text-[14px] font-heading font-semibold text-foreground-900">Delivery</span>
                 <span className="text-[12px] text-foreground-400 leading-relaxed">Enrol a commercial learner with their programme details.</span>

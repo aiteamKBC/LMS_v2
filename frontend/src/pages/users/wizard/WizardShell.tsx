@@ -91,7 +91,7 @@ export function WizardShell({
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left" className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 sm:flex">
-                  <i className="ri-arrow-left-s-line" />
+                  <AppIcon className="ri-arrow-left-s-line" />
                 </button>
                 <div ref={tabScrollRef} className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:scrollbar-thin" role="tablist" aria-label="Enrolment steps">
                   <div className="flex items-center gap-1.5 min-w-max">
@@ -108,7 +108,7 @@ export function WizardShell({
                             active ? 'bg-primary-50 text-primary-700 border border-primary-300/60' : 'text-foreground-500 hover:bg-background-100 border border-transparent'
                           }`}
                         >
-                          <i className={`text-[13px] ${active ? 'ri-checkbox-blank-circle-line text-primary-500' : completed[i] ? 'ri-checkbox-circle-fill text-emerald-500' : 'ri-checkbox-blank-circle-fill text-foreground-300'}`} />
+                          <AppIcon className={`text-[13px] ${active ? 'ri-checkbox-blank-circle-line text-primary-500' : completed[i] ? 'ri-checkbox-circle-fill text-emerald-500' : 'ri-checkbox-blank-circle-fill text-foreground-300'}`} />
                           <span className="truncate">{step.label}</span>
                         </button>
                       );
@@ -116,11 +116,11 @@ export function WizardShell({
                   </div>
                 </div>
                 <button onClick={() => scrollTabs(1)} aria-label="Scroll tabs right" className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 sm:flex">
-                  <i className="ri-arrow-right-s-line" />
+                  <AppIcon className="ri-arrow-right-s-line" />
                 </button>
                 <span className="ml-1 hidden shrink-0 whitespace-nowrap text-[12px] text-foreground-500 sm:inline">{currentIndex + 1} of {WIZARD_STEPS.length}</span>
                 <button onClick={() => !isLast && onNavigateStep(currentIndex + 1)} disabled={isLast} aria-label="Next step" className="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center hover:bg-primary-600 shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  <i className="ri-arrow-right-line" />
+                  <AppIcon className="ri-arrow-right-line" />
                 </button>
               </div>
               {/* Progress bar */}
@@ -138,20 +138,20 @@ export function WizardShell({
             <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 px-4 py-4 sm:gap-3 sm:px-5">
               {!isFirst && (
                 <button onClick={() => onNavigateStep(currentIndex - 1)} className={btnDestructive}>
-                  <i className="ri-arrow-left-line" />Back
+                  <AppIcon className="ri-arrow-left-line" />Back
                 </button>
               )}
               {/* Save is available on every step, not just the ILR — otherwise a
                   learner on (say) Policies has no way to keep their progress. */}
               <button onClick={save} disabled={ilrSaving} className={`${btnSecondary} ${isFirst ? 'ml-auto' : 'sm:ml-auto'} justify-center`}>
-                {ilrSaving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save progress</>}
+                {ilrSaving ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-save-line" />Save progress</>}
               </button>
               {isLast ? (
                 <button onClick={finish} disabled={submitting} className={btnSuccess}>
-                  {submitting ? <><i className="ri-loader-4-line animate-spin" />Submitting…</> : <><i className="ri-check-double-line" />{finishLabel}</>}
+                  {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Submitting…</> : <><AppIcon className="ri-check-double-line" />{finishLabel}</>}
                 </button>
               ) : (
-                <button onClick={() => onNavigateStep(currentIndex + 1)} className={btnPrimary}>Next<i className="ri-arrow-right-line" /></button>
+                <button onClick={() => onNavigateStep(currentIndex + 1)} className={btnPrimary}>Next<AppIcon className="ri-arrow-right-line" /></button>
               )}
             </div>
           </div>

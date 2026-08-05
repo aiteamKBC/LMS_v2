@@ -205,13 +205,13 @@ export default function SafeguardingReportsPage() {
         {/* Export Actions */}
         <div className="flex items-center gap-3 justify-end">
           <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-download-2-line mr-1.5"></i> Export PDF
+            <AppIcon className="ri-download-2-line mr-1.5"></AppIcon> Export PDF
           </button>
           <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-file-excel-2-line mr-1.5"></i> Export CSV
+            <AppIcon className="ri-file-excel-2-line mr-1.5"></AppIcon> Export CSV
           </button>
           <button className="px-4 py-2 bg-red-500 text-white rounded-xl text-[12px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-printer-line mr-1.5"></i> Print Report
+            <AppIcon className="ri-printer-line mr-1.5"></AppIcon> Print Report
           </button>
         </div>
       </div>
@@ -226,7 +226,7 @@ function ReportKpi({ label, value, sub, icon, colour }: { label: string; value: 
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${colourMap[colour]} mb-2`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <p className="text-xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[10px] text-foreground-400 mt-1">{label}</p>

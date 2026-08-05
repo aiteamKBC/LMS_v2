@@ -7,7 +7,7 @@ export default function AttendanceInsights() {
     <section className="bg-background-50 rounded-2xl border border-background-200/60 overflow-hidden">
       <div className="p-5 border-b border-background-200/60 flex items-center gap-3">
         <span className="w-9 h-9 rounded-xl bg-accent-100 flex items-center justify-center">
-          <i className="ri-bar-chart-grouped-line text-accent-600 text-base"></i>
+          <AppIcon className="ri-bar-chart-grouped-line text-accent-600 text-base"></AppIcon>
         </span>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">Insights</h3>
       </div>
@@ -49,7 +49,7 @@ export default function AttendanceInsights() {
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-emerald-50/50 rounded-xl border border-emerald-200/40 p-3 flex items-center gap-3">
             <span className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-              <i className="ri-star-line text-emerald-600 text-sm"></i>
+              <AppIcon className="ri-star-line text-emerald-600 text-sm"></AppIcon>
             </span>
             <div>
               <p className="text-[11px] text-foreground-400">Best Module</p>
@@ -58,7 +58,7 @@ export default function AttendanceInsights() {
           </div>
           <div className="bg-amber-50/50 rounded-xl border border-amber-200/40 p-3 flex items-center gap-3">
             <span className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-              <i className="ri-error-warning-line text-amber-600 text-sm"></i>
+              <AppIcon className="ri-error-warning-line text-amber-600 text-sm"></AppIcon>
             </span>
             <div>
               <p className="text-[11px] text-foreground-400">Most Missed</p>

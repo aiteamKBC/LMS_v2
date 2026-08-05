@@ -229,16 +229,16 @@ export default function RecognitionPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/clubs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-team-line text-sm"></i> Learner Clubs
+            <AppIcon className="ri-team-line text-sm"></AppIcon> Learner Clubs
           </button>
           <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-gift-2-line text-sm"></i> Points Rules
+            <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
           <button onClick={() => navigate('/engagement/rewards-shop')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-shopping-bag-3-line text-sm"></i> Rewards Shop
+            <AppIcon className="ri-shopping-bag-3-line text-sm"></AppIcon> Rewards Shop
           </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
@@ -248,7 +248,7 @@ export default function RecognitionPage() {
         {/* Search + Award */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search by learner, title, or reason..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <label className="flex items-center gap-2 text-[12px] text-foreground-600 cursor-pointer">
@@ -257,7 +257,7 @@ export default function RecognitionPage() {
           </label>
           <div className="flex-1"></div>
           <button onClick={openAward} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <i className="ri-add-line mr-1"></i> Award Recognition
+            <AppIcon className="ri-add-line mr-1"></AppIcon> Award Recognition
           </button>
         </div>
 
@@ -266,7 +266,7 @@ export default function RecognitionPage() {
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {(['all', ...AWARD_TYPES] as const).map(t => (
               <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={`${t === 'all' ? 'ri-list-check' : typeConfig[t].icon} text-sm`}></i>
+                <AppIcon className={`${t === 'all' ? 'ri-list-check' : typeConfig[t].icon} text-sm`}></AppIcon>
                 {t === 'all' ? 'All' : typeConfig[t].label}
               </button>
             ))}
@@ -281,7 +281,7 @@ export default function RecognitionPage() {
             ]).map(opt => (
               <button key={opt.key} onClick={() => handleSort(opt.key)} className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-smooth cursor-pointer whitespace-nowrap ${sortKey === opt.key ? 'bg-primary-50 text-primary-700 border border-primary-200/50' : 'text-foreground-500 hover:text-foreground-700 border border-transparent'}`}>
                 {opt.label}
-                {sortKey === opt.key && opt.key !== 'recent' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>}
+                {sortKey === opt.key && opt.key !== 'recent' && <AppIcon className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>}
               </button>
             ))}
           </div>
@@ -291,7 +291,7 @@ export default function RecognitionPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-award-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-award-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No recognitions match this view</p>
             <p className="text-[11px] text-foreground-400">Try switching the type, programme, or public-only filter — or award a new one.</p>
           </div>
@@ -309,12 +309,12 @@ export default function RecognitionPage() {
                   <div className="flex items-center justify-between mb-2.5">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cfg.wrap}`}>
-                        <i className={`${cfg.icon} text-base`}></i>
+                        <AppIcon className={`${cfg.icon} text-base`}></AppIcon>
                       </span>
                       <span className="text-[9px] font-bold uppercase tracking-wider text-foreground-400">{cfg.label}</span>
                     </div>
                     <button onClick={() => togglePublic(rec)} title={rec.public ? 'Public — visible to the community. Click to make private.' : 'Private. Click to make public.'} className={`flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full cursor-pointer transition-smooth shrink-0 ${rec.public ? 'bg-accent-100 text-accent-700 hover:bg-accent-200' : 'bg-foreground-100 text-foreground-500 hover:bg-foreground-200'}`}>
-                      <i className={rec.public ? 'ri-global-line' : 'ri-lock-line'}></i>
+                      <AppIcon className={rec.public ? 'ri-global-line' : 'ri-lock-line'}></AppIcon>
                       {rec.public ? 'Public' : 'Private'}
                     </button>
                   </div>
@@ -341,20 +341,20 @@ export default function RecognitionPage() {
 
                   {/* Provenance + points */}
                   <div className="flex items-center justify-between mb-3 text-[10px] text-foreground-400">
-                    <span className="truncate"><i className="ri-shield-star-line mr-1 text-secondary-500"></i>{rec.awardedBy}</span>
-                    <span className="shrink-0 ml-2"><i className="ri-calendar-line mr-1 text-primary-500"></i>{rec.awardedAt}</span>
+                    <span className="truncate"><AppIcon className="ri-shield-star-line mr-1 text-secondary-500"></AppIcon>{rec.awardedBy}</span>
+                    <span className="shrink-0 ml-2"><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{rec.awardedAt}</span>
                   </div>
 
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1 text-[12px] font-bold text-accent-600">
-                      <i className="ri-copper-coin-line"></i>{rec.points} pts
+                      <AppIcon className="ri-copper-coin-line"></AppIcon>{rec.points} pts
                     </span>
                     <div className="flex items-center gap-2">
                       <button onClick={() => shareRecognition(rec)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-share-line mr-1"></i> Share
+                        <AppIcon className="ri-share-line mr-1"></AppIcon> Share
                       </button>
                       <button onClick={() => openEdit(rec)} className="px-3 py-1.5 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-edit-line mr-1"></i> Edit
+                        <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit
                       </button>
                     </div>
                   </div>
@@ -372,13 +372,13 @@ export default function RecognitionPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-award-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-award-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Award Recognition</h3>
                   <p className="text-[11px] text-foreground-400">Celebrate a learner's achievement</p>
                 </div>
               </div>
-              <button onClick={() => setShowAward(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setShowAward(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
@@ -401,9 +401,9 @@ export default function RecognitionPage() {
                       <span className="text-[10px] text-foreground-400 truncate">· {selectedLearner.cohort}</span>
                     </>
                   ) : (
-                    <span className="text-[12px] text-foreground-400 flex items-center gap-2"><i className="ri-user-search-line"></i> Select a learner…</span>
+                    <span className="text-[12px] text-foreground-400 flex items-center gap-2"><AppIcon className="ri-user-search-line"></AppIcon> Select a learner…</span>
                   )}
-                  <i className="ri-arrow-down-s-line ml-auto text-foreground-400 shrink-0"></i>
+                  <AppIcon className="ri-arrow-down-s-line ml-auto text-foreground-400 shrink-0"></AppIcon>
                 </button>
                 {awardErrors.learnerId && <p className="text-[10px] text-red-500 mt-1">{awardErrors.learnerId}</p>}
               </div>
@@ -415,7 +415,7 @@ export default function RecognitionPage() {
                     const on = awardForm.type === t;
                     return (
                       <button type="button" key={t} onClick={() => setAwardForm(f => ({ ...f, type: t }))} title={cfg.label} className={`flex flex-col items-center gap-1 py-2 rounded-lg border text-center transition-smooth cursor-pointer ${on ? 'border-primary-400 bg-primary-50' : 'border-foreground-200/60 bg-background-50 hover:border-foreground-300'}`}>
-                        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${cfg.wrap}`}><i className={`${cfg.icon} text-sm`}></i></span>
+                        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${cfg.wrap}`}><AppIcon className={`${cfg.icon} text-sm`}></AppIcon></span>
                         <span className={`text-[8px] font-semibold ${on ? 'text-primary-700' : 'text-foreground-500'}`}>{cfg.label}</span>
                       </button>
                     );
@@ -451,7 +451,7 @@ export default function RecognitionPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setShowAward(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleAward} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600">
-                <i className="ri-award-line"></i> Award Recognition
+                <AppIcon className="ri-award-line"></AppIcon> Award Recognition
               </button>
             </div>
           </div>
@@ -465,13 +465,13 @@ export default function RecognitionPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><i className="ri-edit-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><AppIcon className="ri-edit-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Edit Recognition</h3>
                   <p className="text-[11px] text-foreground-400">{editRec.learner} · {typeConfig[editRec.type]?.label ?? editRec.type}</p>
                 </div>
               </div>
-              <button onClick={() => setEditId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setEditId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
@@ -503,7 +503,7 @@ export default function RecognitionPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setEditId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleEdit} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-accent-500 text-white hover:bg-accent-600">
-                <i className="ri-save-line"></i> Save Changes
+                <AppIcon className="ri-save-line"></AppIcon> Save Changes
               </button>
             </div>
           </div>

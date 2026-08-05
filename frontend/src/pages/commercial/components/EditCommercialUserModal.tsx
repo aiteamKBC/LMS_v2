@@ -106,7 +106,7 @@ export function EditCommercialUserModal({
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Cancel</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save changes</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-save-line" />Save changes</>}
           </button>
         </>
       }

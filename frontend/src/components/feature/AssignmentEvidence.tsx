@@ -107,7 +107,7 @@ export function AssignmentEvidence({
       <div className="flex items-center justify-between gap-3 mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Upload evidence</p>
         <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-600 hover:text-emerald-700 cursor-pointer">
-          <i className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
+          <AppIcon className="ri-upload-2-line" /> {uploading ? 'Uploading…' : 'Choose file'}
           <input
             ref={inputRef}
             type="file"
@@ -133,7 +133,7 @@ export function AssignmentEvidence({
             return (
               <li key={f.id} className="flex items-center gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                 <span className="w-8 h-8 rounded-lg bg-white border border-background-200 flex items-center justify-center shrink-0">
-                  <i className="ri-file-line text-foreground-500 text-sm" />
+                  <AppIcon className="ri-file-line text-foreground-500 text-sm" />
                 </span>
                 {f.status === 'approved' ? (
                   <button
@@ -151,7 +151,7 @@ export function AssignmentEvidence({
                   </span>
                 )}
                 <span className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${meta.bg} ${meta.color}`}>
-                  <i className={meta.icon} /> {meta.label}
+                  <AppIcon className={meta.icon} /> {meta.label}
                 </span>
                 {f.status === 'approved' && (
                   <button
@@ -159,7 +159,7 @@ export function AssignmentEvidence({
                     className="shrink-0 text-foreground-400 hover:text-emerald-600 transition-colors cursor-pointer"
                     title="Open in a new tab"
                   >
-                    <i className="ri-external-link-line" />
+                    <AppIcon className="ri-external-link-line" />
                   </button>
                 )}
               </li>

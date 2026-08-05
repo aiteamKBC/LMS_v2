@@ -61,7 +61,7 @@ export default function NewStartersPage() {
             { label: 'Manual', count: STARTERS.filter(s => s.source === 'Manual').length, icon: 'ri-user-add-line', color: 'bg-foreground-100 text-foreground-600' },
           ].map(stat => (
             <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-4">
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${stat.color}`}><i className={`${stat.icon} text-xs`}></i></span>
+              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${stat.color}`}><AppIcon className={`${stat.icon} text-xs`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400">{stat.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{stat.count}</p>
             </div>
@@ -71,7 +71,7 @@ export default function NewStartersPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 max-w-xs">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search by name or employer..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 transition-smooth" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
@@ -130,7 +130,7 @@ export default function NewStartersPage() {
                     <td className="px-4 py-3 text-[12px] font-medium text-foreground-700 whitespace-nowrap">{s.cohort}</td>
                     <td className="px-4 py-3 text-[12px] text-foreground-500 whitespace-nowrap">{s.coach}</td>
                     <td className="px-4 py-3">
-                      <button className="text-foreground-300 hover:text-primary-600 transition-smooth cursor-pointer"><i className="ri-more-2-fill"></i></button>
+                      <button className="text-foreground-300 hover:text-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-more-2-fill"></AppIcon></button>
                     </td>
                   </tr>
                 ))}

@@ -54,7 +54,7 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
                     : 'text-foreground-400 hover:text-foreground-600'
                 }`}
               >
-                <i className={`${tab.icon} text-[11px]`}></i>
+                <AppIcon className={`${tab.icon} text-[11px]`}></AppIcon>
                 {tab.label}
                 {tab.count > 0 && (
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${tab.badge}`}>
@@ -88,7 +88,7 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
         {sortedItems.length === 0 ? (
           <div className="text-center py-10">
             <span className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-              <i className="ri-check-double-line text-foreground-300 text-lg"></i>
+              <AppIcon className="ri-check-double-line text-foreground-300 text-lg"></AppIcon>
             </span>
             <p className="text-sm text-foreground-500">No catch-up items here</p>
             <p className="text-xs text-foreground-400 mt-0.5">
@@ -120,11 +120,11 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
                     <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
                       isOverdue ? 'bg-red-100' : isApproved ? 'bg-emerald-100' : 'bg-amber-100'
                     }`}>
-                      <i className={`${
+                      <AppIcon className={`${
                         isOverdue ? 'ri-error-warning-line text-red-600' :
                         isApproved ? 'ri-check-double-line text-emerald-600' :
                         'ri-timer-line text-amber-600'
-                      } text-sm`}></i>
+                      } text-sm`}></AppIcon>
                     </div>
 
                     {/* Content */}
@@ -169,7 +169,7 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
                     </div>
 
                     {/* Expand chevron */}
-                    <i className={`ri-arrow-down-s-line text-foreground-300 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}></i>
+                    <AppIcon className={`ri-arrow-down-s-line text-foreground-300 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}></AppIcon>
                   </button>
 
                   {/* Expanded detail */}
@@ -199,7 +199,7 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
                             onClick={onStartCatchUp}
                             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-500 text-background-50 text-xs font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer"
                           >
-                            <i className="ri-play-circle-line"></i> Start Catch-Up
+                            <AppIcon className="ri-play-circle-line"></AppIcon> Start Catch-Up
                           </button>
                         )}
                       </div>
@@ -221,7 +221,7 @@ function CheckItem({ label, done }: { label: string; done: boolean }) {
       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
         done ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'
       }`}>
-        <i className={done ? 'ri-check-line' : 'ri-subtract-line'}></i>
+        <AppIcon className={done ? 'ri-check-line' : 'ri-subtract-line'}></AppIcon>
       </span>
       <span className={`text-xs ${done ? 'text-foreground-600' : 'text-foreground-400'}`}>{label}</span>
     </div>

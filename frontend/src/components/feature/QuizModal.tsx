@@ -149,7 +149,7 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-foreground-200/60 bg-background-50">
           <div className="flex items-center gap-3">
             <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-              <i className="ri-questionnaire-line text-primary-600"></i>
+              <AppIcon className="ri-questionnaire-line text-primary-600"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-semibold text-foreground-900">{session.quizTitle}</h3>
@@ -161,12 +161,12 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
               <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${
                 timeRemaining < 60 ? 'bg-red-50 text-red-600' : 'bg-background-100 text-foreground-600'
               }`}>
-                <i className="ri-time-line"></i>
+                <AppIcon className="ri-time-line"></AppIcon>
                 {formatTime(timeRemaining)}
               </div>
             )}
             <button onClick={onClose} className="text-foreground-300 hover:text-foreground-500 transition-smooth cursor-pointer">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         </div>
@@ -187,19 +187,19 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                 <h4 className="text-sm font-semibold text-primary-900 mb-2">Before You Start</h4>
                 <ul className="space-y-2 text-sm text-primary-700">
                   <li className="flex items-start gap-2">
-                    <i className="ri-check-line text-primary-500 mt-0.5"></i>
+                    <AppIcon className="ri-check-line text-primary-500 mt-0.5"></AppIcon>
                     <span>You have {formatTime(session.timeLimit)} to complete this quiz.</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <i className="ri-check-line text-primary-500 mt-0.5"></i>
+                    <AppIcon className="ri-check-line text-primary-500 mt-0.5"></AppIcon>
                     <span>You need {session.passMark}% to pass. You can flag questions for review.</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <i className="ri-check-line text-primary-500 mt-0.5"></i>
+                    <AppIcon className="ri-check-line text-primary-500 mt-0.5"></AppIcon>
                     <span>Your score will be linked to your KSB tracker automatically.</span>
                   </li>
                   <li className="flex items-start gap-2">
-                    <i className="ri-check-line text-primary-500 mt-0.5"></i>
+                    <AppIcon className="ri-check-line text-primary-500 mt-0.5"></AppIcon>
                     <span>Find a quiet space — once you start, the timer cannot be paused.</span>
                   </li>
                 </ul>
@@ -228,7 +228,7 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                   onClick={() => setPhase('quiz')}
                   className="px-5 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                 >
-                  <i className="ri-play-circle-line"></i> Start Quiz
+                  <AppIcon className="ri-play-circle-line"></AppIcon> Start Quiz
                 </button>
               </div>
             </div>
@@ -246,7 +246,7 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                       flagged.has(currentQuestion) ? 'bg-amber-50 text-amber-700 border border-amber-200/50' : 'bg-background-100 text-foreground-400 border border-foreground-200/60'
                     }`}
                   >
-                    <i className={flagged.has(currentQuestion) ? 'ri-flag-fill' : 'ri-flag-line'}></i>
+                    <AppIcon className={flagged.has(currentQuestion) ? 'ri-flag-fill' : 'ri-flag-line'}></AppIcon>
                     {flagged.has(currentQuestion) ? 'Flagged' : 'Flag for Review'}
                   </button>
                 </div>
@@ -303,8 +303,8 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                     }`}
                   >
                     {idx + 1}
-                    {answers[idx] !== -1 && <i className="ri-check-line text-xs ml-0.5"></i>}
-                    {flagged.has(idx) && answers[idx] === -1 && <i className="ri-flag-line text-xs ml-0.5"></i>}
+                    {answers[idx] !== -1 && <AppIcon className="ri-check-line text-xs ml-0.5"></AppIcon>}
+                    {flagged.has(idx) && answers[idx] === -1 && <AppIcon className="ri-flag-line text-xs ml-0.5"></AppIcon>}
                   </button>
                 ))}
               </div>
@@ -447,7 +447,7 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                   onClick={() => setCurrentQuestion(currentQuestion - 1)}
                   className="px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-xs font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-arrow-left-line"></i>
+                  <AppIcon className="ri-arrow-left-line"></AppIcon>
                 </button>
               )}
               {currentQuestion < session.questions.length - 1 ? (
@@ -455,14 +455,14 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                   onClick={() => setCurrentQuestion(currentQuestion + 1)}
                   className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  Next <i className="ri-arrow-right-line"></i>
+                  Next <AppIcon className="ri-arrow-right-line"></AppIcon>
                 </button>
               ) : (
                 <button
                   onClick={submitQuiz}
                   className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-xs font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  Submit <i className="ri-check-line"></i>
+                  Submit <AppIcon className="ri-check-line"></AppIcon>
                 </button>
               )}
             </div>
@@ -476,14 +476,14 @@ export function QuizModal({ session, onClose, onComplete }: QuizModalProps) {
                 onClick={() => { setPhase('intro'); }}
                 className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-refresh-line mr-1"></i> Retake Quiz
+                <AppIcon className="ri-refresh-line mr-1"></AppIcon> Retake Quiz
               </button>
             )}
             <button
               onClick={() => { navigate('/learner/ksbs'); onClose(); }}
               className="px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-bar-chart-2-line mr-1"></i> View KSBs
+              <AppIcon className="ri-bar-chart-2-line mr-1"></AppIcon> View KSBs
             </button>
             <button
               onClick={onClose}

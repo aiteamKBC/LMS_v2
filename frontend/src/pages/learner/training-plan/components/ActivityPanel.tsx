@@ -29,7 +29,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
           <div className="flex-1 pr-3">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
               <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full ${typeMeta.bg} ${typeMeta.color}`}>
-                <i className={`${activity.typeIcon || typeMeta.icon} text-xs`}></i>
+                <AppIcon className={`${activity.typeIcon || typeMeta.icon} text-xs`}></AppIcon>
                 {typeMeta.label}
               </span>
               {activity.isLive && (
@@ -49,7 +49,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-background-100 transition-colors cursor-pointer shrink-0"
           >
-            <i className="ri-close-line text-foreground-400 text-lg"></i>
+            <AppIcon className="ri-close-line text-foreground-400 text-lg"></AppIcon>
           </button>
         </div>
 
@@ -60,7 +60,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
             <div className="bg-background-100/60 rounded-xl p-3">
               <p className="text-xs text-foreground-400 uppercase tracking-wider font-semibold mb-1">Due Date</p>
               <p className={`text-sm font-semibold ${isOverdue ? 'text-red-600' : 'text-foreground-900'}`}>
-                {isOverdue && <i className="ri-error-warning-fill mr-1 text-red-500"></i>}
+                {isOverdue && <AppIcon className="ri-error-warning-fill mr-1 text-red-500"></AppIcon>}
                 {activity.dueDate}
               </p>
             </div>
@@ -120,7 +120,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
             <div className="bg-red-50/60 border border-red-200/50 rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <span className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                  <i className="ri-arrow-go-back-line text-red-600 text-sm"></i>
+                  <AppIcon className="ri-arrow-go-back-line text-red-600 text-sm"></AppIcon>
                 </span>
                 <h3 className="text-sm font-semibold text-red-800">Submission Referred</h3>
               </div>
@@ -156,7 +156,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
           {activity.aiFeedback && (
             <div className="bg-background-50 border border-foreground-200/50 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <i className="ri-robot-line text-primary-500"></i>
+                <AppIcon className="ri-robot-line text-primary-500"></AppIcon>
                 <h3 className="text-xs text-foreground-400 uppercase tracking-wider font-semibold">AI Assessment</h3>
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary-100 text-primary-700">{activity.aiFeedback.score}%</span>
               </div>
@@ -200,7 +200,7 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
             <div>
               <h4 className="text-xs text-foreground-400 uppercase tracking-wider font-semibold mb-2">Complete When</h4>
               <div className="flex items-start gap-2 bg-primary-50/60 border border-primary-100 rounded-xl p-4">
-                <i className="ri-checkbox-circle-line text-primary-500 text-sm mt-0.5 shrink-0"></i>
+                <AppIcon className="ri-checkbox-circle-line text-primary-500 text-sm mt-0.5 shrink-0"></AppIcon>
                 <p className="text-sm text-primary-800 leading-relaxed">{activity.completeWhen}</p>
               </div>
             </div>
@@ -211,61 +211,61 @@ export default function ActivityPanel({ activity, onClose }: ActivityPanelProps)
         <div className="p-5 border-t border-background-200/50 space-y-2">
           {isCompleted ? (
             <div className="flex items-center justify-center gap-2 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-sm font-semibold text-emerald-700">
-              <i className="ri-checkbox-circle-fill text-emerald-500"></i>
+              <AppIcon className="ri-checkbox-circle-fill text-emerald-500"></AppIcon>
               Component Completed &amp; Validated
             </div>
           ) : isReferred ? (
             <>
               <button className="w-full py-2.5 bg-red-500 text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line mr-2"></i>Update Submission
+                <AppIcon className="ri-edit-line mr-2"></AppIcon>Update Submission
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-message-3-line mr-2"></i>Message Coach
+                <AppIcon className="ri-message-3-line mr-2"></AppIcon>Message Coach
               </button>
             </>
           ) : isOverdue ? (
             <>
               <button className="w-full py-2.5 bg-red-500 text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-upload-2-line mr-2"></i>Submit Now — Overdue
+                <AppIcon className="ri-upload-2-line mr-2"></AppIcon>Submit Now — Overdue
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-message-3-line mr-2"></i>Message Coach
+                <AppIcon className="ri-message-3-line mr-2"></AppIcon>Message Coach
               </button>
             </>
           ) : isInProgress ? (
             <>
               <button className="w-full py-2.5 bg-accent-500 text-foreground-950 rounded-xl text-sm font-semibold hover:bg-accent-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-play-circle-line mr-2"></i>Continue Learning
+                <AppIcon className="ri-play-circle-line mr-2"></AppIcon>Continue Learning
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-file-add-line mr-2"></i>Log Evidence
+                <AppIcon className="ri-file-add-line mr-2"></AppIcon>Log Evidence
               </button>
             </>
           ) : activity.status === 'Evidence Required' ? (
             <>
               <button className="w-full py-2.5 bg-amber-500 text-foreground-950 rounded-xl text-sm font-semibold hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-file-add-line mr-2"></i>Log Evidence
+                <AppIcon className="ri-file-add-line mr-2"></AppIcon>Log Evidence
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-eye-line mr-2"></i>View Details
+                <AppIcon className="ri-eye-line mr-2"></AppIcon>View Details
               </button>
             </>
           ) : activity.status === 'Evidence Submitted' ? (
             <>
               <button className="w-full py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-file-list-line mr-2"></i>View Submission
+                <AppIcon className="ri-file-list-line mr-2"></AppIcon>View Submission
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-edit-line mr-2"></i>Update Evidence
+                <AppIcon className="ri-edit-line mr-2"></AppIcon>Update Evidence
               </button>
             </>
           ) : (
             <>
               <button className="w-full py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-play-circle-line mr-2"></i>Start Learning
+                <AppIcon className="ri-play-circle-line mr-2"></AppIcon>Start Learning
               </button>
               <button className="w-full py-2.5 bg-background-100 text-foreground-600 rounded-xl text-sm font-medium hover:bg-background-200 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-eye-line mr-2"></i>View in Portfolio
+                <AppIcon className="ri-eye-line mr-2"></AppIcon>View in Portfolio
               </button>
             </>
           )}

@@ -43,7 +43,7 @@ export default function OfstedEvidencePage() {
           {OFSTED_CATEGORIES.map(c => (
             <div key={c.category} className={`bg-background-50 rounded-xl border p-5 ${c.status === 'needs-improvement' ? 'border-red-200/60' : c.status === 'adequate' ? 'border-amber-200/60' : 'border-emerald-200/60'}`}>
               <div className="flex items-center gap-3 mb-3">
-                <span className={`w-10 h-10 rounded-lg flex items-center justify-center ${c.strength >= 80 ? 'bg-emerald-100 text-emerald-600' : c.strength >= 70 ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600'}`}><i className={`${c.icon} text-sm`}></i></span>
+                <span className={`w-10 h-10 rounded-lg flex items-center justify-center ${c.strength >= 80 ? 'bg-emerald-100 text-emerald-600' : c.strength >= 70 ? 'bg-amber-100 text-amber-600' : 'bg-red-100 text-red-600'}`}><AppIcon className={`${c.icon} text-sm`}></AppIcon></span>
                 <div>
                   <h3 className="text-[12px] font-heading font-semibold text-foreground-900">{c.category}</h3>
                   <span className={`text-[9px] font-medium ${c.status === 'strong' ? 'text-emerald-600' : c.status === 'adequate' ? 'text-amber-600' : 'text-red-600'}`}>{c.status.replace('-', ' ').toUpperCase()}</span>

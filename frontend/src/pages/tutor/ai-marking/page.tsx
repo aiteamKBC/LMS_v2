@@ -45,7 +45,7 @@ export default function TutorAiMarkingPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-robot-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-robot-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">AI-Assisted Marking</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{readyCount} ready for your review · {reviewedCount} reviewed · Avg AI score: {avgScore.toFixed(0)}% · AI suggestions require human validation</p>
@@ -59,7 +59,7 @@ export default function TutorAiMarkingPage() {
         </div>
 
         <div className="bg-amber-50/50 border border-amber-200/50 rounded-xl p-4 flex items-start gap-3">
-          <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0"><i className="ri-information-line"></i></span>
+          <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center shrink-0"><AppIcon className="ri-information-line"></AppIcon></span>
           <div>
             <p className="text-[12px] font-semibold text-amber-800 mb-0.5">AI suggestions require human validation</p>
             <p className="text-[11px] text-amber-600">All AI-generated scores and feedback must be reviewed by you before they are shared with learners. The AI is a marking assistant, not a replacement for professional judgement.</p>
@@ -74,7 +74,7 @@ export default function TutorAiMarkingPage() {
             { l: 'Reviewed & Sent', v: String(reviewedCount), i: 'ri-check-double-line', c: 'primary' },
           ].map(s => (
             <div key={s.l} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'emerald' ? 'bg-emerald-100 text-emerald-600' : s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'primary' ? 'bg-primary-100 text-primary-600' : 'bg-foreground-100 text-foreground-500'}`}><i className={`${s.i} text-sm`}></i></span>
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'emerald' ? 'bg-emerald-100 text-emerald-600' : s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'primary' ? 'bg-primary-100 text-primary-600' : 'bg-foreground-100 text-foreground-500'}`}><AppIcon className={`${s.i} text-sm`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400 mb-1">{s.l}</p>
               <p className="text-2xl font-heading font-semibold text-foreground-900">{s.v}</p>
             </div>
@@ -98,9 +98,9 @@ export default function TutorAiMarkingPage() {
                   'bg-foreground-100 text-foreground-500'
                 }`}>
                   {item.status === 'Ready' && item.aiScore != null ? `${item.aiScore}%` :
-                   item.status === 'Analysing' ? <i className="ri-loader-4-line animate-spin text-sm"></i> :
-                   item.status === 'Reviewed' ? <i className="ri-check-line"></i> :
-                   <i className="ri-time-line"></i>}
+                   item.status === 'Analysing' ? <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon> :
+                   item.status === 'Reviewed' ? <AppIcon className="ri-check-line"></AppIcon> :
+                   <AppIcon className="ri-time-line"></AppIcon>}
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] font-semibold text-foreground-900 truncate">{item.assignment}</p>
@@ -119,14 +119,14 @@ export default function TutorAiMarkingPage() {
                   item.status === 'Reviewed' ? 'bg-primary-100 text-primary-700' :
                   'bg-foreground-100 text-foreground-500'
                 }`}>{item.status}</span>
-                <i className={expandedId === item.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></i>
+                <AppIcon className={expandedId === item.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></AppIcon>
               </div>
               {expandedId === item.id && (
                 <div className="px-4 pb-4 border-t border-background-200/30 pt-3">
                   {item.aiFeedback && (
                     <div className="bg-primary-50/50 border border-primary-200/30 rounded-lg p-3 mb-3">
                       <div className="flex items-center gap-2 mb-1.5">
-                        <i className="ri-robot-line text-primary-600 text-sm"></i>
+                        <AppIcon className="ri-robot-line text-primary-600 text-sm"></AppIcon>
                         <span className="text-[10px] font-semibold text-primary-700 uppercase">AI Feedback</span>
                         {item.aiScore != null && <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700 ml-auto">Score: {item.aiScore}%</span>}
                         {item.confidence != null && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-foreground-100 text-foreground-500">Confidence: {item.confidence}%</span>}
@@ -148,13 +148,13 @@ export default function TutorAiMarkingPage() {
                   <div className="flex items-center gap-2">
                     {item.status === 'Ready' && (
                       <>
-                        <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Approve & Send</button>
-                        <button className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[10px] font-semibold hover:bg-amber-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-pencil-line mr-1"></i> Edit Before Sending</button>
-                        <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-close-line mr-1"></i> Reject AI Marking</button>
+                        <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Approve & Send</button>
+                        <button className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[10px] font-semibold hover:bg-amber-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-pencil-line mr-1"></AppIcon> Edit Before Sending</button>
+                        <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-close-line mr-1"></AppIcon> Reject AI Marking</button>
                       </>
                     )}
                     {item.status === 'Queued' && (
-                      <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-play-line mr-1"></i> Start AI Analysis</button>
+                      <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-play-line mr-1"></AppIcon> Start AI Analysis</button>
                     )}
                   </div>
                 </div>

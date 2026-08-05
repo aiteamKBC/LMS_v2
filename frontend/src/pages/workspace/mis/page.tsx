@@ -110,7 +110,7 @@ export default function MISDashboard() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge != null && (
                 <span className="bg-primary-100 text-primary-700 text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -128,7 +128,7 @@ export default function MISDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">All cohorts with learner counts, programme details, and delivery status</p>
               </div>
               <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> New Cohort
+                <AppIcon className="ri-add-line mr-1"></AppIcon> New Cohort
               </button>
             </div>
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
@@ -177,7 +177,7 @@ export default function MISDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">All scheduled sessions across cohorts — Week 24, June 2026</p>
               </div>
               <button className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
-                <i className="ri-calendar-2-line mr-1"></i> Full Calendar
+                <AppIcon className="ri-calendar-2-line mr-1"></AppIcon> Full Calendar
               </button>
             </div>
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
@@ -216,7 +216,7 @@ export default function MISDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">Live and 1:1 sessions running this week across all cohorts</p>
               </div>
               <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1"></i> Schedule Session
+                <AppIcon className="ri-add-line mr-1"></AppIcon> Schedule Session
               </button>
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -230,15 +230,15 @@ export default function MISDashboard() {
                   </div>
                   <h4 className="text-sm font-semibold text-foreground-900 mb-2">{s.module}</h4>
                   <div className="space-y-1 text-[11px] text-foreground-400">
-                    <p><i className="ri-group-line mr-1 text-[10px]"></i> {s.cohort} — {s.learners} learners</p>
-                    {s.tutor !== '—' && <p><i className="ri-user-settings-line mr-1 text-[10px]"></i> Tutor: {s.tutor}</p>}
+                    <p><AppIcon className="ri-group-line mr-1 text-[10px]"></AppIcon> {s.cohort} — {s.learners} learners</p>
+                    {s.tutor !== '—' && <p><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon> Tutor: {s.tutor}</p>}
                   </div>
                   <div className="flex items-center gap-2 mt-3">
                     <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-video-line mr-1"></i> Join
+                      <AppIcon className="ri-video-line mr-1"></AppIcon> Join
                     </button>
                     <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-settings-3-line mr-1"></i> Settings
+                      <AppIcon className="ri-settings-3-line mr-1"></AppIcon> Settings
                     </button>
                   </div>
                 </div>
@@ -325,7 +325,7 @@ function MisStatCard({ label, value, sub, icon, color }: { label: string; value:
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
       </div>
       <p className="text-[11px] text-foreground-400 mb-1">{label}</p>

@@ -389,7 +389,7 @@ export default function SupportPage() {
           </div>
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-customer-service-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-customer-service-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">How can we help, {p.firstName}?</h2>
@@ -403,13 +403,13 @@ export default function SupportPage() {
                 onClick={() => setAiModalOpen(true)}
                 className="px-4 py-2.5 bg-white/10 border border-white/20 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 backdrop-blur-sm"
               >
-                <i className="ri-robot-line"></i> Ask AI
+                <AppIcon className="ri-robot-line"></AppIcon> Ask AI
               </button>
               <button
                 onClick={() => setTicketModalOpen(true)}
                 className="px-4 py-2.5 bg-white text-primary-700 rounded-xl text-sm font-semibold hover:bg-white/90 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
               >
-                <i className="ri-add-line"></i> New Ticket
+                <AppIcon className="ri-add-line"></AppIcon> New Ticket
               </button>
             </div>
           </div>
@@ -430,7 +430,7 @@ export default function SupportPage() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge && tab.badge > 0 && (
                 <span className="bg-primary-500 text-white text-xs px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -494,7 +494,7 @@ export default function SupportPage() {
                             'bg-background-100 text-foreground-400 border-background-200/50'
                           }`}>{ticket.status === 'in-progress' ? 'In Progress' : ticket.status.charAt(0).toUpperCase() + ticket.status.slice(1)}</span>
                           <span className={`text-[9px] font-medium px-2 py-0.5 rounded-full ${getSLAColor(ticket.priority)}`}>
-                            <i className="ri-time-line text-[8px] mr-1"></i>{getSLA(ticket.priority)}
+                            <AppIcon className="ri-time-line text-[8px] mr-1"></AppIcon>{getSLA(ticket.priority)}
                           </span>
                           <span className="text-[10px] text-foreground-400">{ticket.messages} msg</span>
                         </div>
@@ -514,7 +514,7 @@ export default function SupportPage() {
                         onClick={() => setSelectedTicket(null)}
                         className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                       >
-                        <i className="ri-close-line text-xs"></i>
+                        <AppIcon className="ri-close-line text-xs"></AppIcon>
                       </button>
                     </div>
 
@@ -586,7 +586,7 @@ export default function SupportPage() {
                                   onClick={() => setFeedbackRating(prev => ({ ...prev, [selectedTicket.id]: star }))}
                                   className="transition-smooth cursor-pointer"
                                 >
-                                  <i className={`${(feedbackRating?.[selectedTicket.id] || 0) >= star ? 'ri-star-fill text-amber-500' : 'ri-star-line text-foreground-300'} text-base`}></i>
+                                  <AppIcon className={`${(feedbackRating?.[selectedTicket.id] || 0) >= star ? 'ri-star-fill text-amber-500' : 'ri-star-line text-foreground-300'} text-base`}></AppIcon>
                                 </button>
                               ))}
                               <span className="text-[10px] text-foreground-400 ml-1">
@@ -612,18 +612,18 @@ export default function SupportPage() {
                             >
                               {feedbackSubmitting?.[selectedTicket.id] ? (
                                 <span className="flex items-center justify-center gap-2">
-                                  <i className="ri-loader-4-line animate-spin"></i> Submitting...
+                                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Submitting...
                                 </span>
                               ) : (
                                 <span className="flex items-center justify-center gap-2">
-                                  <i className="ri-send-plane-line"></i> Submit Feedback
+                                  <AppIcon className="ri-send-plane-line"></AppIcon> Submit Feedback
                                 </span>
                               )}
                             </button>
                           </>
                         ) : (
                           <div className="text-center py-2">
-                            <i className="ri-check-double-line text-emerald-500 text-xl mb-1"></i>
+                            <AppIcon className="ri-check-double-line text-emerald-500 text-xl mb-1"></AppIcon>
                             <p className="text-xs font-semibold text-emerald-700">Thank you for your feedback!</p>
                             <p className="text-[10px] text-emerald-600 mt-0.5">Your feedback helps us improve our support.</p>
                           </div>
@@ -656,13 +656,13 @@ export default function SupportPage() {
                       onClick={() => setReplyModalOpen(true)}
                       className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
                     >
-                      <i className="ri-reply-line"></i> Reply to Ticket
+                      <AppIcon className="ri-reply-line"></AppIcon> Reply to Ticket
                     </button>
                   </div>
                 ) : (
                   <div className="bg-background-50 rounded-xl border border-background-200/50 p-6 text-center">
                     <div className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                      <i className="ri-ticket-line text-foreground-300 text-xl"></i>
+                      <AppIcon className="ri-ticket-line text-foreground-300 text-xl"></AppIcon>
                     </div>
                     <p className="text-[13px] text-foreground-500">Select a ticket to view details</p>
                     <p className="text-[11px] text-foreground-300 mt-1">View timeline, details, and feedback</p>
@@ -688,7 +688,7 @@ export default function SupportPage() {
                     className="w-full flex items-center justify-between p-4 text-left hover:bg-background-100/50 transition-smooth cursor-pointer"
                   >
                     <span className="text-sm font-medium text-foreground-900 pr-4">{faq.question}</span>
-                    <i className={`${expandedFaq === faq.id ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-400 shrink-0`}></i>
+                    <AppIcon className={`${expandedFaq === faq.id ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-400 shrink-0`}></AppIcon>
                   </button>
                   {expandedFaq === faq.id && (
                     <div className="px-4 pb-4 border-t border-background-200/30 pt-3">
@@ -712,7 +712,7 @@ export default function SupportPage() {
 
             {/* KB Search */}
             <div className="relative">
-              <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input
                 type="text"
                 placeholder="Search knowledge base articles..."
@@ -731,7 +731,7 @@ export default function SupportPage() {
                 }`}
               >
                 <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center mx-auto mb-1.5">
-                  <i className="ri-apps-line text-foreground-400 text-sm"></i>
+                  <AppIcon className="ri-apps-line text-foreground-400 text-sm"></AppIcon>
                 </span>
                 <p className="text-[11px] font-medium text-foreground-600">All Topics</p>
               </button>
@@ -744,7 +744,7 @@ export default function SupportPage() {
                   }`}
                 >
                   <span className={`w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-1.5 ${cat.color}`}>
-                    <i className={`${cat.icon} text-sm`}></i>
+                    <AppIcon className={`${cat.icon} text-sm`}></AppIcon>
                   </span>
                   <p className="text-[11px] font-medium text-foreground-600 leading-tight">{cat.name}</p>
                 </button>
@@ -760,23 +760,23 @@ export default function SupportPage() {
                     className="w-full flex items-start gap-3 p-4 text-left hover:bg-background-100/50 transition-smooth cursor-pointer"
                   >
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${KB_CATEGORIES.find(c => c.id === article.category)?.color || 'bg-background-100'}`}>
-                      <i className={`${KB_CATEGORIES.find(c => c.id === article.category)?.icon || 'ri-file-text-line'} text-sm`}></i>
+                      <AppIcon className={`${KB_CATEGORIES.find(c => c.id === article.category)?.icon || 'ri-file-text-line'} text-sm`}></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-semibold text-foreground-800">{article.title}</p>
                       <p className="text-[11px] text-foreground-400 mt-0.5 line-clamp-2 leading-relaxed">{article.excerpt}</p>
                     </div>
-                    <i className={`${expandedArticle === article.id ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-400 shrink-0 mt-1`}></i>
+                    <AppIcon className={`${expandedArticle === article.id ? 'ri-subtract-line' : 'ri-add-line'} text-foreground-400 shrink-0 mt-1`}></AppIcon>
                   </button>
                   {expandedArticle === article.id && (
                     <div className="px-4 pb-4 border-t border-background-200/30 pt-3">
                       <p className="text-sm text-foreground-600 leading-relaxed">{article.content}</p>
                       <div className="flex items-center gap-3 mt-3 pt-3 border-t border-background-100">
                         <button className="text-xs text-primary-600 hover:text-primary-700 font-medium cursor-pointer flex items-center gap-1">
-                          <i className="ri-thumb-up-line"></i> Helpful
+                          <AppIcon className="ri-thumb-up-line"></AppIcon> Helpful
                         </button>
                         <button className="text-xs text-foreground-400 hover:text-foreground-600 font-medium cursor-pointer flex items-center gap-1">
-                          <i className="ri-thumb-down-line"></i> Not helpful
+                          <AppIcon className="ri-thumb-down-line"></AppIcon> Not helpful
                         </button>
                         <span className="text-xs text-foreground-300 ml-auto">Still need help? <button onClick={() => { setTicketModalOpen(true); }} className="text-primary-600 font-medium cursor-pointer">Create a ticket</button></span>
                       </div>
@@ -786,7 +786,7 @@ export default function SupportPage() {
               ))}
               {filteredKB.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
-                  <i className="ri-book-open-line text-2xl text-foreground-200 mb-2"></i>
+                  <AppIcon className="ri-book-open-line text-2xl text-foreground-200 mb-2"></AppIcon>
                   <p className="text-sm text-foreground-400">No articles match your search</p>
                   <p className="text-xs text-foreground-300 mt-1">Try a different keyword or browse all topics</p>
                 </div>
@@ -807,19 +807,19 @@ export default function SupportPage() {
               {CONTACT_OPTIONS.map(contact => (
                 <div key={contact.name} className="bg-background-50 rounded-xl border border-background-200/50 p-5 text-center">
                   <span className="w-12 h-12 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center mx-auto mb-3">
-                    <i className={`${contact.icon} text-lg`}></i>
+                    <AppIcon className={`${contact.icon} text-lg`}></AppIcon>
                   </span>
                   <h4 className="text-sm font-semibold text-foreground-900">{contact.name}</h4>
                   <p className="text-xs text-foreground-400 mb-3">{contact.role}</p>
                   <div className="space-y-1.5 mb-4 text-left">
                     <p className="text-xs text-foreground-500 flex items-center gap-1.5">
-                      <i className="ri-mail-line text-xs text-foreground-300"></i> {contact.email}
+                      <AppIcon className="ri-mail-line text-xs text-foreground-300"></AppIcon> {contact.email}
                     </p>
                     <p className="text-xs text-foreground-500 flex items-center gap-1.5">
-                      <i className="ri-phone-line text-xs text-foreground-300"></i> {contact.phone}
+                      <AppIcon className="ri-phone-line text-xs text-foreground-300"></AppIcon> {contact.phone}
                     </p>
                     <p className="text-xs text-foreground-400 flex items-center gap-1.5">
-                      <i className="ri-time-line text-xs text-foreground-300"></i> {contact.availability}
+                      <AppIcon className="ri-time-line text-xs text-foreground-300"></AppIcon> {contact.availability}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -827,13 +827,13 @@ export default function SupportPage() {
                       onClick={() => handleOpenEmail(contact.name, contact.email)}
                       className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                     >
-                      <i className="ri-mail-send-line mr-1"></i> Email
+                      <AppIcon className="ri-mail-send-line mr-1"></AppIcon> Email
                     </button>
                     <button
                       onClick={() => handleOpenCall(contact.name, contact.phone)}
                       className="flex-1 px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-xs font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                     >
-                      <i className="ri-phone-line mr-1"></i> Call
+                      <AppIcon className="ri-phone-line mr-1"></AppIcon> Call
                     </button>
                   </div>
                 </div>
@@ -843,7 +843,7 @@ export default function SupportPage() {
             {/* Urgent Support Banner */}
             <div className="bg-red-50 border border-red-200/50 rounded-xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <span className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                <i className="ri-alert-fill text-red-600 text-xl"></i>
+                <AppIcon className="ri-alert-fill text-red-600 text-xl"></AppIcon>
               </span>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-red-800">Urgent Safeguarding or Wellbeing Concern?</p>
@@ -855,7 +855,7 @@ export default function SupportPage() {
                 onClick={() => setReportModalOpen(true)}
                 className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-shield-check-line mr-1"></i> Report Concern
+                <AppIcon className="ri-shield-check-line mr-1"></AppIcon> Report Concern
               </button>
             </div>
           </section>
@@ -869,7 +869,7 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <div className="flex items-center gap-3">
                   <span className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-100 to-accent-100 flex items-center justify-center">
-                    <i className="ri-robot-line text-primary-600 text-lg"></i>
+                    <AppIcon className="ri-robot-line text-primary-600 text-lg"></AppIcon>
                   </span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Ask AI First</h3>
@@ -877,14 +877,14 @@ export default function SupportPage() {
                   </div>
                 </div>
                 <button onClick={() => setAiModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 {/* AI Search */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1 relative">
-                    <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-base"></i>
+                    <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-base"></AppIcon>
                     <input
                       type="text"
                       placeholder="Ask a question..."
@@ -901,7 +901,7 @@ export default function SupportPage() {
                       aiQuery.trim() ? 'bg-primary-500 text-white hover:bg-primary-600' : 'bg-background-100 text-foreground-300 cursor-not-allowed'
                     }`}
                   >
-                    <i className="ri-arrow-right-line"></i>
+                    <AppIcon className="ri-arrow-right-line"></AppIcon>
                   </button>
                 </div>
 
@@ -922,7 +922,7 @@ export default function SupportPage() {
                   <div className="bg-emerald-50/50 rounded-xl p-4 border border-emerald-100/50 animate-in fade-in slide-in-from-bottom-2 duration-300">
                     <div className="flex items-start gap-3">
                       <span className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0 mt-0.5">
-                        <i className="ri-check-line text-emerald-600 text-sm"></i>
+                        <AppIcon className="ri-check-line text-emerald-600 text-sm"></AppIcon>
                       </span>
                       <div className="flex-1">
                         <p className="text-sm text-foreground-700 leading-relaxed">{aiAnswer}</p>
@@ -958,7 +958,7 @@ export default function SupportPage() {
                   onClick={() => { setAiModalOpen(false); setTicketModalOpen(true); }}
                   className="px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                 >
-                  <i className="ri-add-line"></i> Create Ticket
+                  <AppIcon className="ri-add-line"></AppIcon> Create Ticket
                 </button>
               </div>
             </div>
@@ -973,7 +973,7 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Submit a New Support Ticket</h3>
                 <button onClick={() => setTicketModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
@@ -1032,7 +1032,7 @@ export default function SupportPage() {
                     Cancel
                   </button>
                   <button className="flex-1 px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-send-plane-line mr-1"></i> Submit Ticket
+                    <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Submit Ticket
                   </button>
                 </div>
               </div>
@@ -1048,7 +1048,7 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Reply to #{selectedTicket.id}</h3>
                 <button onClick={() => setReplyModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
@@ -1081,11 +1081,11 @@ export default function SupportPage() {
                   >
                     {replySending ? (
                       <span className="flex items-center justify-center gap-2">
-                        <i className="ri-loader-4-line animate-spin"></i> Sending...
+                        <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Sending...
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">
-                        <i className="ri-send-plane-line mr-1"></i> Send Reply
+                        <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Send Reply
                       </span>
                     )}
                   </button>
@@ -1103,7 +1103,7 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Send Email</h3>
                 <button onClick={() => setEmailModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
@@ -1148,11 +1148,11 @@ export default function SupportPage() {
                   >
                     {emailSending ? (
                       <span className="flex items-center justify-center gap-2">
-                        <i className="ri-loader-4-line animate-spin"></i> Sending...
+                        <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Sending...
                       </span>
                     ) : (
                       <span className="flex items-center justify-center gap-2">
-                        <i className="ri-send-plane-line mr-1"></i> Send Email
+                        <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Send Email
                       </span>
                     )}
                   </button>
@@ -1170,12 +1170,12 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-background-200/50">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Call {callContact.name}</h3>
                 <button onClick={handleEndCall} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 flex flex-col items-center text-center">
                 <span className="w-16 h-16 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center mb-4">
-                  <i className="ri-phone-line text-2xl"></i>
+                  <AppIcon className="ri-phone-line text-2xl"></AppIcon>
                 </span>
                 <p className="text-sm font-semibold text-foreground-900">{callContact.name}</p>
                 <p className="text-xs text-foreground-400 mb-4">{callContact.phone}</p>
@@ -1186,7 +1186,7 @@ export default function SupportPage() {
                       onClick={handleEndCall}
                       className="px-6 py-2.5 bg-red-500 text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                     >
-                      <i className="ri-close-line"></i> End Call
+                      <AppIcon className="ri-close-line"></AppIcon> End Call
                     </button>
                   </>
                 ) : (
@@ -1194,7 +1194,7 @@ export default function SupportPage() {
                     onClick={handleStartCall}
                     className="px-6 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                   >
-                    <i className="ri-phone-line"></i> Start Call
+                    <AppIcon className="ri-phone-line"></AppIcon> Start Call
                   </button>
                 )}
               </div>
@@ -1210,7 +1210,7 @@ export default function SupportPage() {
               <div className="flex items-center justify-between px-6 py-4 border-b border-red-100/50 bg-red-50/50">
                 <div className="flex items-center gap-3">
                   <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                    <i className="ri-shield-check-line text-red-600 text-sm"></i>
+                    <AppIcon className="ri-shield-check-line text-red-600 text-sm"></AppIcon>
                   </span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Report a Concern</h3>
@@ -1218,13 +1218,13 @@ export default function SupportPage() {
                   </div>
                 </div>
                 <button onClick={() => setReportModalOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-sm"></i>
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-4">
                 {reportSubmitted ? (
                   <div className="text-center py-6">
-                    <i className="ri-check-double-line text-emerald-500 text-3xl mb-2"></i>
+                    <AppIcon className="ri-check-double-line text-emerald-500 text-3xl mb-2"></AppIcon>
                     <p className="text-sm font-semibold text-emerald-700">Concern submitted</p>
                     <p className="text-xs text-emerald-600 mt-1">The safeguarding team will contact you within 24 hours. If you are in immediate danger, call 999.</p>
                   </div>
@@ -1257,7 +1257,7 @@ export default function SupportPage() {
                       />
                     </div>
                     <div className="bg-red-50 rounded-lg p-3 text-xs text-red-700">
-                      <i className="ri-alert-line mr-1"></i> In an emergency, always call <strong>999</strong> first.
+                      <AppIcon className="ri-alert-line mr-1"></AppIcon> In an emergency, always call <strong>999</strong> first.
                     </div>
                     <div className="flex items-center gap-2 pt-2">
                       <button onClick={() => setReportModalOpen(false)} className="flex-1 px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
@@ -1274,11 +1274,11 @@ export default function SupportPage() {
                       >
                         {reportSubmitting ? (
                           <span className="flex items-center justify-center gap-2">
-                            <i className="ri-loader-4-line animate-spin"></i> Submitting...
+                            <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Submitting...
                           </span>
                         ) : (
                           <span className="flex items-center justify-center gap-2">
-                            <i className="ri-shield-check-line mr-1"></i> Submit Report
+                            <AppIcon className="ri-shield-check-line mr-1"></AppIcon> Submit Report
                           </span>
                         )}
                       </button>

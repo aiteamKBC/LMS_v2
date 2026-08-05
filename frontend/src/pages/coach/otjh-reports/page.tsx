@@ -256,7 +256,7 @@ function OtjhMetricCard({ icon, label, value, tone }: { icon: string; label: str
   return (
     <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
       <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
-        <i className={`${icon} text-xl`} />
+        <AppIcon className={`${icon} text-xl`} />
       </span>
       <div className="min-w-0">
         <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
@@ -294,7 +294,7 @@ function OtjhValueButton({
 function OtjhTableMessage({ icon, message }: { icon: string; message: string }) {
   return (
     <div className="px-5 py-14 text-center">
-      <i className={`${icon} text-2xl text-slate-400`} />
+      <AppIcon className={`${icon} text-2xl text-slate-400`} />
       <p className="mt-2 text-xs font-semibold text-slate-500">{message}</p>
     </div>
   );
@@ -312,7 +312,7 @@ function OtjhPagination({ currentPage, pageCount, total, onChange }: { currentPa
       {pageCount > 1 && (
         <div className="flex items-center gap-1">
           <button type="button" aria-label="Previous page" disabled={currentPage === 1} onClick={() => onChange(currentPage - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
-            <i className="ri-arrow-left-s-line" />
+            <AppIcon className="ri-arrow-left-s-line" />
           </button>
           {Array.from({ length: pageCount }, (_, index) => index + 1).map(page => (
             <button key={page} type="button" onClick={() => onChange(page)} className={`h-8 min-w-8 rounded-lg px-2 text-[11px] font-bold transition ${currentPage === page ? 'bg-[#21003f] text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
@@ -320,7 +320,7 @@ function OtjhPagination({ currentPage, pageCount, total, onChange }: { currentPa
             </button>
           ))}
           <button type="button" aria-label="Next page" disabled={currentPage === pageCount} onClick={() => onChange(currentPage + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
-            <i className="ri-arrow-right-s-line" />
+            <AppIcon className="ri-arrow-right-s-line" />
           </button>
         </div>
       )}
@@ -433,7 +433,7 @@ export default function CoachOtjhReports() {
             <div>
               <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/55">
                 <span>Coach Workspace</span>
-                <i className="ri-arrow-right-s-line text-sm" />
+                <AppIcon className="ri-arrow-right-s-line text-sm" />
                 <span className="text-white">OTJH Reports</span>
               </div>
               <h1 className="font-heading text-2xl font-bold tracking-tight md:text-[28px]">Off-The-Job Hours</h1>
@@ -443,7 +443,7 @@ export default function CoachOtjhReports() {
             </div>
             <button type="button" onClick={() => changeFilter(stats.behind ? 'behind' : 'on-track')} className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur-sm transition hover:bg-white/15 md:self-auto">
               <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.behind ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
-                <i className={stats.behind ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
+                <AppIcon className={stats.behind ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
               </span>
               <span>
                 <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-white/55">{stats.behind ? 'Needs attention' : 'Caseload status'}</span>
@@ -751,7 +751,7 @@ export default function CoachOtjhReports() {
             {(selectedRow.status === 'behind' || selectedRow.status === 'need-attention') && (
               <div className={`rounded-2xl border p-4 ${selectedRow.status === 'behind' ? 'bg-red-50 border-red-200/70' : 'bg-amber-50 border-amber-200/70'}`}>
                 <div className="flex items-start gap-3">
-                  <i className={`${selectedRow.status === 'behind' ? 'ri-alarm-warning-line text-red-600' : 'ri-error-warning-line text-amber-600'} text-lg`}></i>
+                  <AppIcon className={`${selectedRow.status === 'behind' ? 'ri-alarm-warning-line text-red-600' : 'ri-error-warning-line text-amber-600'} text-lg`}></AppIcon>
                   <div>
                     <p className={`text-xs font-heading font-bold ${selectedRow.status === 'behind' ? 'text-red-700' : 'text-amber-700'}`}>
                       {selectedRow.statusLabel}

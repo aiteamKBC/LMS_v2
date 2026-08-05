@@ -373,7 +373,7 @@ function QuizRowActions({
           className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-smooth"
           title="Restore to quizzes"
         >
-          <i className="ri-arrow-go-back-line"></i>
+          <AppIcon className="ri-arrow-go-back-line"></AppIcon>
         </button>
       )}
       <button
@@ -382,7 +382,7 @@ function QuizRowActions({
         className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Student preview"
       >
-        <i className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></i>
+        <AppIcon className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></AppIcon>
       </button>
       <button
         type="button"
@@ -390,7 +390,7 @@ function QuizRowActions({
         className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Review questions"
       >
-        <i className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></i>
+        <AppIcon className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></AppIcon>
       </button>
       <button
         type="button"
@@ -398,10 +398,10 @@ function QuizRowActions({
         className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Manage students"
       >
-        <i className={`${studentsLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-team-line'}`}></i>
+        <AppIcon className={`${studentsLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-team-line'}`}></AppIcon>
       </button>
       <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center" title="Download">
-        <i className="ri-download-line"></i>
+        <AppIcon className="ri-download-line"></AppIcon>
       </a>
     </div>
   );
@@ -494,7 +494,7 @@ function GradeSettingsModal({
         <div className="mb-6 flex items-center justify-between gap-4">
           <h3 className="text-2xl font-heading font-bold text-[#10233d]">Grades Settings</h3>
           <button type="button" onClick={onClose} className="h-9 w-9 rounded-full bg-white text-[#64748b] hover:bg-[#e2e8f0]">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
@@ -580,7 +580,7 @@ function GradeSettingsModal({
                     >
                       <td className="px-3 py-2.5">
                         <span className="flex h-8 w-8 cursor-grab items-center justify-center rounded bg-[#f1f5f9] text-[#94a3b8] active:cursor-grabbing" title="Drag to reorder">
-                          <i className="ri-draggable text-sm"></i>
+                          <AppIcon className="ri-draggable text-sm"></AppIcon>
                         </span>
                       </td>
                       <td className="px-4 py-2.5">
@@ -590,7 +590,7 @@ function GradeSettingsModal({
                       <td className="px-4 py-2.5 text-sm text-[#0f172a]">{formatQuizGradeRange(settings.rows, index)}</td>
                       <td className="px-4 py-2.5 text-right">
                         <button type="button" onClick={() => void confirmDeleteRow(row)} className="h-9 w-9 rounded bg-red-50 text-red-500 hover:bg-red-100" title={`Delete ${row.grade}`}>
-                          <i className="ri-delete-bin-fill"></i>
+                          <AppIcon className="ri-delete-bin-fill"></AppIcon>
                         </button>
                       </td>
                     </tr>
@@ -685,7 +685,7 @@ function GeneralQuizSettingsModal({
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative w-full sm:w-72">
               <input placeholder="Search..." className="h-10 w-full rounded-full border border-foreground-200/70 bg-white px-4 pr-10 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100" />
-              <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+              <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             </div>
             <button type="button" onClick={saveAndClose} className="h-10 px-5 rounded-lg bg-primary-500 text-white text-sm font-bold hover:bg-primary-600 transition-smooth">
               Save Settings
@@ -1750,7 +1750,7 @@ export default function QuizXmlWorkspacePage() {
       <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-code-box-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-code-box-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-white mb-1">{pageHeading}</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{visibleQuizzes.length} quiz packages</strong> - {heroSummary}</p>
@@ -1821,12 +1821,12 @@ export default function QuizXmlWorkspacePage() {
                   : 'bg-background-50 border-foreground-200/60 text-foreground-700 hover:border-primary-300'
               }`}
             >
-              <i className="ri-calendar-2-line text-base shrink-0"></i>
+              <AppIcon className="ri-calendar-2-line text-base shrink-0"></AppIcon>
               <span className="min-w-0 flex-1">
                 <span className="block text-xs font-semibold truncate">{dateFilterLabel}</span>
                 <span className="block text-[10px] text-foreground-400 truncate">{dateRangeLabel}</span>
               </span>
-              <i className={`${dateFilterOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-400 shrink-0`}></i>
+              <AppIcon className={`${dateFilterOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-400 shrink-0`}></AppIcon>
             </button>
 
             {dateFilterOpen && (
@@ -1867,10 +1867,10 @@ export default function QuizXmlWorkspacePage() {
                       </h4>
                       <div className="flex items-center gap-2">
                         <button type="button" onClick={() => setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))} className="w-8 h-8 rounded-full bg-[#f1f5f9] text-[#64748b] hover:bg-[#e2e8f0]">
-                          <i className="ri-arrow-left-s-line"></i>
+                          <AppIcon className="ri-arrow-left-s-line"></AppIcon>
                         </button>
                         <button type="button" onClick={() => setCalendarViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))} className="w-8 h-8 rounded-full bg-[#f1f5f9] text-[#64748b] hover:bg-[#e2e8f0]">
-                          <i className="ri-arrow-right-s-line"></i>
+                          <AppIcon className="ri-arrow-right-s-line"></AppIcon>
                         </button>
                       </div>
                     </div>
@@ -1908,7 +1908,7 @@ export default function QuizXmlWorkspacePage() {
 
           <div className="relative w-full sm:w-72 lg:flex-1 lg:max-w-md">
             <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search by title" className="h-10 w-full rounded-lg bg-background-50 border border-foreground-200/60 pl-4 pr-10 text-sm outline-none focus:border-primary-400" />
-            <i className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
           </div>
 
           <div className="relative w-full sm:w-auto">
@@ -1917,9 +1917,9 @@ export default function QuizXmlWorkspacePage() {
               onClick={() => setMoreMenuOpen(open => !open)}
               className="h-10 px-4 bg-white border border-[#d8dde6] rounded-lg text-sm font-semibold text-[#5b2dbb] hover:bg-[#f7f3ff] transition-smooth whitespace-nowrap flex items-center justify-center gap-1.5 w-full sm:w-auto"
             >
-              <i className="ri-more-2-line"></i>
+              <AppIcon className="ri-more-2-line"></AppIcon>
               More
-              <i className={`${moreMenuOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></i>
+              <AppIcon className={`${moreMenuOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
             </button>
             {moreMenuOpen && (
               <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-60 rounded-xl border border-[#d8dde6] bg-white p-2 shadow-2xl">
@@ -1931,11 +1931,11 @@ export default function QuizXmlWorkspacePage() {
                   }}
                   className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
                 >
-                  <i className={`${filterStatus === 'trash' ? 'ri-arrow-left-line' : 'ri-archive-line'}`}></i>
+                  <AppIcon className={`${filterStatus === 'trash' ? 'ri-arrow-left-line' : 'ri-archive-line'}`}></AppIcon>
                   {filterStatus === 'trash' ? 'Back to quizzes' : 'Archive'}
                 </button>
                 <Link to="/curriculum/question-bank" onClick={() => setMoreMenuOpen(false)} className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2">
-                  <i className="ri-questionnaire-line"></i>
+                  <AppIcon className="ri-questionnaire-line"></AppIcon>
                   Question Bank
                 </Link>
                 <button
@@ -1946,7 +1946,7 @@ export default function QuizXmlWorkspacePage() {
                   }}
                   className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
                 >
-                  <i className="ri-graduation-cap-line"></i>
+                  <AppIcon className="ri-graduation-cap-line"></AppIcon>
                   Grade Settings
                 </button>
                 <button
@@ -1957,7 +1957,7 @@ export default function QuizXmlWorkspacePage() {
                   }}
                   className="w-full h-10 px-3 rounded-lg text-sm font-semibold text-left text-[#5b2dbb] hover:bg-[#f7f3ff] flex items-center gap-2"
                 >
-                  <i className="ri-settings-3-line"></i>
+                  <AppIcon className="ri-settings-3-line"></AppIcon>
                   General Settings
                 </button>
               </div>
@@ -1967,16 +1967,16 @@ export default function QuizXmlWorkspacePage() {
           <div className="basis-full h-px bg-foreground-200/50" />
 
           <button onClick={() => setShowGenerator(true)} className="h-10 px-4 bg-[#0f172a] text-white rounded-lg text-sm font-semibold hover:bg-[#111827] transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <i className="ri-sparkling-2-line mr-1"></i> Generate Questions
+            <AppIcon className="ri-sparkling-2-line mr-1"></AppIcon> Generate Questions
           </button>
           <button onClick={() => setShowCreate(true)} className="h-10 px-4 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <i className="ri-add-circle-fill mr-1"></i> Add New Quiz
+            <AppIcon className="ri-add-circle-fill mr-1"></AppIcon> Add New Quiz
           </button>
           <Link to="/curriculum/quiz-xml/manual" className="h-10 px-4 bg-white border border-primary-200 rounded-lg text-sm font-semibold text-primary-700 hover:bg-primary-50 transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto">
-            <i className="ri-edit-2-line mr-1"></i> Manual Quiz
+            <AppIcon className="ri-edit-2-line mr-1"></AppIcon> Manual Quiz
           </Link>
           <button onClick={() => fileInputRef.current?.click()} className="h-10 px-4 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <i className="ri-upload-cloud-line mr-1"></i> Upload Quiz File
+            <AppIcon className="ri-upload-cloud-line mr-1"></AppIcon> Upload Quiz File
           </button>
         </div>
 
@@ -2006,7 +2006,7 @@ export default function QuizXmlWorkspacePage() {
                       <div className="flex items-center gap-2 shrink-0">
                         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusClasses(quiz.status)}`}>{statusLabel(quiz.status)}</span>
                         <span className="text-xs text-foreground-400 uppercase">{quiz.packageType}</span>
-                        {quiz.schemaValid ? <i className="ri-checkbox-circle-line text-emerald-500"></i> : <i className="ri-error-warning-line text-red-500"></i>}
+                        {quiz.schemaValid ? <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon> : <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>}
                       </div>
                     </div>
 
@@ -2117,7 +2117,7 @@ export default function QuizXmlWorkspacePage() {
                       <div className="flex items-center gap-2">
                         <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusClasses(quiz.status)}`}>{statusLabel(quiz.status)}</span>
                         <span className="text-xs text-foreground-400 uppercase">{quiz.packageType}</span>
-                        {quiz.schemaValid ? <i className="ri-checkbox-circle-line text-emerald-500"></i> : <i className="ri-error-warning-line text-red-500"></i>}
+                        {quiz.schemaValid ? <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon> : <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>}
                       </div>
                     </td>
                     <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
@@ -2158,7 +2158,7 @@ export default function QuizXmlWorkspacePage() {
                   className="w-9 h-9 rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Previous page"
                 >
-                  <i className="ri-arrow-left-line"></i>
+                  <AppIcon className="ri-arrow-left-line"></AppIcon>
                 </button>
                 {visiblePageNumbers.map((page, index) => (
                   <div key={page} className="flex items-center gap-2">
@@ -2179,7 +2179,7 @@ export default function QuizXmlWorkspacePage() {
                   className="w-9 h-9 rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Next page"
                 >
-                  <i className="ri-arrow-right-line"></i>
+                  <AppIcon className="ri-arrow-right-line"></AppIcon>
                 </button>
                 <ThemedSelect
                   value={pageSize}
@@ -2213,15 +2213,15 @@ export default function QuizXmlWorkspacePage() {
                   <p className="text-sm text-foreground-400 truncate">{courseLinksData.programme || courseLinksData.quiz.programme || 'No programme'}</p>
                   <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-semibold">
                     <span className="inline-flex items-center gap-1.5 text-foreground-500">
-                      <i className="ri-links-line text-foreground-400"></i>{linkedCourses.length} linked component{linkedCourses.length === 1 ? '' : 's'}
+                      <AppIcon className="ri-links-line text-foreground-400"></AppIcon>{linkedCourses.length} linked component{linkedCourses.length === 1 ? '' : 's'}
                     </span>
                     <span className="inline-flex items-center gap-1.5 text-primary-600">
-                      <i className="ri-group-line text-primary-500"></i>{distinctGroups.size} group{distinctGroups.size === 1 ? '' : 's'} assigned
+                      <AppIcon className="ri-group-line text-primary-500"></AppIcon>{distinctGroups.size} group{distinctGroups.size === 1 ? '' : 's'} assigned
                     </span>
                   </div>
                 </div>
                 <button onClick={() => setCourseLinksData(null)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200 hover:text-foreground-800 transition-colors" aria-label="Close">
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
 
@@ -2229,7 +2229,7 @@ export default function QuizXmlWorkspacePage() {
                 {linkedCourses.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-foreground-200/80 bg-background-100/60 px-4 py-10 text-center">
                     <span className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-white text-foreground-300 border border-foreground-200/60">
-                      <i className="ri-links-line text-xl"></i>
+                      <AppIcon className="ri-links-line text-xl"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-foreground-700">Not linked anywhere yet</p>
                     <p className="mt-1 text-xs text-foreground-400">This quiz isn't attached to a module component, so no groups sit it yet.</p>
@@ -2245,13 +2245,13 @@ export default function QuizXmlWorkspacePage() {
                       <article key={course.id} className="overflow-hidden rounded-xl border border-foreground-200/70 bg-white shadow-sm">
                         <div className="flex items-start gap-3 p-4">
                           <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${isCheckpoint ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-primary-50 text-primary-700 border-primary-100'}`}>
-                            <i className={componentIcon(course.componentType)}></i>
+                            <AppIcon className={componentIcon(course.componentType)}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <h4 className="min-w-0 truncate text-sm font-heading font-bold text-foreground-900">{course.component || course.label || 'Quiz component'}</h4>
                               {isCheckpoint && <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 border border-amber-200">Checkpoint</span>}
-                              {isTemplate && <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500 border border-foreground-200/70"><i className="ri-layout-masonry-line text-[11px]"></i>Week template</span>}
+                              {isTemplate && <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-foreground-500 border border-foreground-200/70"><AppIcon className="ri-layout-masonry-line text-[11px]"></AppIcon>Week template</span>}
                             </div>
                             {meta.length > 0 && (
                               <p className="mt-1 truncate text-xs text-foreground-400">{meta.join('  ·  ')}</p>
@@ -2260,7 +2260,7 @@ export default function QuizXmlWorkspacePage() {
                         </div>
                         <div className="border-t border-foreground-100 bg-background-50/60 px-4 py-3">
                           <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
-                            <i className="ri-group-line text-foreground-400"></i>Assigned groups
+                            <AppIcon className="ri-group-line text-foreground-400"></AppIcon>Assigned groups
                           </p>
                           {groups.length === 0 ? (
                             <p className="text-xs text-foreground-400">No specific groups — open to the whole module.</p>
@@ -2268,7 +2268,7 @@ export default function QuizXmlWorkspacePage() {
                             <div className="flex flex-wrap gap-1.5">
                               {groups.map((name, index) => (
                                 <span key={`${course.id}-${index}`} className="inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[11px] font-semibold text-primary-700">
-                                  <i className="ri-group-line text-xs text-primary-500"></i>{name}
+                                  <AppIcon className="ri-group-line text-xs text-primary-500"></AppIcon>{name}
                                 </span>
                               ))}
                             </div>
@@ -2293,7 +2293,7 @@ export default function QuizXmlWorkspacePage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900">{selectedQuiz.title}</h3>
                   <p className="text-sm text-foreground-400">{selectedQuiz.module} - {selectedQuiz.programme}</p>
                 </div>
-                <button onClick={() => setSelectedQuiz(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200"><i className="ri-close-line"></i></button>
+                <button onClick={() => setSelectedQuiz(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
               <div className="grid grid-cols-2 gap-3 mb-5">
                 {[
@@ -2312,7 +2312,7 @@ export default function QuizXmlWorkspacePage() {
               </div>
               {!selectedQuiz.schemaValid && (
                 <div className="mb-5 p-3 bg-red-50 rounded-lg border border-red-200 text-sm text-red-700">
-                  <i className="ri-error-warning-line mr-1"></i>{selectedQuiz.validationMessage || 'Package requires validation.'}
+                  <AppIcon className="ri-error-warning-line mr-1"></AppIcon>{selectedQuiz.validationMessage || 'Package requires validation.'}
                 </div>
               )}
               <div className="flex items-center gap-2 mb-4">
@@ -2354,7 +2354,7 @@ export default function QuizXmlWorkspacePage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-8 h-8 rounded-xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center">
-                      <i className="ri-eye-line"></i>
+                      <AppIcon className="ri-eye-line"></AppIcon>
                     </span>
                     <p className="text-xs font-bold uppercase tracking-wider text-[#5b2dbb]">Student Preview</p>
                   </div>
@@ -2363,7 +2363,7 @@ export default function QuizXmlWorkspacePage() {
                     {previewData.quiz.packageType === 'scorm' ? 'SCORM package preview' : `${previewData.questions.length} questions`}{previewData.quiz.programme ? ` - ${previewData.quiz.programme}` : ''}
                   </p>
                 </div>
-                <button onClick={() => setPreviewData(null)} className="w-11 h-11 rounded-xl bg-white hover:bg-[#f1f5f9] text-[#0f172a] shrink-0 transition-smooth"><i className="ri-close-line text-lg"></i></button>
+                <button onClick={() => setPreviewData(null)} className="w-11 h-11 rounded-xl bg-white hover:bg-[#f1f5f9] text-[#0f172a] shrink-0 transition-smooth"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
               </div>
 
               <div className={`${previewData.quiz.packageType === 'scorm' ? 'flex-1 min-h-[620px] p-0' : 'flex-1 overflow-y-auto bg-[#f8fafc] px-4 py-5 sm:px-6 quiz-preview-scroll'}`}>
@@ -2377,7 +2377,7 @@ export default function QuizXmlWorkspacePage() {
                 ) : previewData.questions.length === 0 ? (
                   <div className="py-16 text-center">
                     <span className="w-14 h-14 rounded-2xl bg-white border border-[#e2e8f0] flex items-center justify-center mx-auto mb-3">
-                      <i className="ri-questionnaire-line text-foreground-300 text-xl"></i>
+                      <AppIcon className="ri-questionnaire-line text-foreground-300 text-xl"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-foreground-600">No saved questions yet</p>
                     <p className="text-xs text-foreground-400 mt-1">Upload an Excel/CSV/XML file with questions to preview the learner view.</p>
@@ -2420,14 +2420,14 @@ export default function QuizXmlWorkspacePage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 mb-2">
                     <span className="w-8 h-8 rounded-xl bg-[#f2f0ff] text-[#5b2dbb] flex items-center justify-center">
-                      <i className="ri-team-line"></i>
+                      <AppIcon className="ri-team-line"></AppIcon>
                     </span>
                     <p className="text-xs font-bold uppercase tracking-wider text-[#5b2dbb]">Manage Students</p>
                   </div>
                   <h3 className="text-xl font-heading font-bold text-foreground-900 leading-snug break-words [overflow-wrap:anywhere]">{studentResultsData.quiz.title}</h3>
                   <p className="text-sm text-[#647083] mt-1">Review learner attempts, scores and answer-level results.</p>
                 </div>
-                <button onClick={() => setStudentResultsData(null)} className="w-11 h-11 rounded-xl bg-white hover:bg-[#f1f5f9] text-[#0f172a] shrink-0 transition-smooth"><i className="ri-close-line text-lg"></i></button>
+                <button onClick={() => setStudentResultsData(null)} className="w-11 h-11 rounded-xl bg-white hover:bg-[#f1f5f9] text-[#0f172a] shrink-0 transition-smooth"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
               </div>
 
               <div className="flex-1 overflow-y-auto bg-[#f8fafc] p-4 sm:p-6 quiz-preview-scroll">
@@ -2448,7 +2448,7 @@ export default function QuizXmlWorkspacePage() {
                 {studentResultsData.students.length === 0 ? (
                   <div className="rounded-2xl border border-[#e2e8f0] bg-white py-16 text-center">
                     <span className="w-14 h-14 rounded-2xl bg-[#f8fafc] border border-[#e2e8f0] flex items-center justify-center mx-auto mb-3">
-                      <i className="ri-user-search-line text-[#94a3b8] text-xl"></i>
+                      <AppIcon className="ri-user-search-line text-[#94a3b8] text-xl"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-[#334155]">No student attempts yet</p>
                     <p className="text-xs text-[#64748b] mt-1">When learners submit this quiz, their scores and answers will appear here.</p>
@@ -2579,7 +2579,7 @@ export default function QuizXmlWorkspacePage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900 truncate">{editorData.quiz.title}</h3>
                   <p className="text-sm text-foreground-400">{editorData.questions.length} questions - review wording, answers and correct option</p>
                 </div>
-                <button onClick={() => setEditorData(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0"><i className="ri-close-line"></i></button>
+                <button onClick={() => setEditorData(null)} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
               <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[360px_1fr]">
@@ -2641,7 +2641,7 @@ export default function QuizXmlWorkspacePage() {
                         <div className="flex items-center justify-between mb-3">
                           <h4 className="text-sm font-heading font-bold text-foreground-900">Answers</h4>
                           <button onClick={() => addEditorAnswer(activeEditorQuestion.id)} className="px-3 py-1.5 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth">
-                            <i className="ri-add-line mr-1"></i>Add answer
+                            <AppIcon className="ri-add-line mr-1"></AppIcon>Add answer
                           </button>
                         </div>
                         <div className="space-y-3">
@@ -2695,7 +2695,7 @@ export default function QuizXmlWorkspacePage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900">Generate questions from text or files</h3>
                   <p className="text-sm text-foreground-400">Review the generated questions before saving them as a draft quiz.</p>
                 </div>
-                <button onClick={resetGenerator} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0"><i className="ri-close-line"></i></button>
+                <button onClick={resetGenerator} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
               <div className="flex-1 overflow-y-auto quiz-preview-scroll p-4 sm:p-5 grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-5">
@@ -2764,7 +2764,7 @@ export default function QuizXmlWorkspacePage() {
                           onClick={() => setShowPromptCustomize(prev => !prev)}
                           className="h-8 px-3 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95]"
                         >
-                          <i className={showPromptCustomize ? 'ri-check-line mr-1' : 'ri-edit-line mr-1'}></i>{showPromptCustomize ? 'Done' : 'Customize'}
+                          <AppIcon className={showPromptCustomize ? 'ri-check-line mr-1' : 'ri-edit-line mr-1'}></AppIcon>{showPromptCustomize ? 'Done' : 'Customize'}
                         </button>
                       </div>
                     </div>
@@ -2811,7 +2811,7 @@ export default function QuizXmlWorkspacePage() {
                     }`}
                   >
                     <span className="w-10 h-10 rounded-xl bg-white border border-foreground-200/60 flex items-center justify-center text-lg">
-                      <i className={generatorDragActive ? 'ri-upload-cloud-2-line' : 'ri-file-upload-line'}></i>
+                      <AppIcon className={generatorDragActive ? 'ri-upload-cloud-2-line' : 'ri-file-upload-line'}></AppIcon>
                     </span>
                     <span className="max-w-full truncate">
                       {generatorFiles.length === 0
@@ -2837,7 +2837,7 @@ export default function QuizXmlWorkspacePage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-700 flex items-center justify-center shrink-0">
-                          <i className="ri-eye-line"></i>
+                          <AppIcon className="ri-eye-line"></AppIcon>
                         </span>
                         <div className="min-w-0">
                           <h4 className="text-sm font-heading font-bold text-[#0f172a]">Preview</h4>
@@ -2853,7 +2853,7 @@ export default function QuizXmlWorkspacePage() {
                   {generatedQuestions.length === 0 ? (
                     <div className="min-h-80 flex flex-col items-center justify-center text-center">
                       <span className="w-12 h-12 rounded-2xl bg-white border border-foreground-200/60 flex items-center justify-center text-foreground-300 mb-3">
-                        <i className="ri-sparkling-2-line text-xl"></i>
+                        <AppIcon className="ri-sparkling-2-line text-xl"></AppIcon>
                       </span>
                       <p className="text-sm font-semibold text-foreground-700">No generated questions yet</p>
                       <p className="text-xs text-foreground-400 mt-1 max-w-sm">Add a topic, paste lesson content, or upload source files, then generate a preview.</p>
@@ -2868,7 +2868,7 @@ export default function QuizXmlWorkspacePage() {
                               <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-2">
                                 <p className="text-[15px] sm:text-base font-semibold text-[#0f172a] leading-7 break-words [overflow-wrap:anywhere]">{question.text}</p>
                                 <span className="w-fit inline-flex items-center gap-1.5 text-[10px] font-bold uppercase px-2.5 py-1.5 rounded-lg bg-[#e8eef5] text-[#526173] shrink-0">
-                                  <i className="ri-question-answer-line"></i>
+                                  <AppIcon className="ri-question-answer-line"></AppIcon>
                                   {questionTypeOptions.find(option => option.value === question.questionType)?.label}
                                 </span>
                               </div>
@@ -2921,7 +2921,7 @@ export default function QuizXmlWorkspacePage() {
                   <p className="text-sm text-foreground-400">Add each question, choose its type, then mark the correct answer.</p>
                 </div>
                 <button type="button" onClick={resetManualModal} disabled={savingManualQuiz} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
-                  <i className="ri-close-line"></i>
+                  <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               </div>
 
@@ -2972,7 +2972,7 @@ export default function QuizXmlWorkspacePage() {
                       <p className="text-xs text-foreground-400">{manualQuestions.length} question{manualQuestions.length === 1 ? '' : 's'} in this manual quiz.</p>
                     </div>
                     <button type="button" onClick={addManualQuestion} className="h-9 px-4 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth w-full sm:w-auto">
-                      <i className="ri-add-line mr-1"></i>Add question
+                      <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
                     </button>
                   </div>
 
@@ -3007,7 +3007,7 @@ export default function QuizXmlWorkspacePage() {
                             <span className={`hidden sm:inline-flex text-[10px] font-bold uppercase px-2 py-1 rounded-md ${isOpen ? 'bg-primary-100 text-primary-700' : 'bg-foreground-100 text-foreground-500'}`}>
                               {isOpen ? 'Editing' : 'Collapsed'}
                             </span>
-                            <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xl text-foreground-400`}></i>
+                            <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xl text-foreground-400`}></AppIcon>
                           </span>
                         </button>
 
@@ -3042,7 +3042,7 @@ export default function QuizXmlWorkspacePage() {
                                 disabled={manualQuestions.length === 1}
                                 className="h-9 px-3 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed lg:self-start"
                               >
-                                <i className="ri-delete-bin-line mr-1"></i>Remove
+                                <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Remove
                               </button>
                             </div>
 
@@ -3054,7 +3054,7 @@ export default function QuizXmlWorkspacePage() {
                             </div>
                             {canEditAnswerCount && (
                               <button type="button" onClick={() => addManualAnswer(question.id)} className="h-8 px-3 rounded-lg bg-white border border-primary-200 text-primary-700 text-xs font-semibold hover:bg-primary-50 w-full sm:w-auto">
-                                <i className="ri-add-line mr-1"></i>{answerCopy.addLabel}
+                                <AppIcon className="ri-add-line mr-1"></AppIcon>{answerCopy.addLabel}
                               </button>
                             )}
                           </div>
@@ -3077,7 +3077,7 @@ export default function QuizXmlWorkspacePage() {
                                           className="h-10 rounded-lg border border-foreground-200/60 bg-background-50 px-3 text-sm outline-none focus:border-primary-400"
                                         />
                                         <span className="hidden sm:flex items-center justify-center text-foreground-300">
-                                          <i className="ri-arrow-right-line"></i>
+                                          <AppIcon className="ri-arrow-right-line"></AppIcon>
                                         </span>
                                         <input
                                           value={pair.right}
@@ -3115,7 +3115,7 @@ export default function QuizXmlWorkspacePage() {
                                         className="w-9 h-9 rounded-lg bg-background-100 text-foreground-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                                         title="Remove answer"
                                       >
-                                        <i className="ri-close-line"></i>
+                                        <AppIcon className="ri-close-line"></AppIcon>
                                       </button>
                                     )}
                                   </div>
@@ -3136,7 +3136,7 @@ export default function QuizXmlWorkspacePage() {
                 <p className="text-xs text-foreground-400">The quiz will be saved with {manualQuestions.length} manual question{manualQuestions.length === 1 ? '' : 's'}.</p>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <button type="button" disabled={savingManualQuiz} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
-                    <i className="ri-add-line mr-1"></i>Add question
+                    <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
                   </button>
                   <button type="button" disabled={savingManualQuiz} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
                   <button type="submit" disabled={savingManualQuiz} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
@@ -3154,11 +3154,11 @@ export default function QuizXmlWorkspacePage() {
             <form onSubmit={submitQuiz} className="w-full max-w-xl bg-background-50 rounded-2xl border border-foreground-200/60 shadow-xl p-5" onClick={event => event.stopPropagation()}>
               <div className="flex items-center justify-between mb-5">
                 <h3 className="text-base font-heading font-bold text-foreground-900">Add Quiz Package</h3>
-                <button type="button" onClick={resetModal} disabled={savingQuiz} className="w-8 h-8 rounded-lg bg-background-100 hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"><i className="ri-close-line"></i></button>
+                <button type="button" onClick={resetModal} disabled={savingQuiz} className="w-8 h-8 rounded-lg bg-background-100 hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
               {uploadFile && (
                 <div className="mb-4 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm text-primary-700 flex items-center gap-2 min-w-0">
-                  <i className="ri-file-upload-line shrink-0"></i>
+                  <AppIcon className="ri-file-upload-line shrink-0"></AppIcon>
                   <span className="truncate min-w-0" title={`${uploadFile.name} ready to upload`}>{uploadFile.name} ready to upload</span>
                 </div>
               )}

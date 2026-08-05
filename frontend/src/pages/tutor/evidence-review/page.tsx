@@ -64,7 +64,7 @@ export default function EvidenceReviewPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-file-search-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-file-search-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Evidence Review</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{EVIDENCE.length} items</strong> — {pending} pending, {reviewed} reviewed/approved, {returned} returned.</p>
@@ -96,7 +96,7 @@ export default function EvidenceReviewPage() {
               <div className="divide-y divide-background-200/30">
                 {filtered.map(e => (
                   <div key={e.id} onClick={() => setSelectedEv(e)} className={`p-3.5 flex items-center gap-3 cursor-pointer transition-smooth ${selectedEv?.id === e.id ? 'bg-primary-50/40 border-l-2 border-l-primary-400' : 'hover:bg-background-100/30'}`}>
-                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${statusColors[e.status]}`}><i className={`${e.status === 'approved' ? 'ri-checkbox-circle-line' : e.status === 'returned' ? 'ri-close-circle-line' : e.status === 'reviewed' ? 'ri-eye-line' : 'ri-file-search-line'} text-sm`}></i></span>
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${statusColors[e.status]}`}><AppIcon className={`${e.status === 'approved' ? 'ri-checkbox-circle-line' : e.status === 'returned' ? 'ri-close-circle-line' : e.status === 'reviewed' ? 'ri-eye-line' : 'ri-file-search-line'} text-sm`}></AppIcon></span>
                     <div className="flex-1 min-w-0">
                       <p className="text-[12px] font-medium text-foreground-900 truncate">{e.title}</p>
                       <div className="flex items-center gap-x-2 gap-y-1 flex-wrap mt-0.5 text-[10px] text-foreground-400">
@@ -164,11 +164,11 @@ export default function EvidenceReviewPage() {
                 <div className="flex items-center gap-2">
                   {selectedEv.status === 'pending' && (
                     <>
-                      <button className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Approve</button>
-                      <button className="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-close-line mr-1"></i> Return</button>
+                      <button className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Approve</button>
+                      <button className="flex-1 px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-close-line mr-1"></AppIcon> Return</button>
                     </>
                   )}
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i> Download</button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon> Download</button>
                 </div>
               </div>
             </div>

@@ -11,7 +11,7 @@ export function EmployerCaseHeader({ record }: EmployerCaseHeaderProps) {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-5">
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center shrink-0 border border-background-200/50">
-            <i className="ri-building-2-line text-foreground-500 text-xl"></i>
+            <AppIcon className="ri-building-2-line text-foreground-500 text-xl"></AppIcon>
           </div>
           <div>
             <h2 className="text-lg font-heading font-semibold text-foreground-900">{record.employerLegalName}</h2>
@@ -79,7 +79,7 @@ export function EmployerCaseHeader({ record }: EmployerCaseHeaderProps) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4 pt-4 border-t border-background-200/50">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-200/50">
-            <i className="ri-alert-line text-amber-600 text-sm"></i>
+            <AppIcon className="ri-alert-line text-amber-600 text-sm"></AppIcon>
             <div>
               <p className="text-[11px] text-amber-800 font-medium">Next Action</p>
               <p className="text-[12px] text-amber-700">{record.nextAction}</p>
@@ -98,7 +98,7 @@ export function EmployerCaseHeader({ record }: EmployerCaseHeaderProps) {
       {/* Risk reason */}
       {record.riskReason && (
         <div className="mt-3 px-3 py-2 bg-red-50 rounded-lg border border-red-200/50 flex items-start gap-2">
-          <i className="ri-error-warning-line text-red-500 text-sm mt-0.5 shrink-0"></i>
+          <AppIcon className="ri-error-warning-line text-red-500 text-sm mt-0.5 shrink-0"></AppIcon>
           <p className="text-[12px] text-red-700">{record.riskReason}</p>
         </div>
       )}
@@ -148,7 +148,7 @@ function CommitmentChip({ label, done }: { label: string; done: boolean }) {
     <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${
       done ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/50' : 'bg-background-100 text-foreground-400 border border-background-200/50'
     }`}>
-      <i className={`${done ? 'ri-check-line text-emerald-500' : 'ri-time-line text-foreground-300'} text-[10px]`}></i>
+      <AppIcon className={`${done ? 'ri-check-line text-emerald-500' : 'ri-time-line text-foreground-300'} text-[10px]`}></AppIcon>
       {label}
     </span>
   );

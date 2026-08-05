@@ -101,7 +101,7 @@ export function SignatureField({ label = 'User signature', value, onChange }: { 
             <span className="px-4 py-6 border border-foreground-200 rounded-lg text-[13px] italic text-foreground-700 bg-background-50" style={{ fontFamily: 'cursive' }}>{value}</span>
           )}
           <button onClick={() => setEditing(true)} className="text-[12px] text-primary-600 hover:underline cursor-pointer inline-flex items-center gap-1">
-            <i className="ri-pen-nib-line" />Replace
+            <AppIcon className="ri-pen-nib-line" />Replace
           </button>
           <button onClick={() => onChange('')} className="text-[12px] text-red-500 hover:underline cursor-pointer">Clear</button>
         </div>
@@ -110,7 +110,7 @@ export function SignatureField({ label = 'User signature', value, onChange }: { 
           onClick={() => setEditing(true)}
           className="w-full max-w-md h-24 border-2 border-dashed border-foreground-200 rounded-lg flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500 transition-smooth cursor-pointer"
         >
-          <i className="ri-pen-nib-line text-2xl mb-1" />
+          <AppIcon className="ri-pen-nib-line text-2xl mb-1" />
           <span className="text-[12px]">Click to sign or upload</span>
         </button>
       )}

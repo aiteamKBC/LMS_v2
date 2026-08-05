@@ -123,7 +123,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
       {/* Search input */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-background-100">
           <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-            <i className="ri-search-line text-base text-primary-600"></i>
+            <AppIcon className="ri-search-line text-base text-primary-600"></AppIcon>
           </span>
           <input
             ref={inputRef}
@@ -139,7 +139,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
               onClick={() => setQuery('')}
               className="w-6 h-6 rounded-md flex items-center justify-center text-foreground-300 hover:text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
             >
-              <i className="ri-close-line text-sm"></i>
+              <AppIcon className="ri-close-line text-sm"></AppIcon>
             </button>
           )}
           <span className="text-[11px] text-foreground-300 bg-background-100 px-2 py-0.5 rounded-md font-medium border border-foreground-200">
@@ -160,7 +160,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
                   className="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-background-100 transition-smooth"
                   onClick={() => { setQuery(s); inputRef.current?.focus(); }}
                 >
-                  <i className="ri-history-line text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-history-line text-foreground-300 text-sm"></AppIcon>
                   <span className="text-[14px] text-foreground-600">{s}</span>
                 </button>
               ))}
@@ -170,7 +170,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
           {!showRecent && query.trim() && groupedResults.length === 0 && (
             <div className="px-5 py-10 text-center">
               <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-search-line text-xl text-foreground-300"></i>
+                <AppIcon className="ri-search-line text-xl text-foreground-300"></AppIcon>
               </div>
               <p className="text-sm text-foreground-500 font-medium">No results found</p>
               <p className="text-xs text-foreground-300 mt-1">Try a different search term</p>
@@ -180,7 +180,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
           {!showRecent && groupedResults.map(group => (
             <div key={group.category} className="pb-0.5">
               <div className="px-5 py-1.5 flex items-center gap-2">
-                <i className={`${group.icon} text-[10px] text-foreground-300`}></i>
+                <AppIcon className={`${group.icon} text-[10px] text-foreground-300`}></AppIcon>
                 <span className="text-[10px] font-semibold text-foreground-300 uppercase tracking-widest">{group.label}</span>
                 <span className="text-[10px] text-foreground-250 ml-auto">{group.items.length}</span>
               </div>
@@ -201,7 +201,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                       isSelected ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-400 group-hover:bg-background-200/70'
                     }`}>
-                      <i className={`${item.icon} text-sm`}></i>
+                      <AppIcon className={`${item.icon} text-sm`}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className={`text-[14px] truncate ${isSelected ? 'text-primary-800 font-medium' : 'text-foreground-800'}`}>

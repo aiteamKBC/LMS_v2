@@ -39,7 +39,7 @@ export default function AdminTenantsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-building-4-line text-white text-2xl"></i>
+              <AppIcon className="ri-building-4-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Tenant Management</h2>
@@ -67,7 +67,7 @@ export default function AdminTenantsPage() {
         {/* Filters */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search tenants..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -78,7 +78,7 @@ export default function AdminTenantsPage() {
               <option value="suspended">Suspended</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1.5"></i> New Tenant
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Tenant
             </button>
           </div>
         </div>
@@ -106,10 +106,10 @@ export default function AdminTenantsPage() {
                     <p className="text-[11px] text-foreground-400 mt-0.5">Created {t.created} · Expires {t.expiry} · {t.orgs} organisations</p>
                   </div>
                   <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                    <span><i className="ri-user-line mr-1"></i>{t.users}</span>
-                    <span><i className="ri-graduation-cap-line mr-1"></i>{t.learners}</span>
+                    <span><AppIcon className="ri-user-line mr-1"></AppIcon>{t.users}</span>
+                    <span><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{t.learners}</span>
                   </div>
-                  <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedTenant === t.id ? 'text-primary-500' : ''}`}></i>
+                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedTenant === t.id ? 'text-primary-500' : ''}`}></AppIcon>
                 </div>
               );
             })}
@@ -170,7 +170,7 @@ export default function AdminTenantsPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-building-4-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-building-4-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select a tenant to view details</p>
               </div>

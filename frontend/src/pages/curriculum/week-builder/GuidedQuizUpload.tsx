@@ -718,7 +718,7 @@ function RailItem({ pin }: { pin: Pin }) {
       <div className="min-w-0">
         <p className="font-mono text-[12px] font-semibold text-foreground-900">{pin.title}</p>
         <p className={`mt-0.5 text-xs leading-snug ${pin.warn ? 'text-amber-600' : 'text-foreground-500'}`}>
-          {pin.warn && <i className="ri-alert-line mr-1" />}
+          {pin.warn && <AppIcon className="ri-alert-line mr-1" />}
           {pin.detail}
         </p>
       </div>
@@ -914,7 +914,7 @@ function ScormSpecimen() {
           >
             <span style={{ width: node.depth * 18 }} className="shrink-0" />
             {node.depth > 0 && <span className="mr-1 text-slate-600">{index === SCORM_NODES.length - 1 ? '└' : '├'}</span>}
-            <i className={`${node.icon} mr-1.5`} style={{ color: node.depth === 0 ? accent : undefined }} />
+            <AppIcon className={`${node.icon} mr-1.5`} style={{ color: node.depth === 0 ? accent : undefined }} />
             <span className={node.required ? 'text-slate-100' : 'text-slate-300'}>{node.label}</span>
             {node.required && (
               <span className="ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: accent }}>
@@ -951,7 +951,7 @@ function FormatCard({ meta, selected, onSelect }: { meta: FormatMeta; selected: 
           className="flex h-11 w-11 items-center justify-center rounded-xl text-xl text-white"
           style={{ backgroundColor: accent }}
         >
-          <i className={meta.icon} />
+          <AppIcon className={meta.icon} />
         </span>
         <div>
           <p className="font-heading text-base font-bold text-foreground-900">{meta.label}</p>
@@ -959,7 +959,7 @@ function FormatCard({ meta, selected, onSelect }: { meta: FormatMeta; selected: 
         </div>
         {selected && (
           <span className="ml-auto text-xl" style={{ color: accent }}>
-            <i className="ri-checkbox-circle-fill" />
+            <AppIcon className="ri-checkbox-circle-fill" />
           </span>
         )}
       </div>
@@ -1130,7 +1130,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
               className="flex h-9 w-9 items-center justify-center rounded-xl text-white transition-colors"
               style={{ backgroundColor: accent }}
             >
-              <i className="ri-upload-cloud-2-line" />
+              <AppIcon className="ri-upload-cloud-2-line" />
             </span>
             <div>
               <h3 className="font-heading text-base font-bold text-foreground-900">Upload a quiz</h3>
@@ -1142,7 +1142,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
             onClick={() => !saving && onClose()}
             className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"
           >
-            <i className="ri-close-line text-lg" />
+            <AppIcon className="ri-close-line text-lg" />
           </button>
         </div>
 
@@ -1158,7 +1158,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
                     }`}
                     style={state !== 'todo' ? { backgroundColor: accent } : undefined}
                   >
-                    {state === 'done' ? <i className="ri-check-line" /> : item.n}
+                    {state === 'done' ? <AppIcon className="ri-check-line" /> : item.n}
                   </span>
                   <span className={`text-xs font-semibold ${state === 'active' ? 'text-foreground-900' : 'text-foreground-500'}`}>
                     {item.label}
@@ -1218,7 +1218,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
                         onClick={downloadTemplate}
                         className="inline-flex items-center gap-1 rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5 text-xs font-semibold text-foreground-700 hover:bg-background-100"
                       >
-                        <i className="ri-download-2-line" /> Template
+                        <AppIcon className="ri-download-2-line" /> Template
                       </button>
                     )}
                   </div>
@@ -1258,7 +1258,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
                       <ul className="space-y-1.5">
                         {rules.map(rule => (
                           <li key={rule} className="flex gap-2 text-xs text-foreground-600">
-                            <i className="ri-checkbox-circle-line mt-0.5 shrink-0" style={{ color: accent }} />
+                            <AppIcon className="ri-checkbox-circle-line mt-0.5 shrink-0" style={{ color: accent }} />
                             <span>{rule}</span>
                           </li>
                         ))}
@@ -1294,7 +1294,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
                         backgroundColor: dragActive ? `${accent}12` : undefined,
                       }}
                     >
-                      <i className="ri-upload-cloud-2-line mb-2 text-3xl" style={{ color: accent }} />
+                      <AppIcon className="ri-upload-cloud-2-line mb-2 text-3xl" style={{ color: accent }} />
                       <p className="text-sm font-semibold text-foreground-800">
                         Drop your {selectedMeta.extLabel} file here, or <span style={{ color: accent }}>browse</span>
                       </p>
@@ -1320,7 +1320,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
               {file && validation && (
                 <div className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3">
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg text-white" style={{ backgroundColor: accent }}>
-                    <i className={selectedMeta?.icon} />
+                    <AppIcon className={selectedMeta?.icon} />
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-foreground-900">{file.name}</p>
@@ -1354,7 +1354,7 @@ export function GuidedQuizUpload({ open, onClose, onUploaded, scope }: GuidedQui
               <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-foreground-500">Will be added to</p>
                 <p className="mt-1 text-sm text-foreground-800">
-                  <i className="ri-price-tag-3-line mr-1" style={{ color: accent }} />
+                  <AppIcon className="ri-price-tag-3-line mr-1" style={{ color: accent }} />
                   <strong>{scope.programmeName || 'This programme'}</strong>
                   {scope.moduleName ? <> · {scope.moduleName}</> : ''}
                 </p>
@@ -1444,7 +1444,7 @@ function ValidationPanel({
         {validating ? (
           <span className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-foreground-300 border-t-foreground-600" />
         ) : (
-          <i className={`${tone.icon} mt-0.5 text-xl ${tone.text}`} />
+          <AppIcon className={`${tone.icon} mt-0.5 text-xl ${tone.text}`} />
         )}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

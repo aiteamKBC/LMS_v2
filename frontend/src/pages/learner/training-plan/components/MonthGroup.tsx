@@ -79,12 +79,12 @@ export default function MonthGroup({
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
           allCompleted ? 'bg-emerald-100' : isCurrentMonth ? 'bg-primary-100' : hasOverdue ? 'bg-red-100' : 'bg-background-100'
         }`}>
-          <i className={`${
+          <AppIcon className={`${
             allCompleted ? 'ri-checkbox-circle-fill text-emerald-600' :
             isCurrentMonth ? 'ri-calendar-line text-primary-600' :
             hasOverdue ? 'ri-error-warning-fill text-red-500' :
             'ri-calendar-line text-foreground-400'
-          } text-lg`}></i>
+          } text-lg`}></AppIcon>
         </div>
 
         {/* Month label */}
@@ -119,7 +119,7 @@ export default function MonthGroup({
 
         {/* Toggle */}
         <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100 shrink-0">
-          <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
         </div>
       </button>
 
@@ -207,7 +207,7 @@ function WeekSection({
       >
         {/* Week number badge */}
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${allDone ? 'bg-emerald-100 text-emerald-700' : hasOverdue ? 'bg-red-100 text-red-700' : accent.badge}`}>
-          {allDone ? <i className="ri-check-line text-sm"></i> : week.weekNumber}
+          {allDone ? <AppIcon className="ri-check-line text-sm"></AppIcon> : week.weekNumber}
         </span>
 
         {/* Week label + dates */}
@@ -234,7 +234,7 @@ function WeekSection({
           )}
           {/* Toggle arrow */}
           <div className="w-6 h-6 flex items-center justify-center rounded-md bg-foreground-100/60 shrink-0">
-            <i className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
           </div>
         </div>
       </button>
@@ -319,7 +319,7 @@ function ActivityCard({ activity, onClick, isSpecial = false }: { activity: Trai
     >
       {/* Type icon */}
       <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${typeMeta.bg}`}>
-        <i className={`${activity.typeIcon || typeMeta.icon} text-sm ${typeMeta.color}`}></i>
+        <AppIcon className={`${activity.typeIcon || typeMeta.icon} text-sm ${typeMeta.color}`}></AppIcon>
       </div>
 
       {/* Content */}
@@ -350,7 +350,7 @@ function ActivityCard({ activity, onClick, isSpecial = false }: { activity: Trai
               {/* Done badge */}
               {isCompleted && !isSpecial && (
                 <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                  <i className="ri-check-line"></i> Done
+                  <AppIcon className="ri-check-line"></AppIcon> Done
                 </span>
               )}
             </div>
@@ -375,18 +375,18 @@ function ActivityCard({ activity, onClick, isSpecial = false }: { activity: Trai
 
         {/* Meta row */}
         <div className="flex items-center gap-x-3 gap-y-1 text-xs text-foreground-400 mt-1 flex-wrap">
-          <span className="flex items-center gap-1"><i className="ri-timer-line"></i> {activity.duration}</span>
+          <span className="flex items-center gap-1"><AppIcon className="ri-timer-line"></AppIcon> {activity.duration}</span>
           {activity.plannedOTJH > 0 && (
-            <span className="flex items-center gap-1"><i className="ri-time-line"></i> {activity.plannedOTJH}h OTJH</span>
+            <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {activity.plannedOTJH}h OTJH</span>
           )}
           {activity.actualOTJH > 0 && activity.status === 'Completed' && (
             <span className="flex items-center gap-1 text-emerald-600">
-              <i className="ri-check-line"></i> {activity.actualOTJH}h logged
+              <AppIcon className="ri-check-line"></AppIcon> {activity.actualOTJH}h logged
             </span>
           )}
-          <span className="flex items-center gap-1"><i className="ri-calendar-line"></i> {activity.dueDate}</span>
+          <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line"></AppIcon> {activity.dueDate}</span>
           {activity.points > 0 && (
-            <span className="flex items-center gap-1 text-amber-600"><i className="ri-coin-line"></i> {activity.points} pts</span>
+            <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line"></AppIcon> {activity.points} pts</span>
           )}
           {activity.ksbs && activity.ksbs.length > 0 && (
             <div className="flex gap-1">
@@ -400,18 +400,18 @@ function ActivityCard({ activity, onClick, isSpecial = false }: { activity: Trai
           )}
           {isOverdue && (
             <span className="text-xs text-red-500 font-medium flex items-center gap-1">
-              <i className="ri-error-warning-line"></i>Overdue
+              <AppIcon className="ri-error-warning-line"></AppIcon>Overdue
             </span>
           )}
           {isReferred && (
             <span className="text-xs text-red-500 font-medium flex items-center gap-1">
-              <i className="ri-arrow-go-back-line"></i>Referred
+              <AppIcon className="ri-arrow-go-back-line"></AppIcon>Referred
             </span>
           )}
         </div>
       </div>
 
-      <i className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-400 text-lg shrink-0 transition-colors mt-1.5"></i>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-400 text-lg shrink-0 transition-colors mt-1.5"></AppIcon>
     </button>
   );
 }

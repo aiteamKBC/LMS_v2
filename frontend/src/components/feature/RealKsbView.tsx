@@ -175,11 +175,11 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
           <div className="relative flex min-h-[94px] flex-col justify-between gap-6 sm:flex-row sm:items-center">
             <div className="flex min-w-0 items-center gap-4">
               <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white shadow-inner backdrop-blur">
-                <i className="ri-bar-chart-2-line text-2xl" />
+                <AppIcon className="ri-bar-chart-2-line text-2xl" />
               </span>
               <div className="min-w-0">
                 <span className="mb-1.5 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-semibold uppercase tracking-wider text-white/75">
-                  <i className="ri-checkbox-circle-line" />KSB completion
+                  <AppIcon className="ri-checkbox-circle-line" />KSB completion
                 </span>
                 <h1 className="text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">KSB Progress</h1>
                 <p className="mt-1 text-sm !text-white/65">Track the KSBs evidenced by completed activities in your training plan</p>
@@ -247,7 +247,7 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
               <div key={g.type} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2.5">
-                    <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${g.tint}`}><i className={`${g.icon} text-base`} /></span>
+                    <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${g.tint}`}><AppIcon className={`${g.icon} text-base`} /></span>
                     <div>
                       <p className="text-sm font-heading font-bold text-foreground-900">{g.label}</p>
                       <p className="text-[11px] text-foreground-400">
@@ -302,7 +302,7 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
                   ? 'bg-primary-50 text-primary-700'
                   : 'bg-background-100 text-foreground-400'
               }`}>
-                <i className="ri-scales-3-line text-[9px]" />
+                <AppIcon className="ri-scales-3-line text-[9px]" />
                 {w(ksb.earnedWeight)} / {w(ksb.availableWeight)} weight
               </span>
             </div>
@@ -310,7 +310,7 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
           </div>
           <div className="shrink-0 flex items-center gap-1.5">
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${st.badge}`}>{st.label}</span>
-            {hasContributors && <i className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`} />}
+            {hasContributors && <AppIcon className={`ri-arrow-down-s-line text-foreground-400 text-sm transition-transform ${open ? 'rotate-180' : ''}`} />}
           </div>
         </div>
 
@@ -327,7 +327,7 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
           {/* Criteria — what it takes to finish this KSB */}
           <div className={`rounded-lg border p-2.5 ${ksb.status === 'complete' ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-200 bg-amber-50/60'}`}>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-500 mb-1 flex items-center gap-1">
-              <i className={ksb.status === 'complete' ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-flag-line text-amber-600'} />
+              <AppIcon className={ksb.status === 'complete' ? 'ri-checkbox-circle-line text-emerald-600' : 'ri-flag-line text-amber-600'} />
               {ksb.status === 'complete' ? 'Achieved' : 'To achieve this KSB'}
             </p>
             <p className="text-[11px] text-foreground-700 leading-relaxed">
@@ -353,7 +353,7 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
                 const meta = componentTypeMeta(c.title);
                 return (
                   <li key={`${c.componentId}-${i}`} className="flex items-start gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5">
-                    <i className={`${c.done ? 'ri-checkbox-circle-fill text-emerald-600' : 'ri-checkbox-blank-circle-line text-foreground-300'} text-sm shrink-0 mt-0.5`} />
+                    <AppIcon className={`${c.done ? 'ri-checkbox-circle-fill text-emerald-600' : 'ri-checkbox-blank-circle-line text-foreground-300'} text-sm shrink-0 mt-0.5`} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-[11px] font-semibold text-foreground-800 leading-snug truncate">
                         {meta.detail || meta.label}
@@ -388,7 +388,7 @@ function StatCard({ icon, tint, label, value, total, barClass, hint }: {
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2 mb-2">
-        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${tint}`}><i className={`${icon} text-sm`} /></span>
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${tint}`}><AppIcon className={`${icon} text-sm`} /></span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900 tabular-nums leading-tight">{value}<span className="text-sm text-foreground-400">/{total}</span></p>

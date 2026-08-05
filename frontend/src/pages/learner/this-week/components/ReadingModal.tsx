@@ -385,7 +385,7 @@ export function ReadingModal({
           <div className={`shrink-0 flex items-center justify-between px-4 md:px-6 py-3 border-b ${dm.border}`}>
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-                <i className="ri-book-open-line text-primary-600 text-sm"></i>
+                <AppIcon className="ri-book-open-line text-primary-600 text-sm"></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className={`text-sm font-semibold truncate ${dm.headingText}`}>{title}</p>
@@ -397,36 +397,36 @@ export function ReadingModal({
               <button onClick={() => setShowNav(!showNav)}
                 className={`w-8 h-8 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${showNav ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}
                 title="Table of Contents">
-                <i className="ri-menu-2-line text-sm"></i>
+                <AppIcon className="ri-menu-2-line text-sm"></AppIcon>
               </button>
 
               <button onClick={() => setShowTools(!showTools)}
                 className={`w-8 h-8 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${showTools ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}
                 title="Reading tools">
-                <i className="ri-settings-3-line text-sm"></i>
+                <AppIcon className="ri-settings-3-line text-sm"></AppIcon>
               </button>
 
               <button onClick={() => { setShowNotes(!showNotes); setShowHighlights(false); }}
                 className={`w-8 h-8 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${showNotes ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}
                 title="Notes">
-                <i className="ri-sticky-note-line text-sm"></i>
+                <AppIcon className="ri-sticky-note-line text-sm"></AppIcon>
               </button>
 
               <button onClick={() => { setShowHighlights(!showHighlights); setShowNotes(false); }}
                 className={`w-8 h-8 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${showHighlights ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}
                 title="Highlights">
-                <i className="ri-mark-pen-line text-sm"></i>
+                <AppIcon className="ri-mark-pen-line text-sm"></AppIcon>
               </button>
 
               <button onClick={toggleReadAloud}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-smooth cursor-pointer ${readAloud ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}
                 title={readAloud ? 'Stop reading' : 'Listen'}>
-                <i className={`${readAloud ? 'ri-stop-line' : 'ri-volume-up-line'} text-sm`}></i>
+                <AppIcon className={`${readAloud ? 'ri-stop-line' : 'ri-volume-up-line'} text-sm`}></AppIcon>
                 <span className="hidden sm:inline">{readAloud ? 'Stop' : 'Listen'}</span>
               </button>
 
               <button onClick={() => { onSaveProgress(); }} className={`w-8 h-8 rounded-lg flex items-center justify-center ${dm.mutedText} ${dm.toolHover} transition-smooth cursor-pointer`} title="Save & Close">
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
           </div>
@@ -476,18 +476,18 @@ export function ReadingModal({
                   <div className={`flex items-center rounded-lg border ${dm.border} overflow-hidden`}>
                     <button onClick={() => setTextAlign('left')}
                       className={`px-2 py-1 text-xs font-medium transition-smooth cursor-pointer ${textAlign === 'left' ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}>
-                      <i className="ri-align-left"></i>
+                      <AppIcon className="ri-align-left"></AppIcon>
                     </button>
                     <button onClick={() => setTextAlign('justify')}
                       className={`px-2 py-1 text-xs font-medium transition-smooth cursor-pointer border-l ${dm.border} ${textAlign === 'justify' ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}>
-                      <i className="ri-align-justify"></i>
+                      <AppIcon className="ri-align-justify"></AppIcon>
                     </button>
                   </div>
                 </div>
 
                 <button onClick={() => setHighContrast(!highContrast)}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-smooth cursor-pointer ${highContrast ? dm.toolBtnActive : `${dm.mutedText} ${dm.toolHover}`}`}>
-                  <i className="ri-contrast-2-line"></i>
+                  <AppIcon className="ri-contrast-2-line"></AppIcon>
                   <span className="hidden sm:inline">High Contrast</span>
                 </button>
 
@@ -525,7 +525,7 @@ export function ReadingModal({
                           className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition-smooth cursor-pointer ${isActive ? 'bg-primary-100 text-primary-700 font-medium' : isPast ? `${dm.mutedText} ${dm.toolHover}` : `${dm.subtleText} ${dm.toolHover} hover:${dm.mutedText}`}`}>
                           <div className="flex items-center gap-2">
                             <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold shrink-0 ${isActive ? 'bg-primary-500 text-white' : isPast ? 'bg-emerald-100 text-emerald-600' : 'bg-background-200 text-foreground-400'}`}>
-                              {isPast ? <i className="ri-check-line text-[10px]"></i> : i + 1}
+                              {isPast ? <AppIcon className="ri-check-line text-[10px]"></AppIcon> : i + 1}
                             </span>
                             <span className="truncate">{section.heading}</span>
                           </div>
@@ -565,9 +565,9 @@ export function ReadingModal({
                   </div>
                   <h1 className={`${headingSize} font-heading font-bold mb-3 leading-tight ${dm.headingText}`}>{readingData.title}</h1>
                   <div className={`flex items-center gap-3 text-sm ${dm.mutedText}`}>
-                    <span className="flex items-center gap-1"><i className="ri-user-line text-xs"></i>{readingData.author}</span>
+                    <span className="flex items-center gap-1"><AppIcon className="ri-user-line text-xs"></AppIcon>{readingData.author}</span>
                     <span className="w-1 h-1 rounded-full bg-foreground-300"></span>
-                    <span className="flex items-center gap-1"><i className="ri-time-line text-xs"></i>{readingData.estimatedRead}</span>
+                    <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-xs"></AppIcon>{readingData.estimatedRead}</span>
                   </div>
                 </div>
 
@@ -591,7 +591,7 @@ export function ReadingModal({
                             <button onClick={() => { setActiveNoteSection(i); setShowNotes(true); }}
                               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${sectionNote ? 'text-amber-500' : dm.mutedText} ${dm.toolHover}`}
                               title={sectionNote ? 'Edit note' : 'Add note'}>
-                              <i className={`${sectionNote ? 'ri-sticky-note-fill' : 'ri-sticky-note-line'} text-sm`}></i>
+                              <AppIcon className={`${sectionNote ? 'ri-sticky-note-fill' : 'ri-sticky-note-line'} text-sm`}></AppIcon>
                             </button>
                           </div>
                         </div>
@@ -618,7 +618,7 @@ export function ReadingModal({
                 {/* Key Takeaways */}
                 <div className={`mt-12 md:mt-16 rounded-xl border p-6 md:p-8 ${dm.cardBg}`}>
                   <h2 className={`${headingSize} font-heading font-semibold mb-5 flex items-center gap-2 ${dm.headingText}`}>
-                    <i className="ri-lightbulb-line text-primary-500"></i>Key Takeaways
+                    <AppIcon className="ri-lightbulb-line text-primary-500"></AppIcon>Key Takeaways
                   </h2>
                   <ul className="space-y-4">
                     {readingData.keyTakeaways.map((t, i) => (
@@ -633,7 +633,7 @@ export function ReadingModal({
                 {/* Learning Outcomes */}
                 <div className={`mt-8 rounded-xl border p-6 ${dm.cardBg}`}>
                   <h2 className={`${headingSize} font-heading font-semibold mb-4 flex items-center gap-2 ${dm.headingText}`}>
-                    <i className="ri-graduation-cap-line text-accent-500"></i>Learning Outcomes
+                    <AppIcon className="ri-graduation-cap-line text-accent-500"></AppIcon>Learning Outcomes
                   </h2>
                   <ul className="space-y-3">
                     {readingData.learningOutcomes.map((lo, i) => (
@@ -649,7 +649,7 @@ export function ReadingModal({
                 {articleComplete && (
                   <div className={`mt-10 p-5 rounded-xl flex items-start gap-3 ${dm.completeBg}`}>
                     <span className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-                      <i className="ri-check-double-line text-emerald-600 text-lg"></i>
+                      <AppIcon className="ri-check-double-line text-emerald-600 text-lg"></AppIcon>
                     </span>
                     <div>
                       <p className={`text-sm font-semibold ${dm.completeTitle}`}>Reading Complete</p>
@@ -669,7 +669,7 @@ export function ReadingModal({
                   <p className={`text-xs font-semibold uppercase tracking-wider ${dm.mutedText}`}>Notes</p>
                   <button onClick={() => setShowNotes(false)}
                     className={`w-6 h-6 rounded flex items-center justify-center ${dm.mutedText} ${dm.toolHover} cursor-pointer`}>
-                    <i className="ri-close-line text-sm"></i>
+                    <AppIcon className="ri-close-line text-sm"></AppIcon>
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -699,7 +699,7 @@ export function ReadingModal({
 
                   {Object.keys(notes).length === 0 && activeNoteSection === null && (
                     <div className="text-center py-8">
-                      <i className={`ri-sticky-note-line text-3xl mb-3 block ${dm.subtleText}`}></i>
+                      <AppIcon className={`ri-sticky-note-line text-3xl mb-3 block ${dm.subtleText}`}></AppIcon>
                       <p className={`text-sm ${dm.mutedText}`}>No notes yet</p>
                       <p className={`text-xs mt-1 ${dm.subtleText}`}>Click the note icon next to any section to add a note, or select a section from the list below.</p>
                     </div>
@@ -735,7 +735,7 @@ export function ReadingModal({
                   <p className={`text-xs font-semibold uppercase tracking-wider ${dm.mutedText}`}>Highlights</p>
                   <button onClick={() => setShowHighlights(false)}
                     className={`w-6 h-6 rounded flex items-center justify-center ${dm.mutedText} ${dm.toolHover} cursor-pointer`}>
-                    <i className="ri-close-line text-sm"></i>
+                    <AppIcon className="ri-close-line text-sm"></AppIcon>
                   </button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4">
@@ -755,7 +755,7 @@ export function ReadingModal({
 
                   {highlights.length === 0 && (
                     <div className="text-center py-8">
-                      <i className={`ri-mark-pen-line text-3xl mb-3 block ${dm.subtleText}`}></i>
+                      <AppIcon className={`ri-mark-pen-line text-3xl mb-3 block ${dm.subtleText}`}></AppIcon>
                       <p className={`text-sm ${dm.mutedText}`}>No highlights yet</p>
                       <p className={`text-xs mt-1 ${dm.subtleText}`}>Select text in the article to highlight it.</p>
                     </div>
@@ -780,7 +780,7 @@ export function ReadingModal({
                               </span>
                               <button onClick={() => removeHighlight(hl.id)}
                                 className={`w-5 h-5 rounded flex items-center justify-center ${dm.mutedText} hover:text-red-500 transition-smooth cursor-pointer`}>
-                                <i className="ri-close-line text-xs"></i>
+                                <AppIcon className="ri-close-line text-xs"></AppIcon>
                               </button>
                             </div>
                             <p className={`text-xs leading-relaxed ${dm.bodyText}`}
@@ -863,11 +863,11 @@ export function ReadingModal({
           {/* ═══ BOTTOM BAR ═══ */}
           <div className={`shrink-0 flex items-center justify-between px-4 md:px-6 py-3 border-t ${dm.border}`}>
             <div className={`flex items-center gap-3 text-xs ${dm.mutedText}`}>
-              <span className="flex items-center gap-1"><i className="ri-time-line"></i>{duration}</span>
-              <span className="flex items-center gap-1"><i className="ri-hourglass-line"></i>{plannedOTJH}h OTJH</span>
-              <span className="flex items-center gap-1 text-amber-500"><i className="ri-coin-line"></i>{points} pts</span>
+              <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon>{duration}</span>
+              <span className="flex items-center gap-1"><AppIcon className="ri-hourglass-line"></AppIcon>{plannedOTJH}h OTJH</span>
+              <span className="flex items-center gap-1 text-amber-500"><AppIcon className="ri-coin-line"></AppIcon>{points} pts</span>
               {articleComplete && (
-                <span className="flex items-center gap-1 text-emerald-500"><i className="ri-check-line"></i>Fully Read</span>
+                <span className="flex items-center gap-1 text-emerald-500"><AppIcon className="ri-check-line"></AppIcon>Fully Read</span>
               )}
             </div>
             <div className="flex items-center gap-2">
@@ -880,7 +880,7 @@ export function ReadingModal({
                 className={`px-5 py-2 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 ${
                   articleComplete ? 'bg-primary-500 text-white hover:bg-primary-600' : 'bg-background-100 text-foreground-300 cursor-not-allowed'
                 }`}>
-                <i className="ri-check-line"></i>Mark as Complete
+                <AppIcon className="ri-check-line"></AppIcon>Mark as Complete
               </button>
             </div>
           </div>

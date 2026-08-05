@@ -101,7 +101,7 @@ export default function PlatformReportPage() {
           <div className="relative z-10 p-5 sm:p-8 flex flex-col min-h-[200px] md:min-h-[220px]">
             <div className="flex items-start gap-4 mb-3">
               <div className="w-14 h-14 rounded-2xl bg-accent-500 flex items-center justify-center shrink-0 shadow-lg shadow-accent-500/20">
-                <i className="ri-bar-chart-box-line text-foreground-950 text-2xl"></i>
+                <AppIcon className="ri-bar-chart-box-line text-foreground-950 text-2xl"></AppIcon>
               </div>
               <div className="min-w-0">
                 <h2 className="text-2xl sm:text-3xl font-heading font-bold text-white tracking-tight leading-tight">
@@ -144,7 +144,7 @@ export default function PlatformReportPage() {
           <div className="px-4 md:px-5 py-3 border-b border-background-100 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
-                <i className="ri-heart-pulse-line text-emerald-600 text-sm"></i>
+                <AppIcon className="ri-heart-pulse-line text-emerald-600 text-sm"></AppIcon>
               </div>
               <div>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Tenant Health Score</h3>
@@ -213,7 +213,7 @@ export default function PlatformReportPage() {
                     {tenant.status === 'excellent' ? 'Excellent' : tenant.status === 'fair' ? 'Fair' : 'At Risk'}
                   </span>
                   <a href="/admin/tenants" className="text-[10px] text-foreground-400 hover:text-foreground-600 cursor-pointer">
-                    Details <i className="ri-arrow-right-line text-[9px]"></i>
+                    Details <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon>
                   </a>
                 </div>
               </div>
@@ -287,7 +287,7 @@ export default function PlatformReportPage() {
               {featureAdoption.map(f => (
                 <div key={f.name} className="flex items-center gap-3">
                   <span className="w-7 h-7 rounded-lg bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className={`${f.icon} text-secondary-600 text-[11px]`}></i>
+                    <AppIcon className={`${f.icon} text-secondary-600 text-[11px]`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
@@ -299,7 +299,7 @@ export default function PlatformReportPage() {
                     </div>
                   </div>
                   <span className="text-[9px]">
-                    {f.trend === 'up' ? <i className="ri-arrow-up-line text-emerald-500"></i> : f.trend === 'down' ? <i className="ri-arrow-down-line text-red-500"></i> : <i className="ri-subtract-line text-foreground-300"></i>}
+                    {f.trend === 'up' ? <AppIcon className="ri-arrow-up-line text-emerald-500"></AppIcon> : f.trend === 'down' ? <AppIcon className="ri-arrow-down-line text-red-500"></AppIcon> : <AppIcon className="ri-subtract-line text-foreground-300"></AppIcon>}
                   </span>
                 </div>
               ))}
@@ -419,10 +419,10 @@ export default function PlatformReportPage() {
         {/* ================================================================ */}
         <div className="flex items-center gap-3 pt-1">
           <button className="px-4 py-2 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-download-line mr-1.5"></i> Export Full Report
+            <AppIcon className="ri-download-line mr-1.5"></AppIcon> Export Full Report
           </button>
           <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-file-pdf-line mr-1.5"></i> Download as PDF
+            <AppIcon className="ri-file-pdf-line mr-1.5"></AppIcon> Download as PDF
           </button>
         </div>
       </div>
@@ -434,7 +434,7 @@ function HeroKpi({ icon, label, value, sub }: { icon: string; label: string; val
   return (
     <div className="flex items-center gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-xl bg-black/25 backdrop-blur-md border border-white/10">
       <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-        <i className={`${icon} text-accent-400 text-sm`}></i>
+        <AppIcon className={`${icon} text-accent-400 text-sm`}></AppIcon>
       </div>
       <div>
         <p className="text-lg md:text-xl font-heading font-bold text-white leading-none">{value}</p>
@@ -450,7 +450,7 @@ function QuickStat({ label, value, icon, color }: { label: string; value: string
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${bgMap[color]} mb-2`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <p className="text-lg md:text-xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[10px] text-foreground-400 mt-1">{label}</p>

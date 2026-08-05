@@ -53,7 +53,7 @@ export default function ReportsPage() {
             <div key={cat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-5">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center">
-                  <i className={`${cat.icon} text-sm`}></i>
+                  <AppIcon className={`${cat.icon} text-sm`}></AppIcon>
                 </span>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">{cat.label}</h3>
               </div>
@@ -61,7 +61,7 @@ export default function ReportsPage() {
                 {cat.items.map(item => (
                   <a key={item} href="#" className="flex items-center justify-between p-2.5 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer group">
                     <span className="text-[12px] text-foreground-600 group-hover:text-primary-700">{item}</span>
-                    <i className="ri-download-line text-foreground-300 group-hover:text-primary-500 text-sm"></i>
+                    <AppIcon className="ri-download-line text-foreground-300 group-hover:text-primary-500 text-sm"></AppIcon>
                   </a>
                 ))}
               </div>
@@ -71,7 +71,7 @@ export default function ReportsPage() {
 
         <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
           <div className="flex items-center gap-3 mb-3">
-            <i className="ri-information-line text-foreground-400"></i>
+            <AppIcon className="ri-information-line text-foreground-400"></AppIcon>
             <p className="text-[12px] text-foreground-500">Reports are generated daily at 06:00 GMT. All reports can be exported as PDF, CSV or Excel. Contact the MIS team for custom report requests.</p>
           </div>
         </div>

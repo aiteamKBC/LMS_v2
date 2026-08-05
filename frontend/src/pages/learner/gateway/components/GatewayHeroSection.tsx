@@ -13,7 +13,7 @@ export function GatewayHeroSection() {
         </div>
         <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
-            <i className="ri-flag-line text-white text-2xl"></i>
+            <AppIcon className="ri-flag-line text-white text-2xl"></AppIcon>
           </span>
           <div className="flex-1">
             <h2 className="text-lg font-heading font-bold text-white mb-1">Gateway Readiness Dashboard</h2>
@@ -59,7 +59,7 @@ export function GatewayHeroSection() {
       <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
         <div className="flex items-start gap-3 mb-4">
           <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-            <i className="ri-alert-line text-red-600"></i>
+            <AppIcon className="ri-alert-line text-red-600"></AppIcon>
           </span>
           <div>
             <h3 className="text-sm font-heading font-semibold text-foreground-900">What&apos;s Preventing Gateway Approval?</h3>
@@ -71,7 +71,7 @@ export function GatewayHeroSection() {
             <div key={blocker.id} className="bg-background-100/50 rounded-lg p-3.5 border border-background-200/30">
               <div className="flex items-center gap-2 mb-2">
                 <span className="w-7 h-7 rounded-md bg-background-100 flex items-center justify-center">
-                  <i className={`${blocker.icon} text-foreground-500 text-xs`}></i>
+                  <AppIcon className={`${blocker.icon} text-foreground-500 text-xs`}></AppIcon>
                 </span>
                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
                   blocker.severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
@@ -86,7 +86,7 @@ export function GatewayHeroSection() {
         </div>
         {/* Countdown */}
         <div className="mt-4 flex items-center gap-3 bg-primary-50 rounded-lg p-3 border border-primary-200/50">
-          <i className="ri-hourglass-line text-primary-500"></i>
+          <AppIcon className="ri-hourglass-line text-primary-500"></AppIcon>
           <div className="flex items-center gap-1.5 text-sm">
             <span className="font-semibold text-primary-900">{GATEWAY_COUNTDOWN.monthsRemaining} Months</span>
             <span className="text-foreground-400">remaining</span>

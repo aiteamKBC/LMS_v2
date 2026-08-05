@@ -9,7 +9,7 @@ export function KSBMappingTable({ ksbCategories, rplPercentage }: KSBMappingProp
   if (ksbCategories.length === 0) {
     return (
       <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 text-center">
-        <i className="ri-file-search-line text-3xl text-foreground-300 mb-3 block"></i>
+        <AppIcon className="ri-file-search-line text-3xl text-foreground-300 mb-3 block"></AppIcon>
         <p className="text-[13px] text-foreground-500 font-medium">KSB mapping not yet started</p>
         <p className="text-[12px] text-foreground-400 mt-1">KSB categories will appear here once evidence collection is complete and mapping begins.</p>
       </section>

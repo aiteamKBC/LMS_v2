@@ -37,7 +37,7 @@ export default function CoachingReadinessScore() {
                 onClick={() => setExpanded(!expanded)}
                 className="text-sm text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer flex items-center gap-1"
               >
-              <i className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+              <AppIcon className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
                 {expanded ? 'Collapse' : 'Expand'}
               </button>
             </div>
@@ -54,9 +54,9 @@ export default function CoachingReadinessScore() {
                       }`}
                     >
                       <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${style.bg}`}>
-                        <i className={`${style.icon} ${style.text} text-xs`} />
+                        <AppIcon className={`${style.icon} ${style.text} text-xs`} />
                       </span>
-                      <i className={`${item.icon} text-foreground-400 shrink-0`} />
+                      <AppIcon className={`${item.icon} text-foreground-400 shrink-0`} />
                       <span className={`text-sm font-medium ${item.status === 'completed' ? 'text-foreground-500' : 'text-foreground-800'}`}>
                         {item.label}
                       </span>
@@ -76,7 +76,7 @@ export default function CoachingReadinessScore() {
             )}
 
             <div className="mt-4 p-3 rounded-lg bg-amber-50/50 border border-amber-200/50 flex items-start gap-3">
-              <i className="ri-alert-line text-amber-600 mt-0.5 shrink-0" />
+              <AppIcon className="ri-alert-line text-amber-600 mt-0.5 shrink-0" />
               <p className="text-sm text-amber-800">{r.message}</p>
             </div>
           </div>

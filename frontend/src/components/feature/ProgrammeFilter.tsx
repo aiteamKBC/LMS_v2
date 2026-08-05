@@ -33,7 +33,7 @@ export function ProgrammeFilter({ value, onChange, counts, className }: Programm
               active ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
             }`}
           >
-            {opt.key === 'all' && <i className="ri-apps-line text-sm"></i>}
+            {opt.key === 'all' && <AppIcon className="ri-apps-line text-sm"></AppIcon>}
             {opt.label}
             {count != null && (
               <span className={`text-[9px] px-1.5 py-0.5 rounded-full leading-none ${active ? 'bg-white/20 text-white' : 'bg-background-200/70 text-foreground-500'}`}>

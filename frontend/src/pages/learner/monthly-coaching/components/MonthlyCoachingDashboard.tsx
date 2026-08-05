@@ -14,7 +14,7 @@ export default function MonthlyCoachingDashboard() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-            <i className="ri-dashboard-line text-accent-700" />
+            <AppIcon className="ri-dashboard-line text-accent-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Monthly Coaching Dashboard</h2>
           <span className="ml-auto text-xs text-foreground-400">Auto-generated summary</span>
@@ -27,7 +27,7 @@ export default function MonthlyCoachingDashboard() {
               <div key={item.label} className="rounded-xl border border-background-200/50 bg-background-100/30 p-4 hover:bg-background-100/60 transition-smooth">
                 <div className="flex items-center gap-2 mb-3">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${s.bg}`}>
-                    <i className={`${item.icon} ${s.text}`} />
+                    <AppIcon className={`${item.icon} ${s.text}`} />
                   </div>
                   <div className={`w-2 h-2 rounded-full ${s.dot}`} />
                 </div>

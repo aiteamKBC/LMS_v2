@@ -15,7 +15,7 @@ export default function OTJHSignOffSection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-            <i className="ri-shield-check-line text-primary-700" />
+            <AppIcon className="ri-shield-check-line text-primary-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Monthly OTJH Sign-Off</h2>
           <span className={`ml-auto text-xs font-semibold px-2.5 py-1 rounded-full ${isReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -72,7 +72,7 @@ export default function OTJHSignOffSection() {
         {/* Warning */}
         {!isReady && (
           <div className="rounded-xl border border-amber-200/50 bg-amber-50/30 p-4 mb-6 flex items-start gap-3">
-            <i className="ri-alert-line text-amber-600 mt-0.5 shrink-0" />
+            <AppIcon className="ri-alert-line text-amber-600 mt-0.5 shrink-0" />
             <p className="text-sm text-amber-800">{o.warning}</p>
           </div>
         )}
@@ -118,7 +118,7 @@ export default function OTJHSignOffSection() {
               : 'bg-background-200 text-foreground-400 cursor-not-allowed'
           }`}
         >
-          <i className={signed ? 'ri-check-double-line' : 'ri-pen-nib-line'} />
+          <AppIcon className={signed ? 'ri-check-double-line' : 'ri-pen-nib-line'} />
           {signed ? 'OTJH Report Signed' : 'Sign OTJH Report'}
         </button>
       </div>

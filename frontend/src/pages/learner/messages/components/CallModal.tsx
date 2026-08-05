@@ -273,7 +273,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               className="w-8 h-8 rounded-lg bg-foreground-800 flex items-center justify-center text-foreground-300 hover:text-foreground-100 hover:bg-foreground-700 transition-smooth cursor-pointer"
               title="End call"
             >
-              <i className="ri-arrow-left-line text-sm"></i>
+              <AppIcon className="ri-arrow-left-line text-sm"></AppIcon>
             </button>
             <div>
               <p className="text-sm font-semibold text-foreground-100">{contactName}</p>
@@ -296,7 +296,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               }`}
               title="Toggle chat"
             >
-              <i className="ri-chat-3-line text-sm"></i>
+              <AppIcon className="ri-chat-3-line text-sm"></AppIcon>
             </button>
           </div>
         </div>
@@ -322,7 +322,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                 className="mt-4 w-14 h-14 rounded-full bg-red-500 flex items-center justify-center text-white hover:bg-red-600 transition-smooth cursor-pointer shadow-lg shadow-red-500/25"
                 title="Cancel call"
               >
-                <i className="ri-phone-fill text-xl rotate-[135deg]"></i>
+                <AppIcon className="ri-phone-fill text-xl rotate-[135deg]"></AppIcon>
               </button>
             </div>
           )}
@@ -332,7 +332,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               {ratingSubmitted ? (
                 <div className="flex flex-col items-center">
                   <div className="w-20 h-20 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4">
-                    <i className="ri-check-line text-4xl text-emerald-400"></i>
+                    <AppIcon className="ri-check-line text-4xl text-emerald-400"></AppIcon>
                   </div>
                   <h3 className="text-xl font-heading font-semibold text-foreground-100">Thank you!</h3>
                   <p className="text-sm text-foreground-400 mt-2">Your feedback helps us improve</p>
@@ -340,7 +340,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               ) : (
                 <>
                   <div className="w-20 h-20 rounded-full bg-foreground-800 flex items-center justify-center">
-                    <i className="ri-phone-fill text-3xl text-foreground-400 rotate-[135deg]"></i>
+                    <AppIcon className="ri-phone-fill text-3xl text-foreground-400 rotate-[135deg]"></AppIcon>
                   </div>
                   <h3 className="text-lg font-heading font-semibold text-foreground-100">Call ended</h3>
                   <p className="text-sm text-foreground-400">{formatDuration(callDuration)} · {contactName}</p>
@@ -356,7 +356,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                           onClick={() => setRating(star)}
                           className="w-12 h-12 flex items-center justify-center transition-smooth cursor-pointer"
                         >
-                          <i className={`${star <= (hoverRating || rating) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-500'} text-2xl`}></i>
+                          <AppIcon className={`${star <= (hoverRating || rating) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-500'} text-2xl`}></AppIcon>
                         </button>
                       ))}
                     </div>
@@ -408,7 +408,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                   )}
                   <div className="absolute top-4 left-4 bg-foreground-900/80 backdrop-blur-sm rounded-lg px-3 py-1.5 border border-foreground-700/50">
                     <p className="text-xs text-foreground-200 font-medium flex items-center gap-1.5">
-                      <i className="ri-computer-line text-emerald-400"></i>
+                      <AppIcon className="ri-computer-line text-emerald-400"></AppIcon>
                       Sharing your screen
                     </p>
                   </div>
@@ -428,11 +428,11 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                           <p className="text-sm text-foreground-300">{contactName}</p>
                         </div>
                         <div className="text-foreground-600">
-                          <i className="ri-link text-2xl"></i>
+                          <AppIcon className="ri-link text-2xl"></AppIcon>
                         </div>
                         <div className="flex flex-col items-center gap-3">
                           <div className="w-24 h-24 rounded-full bg-foreground-800 flex items-center justify-center ring-4 ring-foreground-700">
-                            <i className="ri-user-line text-3xl text-foreground-500"></i>
+                            <AppIcon className="ri-user-line text-3xl text-foreground-500"></AppIcon>
                           </div>
                           <p className="text-sm text-foreground-400">You</p>
                         </div>
@@ -463,7 +463,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                             <div className="w-full h-full flex items-center justify-center bg-foreground-800">
                               <div className="flex flex-col items-center gap-1.5">
                                 <div className="w-12 h-12 rounded-full bg-foreground-700 flex items-center justify-center">
-                                  <i className="ri-user-line text-xl text-foreground-400"></i>
+                                  <AppIcon className="ri-user-line text-xl text-foreground-400"></AppIcon>
                                 </div>
                                 <p className="text-[10px] text-foreground-400 font-medium">Camera off</p>
                               </div>
@@ -485,7 +485,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                       {contactInitials}
                     </div>
                     <div className="absolute -bottom-2 -right-2 w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center ring-4 ring-foreground-950">
-                      <i className="ri-mic-line text-white text-sm"></i>
+                      <AppIcon className="ri-mic-line text-white text-sm"></AppIcon>
                     </div>
                   </div>
                   <div className="text-center">
@@ -523,7 +523,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               }`}
               title={muted ? 'Unmute' : 'Mute'}
             >
-              <i className={`${muted ? 'ri-mic-off-line' : 'ri-mic-line'} text-lg`}></i>
+              <AppIcon className={`${muted ? 'ri-mic-off-line' : 'ri-mic-line'} text-lg`}></AppIcon>
             </button>
 
             {/* Camera (video only) */}
@@ -535,7 +535,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                 }`}
                 title={cameraOff ? 'Turn camera on' : 'Turn camera off'}
               >
-                <i className={`${cameraOff ? 'ri-video-off-line' : 'ri-video-line'} text-lg`}></i>
+                <AppIcon className={`${cameraOff ? 'ri-video-off-line' : 'ri-video-line'} text-lg`}></AppIcon>
               </button>
             )}
 
@@ -547,7 +547,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               }`}
               title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
             >
-              <i className={`${isScreenSharing ? 'ri-stop-circle-line' : 'ri-computer-line'} text-lg`}></i>
+              <AppIcon className={`${isScreenSharing ? 'ri-stop-circle-line' : 'ri-computer-line'} text-lg`}></AppIcon>
             </button>
 
             {/* Chat toggle */}
@@ -558,7 +558,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               }`}
               title="Chat"
             >
-              <i className="ri-chat-3-line text-lg"></i>
+              <AppIcon className="ri-chat-3-line text-lg"></AppIcon>
             </button>
 
             {/* Speaker toggle */}
@@ -569,7 +569,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               }`}
               title={speakerOn ? 'Speaker on' : 'Speaker off'}
             >
-              <i className={`${speakerOn ? 'ri-volume-up-line' : 'ri-volume-mute-line'} text-lg`}></i>
+              <AppIcon className={`${speakerOn ? 'ri-volume-up-line' : 'ri-volume-mute-line'} text-lg`}></AppIcon>
             </button>
 
             {/* End call */}
@@ -578,7 +578,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               className="w-14 h-14 rounded-full bg-red-500 flex items-center justify-center text-white hover:bg-red-600 transition-smooth cursor-pointer shadow-lg shadow-red-500/20 ml-2"
               title="End call"
             >
-              <i className="ri-phone-fill text-xl rotate-[135deg]"></i>
+              <AppIcon className="ri-phone-fill text-xl rotate-[135deg]"></AppIcon>
             </button>
           </div>
         )}
@@ -590,7 +590,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
           {/* Chat header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-foreground-800 shrink-0">
             <div className="flex items-center gap-2">
-              <i className="ri-chat-3-line text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-chat-3-line text-foreground-300 text-sm"></AppIcon>
               <h3 className="text-sm font-semibold text-foreground-100">In-call chat</h3>
               <span className="text-[10px] text-foreground-500 bg-foreground-800 px-1.5 py-0.5 rounded-full">{chatMessages.length}</span>
             </div>
@@ -598,7 +598,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
               onClick={() => setShowChat(false)}
               className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-200 hover:bg-foreground-800 transition-smooth cursor-pointer"
             >
-              <i className="ri-close-line text-sm"></i>
+              <AppIcon className="ri-close-line text-sm"></AppIcon>
             </button>
           </div>
 
@@ -606,7 +606,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
             {chatMessages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-center">
-                <i className="ri-chat-3-line text-2xl text-foreground-700 mb-2"></i>
+                <AppIcon className="ri-chat-3-line text-2xl text-foreground-700 mb-2"></AppIcon>
                 <p className="text-xs text-foreground-500">Messages sent during this call will appear here</p>
               </div>
             )}
@@ -648,7 +648,7 @@ export default function CallModal({ type, contactName, contactInitials, contactC
                     : 'bg-foreground-800 text-foreground-600 cursor-not-allowed'
                 }`}
               >
-                <i className="ri-send-plane-fill text-sm"></i>
+                <AppIcon className="ri-send-plane-fill text-sm"></AppIcon>
               </button>
             </div>
           </div>

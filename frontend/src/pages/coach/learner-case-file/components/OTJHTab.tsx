@@ -39,7 +39,7 @@ export default function OTJHTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-book-2-line text-primary-500"></i> Module OTJH Summary
+              <AppIcon className="ri-book-2-line text-primary-500"></AppIcon> Module OTJH Summary
             </h2>
             <span className="text-[11px] text-foreground-400">{moduleRows.length} module(s)</span>
           </div>
@@ -73,7 +73,7 @@ export default function OTJHTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-calendar-schedule-line text-accent-500"></i> Weekly OTJH Breakdown
+              <AppIcon className="ri-calendar-schedule-line text-accent-500"></AppIcon> Weekly OTJH Breakdown
             </h2>
             <span className="text-[11px] text-foreground-400">
               Logged {formatFraction(data.otjhCompleted, data.otjhTarget)}
@@ -134,7 +134,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>

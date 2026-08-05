@@ -76,7 +76,7 @@ export function ThemedSelect<T extends string = string>({
       >
         <span className="flex min-w-0 items-center justify-between gap-3">
           <span className="truncate">{selected?.label || placeholder}</span>
-          <i className={`ri-arrow-down-s-line text-[#647083] transition-transform ${open ? 'rotate-180' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line text-[#647083] transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
         </span>
       </button>
       {open && !disabled && createPortal(
@@ -101,7 +101,7 @@ export function ThemedSelect<T extends string = string>({
                 className={`flex h-9 w-full items-center justify-between px-3 text-left text-sm transition-smooth ${active ? 'bg-[#f2f0ff] text-[#4c1d95] font-semibold' : 'text-[#1f2937] hover:bg-[#f8fafc]'}`}
               >
                 <span className="truncate">{option.label}</span>
-                {active && <i className="ri-check-line text-[#5b2dbb]"></i>}
+                {active && <AppIcon className="ri-check-line text-[#5b2dbb]"></AppIcon>}
               </button>
             );
           })}

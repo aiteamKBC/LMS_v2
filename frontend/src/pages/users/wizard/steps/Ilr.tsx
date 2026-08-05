@@ -87,7 +87,7 @@ export default function Ilr() {
               addLabel="Add evidence"
             />
             <label className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-              <i className="ri-upload-2-line" />Upload file
+              <AppIcon className="ri-upload-2-line" />Upload file
               <input type="file" multiple className="hidden" onChange={(e) => set({ eligibility: { ...ilr.eligibility, evidenceFiles: [...ilr.eligibility.evidenceFiles, ...Array.from(e.target.files ?? []).map((f) => f.name)] } })} />
             </label>
           </div>
@@ -192,16 +192,16 @@ export default function Ilr() {
             be produced before saving; saving persists to enrolment."Extended_ILR". */}
         <div className="flex flex-wrap items-center gap-3 mb-2">
           <button className={btnPrimary} onClick={() => downloadIlrDocument(ilr, board)}>
-            <i className="ri-file-download-line" />Download ILR document
+            <AppIcon className="ri-file-download-line" />Download ILR document
           </button>
           {/* Plain "Save progress" lives in the wizard footer on every step; this
               one additionally files the PDF into Compliance documents. */}
           <button className={btnSecondary} onClick={saveAndFile} disabled={ilrSaving || ilrFiling}>
-            {ilrFiling ? <><i className="ri-loader-4-line animate-spin" />Filing…</> : <><i className="ri-folder-upload-line" />Save &amp; file document</>}
+            {ilrFiling ? <><AppIcon className="ri-loader-4-line animate-spin" />Filing…</> : <><AppIcon className="ri-folder-upload-line" />Save &amp; file document</>}
           </button>
           {ilrSavedAt && !ilrSaving && !ilrFiling && (
             <span className="text-[12px] text-emerald-600 inline-flex items-center gap-1">
-              <i className="ri-check-line" />Saved
+              <AppIcon className="ri-check-line" />Saved
             </span>
           )}
         </div>
