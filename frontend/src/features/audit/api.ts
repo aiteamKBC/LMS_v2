@@ -34,7 +34,6 @@ export interface AuditActivitySummary {
   plannedHours: number;
   actualHours: number;
   done: boolean;
-  raw?: AuditRow;
 }
 
 export interface AuditActivityStatsBucket {
@@ -120,9 +119,6 @@ export interface AuditWeek {
   source_column?: string;
   source_note?: string;
   source_modules?: string[];
-  date_is_from_week_name?: boolean;
-  warning_codes?: string[];
-  warnings?: AuditWarning[];
 }
 
 export interface AuditMonth {

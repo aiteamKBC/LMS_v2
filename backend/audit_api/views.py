@@ -184,21 +184,6 @@ def _month_label(month_key):
     return parsed.strftime("%B %Y")
 
 
-def _month_key_from_label(value):
-    normalized = _text(value)
-    if not normalized:
-        return None
-    direct = _month_key(normalized)
-    if direct:
-        return direct
-    for fmt in ("%B %Y", "%b %Y"):
-        try:
-            return datetime.datetime.strptime(normalized, fmt).strftime("%Y-%m")
-        except ValueError:
-            continue
-    return None
-
-
 def _today():
     return datetime.date.today()
 
@@ -378,8 +363,9 @@ def _normalize_attendance_item(row, index):
     session_date = _date_iso(row.get("date") or row.get("Date") or row.get("session_date"))
     attendance_value = row.get("Attendance") if "Attendance" in row else row.get("attendance")
     status = _attendance_status(attendance_value)
-    actual_hours = LIVE_SESSION_HOURS if _integer(attendance_value) == 1 else 0
-    planned_hours = LIVE_SESSION_HOURS
+    recorded_activity_hours = _number(_value_from_keys(row, "activity", "Activity", "hours", "Hours"))
+    actual_hours = recorded_activity_hours if recorded_activity_hours is not None else (LIVE_SESSION_HOURS if status == "Present" else 0)
+    planned_hours = recorded_activity_hours if recorded_activity_hours is not None else LIVE_SESSION_HOURS
     source_id = _text(row.get("key") or row.get("Key") or row.get("id") or row.get("ID")) or f"attendance-{index}"
     module = _text(row.get("module") or row.get("Module"))
     warnings = []
@@ -423,8 +409,8 @@ def _value_from_keys(row, *keys):
 
 def _assignment_source_rows(row):
     safe_row = _json_safe(dict(row))
-    assignment_value = _value_from_keys(safe_row, "assignmanets", "Assignmanets", "assignments", "Assignments", "assignment", "evidence")
-    parsed = _parse_json_value(assignment_value, "fetching_evidence.public.assessment_fetch.assignmanets", []) if isinstance(assignment_value, str) else assignment_value
+    assignment_value = _value_from_keys(safe_row, "assignments", "Assignments", "assignment", "evidence")
+    parsed = _parse_json_value(assignment_value, "fetching_attendence.public.assessment_fetch.assignments", []) if isinstance(assignment_value, str) else assignment_value
     if isinstance(parsed, list):
         return [_prepare_assignment_source_row(item) for item in parsed if isinstance(item, dict)]
     if isinstance(parsed, dict):
@@ -443,21 +429,6 @@ def _assignment_blob_url(blob_name):
 def _prepare_assignment_source_row(row):
     safe_row = _json_safe(row)
     evidence = _value_from_keys(safe_row, "evidence", "Evidence")
-    report_blob = _value_from_keys(safe_row, "report_blob", "ReportBlob")
-    if report_blob and not _value_from_keys(safe_row, "assessment_report_blob_url"):
-        safe_row["assessment_report_blob_url"] = _assignment_blob_url(report_blob)
-    report_url = _value_from_keys(safe_row, "assessment_report_url", "AssessmentReportUrl")
-    file_name = _value_from_keys(safe_row, "name of the file", "name_of_the_file", "file_name", "filename", "name")
-    if not isinstance(evidence, list) and (report_blob or report_url or file_name):
-        safe_row["evidence"] = [{
-            "kind": "File",
-            "name": file_name or _text(_value_from_keys(safe_row, "assessment", "title", "component_name")) or "Assignment evidence",
-            "status": _value_from_keys(safe_row, "status", "Status"),
-            "assessment_report_url": report_url,
-            "assessment_report_blob_url": safe_row.get("assessment_report_blob_url"),
-            "submission_date": _value_from_keys(safe_row, "completed_date", "CompletedDate") or _value_from_keys(safe_row, "due_date", "DueDate"),
-        }]
-        evidence = safe_row["evidence"]
     if isinstance(evidence, list):
         prepared_evidence = []
         for entry in evidence:
@@ -550,21 +521,16 @@ def _enrich_assignment_items_with_evidence_details(learner_id, items, details_by
 def _normalize_assignment_item(row, index):
     raw = _value_from_keys(row, "raw") if isinstance(_value_from_keys(row, "raw"), dict) else row
     evidence = _value_from_keys(row, "evidence", "Evidence") or _value_from_keys(raw, "Evidence") or []
-    assignment_value = _value_from_keys(row, "assignmanets", "Assignmanets", "assignments", "Assignments", "assignment", "evidence") or evidence
-    month_key = _month_key_from_label(_value_from_keys(row, "month", "Month") or _value_from_keys(raw, "month", "Month"))
+    assignment_value = _value_from_keys(row, "assignments", "Assignments", "assignment", "evidence") or evidence
     submitted_date = _date_iso(
-        _value_from_keys(row, "completed_date", "CompletedDate")
-        or _value_from_keys(raw, "CompletedDate")
-        or _value_from_keys(raw, "completed_date")
+        _value_from_keys(row, "due_date", "DueDate")
+        or _value_from_keys(raw, "DueDate")
         or _value_from_keys(row, "last_submission_date", "LastSubmissionDate")
         or _value_from_keys(raw, "LastSubmissionDate")
-        or _value_from_keys(row, "due_date", "DueDate")
-        or _value_from_keys(raw, "DueDate")
-        or _value_from_keys(raw, "due_date")
+        or _value_from_keys(row, "completed_date", "CompletedDate")
+        or _value_from_keys(raw, "CompletedDate")
         or _value_from_keys(row, "submitted_at", "submission_date", "date", "created_at", "fetched_at")
     )
-    if not month_key:
-        month_key = _month_key(submitted_date)
     source_id = _text(
         _value_from_keys(row, "component_id", "Id", "id", "assessment_id")
         or _value_from_keys(raw, "Id", "ComponentId")
@@ -573,8 +539,6 @@ def _normalize_assignment_item(row, index):
     title = _text(
         _value_from_keys(row, "component_name", "ComponentName", "assignment_title", "title", "assessment")
         or _value_from_keys(raw, "ComponentName")
-        or _value_from_keys(row, "name of the file", "name_of_the_file", "file_name", "filename", "name")
-        or _value_from_keys(raw, "name of the file", "name_of_the_file", "file_name", "filename", "name")
         or _value_from_keys(row, "programme", "Program")
         or _value_from_keys(raw, "Program")
     ) or "Assignment evidence"
@@ -597,8 +561,7 @@ def _normalize_assignment_item(row, index):
         "start_date": submitted_date,
         "end_date": submitted_date,
         "relevant_date": submitted_date,
-        "assignment_month_key": month_key,
-        "date_source": "fetching_evidence.public.assessment_fetch.assignmanets[].month/completed_date/due_date",
+        "date_source": "fetching_attendence.public.assessment_fetch.assignments[].due_date/completed/submission date",
         "match_status": "Matched" if assignment_value else "Needs Review",
         "match_reason": "Matched from assessment_fetch by learner_id.",
         "matched_source_ids": [],
@@ -735,7 +698,7 @@ def _fetch_assignment_items(learner_id):
                 if not columns:
                     return []
                 learner_column = _first_column(columns, ("learner_id", "Learner_ID", "aptem_id", "ID"))
-                assignment_column = _first_column(columns, ("assignmanets", "Assignmanets", "assignments", "Assignments", "assignment", "evidence"))
+                assignment_column = _first_column(columns, ("assignments", "Assignments", "assignment", "evidence"))
                 if not learner_column or not assignment_column:
                     return []
                 date_column = _first_column(columns, ("submitted_at", "submission_date", "date", "created_at", "fetched_at"))
@@ -766,7 +729,7 @@ def _fetch_assignment_items_for_ids(learner_ids):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     """
-                    select learner_id::text as learner_id, assignmanets
+                    select learner_id::text as learner_id, assignments
                     from fetching_evidence.assessment_fetch
                     where learner_id::text = any(%s)
                     order by learner_id::text, fetched_at nulls last
@@ -794,7 +757,7 @@ def _fetch_assignment_items_for_ids(learner_ids):
                 )
                 columns = {row["column_name"] for row in cur.fetchall()}
                 learner_column = _first_column(columns, ("learner_id", "Learner_ID", "aptem_id", "ID"))
-                assignment_column = _first_column(columns, ("assignmanets", "Assignmanets", "assignments", "Assignments", "assignment", "evidence"))
+                assignment_column = _first_column(columns, ("assignments", "Assignments", "assignment", "evidence"))
                 if not learner_column or not assignment_column:
                     return {}
                 date_column = _first_column(columns, ("submitted_at", "submission_date", "date", "created_at", "fetched_at"))
@@ -917,7 +880,7 @@ def _week_date_from_title(value):
     text = _text(value)
     patterns = (
         r"(\d{4}-\d{1,2}-\d{1,2})",
-        r"(\d{1,2})[\/\\-](\d{1,2})[\/\\-](\d{2,4})",
+        r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})",
     )
     match = re.search(patterns[0], text)
     if match:
@@ -933,62 +896,34 @@ def _week_date_from_title(value):
 def _programme_week_date(month, week):
     return (
         _date_iso(week.get("date"))
-        or _date_iso(week.get("week_date"))
-        or _date_iso(week.get("start_date"))
-        or _week_date_from_title(week.get("week"))
-        or _week_date_from_title(week.get("week_name"))
         or _week_date_from_title(week.get("matchedBy"))
-        or _date_iso(week.get("week_created_at"))
-        or _date_iso(week.get("created_at"))
-        or _programme_week_order_date(month, week)
+        or _week_date_from_title(week.get("week"))
         or _date_iso(month.get("date"))
     )
 
 
-def _programme_week_order_date(month, week):
-    month_date = _date(month.get("date"))
-    if not month_date:
-        return None
-    week_order = _integer(week.get("week_order") or week.get("order") or week.get("weekOrder"))
-    if not week_order or week_order < 1:
-        return None
-    first_day = month_date.replace(day=1)
-    return _date_iso(first_day + datetime.timedelta(days=(week_order - 1) * 7))
-
-
 def _normalize_programme_component(component, week, month, component_index):
     relevant_date = _programme_week_date(month, week)
-    kind = _text(
-        component.get("kind")
-        or component.get("component_kind")
-        or component.get("materialType")
-        or component.get("material_type")
-        or component.get("postType")
-        or component.get("post_type")
-    ) or "LMS component"
-    title = _text(component.get("title")) or _text(week.get("week_name") or week.get("week")) or "LMS activity"
-    completed = bool(component.get("completed") or component.get("passed") or component.get("attempted") or component.get("completed_at"))
+    kind = _text(component.get("kind") or component.get("materialType") or component.get("postType")) or "LMS component"
+    title = _text(component.get("title")) or _text(week.get("week")) or "LMS activity"
+    completed = bool(component.get("completed") or component.get("passed") or component.get("attempted"))
     status = "Completed" if completed else "Not started"
-    source_id = _text(component.get("componentId") or component.get("component_id") or component.get("id") or component_index)
+    source_id = _text(component.get("componentId") or component.get("id") or component_index)
     score = _number(component.get("bestScorePercent") or component.get("score") or component.get("scorePercent"))
-    tracked_seconds = _integer(component.get("time_spent_seconds") or component.get("tracked_seconds") or component.get("duration_seconds"))
-    configured_seconds = _integer(component.get("configured_duration_seconds") or component.get("planned_seconds"))
-    started_at = _date_iso(component.get("started_at"))
-    completed_at = _date_iso(component.get("completed_at"))
     return {
-        "id": f"lms-programme:{week.get('sectionId') or week.get('week_id') or week.get('week_order') or week.get('week') or week.get('week_name') or 'week'}:{source_id}:{component_index}",
+        "id": f"lms-programme:{week.get('sectionId') or week.get('week') or 'week'}:{source_id}:{component_index}",
         "source": "LMS",
         "source_id": source_id,
-        "course_module": _text(week.get("course") or week.get("week_name")) or _text(month.get("month")) or "LMS",
+        "course_module": _text(week.get("course")) or _text(month.get("month")) or "LMS",
         "component_name": title,
         "component_type": kind,
         "completion_status": status,
-        "tracked_seconds": tracked_seconds,
+        "tracked_seconds": None,
         "quiz_attempts": 1 if component.get("attempted") else 0 if kind.lower() == "quiz" else None,
         "quiz_score": score,
         "tutor": "",
-        "course_started_at": started_at,
-        "course_completed_at": completed_at or (relevant_date if completed else None),
+        "course_started_at": None,
+        "course_completed_at": relevant_date if completed else None,
         "relevant_date": relevant_date,
         "date_source": "Audit.learner_match.programme_structure.months[].weeks[]",
         "match_status": "Matched",
@@ -996,129 +931,53 @@ def _normalize_programme_component(component, week, month, component_index):
         "matched_source_ids": [],
         "warning_codes": [],
         "warnings": [],
-        "raw": {
-            **component,
-            "configured_duration_seconds": configured_seconds,
-            "time_spent_seconds": tracked_seconds,
-        },
+        "raw": component,
     }
 
 
 def _programme_week_shell(month, week, index):
     week_date = _programme_week_date(month, week)
-    source_label = _text(week.get("week_name") or week.get("week"))
-    has_label_date = bool(_week_date_from_title(source_label))
-    week_warnings = []
-    if not has_label_date:
-        week_warnings.append(_warning(
-            "missing_week_name_date",
-            "Week name has no date. Update the week name in the old LMS so month grouping can use the displayed week date.",
-            "Audit.learner_match.programme_structure.months[].weeks[].week_name",
-        ))
-    if week_date:
-        week_key = f"{_month_key(week_date) or 'undated'}:programme-week:{week_date}:{source_label.lower() or index + 1}"
-        start = week_date
-        end = week_date
-        label = source_label or _month_label(_month_key(week_date))
+    week_parts = _week_key(week_date) if week_date else None
+    if week_parts:
+        week_key, start, end, label = week_parts
     else:
         month_key = _month_key(month.get("date")) or "undated"
         week_key = f"{month_key}:programme-week-{index + 1}"
         start = _date_iso(month.get("date"))
         end = start
-        label = source_label or f"Week {index + 1}"
+        label = _text(week.get("week")) or f"Week {index + 1}"
     return {
         "week_key": week_key,
-        "label": source_label or label,
+        "label": _text(week.get("week")) or label,
         "start_date": start,
         "end_date": end,
         "aptem_items": [],
         "lms_items": [],
         "source_column": "Audit.learner_match.programme_structure",
-        "source_note": _text(week.get("matchedBy") or week.get("week") or week.get("week_name")),
-        "source_modules": [_text(week.get("course") or week.get("week_name"))] if _text(week.get("course") or week.get("week_name")) else [],
-        "date_is_from_week_name": has_label_date,
-        "warning_codes": [warning["code"] for warning in week_warnings],
-        "warnings": week_warnings,
+        "source_note": _text(week.get("matchedBy")),
+        "source_modules": [_text(week.get("course"))] if _text(week.get("course")) else [],
     }
-
-
-def _month_end_date(month_key):
-    if not re.match(r"^\d{4}-\d{2}$", _text(month_key)):
-        return None
-    year, month = [int(part) for part in month_key.split("-")]
-    if month == 12:
-        return datetime.date(year, 12, 31)
-    return datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
-
-
-def _apply_programme_week_windows(month, source_month):
-    weeks = sorted(month["weeks"], key=lambda week: (week.get("start_date") or "9999-12-31", week.get("label") or ""))
-    month_start = _date(f"{month.get('month_key')}-01") or _date(source_month.get("date"))
-    month_end = _month_end_date(month.get("month_key"))
-    dated_weeks = [(index, _date(week.get("start_date"))) for index, week in enumerate(weeks)]
-    dated_weeks = [(index, date_value) for index, date_value in dated_weeks if date_value]
-    if not dated_weeks:
-        month["weeks"] = weeks
-        return month
-
-    for order, (week_index, week_start) in enumerate(dated_weeks):
-        next_start = dated_weeks[order + 1][1] if order + 1 < len(dated_weeks) else None
-        window_start = month_start if order == 0 and month_start else week_start
-        window_end = (next_start - datetime.timedelta(days=1)) if next_start else (month_end or week_start)
-        if window_end < window_start:
-            window_end = window_start
-        weeks[week_index]["match_start_date"] = window_start.isoformat()
-        weeks[week_index]["match_end_date"] = window_end.isoformat()
-
-    month["weeks"] = weeks
-    return month
 
 
 def _item_in_week(item, week):
     item_date = _date(item.get("relevant_date"))
-    start = _date(week.get("match_start_date") or week.get("start_date"))
-    end = _date(week.get("match_end_date") or week.get("end_date"))
+    start = _date(week.get("start_date"))
+    end = _date(week.get("end_date"))
     return bool(item_date and start and end and start <= item_date <= end)
 
 
-def _append_week_items(week, attendance_items, assignment_items, used_attendance_ids=None, used_assignment_ids=None):
-    used_attendance_ids = used_attendance_ids or set()
-    used_assignment_ids = used_assignment_ids or set()
+def _append_week_items(week, attendance_items, assignment_items):
     used_attendance = []
     used_assignments = []
     for item in attendance_items:
-        item_id = item.get("id")
-        if item_id not in used_attendance_ids and _item_in_week(item, week):
+        if _item_in_week(item, week):
             week["aptem_items"].append(item)
-            used_attendance.append(item_id)
+            used_attendance.append(item.get("id"))
     for item in assignment_items:
-        item_id = item.get("id")
-        if item_id not in used_assignment_ids and _item_in_week(item, week):
+        if _item_in_week(item, week):
             week["aptem_items"].append(item)
-            used_assignments.append(item_id)
+            used_assignments.append(item.get("id"))
     return set(used_attendance), set(used_assignments)
-
-
-def _assignment_month_key(item):
-    return _text(item.get("assignment_month_key")) or _month_key(item.get("relevant_date"))
-
-
-def _append_assignments_to_last_month_week(month, assignment_items, used_assignment_ids=None):
-    used_assignment_ids = used_assignment_ids or set()
-    if not month.get("weeks"):
-        return set()
-    month_key = month.get("month_key")
-    last_week = sorted(month["weeks"], key=lambda week: (week.get("start_date") or "9999-12-31", week.get("label") or ""))[-1]
-    used_assignments = []
-    for item in sorted(assignment_items, key=lambda entry: (entry.get("relevant_date") or "", entry.get("id") or "")):
-        item_id = item.get("id")
-        if item_id in used_assignment_ids:
-            continue
-        if _assignment_month_key(item) != month_key:
-            continue
-        last_week["aptem_items"].append(item)
-        used_assignments.append(item_id)
-    return set(used_assignments)
 
 
 def _append_item_date_weeks(month, month_key, candidate_items, today):
@@ -1157,7 +1016,6 @@ def _append_item_date_weeks(month, month_key, candidate_items, today):
 
 def _month_summary_from_weeks(month, monthly_hours=None):
     items = [item for week in month["weeks"] for item in week["aptem_items"] + week["lms_items"]] + month["undated_items"]
-    week_warnings = [warning for week in month["weeks"] for warning in week.get("warnings") or []]
     aptem_items = [item for item in items if item.get("source") == "Aptem"]
     lms_items = [item for item in items if item.get("source") == "LMS"]
     statuses = [_status_bucket(item.get("status") or item.get("completion_status")) for item in items]
@@ -1172,7 +1030,7 @@ def _month_summary_from_weeks(month, monthly_hours=None):
         "completed": statuses.count("completed"),
         "in_progress": statuses.count("in_progress"),
         "not_started": statuses.count("not_started"),
-        "warnings": len(week_warnings) + sum(len(item.get("warnings") or []) for item in items),
+        "warnings": sum(len(item.get("warnings") or []) for item in items),
     }
     return month
 
@@ -1185,82 +1043,75 @@ def _group_programme_structure_months(programme_structure, attendance_items=None
     assignment_items = assignment_items or []
     used_attendance_ids = set()
     used_assignment_ids = set()
-    months_by_key = {}
-
-    def ensure_month(month_key, label=""):
-        month_key = month_key or "undated"
-        if month_key not in months_by_key:
-            months_by_key[month_key] = {
-                "month_key": month_key,
-                "label": label or _month_label(month_key),
-                "summary": {},
-                "weeks": [],
-                "undated_items": [],
-                "signoffs": {"learner": None, "coach": None},
-            }
-        return months_by_key[month_key]
-
+    months = []
     for month_index, source_month in enumerate(programme_structure.get("months") or []):
         if not isinstance(source_month, dict):
             continue
-        source_month_key = _month_key(source_month.get("date")) or _month_key(_programme_week_date(source_month, {})) or "undated"
+        month_key = _month_key(source_month.get("date")) or _month_key(_programme_week_date(source_month, {})) or "undated"
         if _is_future_date(source_month.get("date"), today):
             continue
-        source_month_label = _text(source_month.get("month")) or _month_label(source_month_key)
-        has_weeks = False
-        ensure_month(source_month_key, source_month_label)
+        month = {
+            "month_key": month_key,
+            "label": _text(source_month.get("month")) or _month_label(month_key),
+            "summary": {},
+            "weeks": [],
+            "undated_items": [],
+            "signoffs": {"learner": None, "coach": None},
+        }
         for week_index, source_week in enumerate(source_month.get("weeks") or []):
             if not isinstance(source_week, dict):
                 continue
             week = _programme_week_shell(source_month, source_week, week_index)
             if _is_future_date(week.get("start_date"), today):
                 continue
-            has_weeks = True
-            week_month_key = _month_key(week.get("start_date")) or source_month_key
-            month = ensure_month(week_month_key, _month_label(week_month_key) if week_month_key != source_month_key else source_month_label)
             for component_index, component in enumerate(source_week.get("components") or []):
                 if isinstance(component, dict):
                     week["lms_items"].append(_normalize_programme_component(component, source_week, source_month, component_index))
-            month["weeks"].append(week)
-        if not has_weeks and source_month_key != "undated":
-            ensure_month(source_month_key, source_month_label)
-
-    for month in months_by_key.values():
-        if not month["weeks"]:
-            continue
-        _apply_programme_week_windows(month, {"date": f"{month.get('month_key')}-01"})
-        for week in month["weeks"]:
-            attendance_ids, assignment_ids = _append_week_items(week, attendance_items, [], used_attendance_ids, used_assignment_ids)
+            attendance_ids, assignment_ids = _append_week_items(week, attendance_items, assignment_items)
             used_attendance_ids.update(attendance_ids)
             used_assignment_ids.update(assignment_ids)
-        used_assignment_ids.update(_append_assignments_to_last_month_week(month, assignment_items, used_assignment_ids))
-
-    for item in attendance_items + assignment_items:
-        if item.get("id") in used_attendance_ids or item.get("id") in used_assignment_ids:
-            continue
-        item_month_key = _month_key(item.get("relevant_date"))
-        if item_month_key and item.get("relevant_date") and item_month_key in months_by_key:
-            months_by_key[item_month_key]["undated_items"].append(item)
-            if item.get("id", "").startswith("attendance:"):
-                used_attendance_ids.add(item.get("id"))
+            month["weeks"].append(week)
+        dated_month_items = [
+            item
+            for item in attendance_items + assignment_items
+            if item.get("id") not in used_attendance_ids
+            and item.get("id") not in used_assignment_ids
+            and month_key != "undated"
+            and _month_key(item.get("relevant_date")) == month_key
+            and item.get("relevant_date")
+        ]
+        dated_item_ids = _append_item_date_weeks(month, month_key, dated_month_items, today)
+        for item_id in dated_item_ids:
+            if _text(item_id).startswith("attendance:"):
+                used_attendance_ids.add(item_id)
             else:
-                used_assignment_ids.add(item.get("id"))
-
+                used_assignment_ids.add(item_id)
+        for item in attendance_items + assignment_items:
+            if item.get("id") in used_attendance_ids or item.get("id") in used_assignment_ids:
+                continue
+            if month_key != "undated" and _month_key(item.get("relevant_date")) == month_key:
+                month["undated_items"].append(item)
+                if item.get("id", "").startswith("attendance:"):
+                    used_attendance_ids.add(item.get("id"))
+                else:
+                    used_assignment_ids.add(item.get("id"))
+        months.append(_month_summary_from_weeks(month, monthly_hours))
     remaining_items = [
         item
         for item in attendance_items + assignment_items
         if item.get("id") not in used_attendance_ids and item.get("id") not in used_assignment_ids
     ]
     if remaining_items:
-        month = ensure_month("undated", "Undated / Needs Review")
-        month["undated_items"].extend(remaining_items)
-    for month_key in set((monthly_hours or {}).get("planned", {})) | set((monthly_hours or {}).get("completed", {})):
-        ensure_month(month_key)
-    months = [_month_summary_from_weeks(month, monthly_hours) for month in months_by_key.values()]
+        months.append(_month_summary_from_weeks({
+            "month_key": "undated",
+            "label": "Undated / Needs Review",
+            "summary": {},
+            "weeks": [],
+            "undated_items": remaining_items,
+            "signoffs": {"learner": None, "coach": None},
+        }, monthly_hours))
     if not months:
         return _group_months(attendance_items + assignment_items, [], monthly_hours=monthly_hours)
-    for month in months:
-        month["weeks"] = sorted(month["weeks"], key=lambda week: (week.get("start_date") or "9999-12-31", week.get("label") or ""))
     return sorted(months, key=lambda month: month["month_key"], reverse=True)
 
 
@@ -1382,9 +1233,6 @@ def _activity_category(item):
     raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
     if item.get("source") == "Aptem" and item.get("type") == "Attendance" and ("Attendance" in raw or "attendance" in raw):
         return "live_session"
-    raw_category = _activity_category_from_raw(raw)
-    if raw_category:
-        return raw_category
     text = (
         f"{item.get('type')} {item.get('activity_name')}"
         if item.get("source") == "Aptem"
@@ -1393,75 +1241,19 @@ def _activity_category(item):
     normalized = text.lower().replace("-", "_").replace(" ", "_")
     if "quiz" in normalized or "reading" in normalized or "material" in normalized:
         return "quiz_reading"
-    title_text = _text(item.get("component_name") or item.get("activity_name")).lower()
-    if re.search(r"(^|\b)(vid|video|recording|youtube)(\b|[:\-_])", title_text):
+    if "video" in normalized or "recording" in normalized:
         return "video"
     if "assignment" in normalized or "evidence" in normalized or "portfolio" in normalized:
         return "assignment"
+    if "self_study" in normalized or "podcast" in normalized or "powerpoint" in normalized:
+        return "self_study"
+    if "assessment" in normalized or "reflection" in normalized:
+        return "assessment"
     return "other"
-
-
-def _activity_category_from_raw(raw):
-    if not isinstance(raw, dict):
-        return ""
-    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
-    attachments = []
-    if isinstance(source.get("attachments"), list):
-        attachments.extend([entry for entry in source.get("attachments") if isinstance(entry, dict)])
-    if isinstance(raw.get("attachments"), list):
-        attachments.extend([entry for entry in raw.get("attachments") if isinstance(entry, dict)])
-    type_text = " ".join(
-        _text(value)
-        for value in [
-            raw.get("component_kind"),
-            raw.get("component_type"),
-            raw.get("material_type"),
-            raw.get("content_type"),
-            raw.get("material_format"),
-            raw.get("mime_type"),
-            raw.get("post_type"),
-            *[attachment.get("content_type") for attachment in attachments],
-            *[attachment.get("filename") for attachment in attachments],
-        ]
-    ).lower()
-    url_text = " ".join(
-        _text(value)
-        for value in [
-            source.get("provider"),
-            source.get("display_mode"),
-            source.get("open_url"),
-            source.get("embed_url"),
-            source.get("file_url"),
-            source.get("lms_url"),
-            raw.get("open_url"),
-            raw.get("embed_url"),
-            raw.get("file_url"),
-            raw.get("url"),
-            raw.get("video_url"),
-            *[attachment.get("open_url") for attachment in attachments],
-            *[attachment.get("embed_url") for attachment in attachments],
-            *[attachment.get("file_url") for attachment in attachments],
-        ]
-    ).lower()
-    all_text = f"{type_text} {url_text}"
-    if re.search(r"(assignment|evidence|portfolio)", type_text):
-        return "assignment"
-    if re.search(r"(^|\b)(video|recording)(\b|[:\-_])", type_text):
-        return "video"
-    if re.search(r"(\.pdf(\?|$)|application/pdf|\bpdf\b)", all_text):
-        return "quiz_reading"
-    if re.search(r"(\.mp4(\?|$)|\.webm(\?|$)|\.mov(\?|$)|\.m4v(\?|$)|youtube|youtu\.be|vimeo|wistia|loom)", url_text):
-        return "video"
-    if re.search(r"(video/|application/x-mpegurl)", type_text):
-        return "video"
-    if re.search(r"(quiz|reading|material)", type_text):
-        return "quiz_reading"
-    return ""
 
 
 def _compact_activity(item):
     source = item.get("source")
-    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
     if source == "Aptem":
         planned_hours = _number(item.get("planned_hours")) or 0
         actual_hours = _number(item.get("actual_hours")) or 0
@@ -1469,6 +1261,7 @@ def _compact_activity(item):
         title = _text(item.get("activity_name") or item.get("type")) or "Programme activity"
         if _activity_category(item) == "live_session":
             attendance_value = ""
+            raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
             if "Attendance" in raw:
                 attendance_value = _text(raw.get("Attendance"))
             elif "attendance" in raw:
@@ -1494,12 +1287,11 @@ def _compact_activity(item):
         "plannedHours": _round_hours(planned_hours),
         "actualHours": _round_hours(actual_hours),
         "done": _status_bucket(status) == "completed",
-        "raw": raw,
     }
 
 
 def _activity_sources_for_category(category):
-    if category in {"quiz_reading", "quiz", "reading", "video"}:
+    if category in {"quiz_reading", "quiz", "reading", "video", "self_study"}:
         return {"LMS"}
     if category == "live_session":
         return {"Aptem"}
@@ -1532,7 +1324,7 @@ def _learner_activity_summaries(row, category_filter="", attendance_items=None, 
     programme_structure = _programme_structure(row)
     if isinstance(programme_structure, dict):
         if assignment_items is None:
-            assignment_items = _fetch_assignment_items(row.get("Learner_ID")) if category_filter in {"", "assignment", "other"} else []
+            assignment_items = _fetch_assignment_items(row.get("Learner_ID")) if category_filter in {"", "assignment", "assessment", "other"} else []
         months = _group_programme_structure_months(programme_structure, attendance_items or [], assignment_items)
         for month in months:
             for week in month["weeks"]:
@@ -1597,6 +1389,8 @@ def _empty_activity_stats():
         "quiz_reading": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
         "video": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
         "assignment": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "self_study": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
+        "assessment": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
         "other": {"activities": 0, "actualHours": 0, "plannedHours": 0, "done": 0},
     }
 
@@ -2225,7 +2019,7 @@ def _field_sources():
         "summary.quiz": {"table": "Audit.learner_match", "column": "programme_structure.months[].weeks[].components[kind=quiz]", "join_key": "Learner_ID -> aptem_id", "fallback": None},
         "programme.months_weeks": {"table": "Audit.learner_match", "column": "programme_structure", "join_key": "Learner_ID -> aptem_id", "fallback": None},
         "attendance.sessions": {"table": "KBCDATABASE.public.kbc_attendance", "column": "ID/date/Attendance/module", "join_key": "Learner_ID -> ID/aptem_id", "fallback": None},
-        "assignments.evidence": {"table": "fetching_evidence.public.assessment_fetch", "column": "learner_id/programme/assignmanets", "join_key": "Learner_ID -> learner_id", "fallback": None},
+        "assignments.evidence": {"table": "fetching_attendence.public.assessment_fetch", "column": "learner_id/programme/assignments", "join_key": "Learner_ID -> learner_id", "fallback": None},
         "source_data.combined": {"table": "Audit.learner_match", "column": "programme_structure", "join_key": "Learner_ID -> aptem_id", "fallback": None},
         "company.logo": {"table": "environment", "column": "AUDIT_COMPANY_LOGO_URL", "join_key": None, "fallback": None},
     }
@@ -2495,10 +2289,12 @@ def learner_audit_list(request):
         return _error(f"Database error: {exc}", 502)
 
     learner_ids = [row.get("Learner_ID") for row in rows]
+    activity_sources = _activity_sources_for_category(activity_category)
     attendance_by_learner = {}
     assignment_by_learner = {}
-    if include_activities:
+    if include_activities and "Aptem" in activity_sources:
         attendance_by_learner = _fetch_kbc_attendance_items_for_ids(learner_ids)
+    if include_activities and activity_category in {"", "assignment", "assessment", "other"}:
         assignment_by_learner = _fetch_assignment_items_for_ids(learner_ids)
     count = total_count if total_count is not None else len(rows)
     response_page_size = page_size or len(rows)
@@ -2513,19 +2309,6 @@ def learner_audit_list(request):
         )
         for row in rows
     ]
-    stats_results = []
-    if include_activities:
-        stats_results = [
-            _learner_list_detail(
-                row,
-                include_audit,
-                include_activities,
-                "",
-                attendance_by_learner.get(str(row.get("Learner_ID") or ""), []),
-                assignment_by_learner.get(str(row.get("Learner_ID") or ""), []),
-            )
-            for row in rows
-        ]
     payload = {
         "count": count,
         "page": page,
@@ -2534,7 +2317,7 @@ def learner_audit_list(request):
         "results": results,
     }
     if include_activities:
-        payload["activityStats"] = _activity_stats_from_results(stats_results, len(stats_results))
+        payload["activityStats"] = _activity_stats_from_results(results, len(results))
     return JsonResponse(payload)
 
 
