@@ -49,6 +49,20 @@ export async function fetchGroups(programme: string, cohort: string): Promise<st
   return (await request<{ results: string[] }>(`${BASE}/groups/?${qs({ programme, cohort })}`)).results;
 }
 
+/**
+ * The KSB list a learner self-assesses against, resolved from their programme's
+ * authored profile in curriculum.ksb_profiles. `standard` is null when the
+ * programme has no profile authored yet.
+ */
+export interface KsbProfileResponse {
+  standard: { id: string; label: string } | null;
+  results: { id: string; theme: string; kind: 'Knowledge' | 'Skill' | 'Behaviour'; codes: string[]; title: string }[];
+}
+
+export async function fetchKsbProfile(programme: string): Promise<KsbProfileResponse> {
+  return request<KsbProfileResponse>(`${BASE}/ksb-profile/?${qs({ programme })}`);
+}
+
 /** Modules for a programme (independent of cohort/group). */
 export async function fetchModules(programme: string): Promise<CurriculumItem[]> {
   return (await request<{ results: CurriculumItem[] }>(`${BASE}/modules/?${qs({ programme })}`)).results;

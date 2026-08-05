@@ -1,0 +1,77 @@
+.learner-log-pro {
+  --llp-background: 0.975 0.008 100;
+  --llp-foreground: 0.24 0.03 235;
+  --llp-surface: 0.955 0.012 95;
+  --llp-card: 0.998 0.003 100;
+  --llp-popover: 0.998 0.003 100;
+  --llp-popover-foreground: 0.24 0.03 235;
+  --llp-primary: 0.32 0.055 232;
+  --llp-primary-foreground: 0.98 0.008 100;
+  --llp-secondary: 0.93 0.016 95;
+  --llp-secondary-foreground: 0.3 0.04 232;
+  --llp-muted: 0.935 0.012 100;
+  --llp-muted-foreground: 0.5 0.024 235;
+  --llp-accent: 0.72 0.13 65;
+  --llp-accent-foreground: 0.24 0.05 60;
+  --llp-border: 0.88 0.014 95;
+  --llp-input: 0.88 0.014 95;
+  --llp-ring: 0.45 0.06 232;
+  --llp-success: 0.52 0.1 165;
+  --llp-warning: 0.75 0.14 75;
+  --llp-destructive: 0.53 0.2 25;
+  --llp-destructive-foreground: 0.98 0.008 100;
+  min-height: 100vh;
+  color: oklch(var(--llp-foreground));
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+.learner-log-pro .label-caps {
+  color: oklch(0.39 0.035 235);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.learner-log-pro .activity-snapshot .snapshot-label {
+  color: oklch(0.88 0.025 220);
+}
+
+.learner-log-pro .activity-snapshot .snapshot-value {
+  color: oklch(0.16 0.025 235);
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.75;
+}
+
+.learner-log-pro .activity-snapshot dd {
+  color: oklch(0.16 0.025 235);
+}
+
+/* Radix renders select menus in a portal under <body>, outside the scoped
+   Learner Log Pro container. Give that portal an opaque, readable surface. */
+.learner-log-pro-select-content {
+  z-index: 1000;
+  max-height: min(18rem, var(--radix-select-content-available-height));
+  overflow-y: auto;
+  border: 1px solid #d9d6cd;
+  background: #ffffff;
+  color: #17212b;
+  box-shadow: 0 12px 30px rgb(15 23 42 / 18%);
+}
+
+.learner-log-pro-select-content [role="option"] {
+  color: #17212b;
+  background: #ffffff;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+}
+
+.learner-log-pro-select-content [role="option"][data-highlighted] {
+  background: #eef3f5;
+  color: #0f3140;
+}
+
+.learner-log-pro-select-content [role="option"][data-state="checked"] {
+  font-weight: 700;
+}

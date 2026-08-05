@@ -2,6 +2,9 @@ import json
 import logging
 import os
 import re
+# `time` below is datetime.time, so the sleep function is imported under its own
+# name to avoid shadowing it.
+from time import sleep as _sleep
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -40,7 +43,6 @@ from learner_api.models import (
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
-    cached_learner_busy_slots,
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
@@ -496,9 +498,25 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
 
 # Learner-booked session types (booked from the learner calendar page, unlike the
 # generated mcr / progress-review events which only the coach schedules).
+# The three onboarding reviews are booked the same way, but with the learner's
+# case owner rather than their coach (see learner_api.calendar).
 BOOKED_EVENT_TITLES = {
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
+    "eligibility-review": "Eligibility Review & FS Discussion",
+    "workspace": "RPL And Experience",
+    "training-plan": "Workplace Health & Safety Declaration",
+}
+
+# Session types the coach can book from their own timetable page.
+COACH_BOOKABLE_EVENT_TYPES = ("catch-up", "student-support")
+
+# Calendar colour/type vocabulary for the booked types above.
+BOOKED_EVENT_JSON_TYPES = {
+    "student-support": "welfare",
+    "eligibility-review": "review",
+    "workspace": "review",
+    "training-plan": "review",
 }
 
 
@@ -539,14 +557,25 @@ def microsoft_graph_token() -> str:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    try:
-        with urllib_request.urlopen(request, timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Microsoft token request failed: {exc.code} {detail}") from exc
-    except urllib_error.URLError as exc:
-        raise RuntimeError(f"Microsoft token request failed: {exc}") from exc
+    # Transient DNS/network blips otherwise fail a booking outright and leave the
+    # learner holding a slot nobody was told about, so retry the connection a
+    # couple of times. HTTP errors are real rejections -- never retried.
+    last_url_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib_request.urlopen(request, timeout=20) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            last_url_error = None
+            break
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"Microsoft token request failed: {exc.code} {detail}") from exc
+        except urllib_error.URLError as exc:
+            last_url_error = exc
+            if attempt < 2:
+                _sleep(1 + attempt)
+    if last_url_error is not None:
+        raise RuntimeError(f"Microsoft token request failed: {last_url_error}") from last_url_error
 
     access_token = data.get("access_token")
     if not access_token:
@@ -3237,6 +3266,40 @@ def calendar_record_has_launch_url(record: CoachCalendarEvent) -> bool:
     return bool(clean_text(record.meeting_link) or clean_text(record.graph_web_link))
 
 
+TEAMS_SYNC_PERMISSION_MESSAGE = (
+    "Teams calendar sync needs updated Microsoft permissions. "
+    "The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access."
+)
+TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The event was saved locally only."
+TEAMS_SYNC_TEMPORARY_MESSAGE = (
+    "Teams calendar sync could not be completed. "
+    "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
+)
+TEAMS_SYNC_LINK_MISSING_MESSAGE = (
+    "Teams did not return a meeting link, so this event was moved back to Needs Schedule. "
+    "Try scheduling again after Microsoft sync is available."
+)
+
+
+def public_graph_sync_warning(raw_message: str | None) -> str:
+    """Convert low-level Microsoft Graph errors into safe coach-facing copy."""
+    message = clean_text(raw_message)
+    if not message:
+        return ""
+    lowered = message.casefold()
+    if "credentials are not configured" in lowered:
+        return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
+    if "erroraccessdenied" in lowered or "access is denied" in lowered or " 403 " in f" {lowered} ":
+        return TEAMS_SYNC_PERMISSION_MESSAGE
+    if "did not return a teams meeting link" in lowered or (
+        "did not return" in lowered and "teams" in lowered
+    ):
+        return TEAMS_SYNC_LINK_MISSING_MESSAGE
+    if "microsoft graph" in lowered or "microsoft token" in lowered:
+        return TEAMS_SYNC_TEMPORARY_MESSAGE
+    return message
+
+
 def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
     if record.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}:
         return False
@@ -3262,7 +3325,7 @@ def repair_calendar_record_to_needs_schedule(
     record.meeting_link = ""
     record.graph_web_link = ""
     record.graph_event_id = ""
-    record.last_graph_sync_error = clean_text(reason) or default_reason
+    record.last_graph_sync_error = public_graph_sync_warning(reason) or default_reason
     record.save()
     return record
 
@@ -3290,8 +3353,9 @@ def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> l
         )
     if clean_text(record.notes):
         lines.append(clean_text(record.notes))
-    if clean_text(record.last_graph_sync_error):
-        lines.append(f"Microsoft sync warning: {clean_text(record.last_graph_sync_error)}")
+    sync_warning = public_graph_sync_warning(record.last_graph_sync_error)
+    if sync_warning:
+        lines.append(f"Microsoft sync warning: {sync_warning}")
     return lines
 
 
@@ -3434,7 +3498,7 @@ def build_catchup_calendar_event(
         "graphWebLink": graph_web_link,
         "platform": meeting_provider or ("Microsoft Teams" if meeting_link else "--"),
         "location": "Online" if meeting_link else "--",
-        "syncWarning": clean_text(record.last_graph_sync_error),
+        "syncWarning": public_graph_sync_warning(record.last_graph_sync_error),
     }
 
 
@@ -3583,7 +3647,7 @@ def build_booked_calendar_event(record: CoachCalendarEvent) -> dict:
         "source": record.event_type,
         "sequence": record.sequence,
         "title": title,
-        "type": "welfare" if record.event_type == "student-support" else "coaching",
+        "type": BOOKED_EVENT_JSON_TYPES.get(record.event_type, "coaching"),
         "targetDate": target_date.isoformat(),
         "date": target_date.isoformat(),
         "year": target_date.year,
@@ -3620,8 +3684,9 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
         )
     if record and clean_text(record.notes):
         lines.append(clean_text(record.notes))
-    if record and clean_text(record.last_graph_sync_error):
-        lines.append(f"Microsoft sync warning: {clean_text(record.last_graph_sync_error)}")
+    sync_warning = public_graph_sync_warning(record.last_graph_sync_error) if record else ""
+    if sync_warning:
+        lines.append(f"Microsoft sync warning: {sync_warning}")
     return lines
 
 
@@ -3684,7 +3749,7 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "managerSignedAt": record.manager_signed_at.isoformat() if record and record.manager_signed_at else None,
             "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
-            "syncWarning": clean_text(record.last_graph_sync_error) if record else "",
+            "syncWarning": public_graph_sync_warning(record.last_graph_sync_error) if record else "",
         }
     )
     return event
@@ -3703,8 +3768,18 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     body_lines = [
         f"<p><strong>{base_event['title']}</strong></p>",
         f"<p>Learner: {learner_name}</p>",
-        f"<p>Target date: {format_date(record.target_date)}</p>",
     ]
+    if base_event.get("source") in BOOKED_EVENT_TITLES:
+        # Learner-booked: the owner is being told about a meeting someone else
+        # put in their diary, so lead with who booked it and when.
+        body_lines.append(f"<p>Booked by the learner for {format_date(record.scheduled_date)} "
+                          f"at {record.scheduled_time.strftime('%H:%M')}.</p>")
+        if learner_email:
+            body_lines.append(f"<p>Learner email: {learner_email}</p>")
+        if clean_text(record.notes):
+            body_lines.append(f"<p>Notes: {clean_text(record.notes)}</p>")
+    else:
+        body_lines.append(f"<p>Target date: {format_date(record.target_date)}</p>")
 
     payload = {
         "subject": subject,
@@ -3723,8 +3798,9 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
         "isOnlineMeeting": True,
         "onlineMeetingProvider": "teamsForBusiness",
     }
+    attendees = []
     if learner_email:
-        payload["attendees"] = [
+        attendees.append(
             {
                 "emailAddress": {
                     "address": learner_email,
@@ -3732,8 +3808,65 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
                 },
                 "type": "required",
             }
-        ]
+        )
+
+    # The mailbox the event is created on becomes the organizer, and Graph never
+    # emails the organizer -- it just appears on their calendar. So for
+    # learner-booked sessions the owner is listed as an attendee AND the event is
+    # created on the learner's mailbox instead (see graph_organizer_mailbox), or
+    # the invite would land on the calendar of the one person who already knows.
+    owner_email = clean_text(record.owner_email)
+    if base_event.get("source") in BOOKED_EVENT_TITLES and owner_email:
+        already_invited = any(
+            clean_text(a["emailAddress"]["address"]).casefold() == owner_email.casefold()
+            for a in attendees
+        )
+        if not already_invited:
+            attendees.append(
+                {
+                    "emailAddress": {
+                        "address": owner_email,
+                        "name": clean_text(record.owner_name) or owner_email,
+                    },
+                    "type": "required",
+                }
+            )
+
+    # Drop the organizer from its own attendee list -- Graph would ignore the
+    # entry for mail purposes anyway, and leaving it in shows the organizer as an
+    # invitee of their own meeting.
+    organizer = graph_organizer_mailbox(record, base_event).casefold()
+    attendees = [
+        a for a in attendees
+        if clean_text(a["emailAddress"]["address"]).casefold() != organizer
+    ]
+
+    if attendees:
+        payload["attendees"] = attendees
     return payload
+
+
+def graph_organizer_mailbox(record: CoachCalendarEvent, base_event: dict) -> str:
+    """Which mailbox the Graph event is created on -- i.e. who organizes it.
+
+    Graph never emails the organizer; the meeting just shows up on their
+    calendar. Only the other attendees get an invite.
+
+    For coach-scheduled events (mcr / progress-review) the coach is the organizer
+    and the learner is mailed -- correct, the coach already knows.
+
+    Learner-booked sessions are the mirror image: the learner initiated it and the
+    owner (coach or enrolment officer) is the one who must be told. Creating the
+    event on the owner's mailbox would make them the organizer and silently
+    deliver no mail, so it is created on the learner's mailbox instead.
+
+    Falls back to the owner when the learner has no address to organize from.
+    """
+    if base_event.get("source") in BOOKED_EVENT_TITLES:
+        learner_email = clean_text(record.learner_email)
+        if learner_email:
+            return learner_email
+    return clean_text(record.owner_email)
 
 
 def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -> str:
@@ -3741,10 +3874,11 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
         record.meeting_provider = ""
         record.meeting_link = ""
         record.graph_web_link = ""
-        return "Microsoft Graph credentials are not configured; event was saved locally only."
+        return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
 
     payload = build_graph_event_payload(record, base_event)
-    owner_key = urllib_parse.quote(record.owner_email, safe="")
+    organizer_mailbox = graph_organizer_mailbox(record, base_event)
+    owner_key = urllib_parse.quote(organizer_mailbox, safe="")
     try:
         if clean_text(record.graph_event_id):
             event_key = urllib_parse.quote(record.graph_event_id, safe="")
@@ -3765,10 +3899,11 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
                 payload=payload,
             )
     except RuntimeError as exc:
+        logger.warning("Unable to sync coach timetable event to Microsoft Graph: %s", exc)
         record.meeting_provider = ""
         record.meeting_link = ""
         record.graph_web_link = ""
-        return str(exc)
+        return public_graph_sync_warning(str(exc))
 
     response_event_id = clean_text(response.get("id")) or clean_text(record.graph_event_id)
     online_meeting = response.get("onlineMeeting") or {}
@@ -3793,6 +3928,7 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
             response_join_url = clean_text(online_meeting.get("joinUrl"))
 
     record.graph_event_id = response_event_id
+    record.graph_organizer_email = organizer_mailbox if response_event_id else ""
     record.meeting_provider = "Microsoft Teams" if (response_event_id or response_join_url or response_web_link) else ""
     record.meeting_link = response_join_url or response_web_link
     record.graph_web_link = response_web_link
@@ -3803,12 +3939,17 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
     if not clean_text(record.graph_event_id) or not has_graph_credentials():
         return ""
 
-    owner_key = urllib_parse.quote(record.owner_email, safe="")
+    # The event lives on whichever mailbox organized it, which for learner-booked
+    # sessions is the learner, not the owner (see graph_organizer_mailbox). Deleting
+    # as the organizer is also what makes Graph email the cancellation to attendees.
+    mailbox = clean_text(record.graph_organizer_email) or clean_text(record.owner_email)
+    owner_key = urllib_parse.quote(mailbox, safe="")
     event_key = urllib_parse.quote(record.graph_event_id, safe="")
     try:
         microsoft_graph_request("DELETE", f"users/{owner_key}/events/{event_key}")
     except RuntimeError as exc:
-        return str(exc)
+        logger.warning("Unable to delete coach timetable event from Microsoft Graph: %s", exc)
+        return public_graph_sync_warning(str(exc))
     return ""
 
 
@@ -4292,10 +4433,10 @@ def coach_timetable_schedule_event(request):
         )
         warning = sync_calendar_event_to_graph(catchup_record, base_event)
         if not calendar_record_has_launch_url(catchup_record):
-            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             catchup_record = repair_calendar_record_to_needs_schedule(catchup_record, reason=warning)
         else:
-            catchup_record.last_graph_sync_error = warning
+            catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
             catchup_record.save()
 
         updated_event = build_catchup_calendar_event(
@@ -4350,10 +4491,10 @@ def coach_timetable_schedule_event(request):
         )
         warning = sync_calendar_event_to_graph(record, base_event)
         if not calendar_record_has_launch_url(record):
-            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             record = repair_calendar_record_to_needs_schedule(record, reason=warning)
         else:
-            record.last_graph_sync_error = warning
+            record.last_graph_sync_error = public_graph_sync_warning(warning)
             record.save()
 
         updated_event = build_catchup_calendar_event(
@@ -4417,10 +4558,10 @@ def coach_timetable_schedule_event(request):
 
     warning = sync_calendar_event_to_graph(record, base_event)
     if not calendar_record_has_launch_url(record):
-        warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+        warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record = repair_calendar_record_to_needs_schedule(record, reason=warning)
     else:
-        record.last_graph_sync_error = warning
+        record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
 
     updated_event = overlay_calendar_record(base_event, record)
@@ -4446,7 +4587,9 @@ def coach_timetable_book_event(request):
     except (TypeError, ValueError) as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    if session_type not in BOOKED_EVENT_TITLES:
+    # Deliberately narrower than BOOKED_EVENT_TITLES: the onboarding reviews in
+    # that map are booked by the learner against their case owner, not here.
+    if session_type not in COACH_BOOKABLE_EVENT_TYPES:
         return JsonResponse({"detail": "sessionType must be 'catch-up' or 'student-support'."}, status=400)
     if learner_id <= 0:
         return JsonResponse({"detail": "learnerId is required."}, status=400)
@@ -4496,7 +4639,7 @@ def coach_timetable_book_event(request):
             notes=notes,
         )
         warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
-        record.last_graph_sync_error = warning
+        record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
     except Exception as exc:  # noqa: BLE001
         return JsonResponse({"detail": "Unable to create coach session.", "error": str(exc)}, status=500)
@@ -4551,7 +4694,7 @@ def coach_timetable_event_action(request):
             catchup_record.meeting_provider = ""
 
         catchup_record.owner_name = owner_name or catchup_record.owner_name
-        catchup_record.last_graph_sync_error = warning
+        catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
         catchup_record.save()
 
         learner = fetch_owner_active_learner_profiles(owner_email)
@@ -4731,7 +4874,7 @@ def coach_timetable_event_action(request):
         record.graph_event_id = ""
         record.meeting_provider = ""
 
-    record.last_graph_sync_error = warning
+    record.last_graph_sync_error = public_graph_sync_warning(warning)
     record.save()
     updated_event = overlay_calendar_record(base_event, record)
     return JsonResponse({"event": updated_event, "warning": warning})
@@ -4897,66 +5040,6 @@ def coach_timetable(request):
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
         }
     )
-
-
-@require_GET
-def coach_learner_busy_slots(request, learner_id=None):
-    """Return privacy-safe cached busy blocks for learners in this coach's caseload."""
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
-    requested_learner_id = learner_id or parse_int(request.GET.get("learner_id"), 0)
-    start = clean_text(request.GET.get("start"))
-    end = clean_text(request.GET.get("end"))
-    if not start or not end:
-        return JsonResponse({"detail": "start and end are required ISO-8601 datetimes."}, status=400)
-
-    try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
-    except ValueError:
-        return JsonResponse({"detail": "start and end must be ISO-8601 datetimes."}, status=400)
-    if end_dt <= start_dt or (end_dt - start_dt).days > 31:
-        return JsonResponse({"detail": "Busy-slot range must be between 0 and 31 days."}, status=400)
-
-    learners = fetch_owner_active_learner_profiles(owner_email)
-    if requested_learner_id:
-        learners = [row for row in learners if int(getattr(row, "id", 0) or 0) == requested_learner_id]
-        if not learners:
-            return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
-
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows(learners)
-    slots = []
-    seen_slots = set()
-    try:
-        for learner in learners:
-            identity = learner_calendar_source_identity(
-                learner,
-                commercial_rows=commercial_rows,
-                enrolment_rows=enrolment_rows,
-            )
-            if not identity:
-                continue
-            kind, source_id = identity
-            for slot in cached_learner_busy_slots(kind, source_id, start, end):
-                slot_key = (str(learner.id), slot["start"], slot["end"])
-                if slot_key in seen_slots:
-                    continue
-                seen_slots.add(slot_key)
-                slots.append(
-                    {
-                        "id": slot["id"],
-                        "learnerId": str(learner.id),
-                        "learnerName": clean_text(getattr(learner, "username", "")) or "Learner",
-                        "start": slot["start"],
-                        "end": slot["end"],
-                        "status": "busy",
-                        "syncedAt": slot["syncedAt"],
-                    }
-                )
-    except Exception as exc:
-        return JsonResponse({"detail": "Unable to load learner busy slots.", "error": str(exc)}, status=503)
-
-    return JsonResponse({"busy": slots})
-
 
 @require_GET
 def coach_monthly_activity(request):

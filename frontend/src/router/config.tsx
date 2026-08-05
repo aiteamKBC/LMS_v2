@@ -31,6 +31,7 @@ const AdminUsersPage = lazy(() => import("../pages/admin/users/page"));
 const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
 const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-risk/page"));
 const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
+const AuditorCopyWorkspace = lazy(() => import("../pages/workspace/auditor-copy/page"));
 const BadgeDetailPage = lazy(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazy(() => import("../pages/users/BoardPage"));
 const BudgetsPage = lazy(() => import("../pages/finance/budgets/page"));
@@ -137,6 +138,8 @@ const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
+const LearnerOnboardingReviewsPage = lazy(() => import("../pages/learner/onboarding/reviews/page"));
+const LearnerReviewFormPage = lazy(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
 const LearnerProfilePage = lazy(() => import("../pages/learner/profile/page"));
 const MISDashboard = lazy(() => import("../pages/workspace/mis/page"));
@@ -228,7 +231,6 @@ const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"
 const TenantOnboardingWizard = lazy(() => import("@/pages/admin/tenant-onboarding/page"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
-const ThisWeekPage = lazy(() => import("../pages/learner/this-week/page"));
 const TutorAiMarkingPage = lazy(() => import("../pages/tutor/ai-marking/page"));
 const TutorAssignmentMarking = lazy(() => import("../pages/tutor/assignment-marking/page"));
 const TutorDashboard = lazy(() => import("../pages/workspace/tutor/page"));
@@ -273,6 +275,18 @@ const routes: RouteObject[] = [
     // then navigates between steps by slug.
     path: "/learner/onboarding",
     element: <LearnerOnboardingPage />,
+  },
+  {
+    // Declared before the :stepSlug pattern below, which would otherwise
+    // capture "reviews" as a wizard step.
+    path: "/learner/onboarding/reviews",
+    element: <LearnerOnboardingReviewsPage />,
+  },
+  {
+    // The review form. The event key contains colons ("eligibility-review:31:1:
+    // 2026-08-03"), which are fine in a single path segment.
+    path: "/learner/onboarding/reviews/:eventKey",
+    element: <LearnerReviewFormPage />,
   },
   {
     path: "/learner/onboarding/:stepSlug",
@@ -403,14 +417,6 @@ const routes: RouteObject[] = [
   {
     path: "/learner/training-plan/:kind/:id",
     element: <TrainingPlanPage />,
-  },
-  {
-    path: "/learner/lms-components",
-    element: <ThisWeekPage />,
-  },
-  {
-    path: "/learner/lms-components/:kind/:id",
-    element: <ThisWeekPage />,
   },
   {
     path: "/learner/quiz/:kind/:id/:quizId",
@@ -794,6 +800,10 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/auditor",
     element: <AuditorWorkspace />,
+  },
+  {
+    path: "/workspace/auditor-copy",
+    element: <AuditorCopyWorkspace />,
   },
   {
     path: "/workspace/auditor/learner/:auditLearnerId",

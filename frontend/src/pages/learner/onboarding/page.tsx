@@ -10,7 +10,7 @@ import { WIZARD_STEPS, type EnrolmentBoard } from '@/pages/users/types';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
-import { ONBOARDING_NAV_ITEMS, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
+import { ONBOARDING_NAV_ITEMS, ONBOARDING_REVIEWS_ROUTE, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
 
 const learnerNav = roleNavMap.learner;
 
@@ -148,7 +148,9 @@ export default function LearnerOnboardingPage() {
         )}
         {!loading && !loadError && board && (
           <WizardProvider userId={myLearner.id} isCommercial={isCommercial} board={board}>
-            <LearnerWizard currentIndex={currentIndex} onDone={() => navigate('/learner/profile')} />
+            {/* Straight to the reviews they now need to book, not the profile —
+                booking all three is what completes their enrolment. */}
+            <LearnerWizard currentIndex={currentIndex} onDone={() => navigate(ONBOARDING_REVIEWS_ROUTE)} />
           </WizardProvider>
         )}
       </main>

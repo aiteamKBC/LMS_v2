@@ -8,6 +8,7 @@ export default {
       extend: {
         colors: {
           background: {
+            DEFAULT: 'oklch(var(--llp-background, var(--background-50)) / <alpha-value>)',
             50: 'oklch(var(--background-50) / <alpha-value>)',
             100: 'oklch(var(--background-100) / <alpha-value>)',
             200: 'oklch(var(--background-200) / <alpha-value>)',
@@ -21,6 +22,8 @@ export default {
             950: 'oklch(var(--background-950) / <alpha-value>)',
           },
           primary: {
+            DEFAULT: 'oklch(var(--llp-primary, var(--primary-500)) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-primary-foreground, var(--background-50)) / <alpha-value>)',
             50: 'oklch(var(--primary-50) / <alpha-value>)',
             100: 'oklch(var(--primary-100) / <alpha-value>)',
             200: 'oklch(var(--primary-200) / <alpha-value>)',
@@ -34,6 +37,8 @@ export default {
             950: 'oklch(var(--primary-950) / <alpha-value>)',
           },
           accent: {
+            DEFAULT: 'oklch(var(--llp-accent, var(--accent-500)) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-accent-foreground, var(--foreground-900)) / <alpha-value>)',
             50: 'oklch(var(--accent-50) / <alpha-value>)',
             100: 'oklch(var(--accent-100) / <alpha-value>)',
             200: 'oklch(var(--accent-200) / <alpha-value>)',
@@ -47,6 +52,8 @@ export default {
             950: 'oklch(var(--accent-950) / <alpha-value>)',
           },
           secondary: {
+            DEFAULT: 'oklch(var(--llp-secondary, var(--secondary-100)) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-secondary-foreground, var(--foreground-900)) / <alpha-value>)',
             50: 'oklch(var(--secondary-50) / <alpha-value>)',
             100: 'oklch(var(--secondary-100) / <alpha-value>)',
             200: 'oklch(var(--secondary-200) / <alpha-value>)',
@@ -60,6 +67,7 @@ export default {
             950: 'oklch(var(--secondary-950) / <alpha-value>)',
           },
           foreground: {
+            DEFAULT: 'oklch(var(--llp-foreground, var(--foreground-900)) / <alpha-value>)',
             50: 'oklch(var(--foreground-50) / <alpha-value>)',
             100: 'oklch(var(--foreground-100) / <alpha-value>)',
             200: 'oklch(var(--foreground-200) / <alpha-value>)',
@@ -72,12 +80,36 @@ export default {
             900: 'oklch(var(--foreground-900) / <alpha-value>)',
             950: 'oklch(var(--foreground-950) / <alpha-value>)',
           },
+          surface: 'oklch(var(--llp-surface) / <alpha-value>)',
+          card: 'oklch(var(--llp-card) / <alpha-value>)',
+          popover: {
+            DEFAULT: 'oklch(var(--llp-popover) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-popover-foreground) / <alpha-value>)',
+          },
+          muted: {
+            DEFAULT: 'oklch(var(--llp-muted) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-muted-foreground) / <alpha-value>)',
+          },
+          border: 'oklch(var(--llp-border) / <alpha-value>)',
+          input: 'oklch(var(--llp-input) / <alpha-value>)',
+          ring: 'oklch(var(--llp-ring) / <alpha-value>)',
+          success: 'oklch(var(--llp-success) / <alpha-value>)',
+          warning: 'oklch(var(--llp-warning) / <alpha-value>)',
+          destructive: {
+            DEFAULT: 'oklch(var(--llp-destructive) / <alpha-value>)',
+            foreground: 'oklch(var(--llp-destructive-foreground) / <alpha-value>)',
+          },
         },
         fontFamily: {
+          serif: ['"Libre Baskerville"', 'ui-serif', 'Georgia', 'serif'],
+          mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
           sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
           heading: ['"DM Sans"', 'system-ui', 'sans-serif'],
           body: ['"DM Sans"', 'system-ui', 'sans-serif'],
           label: ['"DM Sans"', 'system-ui', 'sans-serif'],
+        },
+        boxShadow: {
+          panel: '0 1px 2px oklch(0.25 0.04 230 / 0.06), 0 12px 32px -18px oklch(0.25 0.04 230 / 0.22)',
         },
         fontSize: {
           'xs': ['0.8125rem', { lineHeight: '1.5' }],

@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import Swal from 'sweetalert2';
+import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
@@ -12,7 +14,6 @@ const API_ENDPOINT = '/coach_api/coach/timetable';
 const BOOK_ENDPOINT = '/coach_api/coach/timetable/events/book';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
-const BUSY_SLOTS_ENDPOINT = '/coach_api/coach/timetable/busy-slots';
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Types
@@ -64,17 +65,6 @@ interface TimetableEvent {
   managerSignedAt?: string | null;
   managerSignedBy?: string;
   schedulerOnly?: boolean;
-  readOnlyBusy?: boolean;
-}
-
-interface CoachBusySlot {
-  id: number;
-  learnerId: string;
-  learnerName: string;
-  start: string;
-  end: string;
-  status: 'busy';
-  syncedAt?: string | null;
 }
 
 interface TimetableSummaryMetrics {
@@ -122,6 +112,7 @@ interface ScheduleNavigationIntent {
 }
 
 type CoachBookableSessionType = 'catch-up' | 'student-support';
+type ApiError = Error & { status?: number };
 
 const EMPTY_SUMMARY_METRICS: TimetableSummaryMetrics = {
   totalEvents: 0,
@@ -148,6 +139,75 @@ const EMPTY_SUMMARY: TimetableSummary = {
   },
 };
 const UPCOMING_WINDOW_DAYS = 7;
+const LEARNER_UNAVAILABLE_MESSAGE = 'This learner is busy at that time. Choose another time.';
+const TEAMS_SYNC_PERMISSION_MESSAGE = 'Teams calendar sync needs updated Microsoft permissions. The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access.';
+const TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = 'Teams calendar sync is not configured. The event was saved locally only.';
+const TEAMS_SYNC_TEMPORARY_MESSAGE = 'Teams calendar sync could not be completed. The event was saved locally only; try again later or ask an admin to check Microsoft permissions.';
+const TEAMS_SYNC_LINK_MISSING_MESSAGE = 'Teams did not return a meeting link, so this event was moved back to Needs Schedule. Try scheduling again after Microsoft sync is available.';
+
+async function readApiJson<T>(response: Response): Promise<T> {
+  const data = await response.json().catch(() => ({})) as { detail?: unknown };
+  if (!response.ok) {
+    const message = typeof data.detail === 'string' && data.detail.trim()
+      ? data.detail
+      : `Request failed with ${response.status}`;
+    const error = new Error(message) as ApiError;
+    error.status = response.status;
+    throw error;
+  }
+  return data as T;
+}
+
+function isLearnerAvailabilityConflict(err: unknown) {
+  if (!(err instanceof Error)) return false;
+  const status = (err as ApiError).status;
+  return status === 409 && /learner.*busy|busy at that time|learner.*unavailable|not available/i.test(err.message);
+}
+
+function showLearnerUnavailableAlert(message = LEARNER_UNAVAILABLE_MESSAGE) {
+  return Swal.fire({
+    title: 'Learner unavailable',
+    text: message,
+    icon: 'warning',
+    width: 512,
+    confirmButtonText: 'Choose another time',
+    buttonsStyling: false,
+    customClass: {
+      popup: 'kbc-standard-swal-popup',
+      title: 'kbc-standard-swal-title',
+      htmlContainer: 'kbc-standard-swal-text',
+      actions: 'kbc-standard-swal-actions',
+      confirmButton: 'kbc-standard-swal-confirm',
+    },
+  });
+}
+
+function sanitizeCalendarSyncMessage(value?: string | null) {
+  const message = (value || '').trim().replace(/\s+/g, ' ');
+  if (!message) return '';
+  const lowered = message.toLowerCase();
+  if (lowered.includes('credentials are not configured')) return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE;
+  if (lowered.includes('erroraccessdenied') || lowered.includes('access is denied') || /(^|\D)403(\D|$)/.test(lowered)) {
+    return TEAMS_SYNC_PERMISSION_MESSAGE;
+  }
+  if (lowered.includes('did not return a teams meeting link') || (lowered.includes('did not return') && lowered.includes('teams'))) {
+    return TEAMS_SYNC_LINK_MISSING_MESSAGE;
+  }
+  if (lowered.includes('microsoft graph') || lowered.includes('microsoft token')) return TEAMS_SYNC_TEMPORARY_MESSAGE;
+  return message;
+}
+
+function sanitizeEventNotes(value?: string | null) {
+  const message = (value || '').trim().replace(/\s+/g, ' ');
+  if (!message) return '';
+  const syncWarningMatch = message.match(/^(.*?)(?:\s*Microsoft sync warning:\s*)(.*)$/i);
+  if (syncWarningMatch) {
+    const prefix = syncWarningMatch[1].trim();
+    const warning = sanitizeCalendarSyncMessage(syncWarningMatch[2]);
+    return [prefix, warning ? `Microsoft sync warning: ${warning}` : ''].filter(Boolean).join(' ');
+  }
+  return sanitizeCalendarSyncMessage(message);
+}
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Data â€” June 2026 (spans 4 weeks)
@@ -170,17 +230,6 @@ function typeConfig(type: TimetableEvent['type']) {
 }
 
 function eventConfig(event: TimetableEvent) {
-  if (event.readOnlyBusy) {
-    return {
-      label: 'Learner Busy',
-      bg: 'bg-slate-100',
-      border: 'border-slate-300',
-      text: 'text-slate-700',
-      icon: 'ri-lock-line',
-      dot: 'bg-slate-500',
-      barBg: 'bg-slate-500',
-    };
-  }
   const mcrTheme = {
     label: 'MCR',
     bg: 'bg-amber-50',
@@ -239,54 +288,6 @@ function formatTime(h: number) {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-}
-
-function mapCoachBusySlot(slot: CoachBusySlot): TimetableEvent | null {
-  const start = new Date(slot.start);
-  const end = new Date(slot.end);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null;
-  const jsDay = start.getDay();
-  return {
-    id: `learner-busy-${slot.learnerId}-${slot.id}`,
-    title: 'Busy',
-    type: 'personal',
-    source: 'learner-busy',
-    date: formatDateInputValue(start.getFullYear(), start.getMonth(), start.getDate()),
-    year: start.getFullYear(),
-    month: start.getMonth(),
-    dayOfMonth: start.getDate(),
-    dayOfWeek: (jsDay === 0 ? 6 : jsDay - 1) as TimetableEvent['dayOfWeek'],
-    startHour: start.getHours() + start.getMinutes() / 60,
-    endHour: start.getHours() + start.getMinutes() / 60 + (end.getTime() - start.getTime()) / 3_600_000,
-    timeLabel: `${formatTime(start.getHours() + start.getMinutes() / 60)} - ${formatTime(end.getHours() + end.getMinutes() / 60)}`,
-    learner: slot.learnerName,
-    learnerId: slot.learnerId,
-    location: 'Private personal calendar event',
-    platform: 'Personal Calendar',
-    priority: 'normal',
-    status: 'confirmed',
-    notes: 'The learner is unavailable during this time. Personal event details remain private.',
-    readOnlyBusy: true,
-  };
-}
-
-function overlapsLearnerBusySlot(
-  slots: CoachBusySlot[],
-  learnerId: string | undefined,
-  dateValue: string,
-  timeValue: string,
-  durationMinutes: number,
-) {
-  if (!learnerId || !dateValue || !timeValue) return false;
-  const proposedStart = new Date(`${dateValue}T${timeValue}:00`);
-  if (Number.isNaN(proposedStart.getTime())) return false;
-  const proposedEnd = new Date(proposedStart.getTime() + durationMinutes * 60_000);
-  return slots.some(slot => {
-    if (slot.learnerId !== learnerId) return false;
-    const busyStart = new Date(slot.start);
-    const busyEnd = new Date(slot.end);
-    return proposedStart < busyEnd && proposedEnd > busyStart;
-  });
 }
 
 function buildInitials(value: string) {
@@ -744,7 +745,6 @@ export default function CoachTimetablePage() {
   const [filterSource, setFilterSource] = useState<SourceFilter>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [events, setEvents] = useState<TimetableEvent[]>([]);
-  const [busySlots, setBusySlots] = useState<CoachBusySlot[]>([]);
   const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
   const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
@@ -887,24 +887,6 @@ export default function CoachTimetablePage() {
   }, [loadTimetable]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    const start = new Date(viewYear, viewMonth, 1).toISOString();
-    const end = new Date(viewYear, viewMonth + 1, 1).toISOString();
-    const params = new URLSearchParams({ start, end });
-    fetch(`${BUSY_SLOTS_ENDPOINT}?${params.toString()}`, { signal: controller.signal })
-      .then(async response => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
-        setBusySlots(Array.isArray(data.busy) ? data.busy : []);
-      })
-      .catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        setBusySlots([]);
-      });
-    return () => controller.abort();
-  }, [viewMonth, viewYear]);
-
-  useEffect(() => {
     const nextIntent = parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent);
     if (!nextIntent) return;
     setPendingScheduleIntent(nextIntent);
@@ -924,7 +906,7 @@ export default function CoachTimetablePage() {
     setScheduleTime(selectedEvent.scheduledTime || '09:00');
     setScheduleDuration(selectedEvent.durationMinutes || 60);
     setEventActionError(null);
-    setEventActionNotice(selectedEvent.syncWarning || null);
+    setEventActionNotice(sanitizeCalendarSyncMessage(selectedEvent.syncWarning) || null);
   }, [selectedEvent]);
 
   const todayInputValue = formatDateInputValue(todayYear, todayMonth, todayDay);
@@ -1084,7 +1066,7 @@ export default function CoachTimetablePage() {
     setScheduleModalTime(selectedScheduleEvent.scheduledTime || '09:00');
     setScheduleModalDuration(selectedScheduleEvent.durationMinutes || (selectedScheduleEvent.source === 'catch-up' ? 45 : 60));
     setScheduleModalError(null);
-    setScheduleModalNotice(selectedScheduleEvent.syncWarning || null);
+    setScheduleModalNotice(sanitizeCalendarSyncMessage(selectedScheduleEvent.syncWarning) || null);
   }, [scheduleModalOpen, selectedDay, selectedScheduleEvent, viewMonth, viewYear]);
 
   useEffect(() => {
@@ -1127,11 +1109,7 @@ export default function CoachTimetablePage() {
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
-  const busyEvents = useMemo(
-    () => busySlots.map(mapCoachBusySlot).filter((event): event is TimetableEvent => event !== null),
-    [busySlots],
-  );
-  const calendarEvents = useMemo(() => [...events, ...busyEvents], [busyEvents, events]);
+  const calendarEvents = events;
   const visibleRangeEvents = useMemo(() => {
     if (viewMode === 'day') {
       return calendarEvents.filter(event => event.dayOfMonth === selectedDay && event.month === viewMonth && event.year === viewYear);
@@ -1359,10 +1337,6 @@ export default function CoachTimetablePage() {
 
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
-    if (overlapsLearnerBusySlot(busySlots, selectedEvent.learnerId, scheduleDate, scheduleTime, scheduleDuration)) {
-      setEventActionError('This learner is busy at that time. Choose another time.');
-      return;
-    }
 
     setEventActionBusy(true);
     setEventActionError(null);
@@ -1380,24 +1354,23 @@ export default function CoachTimetablePage() {
           timezoneOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);
       const updatedEvent = data.event as TimetableEvent;
       updateSingleEvent(updatedEvent);
-      if (data.warning) setEventActionNotice(data.warning as string);
+      setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
     } catch (err) {
-      setEventActionError(err instanceof Error ? err.message : 'Unable to schedule event');
+      const message = err instanceof Error ? err.message : 'Unable to schedule event';
+      if (isLearnerAvailabilityConflict(err)) {
+        void showLearnerUnavailableAlert(message);
+      }
+      setEventActionError(message);
     } finally {
       setEventActionBusy(false);
     }
-  }, [busySlots, scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
+  }, [scheduleDate, scheduleDuration, scheduleTime, selectedEvent, updateSingleEvent]);
 
   const handleCreateSession = useCallback(async () => {
     if (!createSessionLearnerId || !createSessionDate || !createSessionTime) return;
-    if (overlapsLearnerBusySlot(busySlots, createSessionLearnerId, createSessionDate, createSessionTime, createSessionDuration)) {
-      setCreateSessionError('This learner is busy at that time. Choose another time.');
-      return;
-    }
 
     setCreateSessionBusy(true);
     setCreateSessionError(null);
@@ -1415,8 +1388,7 @@ export default function CoachTimetablePage() {
           notes: createSessionNotes,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);
 
       const createdEvent = data.event as TimetableEvent;
       updateSingleEvent(createdEvent);
@@ -1433,12 +1405,16 @@ export default function CoachTimetablePage() {
       setViewMode('day');
       setSelectedEvent(createdEvent);
       setEventActionError(null);
-      setEventActionNotice(typeof data.warning === 'string' && data.warning ? data.warning : null);
+      setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
       setCreateSessionOpen(false);
       setCreateSessionLearnerSearch('');
       setCreateSessionLearnerPickerOpen(false);
     } catch (err) {
-      setCreateSessionError(err instanceof Error ? err.message : 'Unable to create session');
+      const message = err instanceof Error ? err.message : 'Unable to create session';
+      if (isLearnerAvailabilityConflict(err)) {
+        void showLearnerUnavailableAlert(message);
+      }
+      setCreateSessionError(message);
     } finally {
       setCreateSessionBusy(false);
     }
@@ -1449,17 +1425,12 @@ export default function CoachTimetablePage() {
     createSessionNotes,
     createSessionTime,
     createSessionType,
-    busySlots,
     setCalendarDate,
     updateSingleEvent,
   ]);
 
   const handleModalScheduleSave = useCallback(async () => {
     if (!selectedScheduleEvent?.eventKey || !selectedScheduleEvent.ownerEmail) return;
-    if (overlapsLearnerBusySlot(busySlots, selectedScheduleEvent.learnerId, scheduleModalDate, scheduleModalTime, scheduleModalDuration)) {
-      setScheduleModalError('This learner is busy at that time. Choose another time.');
-      return;
-    }
 
     setScheduleModalBusy(true);
     setScheduleModalError(null);
@@ -1477,8 +1448,7 @@ export default function CoachTimetablePage() {
           timezoneOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
+      const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);
 
       const updatedEvent = data.event as TimetableEvent;
       updateSingleEvent(updatedEvent);
@@ -1486,15 +1456,18 @@ export default function CoachTimetablePage() {
       setViewMode('day');
       setSelectedEvent(updatedEvent);
       setEventActionError(null);
-      setEventActionNotice(typeof data.warning === 'string' && data.warning ? data.warning : null);
+      setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
       setScheduleModalOpen(false);
     } catch (err) {
-      setScheduleModalError(err instanceof Error ? err.message : 'Unable to schedule event');
+      const message = err instanceof Error ? err.message : 'Unable to schedule event';
+      if (isLearnerAvailabilityConflict(err)) {
+        void showLearnerUnavailableAlert(message);
+      }
+      setScheduleModalError(message);
     } finally {
       setScheduleModalBusy(false);
     }
   }, [
-    busySlots,
     scheduleModalDate,
     scheduleModalDuration,
     scheduleModalTime,
@@ -1532,7 +1505,7 @@ export default function CoachTimetablePage() {
       const updatedEvent = data.event as TimetableEvent;
       updateSingleEvent(updatedEvent);
       setProgressReviewCompletionEvent(null);
-      if (data.warning) setEventActionNotice(data.warning as string);
+      setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
     } catch (err) {
       setEventActionError(err instanceof Error ? err.message : 'Unable to submit progress review');
     } finally {
@@ -1576,7 +1549,7 @@ export default function CoachTimetablePage() {
       if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
       const updatedEvent = data.event as TimetableEvent;
       const nextSelectedEvent = updateSingleEvent(updatedEvent);
-      if (data.warning) setEventActionNotice(data.warning as string);
+      setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
       if (action === 'start' && (nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink)) {
         window.open(nextSelectedEvent.meetingLink || nextSelectedEvent.graphWebLink, '_blank', 'noopener,noreferrer');
       }
@@ -1592,6 +1565,10 @@ export default function CoachTimetablePage() {
     : viewMode === 'week'
       ? `${weekDates[0].monthName} ${weekDates[0].day} - ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
       : `${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}`;
+  const selectedEventNotes = sanitizeEventNotes(selectedEvent?.notes);
+  const selectedEventFeedback = sanitizeCalendarSyncMessage(eventActionError || eventActionNotice);
+  const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
+  const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
 
   return (
     <WorkspaceShell
@@ -2300,22 +2277,22 @@ export default function CoachTimetablePage() {
                         </a>
                       </EventDetailLine>
                     )}
-                    {selectedEvent.notes && (
+                    {selectedEventNotes && (
                       <div className="rounded-xl border border-background-100 bg-background-50 p-3">
                         <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
                           <AppIcon className="ri-sticky-note-line"></AppIcon>
                           Notes
                         </p>
-                        <p className="text-[11px] leading-5 text-foreground-700">{selectedEvent.notes}</p>
+                        <p className="text-[11px] leading-5 text-foreground-700">{selectedEventNotes}</p>
                       </div>
                     )}
                   </div>
-                  {(eventActionError || eventActionNotice) && (
+                  {selectedEventFeedback && (
                     <div className={`mt-4 rounded-lg border px-3 py-2 text-[11px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                      {eventActionError || eventActionNotice}
+                      {selectedEventFeedback}
                     </div>
                   )}
-                  {!selectedEvent.readOnlyBusy && !['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
+                  {!['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
@@ -3005,9 +2982,9 @@ export default function CoachTimetablePage() {
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalTime || '09:00'}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDuration} min</span>
                       </div>
-                      {selectedScheduleEvent.notes && (
+                      {selectedScheduleEventNotes && (
                         <p className="mt-2 text-[11px] leading-5 text-foreground-500">
-                          {selectedScheduleEvent.notes}
+                          {selectedScheduleEventNotes}
                         </p>
                       )}
                     </section>
@@ -3015,13 +2992,13 @@ export default function CoachTimetablePage() {
                 </>
               )}
 
-              {(scheduleModalError || scheduleModalNotice) && (
+              {scheduleModalFeedback && (
                 <div className={`rounded-2xl border px-4 py-3 text-sm ${
                   scheduleModalError
                     ? 'border-red-200 bg-red-50 text-red-700'
                     : 'border-amber-200 bg-amber-50 text-amber-800'
                 }`}>
-                  {scheduleModalError || scheduleModalNotice}
+                  {scheduleModalFeedback}
                 </div>
               )}
 
