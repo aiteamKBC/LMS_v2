@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumOverview, type CurriculumSession, type CurriculumStaffProfile } from '@/lib/curriculumApi';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
@@ -1093,6 +1093,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   onClose: () => void;
   onFilter: (filter: OtjhFilter) => void;
 }) {
+  const navigate = useNavigate();
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
     active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
@@ -1123,6 +1124,13 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
 
+  const openLearnerProfile = (learner: CoachLearner) => {
+    navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
+      state: { learnerId: learner.id, learnerName: learner.name },
+    });
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
       <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/45 backdrop-blur-[5px]" aria-label="Close popup"></button>
@@ -1152,10 +1160,25 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                 return (
                   <div key={learner.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-all hover:-translate-y-px hover:border-foreground-300/70 hover:shadow-[0_14px_32px_-24px_rgba(15,23,42,0.28)]">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${badge.avatarClass}`}><span>{learner.initials}</span></span>
+                    <button
+                      type="button"
+                      onClick={() => openLearnerProfile(learner)}
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-transform hover:scale-[1.04] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 ${badge.avatarClass}`}
+                      title={`Open ${learner.name}'s profile`}
+                      aria-label={`Open ${learner.name}'s profile`}
+                    >
+                      <span>{learner.initials}</span>
+                    </button>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.name}</p>
+                        <button
+                          type="button"
+                          onClick={() => openLearnerProfile(learner)}
+                          className="truncate text-left text-[12px] font-semibold text-foreground-900 transition-colors hover:text-primary-700 focus:outline-none focus:text-primary-700"
+                          title={`Open ${learner.name}'s profile`}
+                        >
+                          {learner.name}
+                        </button>
                         {type === 'active' || type === 'on-break' ? (
                           <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
                         ) : type === 'gateway' || type === 'epa' ? (
