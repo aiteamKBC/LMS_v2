@@ -260,6 +260,7 @@ class LearnerMatchProfileTests(SimpleTestCase):
             "name": "Test Learner",
             "email": "test@example.com",
             "programme_name": "Level 6 Project Controls Professional",
+            "coach": {"name": "Example Coach", "email": "coach@example.com"},
             "training_plan": [{
                 "month": "July 2026",
                 "date": "2026-07-01",
@@ -353,6 +354,7 @@ class LearnerMatchProfileTests(SimpleTestCase):
         self.assertEqual(payload["skills_radar"][0]["maximum"], 8)
         self.assertEqual(payload["employment"]["employer_name"], "Example Ltd")
         self.assertEqual(payload["programme_status"], "OnBreak")
+        self.assertEqual(payload["coach"]["name"], "Example Coach")
         self.assertEqual(payload["break_in_learning"]["last_learning_date"], "2026-01-15")
         self.assertEqual(payload["break_in_learning"]["return_to_learning_date"], "2026-03-10")
         self.assertEqual(

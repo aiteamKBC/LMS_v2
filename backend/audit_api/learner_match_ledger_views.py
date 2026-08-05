@@ -278,7 +278,8 @@ def _fetch_rows():
             select lm.aptem_id, lm.learner_name, lm.learner_email,
                    lm.programme_structure, lm.aptem_training_plan,
                    lm.programme_name, profile.program_status,
-                   profile.break_in_learning
+                   profile.break_in_learning, owner.coach_name,
+                   owner.coach_email
             from "Audit".learner_match lm
             left join lateral (
                 select program_status, "Break in learning" as break_in_learning
@@ -287,6 +288,12 @@ def _fetch_rows():
                 order by fetched_at desc nulls last, id desc
                 limit 1
             ) profile on true
+            left join lateral (
+                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
+                from "LMS"."Aptem_users"
+                where "ID" = lm.aptem_id
+                limit 1
+            ) owner on true
             where lm.programme_structure ->> 'programme' = %s
             order by lm.learner_name, lm.aptem_id
             ''',
@@ -297,7 +304,8 @@ def _fetch_rows():
     learners = []
     for (
         aptem_id, learner_name, learner_email, structure, training_plan,
-        programme_name, program_status, break_in_learning,
+        programme_name, program_status, break_in_learning, coach_name,
+        coach_email,
     ) in rows:
         # psycopg may hand json/jsonb back as a decoded dict or as raw text
         # depending on the configured loaders — normalise to a dict either way.
@@ -328,6 +336,10 @@ def _fetch_rows():
                 bool(break_in_learning.get("has_break_in_learning"))
                 or str(program_status or "").strip().lower() == "onbreak"
             ),
+            "coach": {
+                "name": coach_name or None,
+                "email": coach_email or None,
+            },
             "training_plan": training_plan if isinstance(training_plan, list) else [],
             "activities": _activities_for_row(aptem_id, name, structure),
             "month_hours": _month_hours_for_row(structure),
@@ -419,6 +431,7 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             "last_activity_date": max(dates) if dates else None,
             "program_status": learner.get("program_status") or "Unknown",
             "has_break_in_learning": bool(learner.get("has_break_in_learning")),
+            "coach": learner.get("coach") or {"name": None, "email": None},
         })
 
     if search:
@@ -510,6 +523,7 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         "programme": learner.get("programme_name") or PROGRAMME_NAME,
         "programme_status": sources["programme_status"],
         "break_in_learning": sources["break_in_learning"],
+        "coach": learner.get("coach") or {"name": None, "email": None},
         "planned_hours": sources["learning_delivery"].get("planned_hours"),
         "learning_delivery": sources["learning_delivery"],
         "contracts": sources["contracts"],

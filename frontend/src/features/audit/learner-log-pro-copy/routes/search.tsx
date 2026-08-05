@@ -226,6 +226,7 @@ function SearchPage() {
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="label-caps pl-7">Learner</TableHead>
                     <TableHead className="label-caps">Status</TableHead>
+                    <TableHead className="label-caps">Coach</TableHead>
                     <TableHead className="label-caps text-right">Activities</TableHead>
                     <TableHead className="label-caps text-right">Planned hours</TableHead>
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
@@ -237,7 +238,7 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
                   )}
                   {summaries.data?.learners.map((learner) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
@@ -247,6 +248,10 @@ function SearchPage() {
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
                           {learner.has_break_in_learning && <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">Break in learning</span>}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm font-medium text-foreground">{learner.coach.name ?? "—"}</p>
+                        {learner.coach.email && <p className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</p>}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">{learner.entries}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{formatHours(learner.planned_hours)}</TableCell>

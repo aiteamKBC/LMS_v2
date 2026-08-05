@@ -46,6 +46,10 @@ export type LearnerSummary = {
   last_activity_date: string | null;
   program_status: string;
   has_break_in_learning: boolean;
+  coach: {
+    name: string | null;
+    email: string | null;
+  };
 };
 
 export type LearnersResponse = {
@@ -69,6 +73,10 @@ export type LearnerProfile = {
     has_return_to_learning: boolean;
     return_to_learning_date: string | null;
     revised_learning_planned_end_date: string | null;
+  };
+  coach: {
+    name: string | null;
+    email: string | null;
   };
   planned_hours: number | null;
   learning_delivery: {

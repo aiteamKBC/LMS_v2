@@ -111,6 +111,11 @@ function LearnerProfilePage() {
             <dl className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm">
               <div><dt className="label-caps">Aptem ID</dt><dd className="mt-1 font-mono">{learner.aptem_id}</dd></div>
               <div><dt className="label-caps">ILR reference</dt><dd className="mt-1 font-mono">{learner.learning_delivery.learner_reference ?? "—"}</dd></div>
+              <div>
+                <dt className="label-caps">Coach</dt>
+                <dd className="mt-1 font-medium">{learner.coach.name ?? "—"}</dd>
+                {learner.coach.email && <dd className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</dd>}
+              </div>
               <div><dt className="label-caps">Start date</dt><dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.start_date)}</dd></div>
               <div>
                 <dt className="label-caps">First evidence</dt>
