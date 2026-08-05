@@ -17,6 +17,7 @@ import {
   type AuditActivityItem,
   type AuditLearnerSummary,
   type AuditMonth,
+  type AuditRow,
   type AuditSignoff,
   type AuditWarning,
   type AuditWeek,
@@ -65,9 +66,11 @@ export default function AuditWorkspace() {
   );
 }
 
-type AuditCategoryKey = 'live_session' | 'quiz_reading' | 'video' | 'assignment' | 'self_study' | 'assessment' | 'other';
+type AuditCategoryKey = 'live_session' | 'quiz_reading' | 'video' | 'assignment' | 'other';
 type AuditSortKey = 'learner' | 'programme' | 'planned' | 'actual' | 'done';
 type AuditSortDirection = 'asc' | 'desc';
+type AuditActivityViewMode = 'list' | 'matrix';
+type AuditAttendanceFilter = 'all' | 'present' | 'absent';
 
 interface AuditMatrixRecord {
   learner: AuditLearnerSummary;
@@ -90,6 +93,8 @@ interface AuditMatrixColumn {
   title: string;
   subtitle: string;
   date: string;
+  sourceId: string;
+  item: AuditMatrixItem;
 }
 
 const AUDIT_CATEGORY_META: Record<AuditCategoryKey, { label: string; icon: string; className: string }> = {
@@ -97,8 +102,6 @@ const AUDIT_CATEGORY_META: Record<AuditCategoryKey, { label: string; icon: strin
   quiz_reading: { label: 'Quiz / Reading Material', icon: 'ri-book-open-line', className: 'bg-blue-50 text-blue-800 border-blue-200' },
   video: { label: 'Video', icon: 'ri-play-circle-line', className: 'bg-red-50 text-red-800 border-red-200' },
   assignment: { label: 'Assignment', icon: 'ri-file-edit-line', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
-  self_study: { label: 'Self Study', icon: 'ri-book-read-line', className: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
-  assessment: { label: 'Assessment', icon: 'ri-checkbox-line', className: 'bg-violet-50 text-violet-800 border-violet-200' },
   other: { label: 'Other Activity', icon: 'ri-stack-line', className: 'bg-background-100 text-foreground-700 border-background-300' },
 };
 
@@ -110,21 +113,32 @@ function AuditActivitiesLanding() {
   const [selectedCategory, setSelectedCategory] = useState<AuditCategoryKey>('live_session');
   const [programme, setProgramme] = useState('all');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [sortKey, setSortKey] = useState<AuditSortKey>('learner');
   const [sortDirection, setSortDirection] = useState<AuditSortDirection>('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const [totalLearners, setTotalLearners] = useState(0);
+  const [viewMode, setViewMode] = useState<AuditActivityViewMode>('list');
+  const [attendanceFilter, setAttendanceFilter] = useState<AuditAttendanceFilter>('all');
   const [totalPages, setTotalPages] = useState(1);
   const [activityStats, setActivityStats] = useState<AuditActivityStats | null>(null);
+  const [viewerItem, setViewerItem] = useState<AuditActivityItem | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError('');
-    fetchAuditLearnersPage({ includeActivities: true, includeTest: true, activityCategory: selectedCategory, page, pageSize, search })
+    fetchAuditLearnersPage({ includeActivities: true, includeTest: true, activityCategory: selectedCategory, page, pageSize, search: debouncedSearch })
       .then((response) => {
         const details = response.results.map((learner) => ({
           learner,
@@ -133,7 +147,6 @@ function AuditActivitiesLanding() {
         }));
         if (!cancelled) {
           setRecords(details);
-          setTotalLearners(response.count);
           setTotalPages(response.totalPages || 1);
           setActivityStats(response.activityStats || null);
         }
@@ -148,7 +161,7 @@ function AuditActivitiesLanding() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [page, pageSize, search, selectedCategory]);
+  }, [debouncedSearch, page, pageSize, selectedCategory]);
 
   const programmeOptions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -167,7 +180,7 @@ function AuditActivitiesLanding() {
   ), [activityStats]);
 
   const filteredRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = debouncedSearch.toLowerCase();
     const rows = records
       .filter((record) => {
         const programmeName = record.audit?.learner.programme_name || record.learner.programName || 'No programme';
@@ -187,13 +200,14 @@ function AuditActivitiesLanding() {
         const cells = record.activities
           .filter((item) => auditCategory(item) === selectedCategory)
           .filter((item) => inAuditDateWindow(auditItemDate(item), fromDate, toDate))
-          .map((item) => auditCell(item));
+          .map((item) => auditCell(item))
+          .filter((cell) => attendanceMatchesFilter(cell, selectedCategory, attendanceFilter));
         const planned = roundHours(cells.reduce((sum, cell) => sum + cell.planned, 0));
         const actual = roundHours(cells.reduce((sum, cell) => sum + cell.actual, 0));
         const done = cells.filter((cell) => cell.done).length;
         return { record, cells, planned, actual, done };
       })
-      .filter((row) => row.cells.length > 0 || (!fromDate && !toDate));
+      .filter((row) => row.cells.length > 0);
 
     return rows.sort((left, right) => {
       const direction = sortDirection === 'asc' ? 1 : -1;
@@ -205,36 +219,52 @@ function AuditActivitiesLanding() {
       if (sortKey === 'actual') return (left.actual - right.actual) * direction;
       return (left.done - right.done) * direction;
     });
-  }, [fromDate, programme, records, search, selectedCategory, sortDirection, sortKey, toDate]);
+  }, [attendanceFilter, debouncedSearch, fromDate, programme, records, selectedCategory, sortDirection, sortKey, toDate]);
 
   const columns = useMemo<AuditMatrixColumn[]>(() => {
-    const preferredProgramme = programme === 'all' ? filteredRows.find((row) => row.record.audit?.learner.programme_name || row.record.learner.programName)?.record.audit?.learner.programme_name || filteredRows[0]?.record.learner.programName || '' : programme;
+    const preferredProgramme = programme === 'all'
+      ? filteredRows.find((row) => row.cells.length > 0)?.record.audit?.learner.programme_name || filteredRows.find((row) => row.cells.length > 0)?.record.learner.programName || ''
+      : programme;
     const byKey = new Map<string, AuditMatrixColumn>();
     filteredRows
-      .filter((row) => programme !== 'all' || !preferredProgramme || (row.record.audit?.learner.programme_name || row.record.learner.programName || 'No programme') === preferredProgramme)
+      .filter((row) => row.cells.length > 0)
+      .filter((row) => programme !== 'all' || !preferredProgramme || selectedCategory === 'video' || (row.record.audit?.learner.programme_name || row.record.learner.programName || 'No programme') === preferredProgramme)
       .forEach((row) => {
         row.cells.forEach((cell) => {
           const key = auditItemKey(cell.item);
           if (!byKey.has(key)) {
-            byKey.set(key, { key, title: auditItemTitle(cell.item), subtitle: auditItemSubtitle(cell.item), date: auditItemDate(cell.item) || '' });
+            byKey.set(key, {
+              key,
+              title: auditItemTitle(cell.item),
+              subtitle: selectedCategory === 'live_session' ? auditItemDate(cell.item) || '' : auditItemSubtitle(cell.item),
+              date: auditItemDate(cell.item) || '',
+              sourceId: auditItemSourceId(cell.item),
+              item: cell.item,
+            });
           }
         });
-      });
+    });
     return Array.from(byKey.values()).sort((left, right) => {
       if (left.date !== right.date) return left.date.localeCompare(right.date);
       if (left.title !== right.title) return left.title.localeCompare(right.title);
       return left.subtitle.localeCompare(right.subtitle);
     });
-  }, [filteredRows, programme]);
+  }, [filteredRows, programme, selectedCategory]);
 
-  const totals = useMemo(() => {
-    const planned = roundHours(filteredRows.reduce((sum, row) => sum + row.planned, 0));
-    const actual = roundHours(filteredRows.reduce((sum, row) => sum + row.actual, 0));
-    const done = filteredRows.reduce((sum, row) => sum + row.done, 0);
-    const cells = filteredRows.reduce((sum, row) => sum + row.cells.length, 0);
-    return { planned, actual, done, cells, rate: cells ? Math.round((done / cells) * 100) : 0 };
-  }, [filteredRows]);
-  const selectedDbStats = activityStats?.categories[selectedCategory] || null;
+  const listRows = useMemo(() => (
+    filteredRows
+      .flatMap((row) => row.cells.map((cell) => ({ row, cell })))
+      .sort((left, right) => {
+        const leftDate = auditItemDate(left.cell.item) || '9999-12-31';
+        const rightDate = auditItemDate(right.cell.item) || '9999-12-31';
+        if (leftDate !== rightDate) return leftDate.localeCompare(rightDate);
+        const leftTitle = auditItemTitle(left.cell.item);
+        const rightTitle = auditItemTitle(right.cell.item);
+        if (leftTitle !== rightTitle) return leftTitle.localeCompare(rightTitle);
+        return (left.row.record.learner.fullName || '').localeCompare(right.row.record.learner.fullName || '');
+      })
+  ), [filteredRows]);
+  const initialLoading = loading && records.length === 0;
 
   const requestSort = (next: AuditSortKey) => {
     if (next === sortKey) setSortDirection((direction) => direction === 'asc' ? 'desc' : 'asc');
@@ -272,7 +302,7 @@ function AuditActivitiesLanding() {
                 <i className={meta.icon} />
                 {meta.label}
                 <span className={`rounded-full px-2 py-0.5 text-[11px] ${active ? 'bg-white/20 text-white' : 'bg-[#f5f1ea] text-[#8a7561]'}`}>
-                  {active ? categoryCounts[key] : '-'}
+                  {categoryCounts[key] ?? 0}
                 </span>
               </button>
             );
@@ -280,7 +310,7 @@ function AuditActivitiesLanding() {
         </div>
 
         <div className="mt-4 rounded-xl border border-[#eee7dc] bg-white p-3">
-          <div className="grid gap-3 lg:grid-cols-[120px_220px_170px_1fr]">
+          <div className="grid gap-3 lg:grid-cols-[120px_220px_170px_180px_1fr]">
             <label className="flex items-center gap-2 text-xs font-bold uppercase text-[#8a7561]"><i className="ri-filter-3-line" />Filters</label>
             <select value={programme} onChange={(event) => setProgramme(event.target.value)} className="h-10 rounded-lg border border-[#eee7dc] bg-white px-3 text-sm outline-none focus:border-[#d97706]">
               <option value="all">All programmes</option>
@@ -290,40 +320,49 @@ function AuditActivitiesLanding() {
               <input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-[#eee7dc] bg-white px-2 text-sm outline-none focus:border-[#d97706]" />
               <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-[#eee7dc] bg-white px-2 text-sm outline-none focus:border-[#d97706]" />
             </div>
+            {selectedCategory === 'live_session' ? (
+              <select
+                value={attendanceFilter}
+                onChange={(event) => {
+                  setAttendanceFilter(event.target.value as AuditAttendanceFilter);
+                  setPage(1);
+                }}
+                className="h-10 rounded-lg border border-[#eee7dc] bg-white px-3 text-sm outline-none focus:border-[#d97706]"
+              >
+                <option value="all">All attendance</option>
+                <option value="present">Present only</option>
+                <option value="absent">Absent only</option>
+              </select>
+            ) : (
+              <div />
+            )}
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-[#9b8875]" />
               <input
                 value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(1);
-                }}
+                onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search learner..."
                 className="h-10 w-full rounded-lg border border-[#eee7dc] bg-white pl-10 pr-3 text-sm outline-none focus:border-[#d97706]"
               />
             </div>
           </div>
+          <div className="mt-3 inline-flex rounded-lg border border-[#eee7dc] bg-[#fbfaf8] p-1">
+            {(['list', 'matrix'] as AuditActivityViewMode[]).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                className={`inline-flex h-8 items-center gap-2 rounded-md px-3 text-xs font-bold transition ${viewMode === mode ? 'bg-white text-[#d97706] shadow-sm' : 'text-[#7c6754] hover:text-[#9a3412]'}`}
+              >
+                <i className={mode === 'list' ? 'ri-list-check' : 'ri-table-line'} />
+                {mode === 'list' ? 'List' : 'Matrix'}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#eee7dc] bg-[#fbfaf8] px-4 py-3 text-sm text-[#6f5b49]">
-          <div className="flex flex-wrap items-center gap-4">
-            {loading ? (
-              <AuditStatsSkeleton />
-            ) : (
-              <>
-                <span><strong>{filteredRows.length}</strong> learners on page</span>
-                <span><strong>{records.filter((record) => isTestLearner(record.learner)).length}</strong> test learners</span>
-                <span><strong>{totalLearners}</strong> matching learners</span>
-                <span><strong>{selectedDbStats?.activities ?? totals.cells}</strong> page activities</span>
-                <span><strong>{columns.length}</strong> page columns</span>
-                <span>Planned: <strong>{formatHoursFromHours(totals.planned)}</strong></span>
-                <span>Actual on page: <strong>{formatHoursFromHours(totals.actual)}</strong></span>
-                <span>Category actual: <strong>{formatHoursFromHours(selectedDbStats?.actualHours ?? totals.actual)}</strong></span>
-                <span>Completed: <strong>{totals.done}/{totals.cells}</strong></span>
-                <span>Rate: <strong>{totals.rate}%</strong></span>
-              </>
-            )}
-          </div>
+        <div className="mt-4 flex flex-wrap items-center justify-end gap-3 rounded-lg border border-[#eee7dc] bg-[#fbfaf8] px-4 py-3 text-sm text-[#6f5b49]">
+          {loading && !initialLoading && <span className="mr-auto text-xs font-bold text-[#d97706]">Updating...</span>}
           <div className="flex items-center gap-2">
             <select
               value={pageSize}
@@ -346,12 +385,20 @@ function AuditActivitiesLanding() {
         </div>
 
         <div className="mt-4 overflow-hidden rounded-xl border border-[#eee7dc] bg-white">
-          {loading ? (
+          {initialLoading ? (
             <ActivityMatrixSkeleton />
           ) : error ? (
             <div className="p-6"><StateBanner tone="error" text={error} /></div>
           ) : filteredRows.length === 0 ? (
-            <div className="p-6"><EmptyPanel icon="ri-inbox-line" text="No learners match this activity category and filter set." /></div>
+            <div className="p-6"><EmptyPanel icon="ri-inbox-line" text={`No ${AUDIT_CATEGORY_META[selectedCategory].label.toLowerCase()} activities on this page.`} /></div>
+          ) : viewMode === 'list' ? (
+            <ActivityListTable
+              rows={listRows}
+              category={selectedCategory}
+              activityColumnLabel={selectedCategory === 'live_session' ? 'Live session Title' : 'Activity'}
+              onOpenLearner={(learnerId) => navigate(`/workspace/auditor/learner/${learnerId}`)}
+              onOpenSource={(item) => setViewerItem(item)}
+            />
           ) : (
             <div className="overflow-auto">
               <table className="min-w-full border-collapse text-sm">
@@ -365,7 +412,10 @@ function AuditActivitiesLanding() {
                     <th className="min-w-[120px] border-b border-r border-background-300 px-3 py-3 text-center"><SortButton id="done" label="Completed" /></th>
                     {columns.map((column) => (
                       <th key={column.key} className="min-w-[240px] max-w-[320px] border-b border-r border-background-300 px-3 py-3 text-left align-top" title={`${column.title} - ${column.subtitle}`}>
-                        <span className="block whitespace-normal break-words text-[11px] font-bold leading-snug text-foreground-700">{column.title}</span>
+                        <ActivityColumnTitle
+                          column={column}
+                          onOpen={(item) => setViewerItem(item)}
+                        />
                         <span className="mt-1 block whitespace-normal break-words text-[10px] font-medium leading-snug normal-case tracking-normal text-foreground-400">{column.subtitle}</span>
                       </th>
                     ))}
@@ -399,7 +449,7 @@ function AuditActivitiesLanding() {
                           const cell = cellsByColumn.get(column.key);
                           return (
                             <td key={column.key} className="border-r border-background-200 px-3 py-3 text-center text-xs text-foreground-500">
-                              {cell ? <span className={`inline-flex rounded-md px-2 py-1 font-bold ${cell.done ? 'bg-cyan-50 text-cyan-800' : 'bg-background-100 text-foreground-500'}`}>{formatHoursFromHours(cell.actual)}/{formatHoursFromHours(cell.planned)}</span> : '-'}
+                              {cell ? <span className={`inline-flex rounded-md px-2 py-1 font-bold ${auditCellTone(cell)}`}>{formatHoursFromHours(cell.actual)}/{formatHoursFromHours(cell.planned)}</span> : '-'}
                             </td>
                           );
                         })}
@@ -412,8 +462,155 @@ function AuditActivitiesLanding() {
           )}
         </div>
       </section>
+      <AuditSourceViewer item={viewerItem} onClose={() => setViewerItem(null)} />
     </div>
   );
+}
+
+function ActivityColumnTitle({ column, onOpen }: { column: AuditMatrixColumn; onOpen: (item: AuditActivityItem) => void }) {
+  const openable = matrixColumnViewerItem(column.item);
+  if (!openable) {
+    return <span className="block whitespace-normal break-words text-[11px] font-bold leading-snug text-foreground-700">{column.title}</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen(openable);
+      }}
+      className="block w-full whitespace-normal break-words text-left text-[11px] font-bold leading-snug text-[#9a3412] underline decoration-[#fed7aa] decoration-2 underline-offset-2 transition hover:text-[#c2410c]"
+      title="Open video"
+    >
+      <span className="inline-flex items-start gap-1">
+        <i className="ri-play-circle-line mt-0.5 shrink-0 text-[12px]" />
+        <span>{column.title}</span>
+      </span>
+    </button>
+  );
+}
+
+function ActivityListTable({
+  rows,
+  category,
+  activityColumnLabel,
+  onOpenLearner,
+  onOpenSource,
+}: {
+  rows: Array<{ row: { record: AuditMatrixRecord; cells: AuditMatrixCell[]; planned: number; actual: number; done: number }; cell: AuditMatrixCell }>;
+  category: AuditCategoryKey;
+  activityColumnLabel: string;
+  onOpenLearner: (learnerId: string) => void;
+  onOpenSource: (item: AuditActivityItem) => void;
+}) {
+  return (
+    <div className="overflow-auto">
+      <table className="min-w-full border-collapse text-sm">
+        <thead className="sticky top-0 z-20 bg-[#fbfaf8] text-xs uppercase tracking-wide text-[#8a7561]">
+          <tr>
+            <th className="w-12 border-b border-r border-[#eee7dc] px-3 py-3 text-left">#</th>
+            <th className="min-w-[220px] border-b border-r border-[#eee7dc] px-3 py-3 text-left">Learner</th>
+            <th className="min-w-[260px] border-b border-r border-[#eee7dc] px-3 py-3 text-left">Programme</th>
+            <th className="min-w-[110px] border-b border-r border-[#eee7dc] px-3 py-3 text-left">Date</th>
+            <th className="min-w-[320px] border-b border-r border-[#eee7dc] px-3 py-3 text-left">{activityColumnLabel}</th>
+            <th className="min-w-[130px] border-b border-r border-[#eee7dc] px-3 py-3 text-center">{category === 'live_session' ? 'Attendance' : 'Status'}</th>
+            <th className="min-w-[120px] border-b border-[#eee7dc] px-3 py-3 text-right">Hours</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ row, cell }, index) => {
+            const item = cell.item;
+            const learner = row.record.learner;
+            const learnerName = row.record.audit?.learner.name || learner.fullName || `Learner ${learner.learnerId}`;
+            const programmeName = row.record.audit?.learner.programme_name || learner.programName || '';
+            const sourceItem = matrixColumnViewerItem(item);
+            const status = auditListStatus(item);
+            return (
+              <tr key={`${auditItemKey(item)}:${learner.learnerId}:${index}`} className="border-b border-background-200 transition hover:bg-primary-50/40">
+                <td className="border-r border-background-200 px-3 py-3 text-foreground-600">{index + 1}</td>
+                <td className="border-r border-background-200 px-3 py-3">
+                  <button type="button" onClick={() => onOpenLearner(learner.learnerId)} className="text-left">
+                    <span className="block font-bold text-foreground-950">{learnerName}</span>
+                    <span className="text-[11px] text-foreground-400">ID {learner.learnerId}</span>
+                  </button>
+                </td>
+                <td className="border-r border-background-200 px-3 py-3">
+                  <span className="block max-w-[280px] whitespace-normal break-words text-xs font-bold leading-snug text-[#8a5a14]" title={programmeName}>{display(programmeName)}</span>
+                </td>
+                <td className="border-r border-background-200 px-3 py-3 text-xs font-semibold text-foreground-600">{formatDate(auditItemDate(item))}</td>
+                <td className="border-r border-background-200 px-3 py-3">
+                  {sourceItem ? (
+                    <button type="button" onClick={() => onOpenSource(sourceItem)} className="text-left text-xs font-bold leading-snug text-[#9a3412] underline decoration-[#fed7aa] decoration-2 underline-offset-2">
+                      {auditItemTitle(item)}
+                    </button>
+                  ) : (
+                    <span className="text-xs font-bold leading-snug text-foreground-800">{auditItemTitle(item)}</span>
+                  )}
+                  {category !== 'live_session' && <span className="mt-1 block text-[11px] text-foreground-400">{auditItemSubtitle(item)}</span>}
+                </td>
+                <td className="border-r border-background-200 px-3 py-3 text-center">
+                  <span className={`inline-flex rounded-md px-2 py-1 text-xs font-bold ${auditCellTone(cell)}`}>{status}</span>
+                </td>
+                <td className="px-3 py-3 text-right text-xs font-bold text-foreground-800">{formatHoursFromHours(cell.actual)}/{formatHoursFromHours(cell.planned)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function auditListStatus(item: AuditMatrixItem) {
+  if (auditCategory(item) === 'live_session') {
+    const cell = auditCell(item);
+    return cell.actual > 0 ? 'Present' : 'Absent';
+  }
+  if (isAuditActivitySummary(item)) return item.done ? 'Completed' : 'Not started';
+  if (item.source === 'Aptem' && isAttendanceItem(item)) return item.status || 'Not available';
+  return item.source === 'Aptem' ? item.status || 'Not available' : item.completion_status || 'Not available';
+}
+
+function auditCellTone(cell: AuditMatrixCell) {
+  if (auditCategory(cell.item) === 'live_session') {
+    return cell.actual > 0 ? 'bg-cyan-50 text-cyan-800' : 'bg-red-50 text-red-700';
+  }
+  return cell.done ? 'bg-cyan-50 text-cyan-800' : 'bg-background-100 text-foreground-600';
+}
+
+function attendanceMatchesFilter(cell: AuditMatrixCell, category: AuditCategoryKey, filter: AuditAttendanceFilter) {
+  if (category !== 'live_session' || filter === 'all') return true;
+  const present = cell.actual > 0;
+  return filter === 'present' ? present : !present;
+}
+
+function matrixColumnViewerItem(item: AuditMatrixItem): AuditActivityItem | null {
+  if (!isAuditActivitySummary(item)) return item.source === 'LMS' ? item : null;
+  if (item.source !== 'LMS') return null;
+  const raw = item.raw || {};
+  return {
+    id: item.id,
+    source: 'LMS',
+    source_id: item.sourceId,
+    relevant_date: item.relevantDate,
+    date_source: 'Audit.learner_match.programme_structure.months[].weeks[]',
+    match_status: 'Matched',
+    match_reason: 'Matched from activity category summary.',
+    matched_source_ids: [],
+    warning_codes: [],
+    warnings: [],
+    raw,
+    course_module: item.subtitle,
+    component_name: item.title,
+    component_type: String(raw.component_kind || raw.material_type || raw.post_type || item.category || 'component'),
+    completion_status: item.done ? 'Completed' : 'Not started',
+    tracked_seconds: null,
+    quiz_attempts: null,
+    quiz_score: null,
+    tutor: '',
+    course_started_at: null,
+    course_completed_at: null,
+  };
 }
 
 function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
@@ -433,6 +630,7 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
   const [pdfError, setPdfError] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [monthSort, setMonthSort] = useState<'desc' | 'asc'>('desc');
+  const [fullAuditTotals, setFullAuditTotals] = useState<{ actual: number | null; planned: number | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -442,6 +640,10 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
       .then((payload) => {
         if (cancelled) return;
         const pastAudit = filterPastAudit(payload);
+        setFullAuditTotals({
+          actual: payload.summary.completed_otjh ?? sumAvailableHours(payload.months.map((month) => month.summary.actual_hours)),
+          planned: payload.summary.total_programme_planned_hours ?? sumAvailableHours(payload.months.map((month) => month.summary.planned_hours)),
+        });
         setAudit(pastAudit);
         const monthKeys = pastAudit.months.filter((month) => month.month_key !== 'undated').map((month) => month.month_key);
         setSelectedMonthKeys(new Set(monthKeys));
@@ -464,12 +666,12 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
   const allDatedSelected = Boolean(audit?.months.filter((month) => month.month_key !== 'undated').every((month) => selectedMonthKeys.has(month.month_key)));
   const overall = useMemo(() => {
     const months = audit?.months || [];
-    const actual = sumAvailableHours(months.map((month) => month.summary.actual_hours));
-    const planned = sumAvailableHours(months.map((month) => month.summary.planned_hours));
+    const actual = fullAuditTotals?.actual ?? sumAvailableHours(months.map((month) => month.summary.actual_hours));
+    const planned = fullAuditTotals?.planned ?? sumAvailableHours(months.map((month) => month.summary.planned_hours));
     const items = months.reduce((total, month) => total + month.summary.aptem_items + month.summary.lms_items, 0);
     const completed = months.reduce((total, month) => total + month.summary.completed, 0);
     return { actual, planned, items, completed, rate: percentage(actual, planned) };
-  }, [audit]);
+  }, [audit, fullAuditTotals]);
 
   const toggleMonth = (monthKey: string) => {
     setSelectedMonthKeys((current) => {
@@ -699,8 +901,7 @@ function AuditLearnerMonthSection({ month, defaultOpen, selected, onToggleSelect
   const displayWeeks = useMemo(() => displayWeeksForMonth(month), [month]);
   const totalItems = useMemo(() => uniqueAuditItems([
     ...displayWeeks.flatMap((week) => [...week.aptem_items, ...week.lms_items]),
-    ...month.undated_items,
-  ]).length, [displayWeeks, month.undated_items]);
+  ]).length, [displayWeeks]);
   const rate = percentage(month.summary.actual_hours, month.summary.planned_hours);
 
   return (
@@ -754,50 +955,39 @@ function AuditLearnerMonthSection({ month, defaultOpen, selected, onToggleSelect
       {open && (
         <div className="space-y-3 border-t border-[#eee7dc] bg-white p-4">
           <div className="space-y-3">
-            {displayWeeks.map((week, index) => <AuditLearnerWeekSection key={week.week_key} week={week} weekNumber={index + 1} />)}
+            {displayWeeks.map((week) => <AuditLearnerWeekSection key={week.week_key} week={week} />)}
           </div>
-          {month.undated_items.length > 0 && (
-            <div className="rounded-lg border border-background-300">
-              <div className="border-b border-background-300 bg-background-50 px-4 py-3">
-                <p className="text-sm font-bold text-foreground-900">Undated activity</p>
-                <p className="text-xs text-foreground-500">Items without a reliable week date</p>
-              </div>
-              <div className="grid gap-3 p-3 xl:grid-cols-3">
-                <AuditActivityBucket title="Attendance" icon="ri-calendar-check-line" items={month.undated_items.filter(isAttendanceItem)} />
-                <AuditActivityBucket title="LMS Activity" icon="ri-computer-line" items={month.undated_items.filter(isLmsActivityItem)} />
-                <AuditActivityBucket title="Assignment" icon="ri-file-edit-line" items={month.undated_items.filter(isAssignmentItem)} />
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
   );
 }
 
-function AuditLearnerWeekSection({ week, weekNumber }: { week: AuditWeek; weekNumber: number }) {
+function AuditLearnerWeekSection({ week }: { week: AuditWeek }) {
   const [open, setOpen] = useState(false);
   const allItems = uniqueAuditItems([...week.aptem_items, ...week.lms_items]);
   const attendanceItems = allItems.filter(isAttendanceItem);
   const lmsItems = allItems.filter(isLmsActivityItem);
   const assignmentItems = allItems.filter(isAssignmentItem);
-  const actual = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).actual, 0));
-  const planned = roundHours(allItems.reduce((sum, item) => sum + auditCell(item).planned, 0));
   const done = allItems.filter((item) => auditCell(item).done).length;
-  const rate = percentage(actual, planned);
+  const weekDateWarning = weekNeedsLmsDateWarning(week);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[#eee7dc] bg-white">
-      <button type="button" onClick={() => setOpen((value) => !value)} className="w-full px-4 py-3 text-left transition hover:bg-[#fbfaf8]">
+    <div className={`overflow-hidden rounded-lg border ${weekDateWarning ? 'border-amber-300 bg-amber-50/60' : 'border-[#eee7dc] bg-white'}`}>
+      <button type="button" onClick={() => setOpen((value) => !value)} className={`w-full px-4 py-3 text-left transition ${weekDateWarning ? 'hover:bg-amber-50' : 'hover:bg-[#fbfaf8]'}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#ccfbf1] text-xs font-bold text-[#0f766e]">W{weekNumber}</span>
+            <span className={`mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm ${weekDateWarning ? 'bg-amber-100 text-amber-700' : 'bg-[#ccfbf1] text-[#0f766e]'}`}>
+              <i className={weekDateWarning ? 'ri-error-warning-line' : 'ri-calendar-event-line'} />
+            </span>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <p className="text-sm font-bold text-[#17110b]">Week {weekNumber}</p>
+                <p className="max-w-[520px] truncate text-sm font-bold text-[#17110b]">{week.label || 'Untitled week'}</p>
                 <span className="text-[12px] font-semibold text-[#8a7561]">{formatDateRange(week.start_date, week.end_date)}</span>
+                {weekDateWarning && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Needs LMS date</span>}
               </div>
-              <p className="mt-1 text-[12px] font-semibold text-[#6f5b49]">{formatHoursFromHours(actual)} / {formatHoursFromHours(planned)} · {rate}% · {done}/{allItems.length} done</p>
+              {weekDateWarning && <p className="mt-1 text-[11px] font-semibold text-amber-800">Add the date beside this week name in the old LMS.</p>}
+              <p className="mt-1 text-[12px] font-semibold text-[#6f5b49]">{done}/{allItems.length} done</p>
             </div>
           </div>
           <i className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
@@ -815,69 +1005,20 @@ function AuditLearnerWeekSection({ week, weekNumber }: { week: AuditWeek; weekNu
 }
 
 function displayWeeksForMonth(month: AuditMonth): AuditWeek[] {
-  const match = /^(\d{4})-(\d{2})$/.exec(month.month_key);
-  if (!match) return month.weeks;
-
-  const year = Number(match[1]);
-  const monthNumber = Number(match[2]);
-  if (!Number.isFinite(year) || !Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) return month.weeks;
-
-  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  const ranges = [
-    [1, 7],
-    [8, 14],
-    [15, 21],
-    [22, lastDay],
-  ];
-
-  const buckets = ranges.map(([startDay, endDay], index): AuditWeek => ({
-    week_key: `${month.month_key}-display-week-${index + 1}`,
-    label: `${startDay}-${endDay} ${shortMonthName(monthNumber)}`,
-    start_date: dateKey(year, monthNumber, startDay),
-    end_date: dateKey(year, monthNumber, endDay),
-    aptem_items: [],
-    lms_items: [],
-  }));
-
-  const overflowWeeks: AuditWeek[] = [];
-  month.weeks.forEach((week) => {
-    const bucketIndex = weekBucketIndex(month.month_key, week);
-    if (bucketIndex >= 0 && bucketIndex < buckets.length) {
-      buckets[bucketIndex].aptem_items = uniqueAuditItems([...buckets[bucketIndex].aptem_items, ...week.aptem_items]).filter((item): item is AptemAuditItem => item.source === 'Aptem');
-      buckets[bucketIndex].lms_items = uniqueAuditItems([...buckets[bucketIndex].lms_items, ...week.lms_items]).filter((item): item is LmsAuditItem => item.source === 'LMS');
-      return;
-    }
-    overflowWeeks.push({
+  return [...month.weeks]
+    .map((week) => ({
       ...week,
       aptem_items: uniqueAuditItems(week.aptem_items).filter((item): item is AptemAuditItem => item.source === 'Aptem'),
       lms_items: uniqueAuditItems(week.lms_items).filter((item): item is LmsAuditItem => item.source === 'LMS'),
+    }))
+    .sort((left, right) => {
+      if (left.start_date !== right.start_date) return left.start_date.localeCompare(right.start_date);
+      return left.label.localeCompare(right.label);
     });
-  });
-
-  return [...buckets, ...overflowWeeks];
 }
 
-function weekBucketIndex(monthKey: string, week: AuditWeek) {
-  const day = dayInsideMonth(monthKey, week.start_date) ?? dayInsideMonth(monthKey, week.end_date);
-  if (!day) return -1;
-  if (day <= 7) return 0;
-  if (day <= 14) return 1;
-  if (day <= 21) return 2;
-  return 3;
-}
-
-function dayInsideMonth(monthKey: string, value?: string | null) {
-  if (!value || !value.startsWith(monthKey)) return null;
-  const day = Number(value.slice(8, 10));
-  return Number.isFinite(day) && day > 0 ? day : null;
-}
-
-function dateKey(year: number, monthNumber: number, day: number) {
-  return `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function shortMonthName(monthNumber: number) {
-  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][monthNumber - 1] || '';
+function weekNeedsLmsDateWarning(week: AuditWeek): boolean {
+  return week.date_is_from_week_name === false || Boolean(week.warning_codes?.includes('missing_week_name_date'));
 }
 
 function AuditActivityBucket({ title, icon, items }: { title: string; icon: string; items: AuditActivityItem[] }) {
@@ -905,7 +1046,6 @@ function AuditActivityBucket({ title, icon, items }: { title: string; icon: stri
                   <p className="text-sm font-bold text-[#17110b]">{auditItemTitle(item)}</p>
                   <p className="mt-1 text-xs text-[#8a7561]">{auditItemSubtitle(item)}</p>
                   <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[#6f5b49]">
-                    <span className="rounded-full bg-[#f5f1ea] px-2 py-0.5">{formatHoursFromHours(auditCell(item).actual)} / {formatHoursFromHours(auditCell(item).planned)}</span>
                     <span className={`rounded-full px-2 py-0.5 font-semibold ${statusPill(item.source === 'Aptem' ? item.status : item.completion_status)}`}>{item.source === 'Aptem' ? item.status : item.completion_status}</span>
                     {item.warnings.length > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{item.warnings.length} warning(s)</span>}
                     {canOpen && <span className="rounded-full bg-[#ffedd5] px-2 py-0.5 font-semibold text-[#9a3412]"><i className="ri-window-line mr-1" />Open</span>}
@@ -1047,7 +1187,7 @@ function AuditSourceViewer({ item, onClose }: { item: AuditActivityItem | null; 
 function ViewerFrame({ viewer }: { viewer: ViewerSource }) {
   const url = externalUrl(viewer.fileUrl) || externalUrl(viewer.embedUrl) || externalUrl(viewer.openUrl) || '';
   const iframeUrl = externalUrl(viewer.embedUrl) || externalUrl(viewer.openUrl) || externalUrl(viewer.fileUrl) || '';
-  const type = viewer.contentType.toLowerCase();
+  const type = `${viewer.contentType} ${url ? inferContentType(url) : ''}`.toLowerCase();
   if (url && shouldLaunchOutside(url)) {
     return <ExternalLaunchPanel viewer={viewer} url={url} />;
   }
@@ -1104,6 +1244,19 @@ function ExternalLaunchPanel({ viewer, url }: { viewer: ViewerSource; url: strin
 
 async function resolveAuditViewerSource(item: AuditActivityItem): Promise<ViewerSource> {
   if (item.source === 'Aptem') return aptemViewerSource(item);
+  const direct = lmsViewerSourceFromRaw(item);
+  if (direct) return direct;
+  const exactPostUrl = wordpressPostUrl(item);
+  if (exactPostUrl) {
+    return {
+      title: auditItemTitle(item),
+      subtitle: auditItemSubtitle(item),
+      contentType: item.component_type || String(item.raw.material_type || 'component'),
+      openUrl: exactPostUrl,
+      embedUrl: exactPostUrl,
+      notice: 'Opening the exact WordPress LMS item by component id. Use New tab if WordPress blocks embedded viewing.',
+    };
+  }
   let materials: LmsMaterial[] = [];
   try {
     const schema = await fetchLmsSchema({ search: auditItemTitle(item) });
@@ -1115,16 +1268,11 @@ async function resolveAuditViewerSource(item: AuditActivityItem): Promise<Viewer
   }
   const material = findLmsMaterial(item, materials);
   if (!material) {
-    const fallbackUrl = wordpressPostUrl(item);
     return {
       title: auditItemTitle(item),
       subtitle: auditItemSubtitle(item),
       contentType: item.component_type || String(item.raw.material_type || 'component'),
-      openUrl: fallbackUrl,
-      embedUrl: fallbackUrl,
-      notice: fallbackUrl
-        ? 'No direct file link was found in the paged LMS schema yet. Opening the WordPress LMS item by its component id.'
-        : 'No matching LMS material link was found in the source schema. The audit record still shows the component metadata.',
+      notice: 'No matching LMS material link was found in the source schema. The audit record still shows the component metadata.',
     };
   }
   const source = material.source || null;
@@ -1144,6 +1292,62 @@ async function resolveAuditViewerSource(item: AuditActivityItem): Promise<Viewer
       ? 'This LMS item may require WordPress login or may block iframe embedding. Use New tab if the viewer stays blank.'
       : null,
   };
+}
+
+function lmsViewerSourceFromRaw(item: LmsAuditItem): ViewerSource | null {
+  const rawSource = auditObject(item.raw.source);
+  const rawAttachment = auditArray(rawSource?.attachments)[0] || auditArray(item.raw.attachments)[0];
+  const embedUrl = firstExternalUrl(
+    rawSource?.embed_url,
+    rawAttachment?.embed_url,
+    item.raw.embed_url,
+    item.raw.video_embed_url,
+  );
+  const fileUrl = firstExternalUrl(
+    rawSource?.file_url,
+    rawAttachment?.file_url,
+    item.raw.file_url,
+    item.raw.video_url,
+    item.raw.url,
+  );
+  const openUrl = firstExternalUrl(
+    rawSource?.open_url,
+    rawAttachment?.open_url,
+    rawSource?.lms_url,
+    item.raw.open_url,
+    item.raw.lms_url,
+    fileUrl,
+  );
+  if (!embedUrl && !fileUrl && !openUrl) return null;
+  const primaryUrl = fileUrl || embedUrl || openUrl;
+  const inferredType = primaryUrl ? inferContentType(primaryUrl) : '';
+  return {
+    title: auditItemTitle(item),
+    subtitle: auditItemSubtitle(item),
+    contentType: inferredType || String(item.raw.material_type || item.raw.content_type || item.component_type || ''),
+    embedUrl: embedUrl || (fileUrl ? embeddableAuditUrl(fileUrl) : null),
+    openUrl: openUrl || fileUrl,
+    fileUrl,
+    notice: rawSource?.requires_lms_login || rawSource?.can_embed === false
+      ? 'This LMS item may require WordPress login or may block iframe embedding. Use New tab if the viewer stays blank.'
+      : null,
+  };
+}
+
+function firstExternalUrl(...values: Array<AuditJsonValue | string | null | undefined>) {
+  for (const value of values) {
+    const url = externalUrl(stringFromAuditValue(value as AuditJsonValue | undefined));
+    if (url) return url;
+  }
+  return null;
+}
+
+function auditObject(value: AuditJsonValue | undefined): Record<string, AuditJsonValue> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function auditArray(value: AuditJsonValue | undefined): Array<Record<string, AuditJsonValue>> {
+  return Array.isArray(value) ? value.filter((entry): entry is Record<string, AuditJsonValue> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry)) : [];
 }
 
 function wordpressPostUrl(item: LmsAuditItem) {
@@ -1226,7 +1430,7 @@ function hasAptemSourceUrl(item: AptemAuditItem) {
     || reportUrls.some((value) => externalUrl(value));
 }
 
-function externalUrl(value?: string | null) {
+function externalUrl(value?: AuditJsonValue | string | null) {
   if (!value) return null;
   const url = String(value).trim();
   if (!/^https?:\/\//i.test(url)) return null;
@@ -1343,8 +1547,8 @@ function auditCell(item: AuditMatrixItem): AuditMatrixCell {
   }
   return {
     item,
-    planned: 0,
-    actual: roundHours((item.tracked_seconds || 0) / 3600),
+    planned: roundHours(Number(item.raw.configured_duration_seconds || 0) / 3600),
+    actual: roundHours((item.tracked_seconds || Number(item.raw.time_spent_seconds || 0) || 0) / 3600),
     done: statusBucket(item.completion_status) === 'completed',
   };
 }
@@ -1355,22 +1559,79 @@ function auditCategory(item: AuditMatrixItem): AuditCategoryKey {
     if (item.category in AUDIT_CATEGORY_META) return item.category as AuditCategoryKey;
     return 'other';
   }
+  const rawCategory = auditCategoryFromRaw(item.raw);
+  if (rawCategory) return rawCategory;
   const text = item.source === 'Aptem'
     ? `${item.type} ${item.activity_name}`
     : `${item.component_type} ${item.component_name} ${item.course_module}`;
   const normalized = text.toLowerCase().replace(/[-\s]+/g, '_');
   if (!isAuditActivitySummary(item) && isAttendanceItem(item)) return 'live_session';
   if (normalized.includes('quiz') || normalized.includes('reading') || normalized.includes('material')) return 'quiz_reading';
-  if (normalized.includes('video') || normalized.includes('recording')) return 'video';
+  const titleText = auditItemTitle(item).toLowerCase();
+  if (/(^|\b)(vid|video|recording|youtube)(\b|[:\-_])/.test(titleText)) return 'video';
   if (normalized.includes('assignment') || normalized.includes('evidence') || normalized.includes('portfolio')) return 'assignment';
-  if (normalized.includes('self_study') || normalized.includes('podcast') || normalized.includes('powerpoint')) return 'self_study';
-  if (normalized.includes('assessment') || normalized.includes('reflection')) return 'assessment';
   return 'other';
 }
 
+function auditCategoryFromRaw(raw: AuditRow | undefined): AuditCategoryKey | '' {
+  if (!raw) return '';
+  const source = auditObject(raw.source);
+  const attachments = [...auditArray(source?.attachments), ...auditArray(raw.attachments)];
+  const typeText = [
+    raw.component_kind,
+    raw.component_type,
+    raw.material_type,
+    raw.content_type,
+    raw.material_format,
+    raw.mime_type,
+    raw.post_type,
+    ...attachments.flatMap((attachment) => [
+      attachment.content_type,
+      attachment.filename,
+    ]),
+  ].map((value) => stringFromAuditValue(value)).join(' ').toLowerCase();
+  const urlText = [
+    source?.provider,
+    source?.display_mode,
+    source?.open_url,
+    source?.embed_url,
+    source?.file_url,
+    source?.lms_url,
+    raw.open_url,
+    raw.embed_url,
+    raw.file_url,
+    raw.url,
+    raw.video_url,
+    ...attachments.flatMap((attachment) => [
+      attachment.open_url,
+      attachment.embed_url,
+      attachment.file_url,
+    ]),
+  ].map((value) => stringFromAuditValue(value)).join(' ').toLowerCase();
+  const allText = `${typeText} ${urlText}`;
+  if (/(assignment|evidence|portfolio)/.test(typeText)) return 'assignment';
+  if (/(^|\b)(video|recording)(\b|[:\-_])/.test(typeText)) return 'video';
+  if (/(\.pdf(\?|$)|application\/pdf|\bpdf\b)/.test(allText)) return 'quiz_reading';
+  if (/(\.mp4(\?|$)|\.webm(\?|$)|\.mov(\?|$)|\.m4v(\?|$)|youtube|youtu\.be|vimeo|wistia|loom)/.test(urlText)) return 'video';
+  if (/(video\/|application\/x-mpegurl)/.test(typeText)) return 'video';
+  if (/(quiz|reading|material)/.test(typeText)) return 'quiz_reading';
+  return '';
+}
+
 function auditItemKey(item: AuditMatrixItem): string {
-  if (isAuditActivitySummary(item)) return `${item.source}:${item.sourceId || item.id}:${item.title}`;
-  return `${item.source}:${item.source_id || item.id}:${auditItemTitle(item)}`;
+  if (auditCategory(item) === 'live_session') {
+    return [
+      'live_session',
+      auditItemDate(item) || '',
+      normalizeLookup(auditItemTitle(item)),
+    ].join(':');
+  }
+  if (isAuditActivitySummary(item)) return `${item.source}:${item.id || item.sourceId}:${item.title}:${item.subtitle}`;
+  return `${item.source}:${item.id || item.source_id}:${auditItemTitle(item)}:${auditItemSubtitle(item)}`;
+}
+
+function auditItemSourceId(item: AuditMatrixItem): string {
+  return isAuditActivitySummary(item) ? item.sourceId || item.id : item.source_id || item.id;
 }
 
 function auditItemTitle(item: AuditMatrixItem): string {
@@ -2045,12 +2306,6 @@ function MonthlyTimeline({ audit, loading, activitySearch, onActivitySearch, sel
                         {month.weeks.map((week, index) => (
                           <WeekBlock key={week.week_key} week={week} weekNumber={index + 1} search={activitySearch} open={openWeeks.has(week.week_key)} onToggle={() => toggleWeek(week.week_key)} selectedItemId={selectedItemId} onSelectItem={onSelectItem} />
                         ))}
-                        {month.undated_items.length > 0 && (
-                          <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">
-                            <p className="mb-2 text-[12px] font-semibold text-amber-800">Undated / Needs Review</p>
-                            {month.undated_items.filter((item) => matchesActivity(item, activitySearch)).map((item) => <ActivityButton key={item.id} item={item} selected={selectedItemId === item.id} onSelect={onSelectItem} />)}
-                          </div>
-                        )}
                       </>
                     )}
                   </div>
@@ -2064,28 +2319,26 @@ function MonthlyTimeline({ audit, loading, activitySearch, onActivitySearch, sel
   );
 }
 
-function WeekBlock({ week, weekNumber, search, open, onToggle, selectedItemId, onSelectItem }: { week: AuditWeek; weekNumber: number; search: string; open: boolean; onToggle: () => void; selectedItemId: string; onSelectItem: (id: string) => void }) {
+function WeekBlock({ week, search, open, onToggle, selectedItemId, onSelectItem }: { week: AuditWeek; weekNumber: number; search: string; open: boolean; onToggle: () => void; selectedItemId: string; onSelectItem: (id: string) => void }) {
   const aptem = week.aptem_items.filter((item) => matchesActivity(item, search));
   const lms = week.lms_items.filter((item) => matchesActivity(item, search));
-  const actualHours = aptem.reduce((total, item) => total + (item.actual_hours || 0), 0);
-  const plannedHours = aptem.reduce((total, item) => total + (item.planned_hours || 0), 0);
-  const warningCount = [...aptem, ...lms].reduce((total, item) => total + item.warnings.length, 0);
+  const weekDateWarning = weekNeedsLmsDateWarning(week);
+  const warningCount = (week.warnings?.length || 0) + [...aptem, ...lms].reduce((total, item) => total + item.warnings.length, 0);
   if (search.trim() && !aptem.length && !lms.length) return null;
   return (
-    <div className="rounded-lg border border-background-200 bg-white shadow-sm">
+    <div className={`rounded-lg border shadow-sm ${weekDateWarning ? 'border-amber-300 bg-amber-50/70' : 'border-background-200 bg-white'}`}>
       <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">Week {weekNumber}</span>
-            <p className="text-[12px] font-semibold text-foreground-900">{week.label}</p>
+            <p className="text-[12px] font-semibold text-foreground-900">{week.label || 'Untitled week'}</p>
+            {weekDateWarning && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">Needs LMS date</span>}
           </div>
           <p className="mt-0.5 text-[10px] text-foreground-400">{formatDate(week.start_date)} - {formatDate(week.end_date)}</p>
+          {weekDateWarning && <p className="mt-1 text-[11px] font-semibold text-amber-800">Add the date beside this week name in the old LMS.</p>}
           {week.source_modules?.length ? <p className="mt-1 truncate text-[10px] text-foreground-500">{week.source_modules.join(', ')}</p> : null}
           <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
             <span className="rounded-full bg-primary-50 px-2 py-0.5 font-semibold text-primary-700">{aptem.length} programme</span>
             <span className="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-700">{lms.length} online</span>
-            <span title={metricHelp.actualHours} className="rounded-full bg-background-100 px-2 py-0.5 text-foreground-600">Actual {formatHoursFromHours(actualHours)}</span>
-            <span title={metricHelp.plannedHours} className="rounded-full bg-background-100 px-2 py-0.5 text-foreground-600">Planned {formatHoursFromHours(plannedHours)}</span>
             {warningCount > 0 && <span title={metricHelp.warnings} className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{warningCount} warning(s)</span>}
           </div>
         </div>
@@ -2114,8 +2367,8 @@ function ActivityButton({ item, selected, onSelect }: { item: AuditActivityItem;
   const title = item.source === 'Aptem' ? item.activity_name : item.component_name;
   const status = item.source === 'Aptem' ? item.status : item.completion_status;
   const details = item.source === 'Aptem'
-    ? `${item.type} - Actual ${formatHoursFromHours(item.actual_hours)} - Planned ${formatHoursFromHours(item.planned_hours)}`
-    : `${item.course_module} - ${formatHours(item.tracked_seconds)}`;
+    ? item.type
+    : item.course_module;
   const dateText = formatDate(item.relevant_date);
   return (
     <button type="button" onClick={() => onSelect(item.id)} className={`mb-2 w-full rounded-lg border p-3 text-left transition ${selected ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-white hover:bg-background-100'}`}>
@@ -2173,9 +2426,6 @@ function AptemDetails({ item }: { item: AptemAuditItem }) {
         ['Activity name', item.activity_name],
         ['Type', item.type],
         ['Status', item.status],
-        ['Actual hours', formatHoursFromHours(item.actual_hours)],
-        ['Planned hours', formatHoursFromHours(item.planned_hours)],
-        ['Hours variance', formatHoursFromHours(item.hours_variance)],
         ['Start date', formatDate(item.start_date)],
         ['End date', formatDate(item.end_date)],
         ['Relevant date', formatDate(item.relevant_date)],
@@ -2483,19 +2733,6 @@ function SummaryFact({ label, value, title }: { label: string; value: string; ti
       </p>
       <p className="mt-1 break-words text-[13px] font-bold text-foreground-900">{value}</p>
     </div>
-  );
-}
-
-function AuditStatsSkeleton() {
-  return (
-    <>
-      {Array.from({ length: 10 }).map((_, index) => (
-        <span key={index} className="inline-flex items-center gap-1">
-          <SkeletonBlock className="h-4 w-8 rounded bg-[#eadfce]" />
-          <SkeletonBlock className={`${index % 3 === 0 ? 'w-24' : 'w-16'} h-3 rounded bg-[#efe7dc]`} />
-        </span>
-      ))}
-    </>
   );
 }
 
@@ -2992,6 +3229,7 @@ function formatDate(value?: string | null) {
 function formatDateRange(start?: string | null, end?: string | null) {
   if (!start && !end) return 'Not available';
   if (!start || !end) return formatDate(start || end);
+  if (start === end) return formatDate(start);
   return `${formatDate(start)} - ${formatDate(end)}`;
 }
 

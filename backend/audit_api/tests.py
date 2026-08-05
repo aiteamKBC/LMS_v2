@@ -3,7 +3,7 @@ import json
 
 from django.test import SimpleTestCase
 
-from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _signoff_row
+from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _group_programme_structure_months, _normalize_assignment_item, _normalize_attendance_item, _signoff_row
 
 
 class AptemLmsAuditPayloadTests(SimpleTestCase):
@@ -139,6 +139,135 @@ class AptemLmsAuditPayloadTests(SimpleTestCase):
         self.assertEqual([month["month_key"] for month in months], ["2026-07"])
         self.assertEqual(months[0]["weeks"][0]["aptem_items"][0]["activity_name"], "Past Activity")
 
+    def test_programme_weeks_use_dates_in_week_names_for_month_grouping(self):
+        months = _group_programme_structure_months(
+            {
+                "months": [
+                    {
+                        "month": "November 2025",
+                        "date": "2025-11-01",
+                        "weeks": [
+                            {
+                                "week_name": "Lecture 29: Procurement Management: 21/05/26",
+                                "week_order": 41,
+                                "week_created_at": "2025-11-07 09:54:02",
+                                "components": [{"component_id": 1, "title": "PowerPoint 1"}],
+                            },
+                            {
+                                "week_name": "Lecture 31: Qualitative and Quantitative Risk - 04/06/26",
+                                "week_order": 45,
+                                "week_created_at": "2025-11-28 09:16:05",
+                                "components": [{"component_id": 2, "title": "PowerPoint 2"}],
+                            },
+                            {
+                                "week_name": "Lecture 30: Project Risk Management - 27/05/26",
+                                "week_order": 44,
+                                "week_created_at": "2025-11-21 09:28:28",
+                                "components": [{"component_id": 4, "title": "PowerPoint 3"}],
+                            },
+                            {
+                                "week_name": "Safeguarding For Learners.",
+                                "week_order": 1,
+                                "week_created_at": "2025-11-14 09:11:41",
+                                "components": [{"component_id": 3, "title": "Safeguarding"}],
+                            },
+                        ],
+                    }
+                ]
+            },
+            today=datetime.date(2026, 8, 3),
+        )
+
+        by_key = {month["month_key"]: month for month in months}
+        self.assertEqual(list(by_key.keys()), ["2026-06", "2026-05", "2025-11"])
+        self.assertEqual(
+            [week["label"] for week in by_key["2026-05"]["weeks"]],
+            [
+                "Lecture 29: Procurement Management: 21/05/26",
+                "Lecture 30: Project Risk Management - 27/05/26",
+            ],
+        )
+        self.assertEqual(
+            [week["start_date"] for week in by_key["2026-05"]["weeks"]],
+            ["2026-05-21", "2026-05-27"],
+        )
+        self.assertEqual(by_key["2026-06"]["weeks"][0]["label"], "Lecture 31: Qualitative and Quantitative Risk - 04/06/26")
+        self.assertEqual(by_key["2026-06"]["weeks"][0]["start_date"], "2026-06-04")
+        self.assertEqual(by_key["2025-11"]["weeks"][0]["label"], "Safeguarding For Learners.")
+        self.assertEqual(by_key["2025-11"]["weeks"][0]["start_date"], "2025-11-14")
+        self.assertEqual(by_key["2025-11"]["weeks"][0]["date_is_from_week_name"], False)
+        self.assertIn("missing_week_name_date", by_key["2025-11"]["weeks"][0]["warning_codes"])
+        self.assertEqual(by_key["2025-11"]["summary"]["warnings"], 1)
+
+    def test_programme_week_date_accepts_backslash_date_separator(self):
+        months = _group_programme_structure_months(
+            {
+                "months": [
+                    {
+                        "month": "April 2026",
+                        "date": "2026-04-01",
+                        "weeks": [
+                            {"week_name": "L7 - Customer Journey 21\\4\\26", "week_created_at": "2026-04-08 09:40:01", "components": []},
+                        ],
+                    }
+                ]
+            },
+            today=datetime.date(2026, 8, 3),
+        )
+
+        self.assertEqual(months[0]["weeks"][0]["start_date"], "2026-04-21")
+        self.assertEqual(months[0]["weeks"][0]["date_is_from_week_name"], True)
+        self.assertEqual(months[0]["weeks"][0]["warning_codes"], [])
+
+    def test_zero_value_monthly_hours_month_is_still_shown(self):
+        months = _group_programme_structure_months(
+            {"months": []},
+            monthly_hours={"planned": {"2027-03": 0}, "completed": {"2027-03": 0}},
+            today=datetime.date(2027, 3, 31),
+        )
+
+        self.assertEqual(months[0]["month_key"], "2027-03")
+        self.assertEqual(months[0]["summary"]["planned_hours"], 0)
+        self.assertEqual(months[0]["summary"]["actual_hours"], 0)
+        self.assertEqual(months[0]["weeks"], [])
+
+    def test_programme_structure_does_not_create_weeks_from_attendance_rows(self):
+        programme_structure = {
+            "months": [
+                {
+                    "month": "April 2026",
+                    "date": "2026-04-01",
+                    "weeks": [
+                        {"week_name": "L7 - Customer Journey", "week_created_at": "2026-04-08 09:40:01", "components": [{"component_id": 1, "title": "Component 1"}]},
+                        {"week_name": "L8 - Spot the Signal", "week_created_at": "2026-04-15 09:40:01", "components": [{"component_id": 2, "title": "Component 2"}]},
+                        {"week_name": "L9 - Turning Customer Data", "week_created_at": "2026-04-25 09:40:01", "components": [{"component_id": 3, "title": "Component 3"}]},
+                        {"week_name": "L10 - Customer Journey Optimisation", "week_created_at": "2026-04-28 09:40:01", "components": [{"component_id": 4, "title": "Component 4"}]},
+                    ],
+                }
+            ]
+        }
+        attendance_items = [
+            _normalize_attendance_item({"date": "2026-04-01", "Attendance": 1, "module": "Live session"}, 0),
+            _normalize_attendance_item({"date": "2026-04-14", "Attendance": 1, "module": "Live session"}, 1),
+            _normalize_attendance_item({"date": "2026-04-22", "Attendance": 0, "module": "Live session"}, 2),
+            _normalize_attendance_item({"date": "2026-04-28", "Attendance": 1, "module": "Live session"}, 3),
+        ]
+
+        months = _group_programme_structure_months(programme_structure, attendance_items, today=datetime.date(2026, 8, 3))
+        april = next(month for month in months if month["month_key"] == "2026-04")
+
+        self.assertEqual([week["label"] for week in april["weeks"]], [
+            "L7 - Customer Journey",
+            "L8 - Spot the Signal",
+            "L9 - Turning Customer Data",
+            "L10 - Customer Journey Optimisation",
+        ])
+        self.assertEqual(len(april["weeks"]), 4)
+        self.assertEqual([week["start_date"] for week in april["weeks"]], ["2026-04-08", "2026-04-15", "2026-04-25", "2026-04-28"])
+        self.assertEqual([len([item for item in week["aptem_items"] if item["type"] == "Attendance"]) for week in april["weeks"]], [2, 1, 0, 1])
+        self.assertEqual([item["status"] for week in april["weeks"] for item in week["aptem_items"] if item["type"] == "Attendance"], ["Present", "Present", "Absent", "Present"])
+        self.assertEqual(len(april["undated_items"]), 0)
+
     def test_live_session_category_only_uses_attendance_rows(self):
         present = _normalize_attendance_item({"ID": 1521, "date": "2026-05-01", "Attendance": 1, "module": "Live session"}, 0)
         absent = _normalize_attendance_item({"ID": 1521, "date": "2026-05-08", "Attendance": 0, "module": "Live session"}, 1)
@@ -154,6 +283,45 @@ class AptemLmsAuditPayloadTests(SimpleTestCase):
         self.assertEqual(_activity_category(present), "live_session")
         self.assertEqual(_activity_category(absent), "live_session")
         self.assertNotEqual(_activity_category(lms_session), "live_session")
+
+    def test_lms_material_type_controls_activity_category(self):
+        self.assertEqual(_activity_category({
+            "source": "LMS",
+            "component_type": "lesson",
+            "component_name": "Part 1 - Introduction to Strategic Marketing",
+            "course_module": "Charl - Strategy and Planning - Oct 2025",
+            "raw": {"component_id": 81549, "component_kind": "lesson", "material_type": "video", "post_type": "stm-lessons"},
+        }), "video")
+        self.assertEqual(_activity_category({
+            "source": "LMS",
+            "component_type": "lesson",
+            "component_name": "P1 - Introduction to Strategic Marketing",
+            "course_module": "Charl - Strategy and Planning - Oct 2025",
+            "raw": {"component_id": 81224, "component_kind": "lesson", "material_type": "pdf", "post_type": "stm-lessons"},
+        }), "quiz_reading")
+        self.assertEqual(_activity_category({
+            "source": "LMS",
+            "component_type": "quiz",
+            "component_name": "Q1 - What is Marketing?",
+            "course_module": "Charl - Strategy and Planning - Oct 2025",
+            "raw": {"component_id": 81231, "component_kind": "quiz", "post_type": "stm-quizzes"},
+        }), "quiz_reading")
+
+    def test_attendance_value_controls_live_session_hours(self):
+        present = _normalize_attendance_item({"date": "2026-02-12", "Attendance": 1, "module": "Project Management"}, 0)
+        absent = _normalize_attendance_item({"date": "2026-02-13", "Attendance": 0, "module": "Project Management"}, 1)
+
+        self.assertEqual(present["actual_hours"], 2)
+        self.assertEqual(present["planned_hours"], 2)
+        self.assertEqual(absent["actual_hours"], 0)
+        self.assertEqual(absent["planned_hours"], 2)
+
+    def test_same_day_attendance_rows_keep_individual_statuses(self):
+        present = _normalize_attendance_item({"date": "2026-03-20", "Attendance": 1, "module": "Project Management"}, 0)
+        absent = _normalize_attendance_item({"date": "2026-03-20", "Attendance": 0, "module": "Project Management"}, 1)
+
+        self.assertEqual([present["status"], absent["status"]], ["Present", "Absent"])
+        self.assertEqual([present["actual_hours"], absent["actual_hours"]], [2, 0])
 
     def test_assignment_json_rows_keep_hours_and_evidence_details(self):
         source_rows = _assignment_source_rows({
@@ -188,6 +356,42 @@ class AptemLmsAuditPayloadTests(SimpleTestCase):
         self.assertEqual(item["hours_variance"], -5)
         self.assertEqual(item["relevant_date"], "2025-08-30")
         self.assertEqual(item["raw"]["evidence"][0]["name"], "Assessment.docx")
+
+    def test_assignmanets_rows_are_added_to_last_programme_week_for_month(self):
+        programme_structure = {
+            "months": [
+                {
+                    "month": "April 2026",
+                    "date": "2026-04-01",
+                    "weeks": [
+                        {"week_name": "L7", "week_created_at": "2026-04-08 09:00:00", "components": []},
+                        {"week_name": "L8", "week_created_at": "2026-04-15 09:00:00", "components": []},
+                        {"week_name": "L9", "week_created_at": "2026-04-22 09:00:00", "components": []},
+                    ],
+                }
+            ]
+        }
+        source_rows = _assignment_source_rows({
+            "learner_id": 5170,
+            "assignmanets": json.dumps([{
+                "month": "April 2026",
+                "status": "Completed",
+                "due_date": "2026-04-10",
+                "completed_date": "2026-04-12",
+                "report_blob": "April 2026/5170/report.pdf",
+                "name of the file": "Assessment evidence.pdf",
+            }]),
+        })
+        assignments = [_normalize_assignment_item(source_rows[0], 0)]
+
+        months = _group_programme_structure_months(programme_structure, [], assignments, today=datetime.date(2026, 8, 3))
+        april = next(month for month in months if month["month_key"] == "2026-04")
+
+        self.assertEqual([len([item for item in week["aptem_items"] if item["type"] == "Assignment"]) for week in april["weeks"]], [0, 0, 1])
+        self.assertEqual(april["weeks"][-1]["aptem_items"][0]["activity_name"], "Assessment evidence.pdf")
+        self.assertEqual(april["weeks"][-1]["aptem_items"][0]["assignment_month_key"], "2026-04")
+        self.assertEqual(april["weeks"][-1]["aptem_items"][0]["raw"]["evidence"][0]["name"], "Assessment evidence.pdf")
+        self.assertEqual(len(april["undated_items"]), 0)
 
     def test_assignment_report_blob_gets_internal_azure_url(self):
         source_rows = _assignment_source_rows({
