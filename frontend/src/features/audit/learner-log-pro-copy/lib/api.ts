@@ -40,6 +40,7 @@ export type LearnerActivity = {
   actual_lms_hours: number | null;
   activity_category: string;
   activity_unit: string;
+  section_title: string | null;
   activity_description: string | null;
   delivery_method: string;
   planned_hours: number | null;
