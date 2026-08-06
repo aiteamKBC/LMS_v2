@@ -199,6 +199,7 @@ class CurriculumTeamsMeetingTests(TestCase):
 class CurriculumPersistenceTests(TestCase):
     def setUp(self):
         views._AUTHORING_TABLES_READY = False
+        views._STAFF_PROFILE_TABLES_READY = False
         views._PROGRAMME_CONFIG_DEDUP_READY = False
         views._TABLE_COLUMNS_CACHE.clear()
         views.invalidate_curriculum_cache()
@@ -206,7 +207,9 @@ class CurriculumPersistenceTests(TestCase):
         self.ensure_programmes_table()
         self.ensure_ksb_profiles_table()
         views.ensure_module_authoring_tables()
+        views.ensure_staff_profile_tables()
         self.clear_curriculum_tables()
+        self.clear_staff_profile_tables()
         self.seed_ksb_profile()
 
     def ensure_programmes_table(self):
@@ -281,6 +284,11 @@ class CurriculumPersistenceTests(TestCase):
         with connection.cursor() as cursor:
             for table in table_names:
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
+
+    def clear_staff_profile_tables(self):
+        with connection.cursor() as cursor:
+            cursor.execute(f'delete from {views.table_name("coaches")}')
+            cursor.execute(f'delete from {views.table_name("tutors")}')
 
     def seed_ksb_profile(self):
         with connection.cursor() as cursor:
@@ -724,6 +732,148 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(group['tutor_name'], 'Tutor Two')
         self.assertEqual(module['cohort_id'], 'COHORT-DATA-1')
         self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+
+    def test_group_staff_assignments_accept_email_identifiers_and_store_canonical_names(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        coach = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Two',
+            'email': 'coach.two@example.com',
+        })
+        tutor = self.post_json('/curriculum_api/curriculum/tutors/', {
+            'name': 'Tutor Two',
+            'email': 'tutor.two@example.com',
+        })
+        self.assertEqual(coach.status_code, 201, coach.content)
+        self.assertEqual(tutor.status_code, 201, tutor.content)
+
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'coach': 'coach.two@example.com',
+            'tutor': 'tutor.two@example.com',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        group = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        coach_row = views.find_staff_profile_row('coach', 'coach.two@example.com')
+        tutor_row = views.find_staff_profile_row('tutor', 'tutor.two@example.com')
+
+        self.assertEqual(group['coach_name'], 'Coach Two')
+        self.assertEqual(group['tutor_name'], 'Tutor Two')
+        self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+        self.assertIn('GROUP-DATA-1', views.as_json_value(coach_row.get('assigned_group_ids'), []))
+        self.assertIn('MOD-DATA-1', views.as_json_value(tutor_row.get('assigned_module_ids'), []))
+
+    def test_create_coach_profile_is_idempotent_for_duplicate_email(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Primary',
+            'email': 'coach.duplicate@example.com',
+            'phone': '07123456789',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Alias',
+            'email': 'coach.duplicate@example.com',
+            'phone': '07999999999',
+        })
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertFalse(second.json()['created'])
+        self.assertTrue(second.json()['duplicate'])
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Alias', 'coach.duplicate@example.com', include_archived=True)
+        self.assertEqual(len(matching), 1)
+        self.assertFalse(views.staff_profile_is_archived(matching[0]))
+        self.assertEqual(views.staff_profile_name(matching[0]), 'Coach Primary')
+
+    def test_create_coach_profile_allows_same_name_with_different_email_and_overview_keeps_both(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Same Name',
+            'email': 'coach.same.one@example.com',
+        })
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Same Name',
+            'email': 'coach.same.two@example.com',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 201, second.content)
+
+        overview = views.build_curriculum_payload('all')
+        matches = [item for item in overview['coaches'] if item['name'] == 'Coach Same Name']
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(
+            sorted(item['email'] for item in matches),
+            ['coach.same.one@example.com', 'coach.same.two@example.com'],
+        )
+
+    def test_create_coach_profile_restores_archived_duplicate_in_place(self):
+        created = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Restore',
+            'email': 'coach.restore@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        created_id = created.json()['profile']['id']
+
+        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+
+        restored = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Restore Updated',
+            'email': 'coach.restore@example.com',
+            'phone': '07999999999',
+        })
+        self.assertEqual(restored.status_code, 200, restored.content)
+        self.assertFalse(restored.json()['created'])
+        self.assertTrue(restored.json()['restored'])
+        self.assertEqual(restored.json()['profile']['id'], created_id)
+        self.assertEqual(restored.json()['profile']['name'], 'Coach Restore Updated')
+        self.assertEqual(restored.json()['profile']['phone'], '07999999999')
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Restore Updated', 'coach.restore@example.com', include_archived=True)
+        self.assertEqual(len(matching), 1)
+        self.assertFalse(views.staff_profile_is_archived(matching[0]))
+
+    def test_delete_coach_archives_all_duplicate_rows_for_same_email(self):
+        created = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Archive All',
+            'email': 'coach.archive@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        created_id = created.json()['profile']['id']
+
+        views.insert_row('coaches', views.staff_profile_payload('coach', {
+            'id': 'COACH-DUP-ARCHIVE-2',
+            'name': 'Coach Archive Alias',
+            'email': 'coach.archive@example.com',
+            'phone': '07000000000',
+        }))
+
+        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertEqual(deleted.json()['count'], 2)
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Archive All', 'coach.archive@example.com', include_archived=True)
+        self.assertEqual(len(matching), 2)
+        self.assertTrue(all(views.staff_profile_is_archived(row) for row in matching))
+
+    def test_patch_coach_profile_rejects_email_change_to_existing_email(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Rename One',
+            'email': 'coach.one@example.com',
+        })
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Rename Two',
+            'email': 'coach.two@example.com',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 201, second.content)
+
+        response = self.patch_json(
+            f'/curriculum_api/curriculum/coaches/{second.json()["profile"]["id"]}/',
+            {'email': 'coach.one@example.com'},
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn('already exists', response.json()['error'])
 
 
 class CurriculumCacheTests(SimpleTestCase):

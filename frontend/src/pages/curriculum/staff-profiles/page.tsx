@@ -271,9 +271,12 @@ export default function StaffProfilesPage() {
       notes: form.notes.trim(),
     };
     try {
+      const isCreating = editing === 'new';
       const response = editing === 'new'
         ? role === 'coach' ? await createCurriculumCoach(input) : await createCurriculumTutor(input)
         : role === 'coach' ? await updateCurriculumCoach(editing.id || '', input) : await updateCurriculumTutor(editing.id || '', input);
+      const wasRestored = Boolean(isCreating && 'restored' in response && response.restored);
+      const wasDuplicate = Boolean(isCreating && 'duplicate' in response && response.duplicate);
       setEditing(null);
       setSelected(response.profile);
       setData(prev => {
@@ -289,10 +292,20 @@ export default function StaffProfilesPage() {
       });
       void load();
       await showCurriculumAlert({
-        title: editing === 'new' ? `${roleLabel(role)} added` : `${roleLabel(role)} updated`,
-        text: 'Profile details are now synced. Programme staffing assignments remain managed in the programme wizard.',
-        icon: 'success',
-        timer: 1700,
+        title: isCreating
+          ? wasRestored
+            ? `${roleLabel(role)} restored`
+            : wasDuplicate
+              ? `${roleLabel(role)} already exists`
+              : `${roleLabel(role)} added`
+          : `${roleLabel(role)} updated`,
+        text: wasDuplicate
+          ? 'A matching profile is already on file, so no duplicate record was created.'
+          : wasRestored
+            ? 'The archived profile was restored instead of creating a duplicate record.'
+            : 'Profile details are now synced. Programme staffing assignments remain managed in the programme wizard.',
+        icon: wasDuplicate ? 'error' : 'success',
+        timer: wasDuplicate ? 4200 : 1700,
       });
     } catch (err) {
       await showCurriculumAlert({

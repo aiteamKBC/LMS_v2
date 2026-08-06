@@ -74,6 +74,7 @@ type WizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'revi
 type ModuleMode = 'existing' | 'new';
 type SaveIntent = 'draft' | 'final';
 type ProgrammeStructureType = 'scheduled' | 'free';
+type StaffOption = { value: string; label: string; email?: string; aliases?: string[] };
 
 const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
 
@@ -155,6 +156,7 @@ interface TeamsMeetingDraft {
 interface TutorSessionSummary {
   id: string;
   tutor: string;
+  tutorKey?: string;
   date: string;
   startTime: string;
   endTime: string;
@@ -686,6 +688,37 @@ function staffName(profile: CurriculumStaffProfile) {
   return String(profile.name || profile.Tutor_name || profile.Coach_name || profile.email || '').trim();
 }
 
+function staffEmail(profile: CurriculumStaffProfile) {
+  return String(profile.email || '').trim();
+}
+
+function staffSelectionValue(profile: CurriculumStaffProfile) {
+  return staffEmail(profile) || staffName(profile);
+}
+
+function staffSelectionLabel(profile: CurriculumStaffProfile) {
+  const name = staffName(profile);
+  const email = staffEmail(profile);
+  return email && name && normalise(name) !== normalise(email)
+    ? `${name} - ${email}`
+    : name || email;
+}
+
+function staffOptionMatchesValue(option: StaffOption, value: string) {
+  const requested = normalise(value);
+  if (!requested || requested === 'unassigned') return false;
+  return [option.value, option.label, option.email, ...(option.aliases || [])].some(candidate => normalise(candidate) === requested);
+}
+
+function findStaffOption(options: StaffOption[], value: string) {
+  const current = String(value || '').trim();
+  if (!current) return undefined;
+  const direct = options.find(option => option.value === current);
+  if (direct) return direct;
+  const matches = options.filter(option => staffOptionMatchesValue(option, current));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function staffAssignment(...values: unknown[]) {
   const value = values
     .map(item => String(item || '').trim())
@@ -693,15 +726,44 @@ function staffAssignment(...values: unknown[]) {
   return value || '';
 }
 
-function uniqueStaffNames(values: unknown[]) {
-  const names = new Map<string, string>();
+function staffDisplayValue(value: unknown, options: StaffOption[] = []) {
+  const current = staffAssignment(value);
+  if (!current) return '';
+  return findStaffOption(options, current)?.label || current;
+}
+
+function staffIdentityKey(value: unknown, options: StaffOption[] = []) {
+  const current = staffAssignment(value);
+  if (!current) return '';
+  return normalise(findStaffOption(options, current)?.value || current);
+}
+
+function countUniqueStaffAssignments(values: unknown[], options: StaffOption[] = []) {
+  const seen = new Set<string>();
   values.forEach(value => {
-    const name = String(value || '').trim();
-    const key = normalise(name);
-    if (!key || key === 'unassigned' || names.has(key)) return;
-    names.set(key, name);
+    const key = staffIdentityKey(value, options);
+    if (!key || key === 'unassigned') return;
+    seen.add(key);
   });
-  return Array.from(names.values()).sort((left, right) => left.localeCompare(right));
+  return seen.size;
+}
+
+function buildStaffOptions(profiles: CurriculumStaffProfile[] = []) {
+  const options = new Map<string, StaffOption>();
+  profiles.forEach(profile => {
+    const value = staffSelectionValue(profile);
+    const key = normalise(value);
+    if (!key || key === 'unassigned' || options.has(key)) return;
+    const label = staffSelectionLabel(profile);
+    const email = staffEmail(profile);
+    options.set(key, {
+      value,
+      label,
+      email: email || undefined,
+      aliases: [staffName(profile), email, label].filter(Boolean),
+    });
+  });
+  return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function moduleOptionId(module: CurriculumModule) {
@@ -761,12 +823,12 @@ function moduleDraftMatchesStaffAssignment(draft: ModuleDraft, assignment: Parti
 
 function assignedTutorForDraft(draft: ModuleDraft, tutorProfiles: CurriculumStaffProfile[]) {
   for (const profile of tutorProfiles) {
-    const name = staffName(profile);
-    if (!name) continue;
+    const value = staffSelectionValue(profile);
+    if (!value) continue;
     const assignedModules = Array.isArray(profile.assignedModules) ? profile.assignedModules : [];
-    if (assignedModules.some(module => moduleDraftMatchesStaffAssignment(draft, module))) return name;
+    if (assignedModules.some(module => moduleDraftMatchesStaffAssignment(draft, module))) return value;
     const assignedModuleIds = Array.isArray(profile.assignedModuleIds) ? profile.assignedModuleIds : [];
-    if (assignedModuleIds.some(id => moduleDraftMatchesStaffAssignment(draft, id))) return name;
+    if (assignedModuleIds.some(id => moduleDraftMatchesStaffAssignment(draft, id))) return value;
   }
   return '';
 }
@@ -1752,24 +1814,26 @@ function formatTimeRange(startTime: string, endTime: string) {
   return `${startTime || '--:--'}-${endTime || addHoursToTime(startTime, 2) || '--:--'}`;
 }
 
-function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: string, savedGroups: CurriculumGroup[] = []) {
+function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: string, savedGroups: CurriculumGroup[] = [], coachOptions: StaffOption[] = []) {
   const groups = cohortDrafts.flatMap(cohort => cohort.groups.map(group => ({ cohort, group })));
   const target = groups.find(item => item.group.localId === activeGroupId);
   if (!target) return null;
   const coach = staffAssignment(target.group.coach);
-  if (!coach || normalise(coach) === 'unassigned') return null;
+  const coachKey = staffIdentityKey(coach, coachOptions);
+  if (!coachKey || coachKey === 'unassigned') return null;
+  const coachLabel = staffDisplayValue(coach, coachOptions) || coach;
   const targetDays = new Set(target.group.deliveryDays);
   if (!targetDays.size || !target.group.startTime) return null;
 
   for (const item of groups) {
     if (item.group.localId === target.group.localId) continue;
-    if (normalise(staffAssignment(item.group.coach)) !== normalise(coach)) continue;
+    if (staffIdentityKey(item.group.coach, coachOptions) !== coachKey) continue;
     const overlappingDays = item.group.deliveryDays.filter(day => targetDays.has(day));
     if (!overlappingDays.length) continue;
     if (!timeRangesOverlap(target.group.startTime, target.group.endTime, item.group.startTime, item.group.endTime)) continue;
     if (!dateRangesOverlap(target.cohort.startDate, target.cohort.endDate, item.cohort.startDate, item.cohort.endDate)) continue;
     return {
-      coach,
+      coach: coachLabel,
       groupName: item.group.name || 'another group',
       cohortName: cohortDisplayName(item.cohort),
       programmeName: '',
@@ -1780,7 +1844,7 @@ function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: 
 
   for (const group of savedGroups) {
     if (target.group.sourceId && normalise(group.id) === normalise(target.group.sourceId)) continue;
-    if (normalise(staffAssignment(group.coach)) !== normalise(coach)) continue;
+    if (staffIdentityKey(group.coach, coachOptions) !== coachKey) continue;
     const schedule = String(group.schedule || '');
     const savedDays = scheduleDeliveryDays(schedule);
     const overlappingDays = savedDays.filter(day => targetDays.has(day));
@@ -1789,7 +1853,7 @@ function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: 
     if (!timeRangesOverlap(target.group.startTime, target.group.endTime, savedTimes.startTime, savedTimes.endTime)) continue;
     if (!dateRangesOverlap(target.cohort.startDate, target.cohort.endDate, group.startDate, group.endDate)) continue;
     return {
-      coach,
+      coach: coachLabel,
       groupName: group.name || 'another group',
       cohortName: group.cohort || 'another cohort',
       programmeName: group.programme || '',
@@ -1801,7 +1865,9 @@ function groupCoachScheduleConflict(cohortDrafts: CohortDraft[], activeGroupId: 
 }
 
 function tutorSessionsOverlap(left: TutorSessionSummary, right: TutorSessionSummary) {
-  if (!left.tutor || normalise(left.tutor) !== normalise(right.tutor)) return false;
+  const leftTutor = left.tutorKey || normalise(left.tutor);
+  const rightTutor = right.tutorKey || normalise(right.tutor);
+  if (!leftTutor || leftTutor !== rightTutor) return false;
   if (!left.date || left.date !== right.date) return false;
   return timeRangesOverlap(left.startTime, left.endTime, right.startTime, right.endTime);
 }
@@ -1832,16 +1898,19 @@ function buildTutorConflict(proposed: TutorSessionSummary, conflicting: TutorSes
   };
 }
 
-function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: CurriculumModule[], programmeName: string, programmeSourceId = '') {
+function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: CurriculumModule[], tutorOptions: StaffOption[] = [], programmeName: string, programmeSourceId = '') {
   return cohortDrafts.flatMap(cohort => cohort.groups.flatMap(group => group.modules.flatMap((draft, moduleIndex) => {
-    const tutor = staffAssignment(draft.tutor);
-    if (!tutor || !isConfiguredModule(draft)) return [];
+    const tutorValue = staffAssignment(draft.tutor);
+    const tutorKey = staffIdentityKey(tutorValue, tutorOptions);
+    if (!tutorKey || !isConfiguredModule(draft)) return [];
+    const tutor = staffDisplayValue(tutorValue, tutorOptions) || tutorValue;
     const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
     const moduleName = moduleDraftDisplayName(draft, moduleIndex, moduleOptions);
     const endTime = group.endTime || addHoursToTime(group.startTime, 2);
     return draft.weeks.map(session => ({
       id: `draft-${cohort.localId}-${group.localId}-${draft.localId}-${session.sessionNumber}`,
       tutor,
+      tutorKey,
       date: session.date,
       startTime: session.startTime || group.startTime,
       endTime,
@@ -1862,39 +1931,47 @@ function draftTutorSessions(cohortDrafts: CohortDraft[], moduleOptions: Curricul
   })));
 }
 
-function savedTutorSessions(sessions: CurriculumSession[]) {
+function savedTutorSessions(sessions: CurriculumSession[], tutorOptions: StaffOption[] = []) {
   return sessions
     .filter(session => staffAssignment(session.tutor))
     .filter(session => !['cancelled', 'archived'].includes(normalise(session.status)))
-    .map((session): TutorSessionSummary => ({
-      id: `saved-${session.id}`,
-      tutor: staffAssignment(session.tutor),
-      date: session.date,
-      startTime: session.startTime,
-      endTime: session.endTime || addHoursToTime(session.startTime, 2),
-      programme: session.programme,
-      cohort: session.cohort,
-      group: session.group,
-      module: session.module,
-      sessionNumber: Number(session.week) || 1,
-      title: session.title || session.module || 'Saved session',
-      programmeSourceId: session.programmeSourceId || session.programmeId,
-      cohortSourceId: session.cohortId,
-      groupSourceId: session.groupId,
-      moduleSourceId: session.moduleCatalogueId || session.moduleId || session.deliveryModuleId || session.legacyModuleId,
-      external: true,
-    }));
+    .map((session): TutorSessionSummary | null => {
+      const tutorValue = staffAssignment(session.tutor);
+      const tutorKey = staffIdentityKey(tutorValue, tutorOptions);
+      if (!tutorKey) return null;
+      return {
+        id: `saved-${session.id}`,
+        tutor: staffDisplayValue(tutorValue, tutorOptions) || tutorValue,
+        tutorKey,
+        date: session.date,
+        startTime: session.startTime,
+        endTime: session.endTime || addHoursToTime(session.startTime, 2),
+        programme: session.programme,
+        cohort: session.cohort,
+        group: session.group,
+        module: session.module,
+        sessionNumber: Number(session.week) || 1,
+        title: session.title || session.module || 'Saved session',
+        programmeSourceId: session.programmeSourceId || session.programmeId,
+        cohortSourceId: session.cohortId,
+        groupSourceId: session.groupId,
+        moduleSourceId: session.moduleCatalogueId || session.moduleId || session.deliveryModuleId || session.legacyModuleId,
+        external: true,
+      };
+    })
+    .filter((session): session is TutorSessionSummary => Boolean(session));
 }
 
 function findTutorScheduleConflicts(
   cohortDrafts: CohortDraft[],
   moduleOptions: CurriculumModule[],
+  tutorOptions: StaffOption[] = [],
   programmeName: string,
   programmeSourceId = '',
   externalSessions: CurriculumSession[] = [],
 ) {
-  const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, programmeName, programmeSourceId);
-  const savedSessions = savedTutorSessions(externalSessions);
+  const proposedSessions = draftTutorSessions(cohortDrafts, moduleOptions, tutorOptions, programmeName, programmeSourceId);
+  const savedSessions = savedTutorSessions(externalSessions, tutorOptions);
   const conflicts: TutorScheduleConflict[] = [];
   const seen = new Set<string>();
 
@@ -2900,12 +2977,12 @@ export function AddCurriculumStructureWizard({
     [activeHolidays, cohortForm.durationMonths, cohortForm.startDate],
   );
   const activeProgrammeSourceId = selectedProgramme?.sourceId || selectedProgramme?.id || slugify(programmeForm.name);
+  const tutorOptions = useMemo(() => buildStaffOptions(staffTutors), [staffTutors]);
+  const coachOptions = useMemo(() => buildStaffOptions(staffCoaches), [staffCoaches]);
   const activeGroupCoachConflict = useMemo(
-    () => groupCoachScheduleConflict(cohortDrafts, activeGroup.localId, data?.groups || []),
-    [activeGroup.localId, cohortDrafts, data?.groups],
+    () => groupCoachScheduleConflict(cohortDrafts, activeGroup.localId, data?.groups || [], coachOptions),
+    [activeGroup.localId, coachOptions, cohortDrafts, data?.groups],
   );
-  const tutors = uniqueStaffNames(staffTutors.map(staffName));
-  const coaches = uniqueStaffNames(staffCoaches.map(staffName));
   useEffect(() => {
     if (!isOpen || !cohortDrafts.length || !staffTutors.length) return;
     setCohortDrafts(previous => {
@@ -2930,11 +3007,12 @@ export function AddCurriculumStructureWizard({
     () => isFreeProgramme ? [] : findTutorScheduleConflicts(
       cohortDrafts,
       moduleOptions,
+      tutorOptions,
       selectedProgramme?.name || programmeForm.name,
       activeProgrammeSourceId,
       data?.sessions || [],
     ),
-    [activeProgrammeSourceId, cohortDrafts, data?.sessions, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name],
+    [activeProgrammeSourceId, cohortDrafts, data?.sessions, isFreeProgramme, moduleOptions, programmeForm.name, selectedProgramme?.name, tutorOptions],
   );
   const tutorScheduleIssues = useMemo(() => {
     if (isFreeProgramme) return [];
@@ -4725,7 +4803,7 @@ export function AddCurriculumStructureWizard({
                                   <p className="text-[11px] font-semibold text-foreground-500">Assigned at group level</p>
                                 </div>
                               </div>
-                              <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coaches} onOpen={() => reloadStaffProfiles({ silent: true })} />
+                              <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coachOptions} onOpen={() => reloadStaffProfiles({ silent: true })} />
                               {activeGroupCoachConflict && (
                                 <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
                                   <div className="flex items-start gap-2">
@@ -4766,8 +4844,8 @@ export function AddCurriculumStructureWizard({
                     activeModule={activeModule}
                     moduleDrafts={moduleDrafts}
                     moduleOptions={moduleOptions}
-                    tutors={tutors}
-                    tutorProfiles={staffTutors}
+                    tutors={tutorOptions}
+                    coachOptions={coachOptions}
                     groupForm={groupForm}
                     removingDraftId={removingDraftId}
                     validationModules={validation.modules}
@@ -4956,6 +5034,8 @@ export function AddCurriculumStructureWizard({
                     groupForm={groupForm}
                     moduleDrafts={moduleDrafts}
                     moduleOptions={moduleOptions}
+                    tutorOptions={tutorOptions}
+                    coachOptions={coachOptions}
                     selectedHolidays={activeHolidays}
                     cohortHolidayExtensionDays={cohortHolidayPlan.extensionDays}
                     cohortDrafts={cohortDrafts}
@@ -6297,7 +6377,7 @@ function ModulesStepWorkspace({
   moduleDrafts,
   moduleOptions,
   tutors,
-  tutorProfiles,
+  coachOptions,
   groupForm,
   removingDraftId,
   validationModules,
@@ -6322,8 +6402,8 @@ function ModulesStepWorkspace({
   activeModule?: ModuleDraft;
   moduleDrafts: ModuleDraft[];
   moduleOptions: CurriculumModule[];
-  tutors: string[];
-  tutorProfiles: CurriculumStaffProfile[];
+  tutors: StaffOption[];
+  coachOptions: StaffOption[];
   groupForm: GroupDraft & { deliveryDay: string };
   removingDraftId: string;
   validationModules: string[];
@@ -6355,7 +6435,7 @@ function ModulesStepWorkspace({
             { label: 'Programme', value: programmeName || 'Current programme', icon: 'ri-book-2-line', tone: 'bg-primary-50 text-primary-700' },
             { label: 'Cohort', value: cohortDisplayName(activeCohort), icon: 'ri-calendar-event-line', tone: 'bg-emerald-50 text-emerald-700' },
             { label: 'Group', value: activeGroup.name || 'No group selected', icon: 'ri-team-line', tone: 'bg-slate-100 text-slate-700' },
-            { label: 'Coach', value: activeGroup.coach || 'Unassigned', icon: 'ri-user-star-line', tone: 'bg-amber-50 text-amber-700' },
+            { label: 'Coach', value: staffDisplayValue(activeGroup.coach, coachOptions) || 'Unassigned', icon: 'ri-user-star-line', tone: 'bg-amber-50 text-amber-700' },
           ]}
         />
 
@@ -6381,7 +6461,7 @@ function ModulesStepWorkspace({
           items={activeCohort.groups.map((group, index) => ({
             id: group.localId,
             label: group.name || `Group ${index + 1}`,
-            meta: `${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${group.coach ? ` - Coach: ${group.coach}` : ''}`,
+            meta: `${group.deliveryDays.join(', ')} ${group.startTime}-${group.endTime || addHoursToTime(group.startTime, 2)}${staffIdentityKey(group.coach, coachOptions) ? ` - Coach: ${staffDisplayValue(group.coach, coachOptions)}` : ''}`,
             color: group.color,
           }))}
           activeId={activeGroup.localId}
@@ -6424,7 +6504,7 @@ function ModulesStepWorkspace({
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-foreground-500">
             <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1">
               <AppIcon className="ri-user-star-line text-amber-600"></AppIcon>
-              Group coach: {activeGroup.coach || 'Unassigned'}
+              Group coach: {staffDisplayValue(activeGroup.coach, coachOptions) || 'Unassigned'}
             </span>
             <span className="inline-flex items-center gap-1 rounded-full bg-background-100 px-2.5 py-1">
               <AppIcon className="ri-user-line text-primary-600"></AppIcon>
@@ -6488,7 +6568,6 @@ function ModulesStepWorkspace({
               index={activeModuleIndex}
               moduleOptions={moduleOptions}
               tutors={tutors}
-              tutorProfiles={tutorProfiles}
               groupDay={groupForm.deliveryDay}
               groupTime={groupForm.startTime}
               groupEndTime={groupForm.endTime}
@@ -6745,7 +6824,6 @@ function ModulePlanningPanel({
   index,
   moduleOptions,
   tutors,
-  tutorProfiles,
   groupDay,
   groupTime,
   groupEndTime,
@@ -6763,8 +6841,7 @@ function ModulePlanningPanel({
   draft: ModuleDraft;
   index: number;
   moduleOptions: CurriculumModule[];
-  tutors: string[];
-  tutorProfiles: CurriculumStaffProfile[];
+  tutors: StaffOption[];
   groupDay: string;
   groupTime: string;
   groupEndTime: string;
@@ -7133,7 +7210,7 @@ function ModulePlanningPanel({
             moduleTitle={moduleTitle}
             groupTime={groupTime}
             groupEndTime={groupEndTime}
-            tutorEmail={String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '')}
+            tutorEmail={String(findStaffOption(tutors, draft.tutor)?.email || '')}
             onClose={() => setTeamsMeetingOpen(false)}
             persistLabel={teamsPersisting ? 'Saving Teams link to module...' : ''}
             onCreated={async (meeting, details) => {
@@ -8254,6 +8331,8 @@ function ReviewSummary({
   groupForm,
   moduleDrafts,
   moduleOptions,
+  tutorOptions,
+  coachOptions,
   selectedHolidays,
   cohortHolidayExtensionDays,
   cohortDrafts,
@@ -8266,6 +8345,8 @@ function ReviewSummary({
   groupForm: { name: string; deliveryDay: string; startTime: string; endTime: string; color: string; coach?: string };
   moduleDrafts: ModuleDraft[];
   moduleOptions: CurriculumModule[];
+  tutorOptions: StaffOption[];
+  coachOptions: StaffOption[];
   selectedHolidays: CurriculumHoliday[];
   cohortHolidayExtensionDays: number;
   cohortDrafts: CohortDraft[];
@@ -8302,12 +8383,12 @@ function ReviewSummary({
   const programmeKsbs = programmeKsbMappings(configuredCohorts, freeMode);
   const averageGroupHours = groupCount ? totalHours / groupCount : 0;
   const averageModuleHours = moduleCount ? totalHours / moduleCount : 0;
-  const coachCount = uniqueStaffNames(configuredGroups.map(group => group.coach)).length;
-  const tutorCount = uniqueStaffNames(configuredModules.map(module => module.tutor)).length;
-  const assignedGroupCount = configuredGroups.filter(group => Boolean(group.coach)).length;
-  const assignedModuleCount = configuredModules.filter(module => Boolean(module.tutor)).length;
-  const unassignedGroups = configuredGroups.filter(group => !group.coach).length;
-  const unassignedModules = configuredModules.filter(module => !module.tutor).length;
+  const coachCount = countUniqueStaffAssignments(configuredGroups.map(group => group.coach), coachOptions);
+  const tutorCount = countUniqueStaffAssignments(configuredModules.map(module => module.tutor), tutorOptions);
+  const assignedGroupCount = configuredGroups.filter(group => Boolean(staffIdentityKey(group.coach, coachOptions))).length;
+  const assignedModuleCount = configuredModules.filter(module => Boolean(staffIdentityKey(module.tutor, tutorOptions))).length;
+  const unassignedGroups = configuredGroups.filter(group => !staffIdentityKey(group.coach, coachOptions)).length;
+  const unassignedModules = configuredModules.filter(module => !staffIdentityKey(module.tutor, tutorOptions)).length;
   const deliveryDayCount = new Set(configuredGroups.flatMap(group => group.deliveryDays).filter(Boolean)).size;
   const readinessWarnings = [
     unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need coach cover` : '',
@@ -8554,7 +8635,7 @@ function ReviewSummary({
                                     {group.deliveryDays.join(', ') || 'No delivery day'} - {group.startTime || '--:--'} to {group.endTime || '--:--'}
                                   </p>
                                   <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
-                                    Coach: {group.coach || 'Unassigned'}
+                                    Coach: {staffDisplayValue(group.coach, coachOptions) || 'Unassigned'}
                                   </p>
                                 </div>
                               </div>
@@ -8563,7 +8644,7 @@ function ReviewSummary({
                               <ReviewMiniMetric label="Group OTJH" value={formatHoursValue(groupHours)} tone="success" />
                               <ReviewMiniMetric label="Modules" value={String(modules.length)} />
                               <ReviewMiniMetric label="KSBs" value={groupKsbs.length ? ksbMappingTypeSummary(groupKsbs) : 'Needs mapping'} tone={groupKsbs.length ? 'success' : 'warning'} />
-                              <ReviewMiniMetric label="Coach" value={group.coach || 'Unassigned'} tone={group.coach ? 'success' : 'warning'} />
+                              <ReviewMiniMetric label="Coach" value={staffDisplayValue(group.coach, coachOptions) || 'Unassigned'} tone={staffIdentityKey(group.coach, coachOptions) ? 'success' : 'warning'} />
                             </div>
 
                             <div className="relative mt-3 grid grid-cols-1 gap-2 pl-5 lg:grid-cols-2">
@@ -8596,7 +8677,7 @@ function ReviewSummary({
                                       <ReviewMiniMetric label="Module OTJH" value={formatHoursValue(moduleHours)} tone="success" />
                                       <ReviewMiniMetric label="KSBs" value={moduleKsbs.length ? ksbMappingTypeSummary(moduleKsbs) : 'Needs mapping'} tone={moduleKsbs.length ? 'success' : 'warning'} />
                                       <ReviewMiniMetric label="Skipped" value={String(draft.skippedHolidaySessions.length)} tone={draft.skippedHolidaySessions.length ? 'warning' : 'success'} />
-                                      <ReviewMiniMetric label="Tutor" value={draft.tutor || 'Unassigned'} tone={draft.tutor ? 'success' : 'warning'} />
+                                      <ReviewMiniMetric label="Tutor" value={staffDisplayValue(draft.tutor, tutorOptions) || 'Unassigned'} tone={staffIdentityKey(draft.tutor, tutorOptions) ? 'success' : 'warning'} />
                                     </div>
                                     <ReviewKsbPreview mappings={moduleKsbs} />
                                   </div>
@@ -8963,11 +9044,16 @@ function SelectNative({
   );
 }
 
-function StaffSelect({ label, value, onChange, options, onOpen }: { label: string; value: string; onChange: (value: string) => void; options: string[]; onOpen?: () => void }) {
+function StaffSelect({ label, value, onChange, options, onOpen }: { label: string; value: string; onChange: (value: string) => void; options: StaffOption[]; onOpen?: () => void }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement | null>(null);
-  const filtered = options.filter(option => normalise(option).includes(normalise(query)));
+  const selectedOption = findStaffOption(options, value);
+  const filtered = options.filter(option => {
+    const search = normalise(query);
+    if (!search) return true;
+    return [option.label, option.value, option.email, ...(option.aliases || [])].some(candidate => normalise(candidate).includes(search));
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -8993,7 +9079,7 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
         className="mt-1 flex w-full items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-left text-[13px] font-semibold text-foreground-900 hover:bg-background-100/60"
       >
         <AppIcon className="ri-user-line text-foreground-400"></AppIcon>
-        <span className="min-w-0 flex-1 truncate">{value || 'Unassigned'}</span>
+        <span className="min-w-0 flex-1 truncate">{selectedOption?.label || value || 'Unassigned'}</span>
         <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
       {open && (
@@ -9002,7 +9088,7 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
           <div className="max-h-56 overflow-y-auto">
             <button type="button" onClick={() => { onChange(''); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Unassigned</button>
             {filtered.map(option => (
-              <button key={option} type="button" onClick={() => { onChange(option); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-foreground-700 hover:bg-primary-50">{option}</button>
+              <button key={option.value} type="button" onClick={() => { onChange(option.value); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-foreground-700 hover:bg-primary-50">{option.label}</button>
             ))}
             {!filtered.length && <p className="px-3 py-3 text-[12px] text-foreground-400">No matching staff found.</p>}
           </div>
