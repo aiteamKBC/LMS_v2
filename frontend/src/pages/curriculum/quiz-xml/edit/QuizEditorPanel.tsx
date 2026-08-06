@@ -6,10 +6,13 @@
 // optional onClose (rendered as a back/close control instead of the route Link).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
+import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { useToast } from '@/hooks/useToast';
 import { formatQuizGradeRange, useQuizGradeSettings } from '@/lib/quizGradeSettings';
+import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 type QuizStatus = 'published' | 'pending' | 'draft' | 'trash' | 'private' | 'validating';
@@ -95,21 +98,37 @@ interface QuizEditorData {
   questions: QuizQuestion[];
 }
 
+interface CourseLinkWeekOption {
+  id: string;
+  label: string;
+}
+
 interface CourseLinkOption {
   id: string;
   moduleCatalogueId?: string;
   label: string;
   programme: string;
+  programmeId?: string;
   module: string;
   cohort: string;
   startDate: string;
   selected: boolean;
+  weeks?: CourseLinkWeekOption[];
+}
+
+interface CourseLinkAssignment {
+  moduleCatalogueId: string;
+  weekId: string;
 }
 
 interface CourseLinksState {
   programme: string;
+  selectedProgrammeId?: string;
+  selectedProgrammeName?: string;
   selectedIds: string[];
   selectedModuleCatalogueIds?: string[];
+  selectedAssignments?: CourseLinkAssignment[];
+  selectedWeekIdsByModule?: Record<string, string>;
   courses: CourseLinkOption[];
 }
 
@@ -137,7 +156,7 @@ function answerEditorCopy(type: QuestionType) {
   if (type === 'multiple_choice') return { title: 'Answer choices', hint: 'Tick every option that should be accepted as correct.', addLabel: 'Add option' };
   if (type === 'true_false') return { title: 'True/False answers', hint: 'Choose whether True or False is the correct answer.', addLabel: 'Add option' };
   if (type === 'matching') return { title: 'Matching pairs', hint: 'Write each pair as a left prompt and a matching answer.', addLabel: 'Add pair' };
-  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Write each image prompt and the answer it should match.', addLabel: 'Add match' };
+  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Upload each image and enter the answer it should match.', addLabel: 'Add match' };
   if (type === 'keywords') return { title: 'Accepted keywords', hint: 'Every row is treated as an accepted keyword or phrase.', addLabel: 'Add keyword' };
   if (type === 'fill_gap') return { title: 'Accepted gap answers', hint: 'Every row is treated as an accepted answer for the blank.', addLabel: 'Add answer' };
   if (type === 'ordering') return { title: 'Correct order', hint: 'Drag items into the correct order. The order itself is the correct answer.', addLabel: 'Add step' };
@@ -146,18 +165,6 @@ function answerEditorCopy(type: QuestionType) {
 
 function isAlwaysCorrectType(type: QuestionType) {
   return ['ordering', 'matching', 'image_matching', 'keywords', 'fill_gap'].includes(type);
-}
-
-function splitAnswerPair(value: string) {
-  const parts = value.split(/\s*(?:->|=>|=)\s*/);
-  return {
-    left: (parts[0] || '').trim(),
-    right: (parts.length > 1 ? parts.slice(1).join(' -> ') : '').trim(),
-  };
-}
-
-function joinAnswerPair(left: string, right: string) {
-  return `${left.trim()} -> ${right.trim()}`;
 }
 
 function normalizeAnswersForQuestionType(answers: QuizQuestion['answers'], type: QuestionType): QuizQuestion['answers'] {
@@ -260,23 +267,99 @@ function serializeSettings(settings: QuizSettingsState) {
   return JSON.stringify(settings);
 }
 
+function buildCourseLinkAssignments(courseLinks: CourseLinksState | null): CourseLinkAssignment[] {
+  const selectedIds = [...new Set(courseLinks?.selectedModuleCatalogueIds ?? courseLinks?.selectedIds ?? [])]
+    .map(id => String(id))
+    .sort();
+  const selectedWeekIdsByModule = courseLinks?.selectedWeekIdsByModule ?? {};
+  return selectedIds.map(moduleCatalogueId => ({
+    moduleCatalogueId,
+    weekId: String(selectedWeekIdsByModule[moduleCatalogueId] ?? '').trim(),
+  }));
+}
+
 function serializeCourseLinks(courseLinks: CourseLinksState | null) {
-  return JSON.stringify([...(courseLinks?.selectedModuleCatalogueIds ?? courseLinks?.selectedIds ?? [])].sort());
+  const selectedAssignments = buildCourseLinkAssignments(courseLinks);
+  return JSON.stringify({
+    programmeId: courseLinks?.selectedProgrammeId || '',
+    selectedIds: selectedAssignments.map(assignment => assignment.moduleCatalogueId),
+    selectedAssignments,
+  });
 }
 
 function normaliseCourseLinks(payload: CourseLinksState | null): CourseLinksState | null {
   if (!payload) return null;
-  const selectedIds = (payload.selectedModuleCatalogueIds ?? payload.selectedIds ?? []).map(id => String(id));
+  const selectedAssignments = Array.isArray(payload.selectedAssignments)
+    ? payload.selectedAssignments
+        .map(assignment => ({
+          moduleCatalogueId: String(assignment?.moduleCatalogueId ?? ''),
+          weekId: String(assignment?.weekId ?? ''),
+        }))
+        .filter(assignment => assignment.moduleCatalogueId)
+    : [];
+  const selectedIds = Array.from(new Set([
+    ...(payload.selectedModuleCatalogueIds ?? payload.selectedIds ?? []).map(id => String(id)),
+    ...selectedAssignments.map(assignment => assignment.moduleCatalogueId),
+  ]));
+  const courses = (payload.courses ?? []).map(course => ({
+    ...course,
+    id: String(course.moduleCatalogueId ?? course.id),
+    moduleCatalogueId: String(course.moduleCatalogueId ?? course.id),
+    programmeId: String(course.programmeId ?? ''),
+    selected: selectedIds.includes(String(course.moduleCatalogueId ?? course.id)),
+    weeks: (course.weeks ?? [])
+      .map(week => ({
+        id: String(week.id ?? ''),
+        label: String(week.label ?? ''),
+      }))
+      .filter(week => week.id),
+  }));
+  const selectedWeekIdsByModule = selectedAssignments.reduce<Record<string, string>>((map, assignment) => {
+    map[assignment.moduleCatalogueId] = assignment.weekId;
+    return map;
+  }, {});
+  selectedIds.forEach(selectedId => {
+    const validWeekIds = new Set(
+      (courses.find(course => course.id === selectedId)?.weeks ?? [])
+        .map(week => String(week.id ?? '').trim())
+        .filter(Boolean),
+    );
+    const currentWeekId = String(selectedWeekIdsByModule[selectedId] ?? '').trim();
+    if (validWeekIds.size > 0 && !validWeekIds.has(currentWeekId)) selectedWeekIdsByModule[selectedId] = '';
+  });
+  const programmeNameById = new Map<string, string>();
+  courses.forEach(course => {
+    const programmeId = String(course.programmeId ?? '').trim();
+    if (!programmeId) return;
+    if (!programmeNameById.has(programmeId)) programmeNameById.set(programmeId, String(course.programme || '').trim() || programmeId);
+  });
+  const explicitProgrammeId = String(payload.selectedProgrammeId ?? '').trim();
+  const firstSelectedProgrammeId = courses.find(course => selectedIds.includes(course.id) && String(course.programmeId ?? '').trim())?.programmeId ?? '';
+  const programmeFromLabel = courses.find(course => String(course.programme || '').trim() === String(payload.programme || '').trim())?.programmeId ?? '';
+  const selectedProgrammeId = (
+    (explicitProgrammeId && programmeNameById.has(explicitProgrammeId) && explicitProgrammeId)
+    || firstSelectedProgrammeId
+    || programmeFromLabel
+    || (programmeNameById.size === 1 ? Array.from(programmeNameById.keys())[0] : '')
+  );
+  const selectedProgrammeName = (
+    (selectedProgrammeId && programmeNameById.get(selectedProgrammeId))
+    || String(payload.selectedProgrammeName ?? '').trim()
+    || String(payload.programme || '').trim()
+  );
   return {
     ...payload,
+    programme: selectedProgrammeName,
+    selectedProgrammeId,
+    selectedProgrammeName,
     selectedIds,
     selectedModuleCatalogueIds: selectedIds,
-    courses: (payload.courses ?? []).map(course => ({
-      ...course,
-      id: String(course.moduleCatalogueId ?? course.id),
-      moduleCatalogueId: String(course.moduleCatalogueId ?? course.id),
-      selected: selectedIds.includes(String(course.moduleCatalogueId ?? course.id)),
+    selectedAssignments: selectedIds.map(moduleCatalogueId => ({
+      moduleCatalogueId,
+      weekId: String(selectedWeekIdsByModule[moduleCatalogueId] ?? '').trim(),
     })),
+    selectedWeekIdsByModule,
+    courses,
   };
 }
 
@@ -313,6 +396,37 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   const questionDirty = Boolean(data && serializeQuestions(data.questions) !== questionBaseline);
   const settingsDirty = Boolean(settings && serializeSettings(settings) !== settingsBaseline);
   const courseLinksDirty = Boolean(courseLinks && serializeCourseLinks(courseLinks) !== courseLinksBaseline);
+  const selectedCourseLinks = useMemo(
+    () => courseLinks?.courses.filter(course => courseLinks.selectedIds.includes(course.id)) ?? [],
+    [courseLinks],
+  );
+  const programmeOptions = useMemo(() => {
+    if (!courseLinks) return [];
+    const options = new Map<string, string>();
+    courseLinks.courses.forEach(course => {
+      const programmeId = String(course.programmeId ?? '').trim();
+      const programmeName = String(course.programme || '').trim();
+      if (!programmeId || options.has(programmeId)) return;
+      options.set(programmeId, programmeName || programmeId);
+    });
+    return [
+      { value: '', label: 'Select programme' },
+      ...Array.from(options.entries()).map(([value, label]) => ({ value, label })),
+    ];
+  }, [courseLinks]);
+  const visibleCourseLinks = useMemo(() => {
+    if (!courseLinks) return [];
+    if (!courseLinks.selectedProgrammeId) return [];
+    return courseLinks.courses.filter(course => String(course.programmeId ?? '') === courseLinks.selectedProgrammeId);
+  }, [courseLinks]);
+  const headerProgramme = courseLinks?.selectedProgrammeName || courseLinks?.programme || data?.quiz.programme || 'No programme';
+  const headerModule = data?.quiz.module || (
+    selectedCourseLinks.length === 1
+      ? selectedCourseLinks[0].module
+      : selectedCourseLinks.length > 1
+        ? 'Multiple modules'
+        : 'No module'
+  );
 
   const loadQuiz = useCallback(async () => {
     if (!quizId) return;
@@ -371,17 +485,18 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     }) : prev);
   };
 
-  const updateAnswerPair = (questionId: number, answerId: number, side: 'left' | 'right', value: string) => {
+  const updateAnswerPair = (questionId: number, answerId: number, patch: { left?: string; right?: string; imageUrl?: string }) => {
     setData(prev => prev ? ({
       ...prev,
       questions: prev.questions.map(question => question.id === questionId ? {
         ...question,
         answers: question.answers.map(answer => {
           if (answer.id !== answerId) return answer;
-          const pair = splitAnswerPair(answer.text);
+          const type = question.questionType === 'image_matching' ? 'image_matching' : 'matching';
+          const pair = parseQuizPairAnswer(answer.text, type);
           return {
             ...answer,
-            text: joinAnswerPair(side === 'left' ? value : pair.left, side === 'right' ? value : pair.right),
+            text: serializeQuizPairAnswer(type, { ...pair, ...patch }),
             isCorrect: true,
           };
         }),
@@ -395,7 +510,13 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
       questions: prev.questions.map(question => question.id === questionId ? {
         ...question,
         questionType,
-        answers: normalizeAnswersForQuestionType(question.answers, questionType),
+        answers: normalizeAnswersForQuestionType(
+          question.answers.map(answer => ({
+            ...answer,
+            text: convertAnswerTextForQuestionType(answer.text, question.questionType, questionType),
+          })),
+          questionType,
+        ),
       } : question),
     }) : prev);
   };
@@ -580,8 +701,37 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
     }) : prev);
   };
 
+  const validateQuestions = (questions: QuizQuestion[]) => {
+    for (const [index, question] of questions.filter(item => !item.isArchived).entries()) {
+      if (!question.text.trim()) return `Question ${index + 1} needs question text.`;
+      if (question.questionType === 'matching' && question.answers.some(answer => !isPairAnswerComplete('matching', answer.text))) {
+        return `Question ${index + 1} has an incomplete matching pair.`;
+      }
+      if (question.questionType === 'image_matching' && question.answers.some(answer => !isPairAnswerComplete('image_matching', answer.text))) {
+        return `Question ${index + 1} needs an image or prompt plus a matching concept for every row.`;
+      }
+      if (!['matching', 'image_matching'].includes(question.questionType) && question.answers.some(answer => !answer.text.trim())) {
+        return `Question ${index + 1} has an empty answer.`;
+      }
+      if (!isAlwaysCorrectType(question.questionType) && !question.answers.some(answer => answer.isCorrect)) {
+        return `Question ${index + 1} needs at least one correct answer.`;
+      }
+      if (['single_choice', 'multiple_choice', 'true_false'].includes(question.questionType) && question.answers.length < 2) {
+        return `Question ${index + 1} needs at least two answers.`;
+      }
+    }
+    return '';
+  };
+
   const saveQuestions = async () => {
     if (!data) return;
+    const validationMessage = validateQuestions(data.questions);
+    if (validationMessage) {
+      setPageError(validationMessage);
+      toastError('Validation error', validationMessage);
+      return;
+    }
+    setPageError('');
     await persistQuestionList(data.questions, activeQuestion?.id ?? null, 'Questions saved', 'Question text, answers and correct options were updated.');
   };
 
@@ -614,34 +764,109 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
       const selected = (prev.selectedModuleCatalogueIds ?? prev.selectedIds).includes(courseId)
         ? (prev.selectedModuleCatalogueIds ?? prev.selectedIds).filter(id => id !== courseId)
         : [...(prev.selectedModuleCatalogueIds ?? prev.selectedIds), courseId];
+      const selectedProgrammeName = prev.selectedProgrammeId
+        ? prev.courses.find(course => String(course.programmeId ?? '') === prev.selectedProgrammeId)?.programme || prev.selectedProgrammeName || prev.programme
+        : prev.selectedProgrammeName || prev.programme;
       return {
         ...prev,
+        programme: selectedProgrammeName || '',
         selectedIds: selected,
         selectedModuleCatalogueIds: selected,
+        selectedAssignments: selected.map(moduleCatalogueId => ({
+          moduleCatalogueId,
+          weekId: String(prev.selectedWeekIdsByModule?.[moduleCatalogueId] ?? '').trim(),
+        })),
         courses: prev.courses.map(course => course.id === courseId ? { ...course, selected: selected.includes(course.id) } : course),
+      };
+    });
+  };
+
+  const selectCourseLinkProgramme = (programmeId: string) => {
+    setCourseLinks(prev => {
+      if (!prev) return prev;
+      const selectedProgrammeName = programmeId
+        ? prev.courses.find(course => String(course.programmeId ?? '') === programmeId)?.programme || programmeId
+        : '';
+      const allowedIds = new Set(
+        prev.courses
+          .filter(course => !programmeId || String(course.programmeId ?? '') === programmeId)
+          .map(course => course.id),
+      );
+      const nextSelected = (prev.selectedModuleCatalogueIds ?? prev.selectedIds).filter(id => allowedIds.has(id));
+        return {
+          ...prev,
+          programme: selectedProgrammeName,
+          selectedProgrammeId: programmeId,
+          selectedProgrammeName,
+          selectedIds: nextSelected,
+          selectedModuleCatalogueIds: nextSelected,
+          selectedAssignments: nextSelected.map(moduleCatalogueId => ({
+            moduleCatalogueId,
+            weekId: String(prev.selectedWeekIdsByModule?.[moduleCatalogueId] ?? '').trim(),
+          })),
+          courses: prev.courses.map(course => ({ ...course, selected: nextSelected.includes(course.id) })),
+        };
+      });
+  };
+
+  const selectCourseLinkWeek = (courseId: string, weekId: string) => {
+    setCourseLinks(prev => {
+      if (!prev) return prev;
+      const selectedIds = prev.selectedModuleCatalogueIds ?? prev.selectedIds;
+      const nextWeekIdsByModule = {
+        ...(prev.selectedWeekIdsByModule ?? {}),
+        [courseId]: weekId,
+      };
+      return {
+        ...prev,
+        selectedWeekIdsByModule: nextWeekIdsByModule,
+        selectedAssignments: selectedIds.map(moduleCatalogueId => ({
+          moduleCatalogueId,
+          weekId: String(nextWeekIdsByModule[moduleCatalogueId] ?? '').trim(),
+        })),
       };
     });
   };
 
   const saveCourseLinks = async () => {
     if (!data || !courseLinks) return;
+    const moduleAssignments = buildCourseLinkAssignments(courseLinks);
+    const invalidAssignment = moduleAssignments
+      .map(assignment => ({
+        assignment,
+        course: courseLinks.courses.find(course => course.id === assignment.moduleCatalogueId),
+      }))
+      .find(({ assignment, course }) => {
+        const validWeekIds = new Set((course?.weeks ?? []).map(week => String(week.id ?? '').trim()).filter(Boolean));
+        if (validWeekIds.size === 0) return false;
+        return !assignment.weekId || !validWeekIds.has(assignment.weekId);
+      });
+    if (invalidAssignment?.course) {
+      toastError('Week required', `Select a delivery week for ${invalidAssignment.course.module} before saving.`);
+      return;
+    }
     setSavingCourseLinks(true);
     try {
       const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/course-links/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ moduleCatalogueIds: courseLinks.selectedModuleCatalogueIds ?? courseLinks.selectedIds }),
+        body: JSON.stringify({
+          programmeId: courseLinks.selectedProgrammeId,
+          programmeName: courseLinks.selectedProgrammeName || courseLinks.programme,
+          moduleCatalogueIds: moduleAssignments.map(assignment => assignment.moduleCatalogueId),
+          moduleAssignments,
+        }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error || 'Could not save linked courses');
+      if (!response.ok) throw new Error(payload?.error || 'Could not save module assignments');
       const nextCourseLinks = normaliseCourseLinks(payload);
-      if (!nextCourseLinks) throw new Error('Could not save linked courses');
+      if (!nextCourseLinks) throw new Error('Could not save module assignments');
       setCourseLinks(nextCourseLinks);
       setCourseLinksBaseline(serializeCourseLinks(nextCourseLinks));
       setData(prev => prev ? { ...prev, quiz: payload.quiz } : prev);
-      success('Courses linked', 'Quiz course links were updated.');
+      success('Assignments saved', 'Quiz delivery modules were updated.');
     } catch (err) {
-      toastError('Save failed', err instanceof Error ? err.message : 'Could not save linked courses');
+      toastError('Save failed', err instanceof Error ? err.message : 'Could not save module assignments');
     } finally {
       setSavingCourseLinks(false);
     }
@@ -714,7 +939,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
               </Link>
             )}
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">{data.quiz.title}</h2>
-            <p className="text-sm text-[#647083]">{data.quiz.module || 'No module'} - {data.quiz.programme || 'No programme'} - {data.quiz.packageType.toUpperCase()}</p>
+            <p className="text-sm text-[#647083]">{headerModule} - {headerProgramme} - {data.quiz.packageType.toUpperCase()}</p>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 rounded-full border border-[#e2e8f0] bg-[#f8fafc] p-1">
@@ -852,7 +1077,12 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                         {activeQuestion.answers.map((answer, answerIndex) => {
                           const isOrdering = activeQuestion.questionType === 'ordering';
                           const isPair = activeQuestion.questionType === 'matching' || activeQuestion.questionType === 'image_matching';
-                          const pair = isPair ? splitAnswerPair(answer.text) : null;
+                          const pair = isPair
+                            ? parseQuizPairAnswer(
+                              answer.text,
+                              activeQuestion.questionType === 'image_matching' ? 'image_matching' : 'matching',
+                            )
+                            : null;
                           const rowNumber = isOrdering ? answerIndex + 1 : String.fromCharCode(65 + answerIndex);
 
                           return (
@@ -902,23 +1132,31 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                                 </span>
 
                                 {isPair ? (
-                                  <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
-                                    <input
-                                      value={pair?.left ?? ''}
-                                      onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'left', event.target.value)}
-                                      placeholder={activeQuestion.questionType === 'image_matching' ? 'Image prompt or label' : 'Prompt'}
-                                      className="min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]"
+                                  activeQuestion.questionType === 'image_matching' ? (
+                                    <ImageMatchingPairFields
+                                      value={answer.text}
+                                      onChange={nextValue => updateAnswerPair(activeQuestion.id, answer.id, parseQuizPairAnswer(nextValue, 'image_matching'))}
+                                      matchPlaceholder="Matching answer"
                                     />
-                                    <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]">
-                                      <AppIcon className="ri-arrow-right-line"></AppIcon>
-                                    </span>
-                                    <input
-                                      value={pair?.right ?? ''}
-                                      onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'right', event.target.value)}
-                                      placeholder="Matching answer"
-                                      className="min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]"
-                                    />
-                                  </div>
+                                  ) : (
+                                    <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
+                                      <input
+                                        value={pair?.left ?? ''}
+                                        onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { left: event.target.value })}
+                                        placeholder="Prompt"
+                                        className="min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]"
+                                      />
+                                      <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]">
+                                        <AppIcon className="ri-arrow-right-line"></AppIcon>
+                                      </span>
+                                      <input
+                                        value={pair?.right ?? ''}
+                                        onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { right: event.target.value })}
+                                        placeholder="Matching answer"
+                                        className="min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]"
+                                      />
+                                    </div>
+                                  )
                                 ) : (
                                   <input
                                     value={answer.text}
@@ -987,11 +1225,11 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                       <span className="w-8 h-8 rounded-lg bg-[#f2edff] text-[#5b21b6] flex items-center justify-center">
                         <AppIcon className="ri-links-line"></AppIcon>
                       </span>
-                      <h3 className="text-sm font-heading font-bold text-[#0f172a]">Linked courses</h3>
+                      <h3 className="text-sm font-heading font-bold text-[#0f172a]">Assigned modules</h3>
                     </div>
                     <p className="text-xs text-[#64748b] leading-5">
-                      Add this quiz to another course in the same programme only.
-                      {courseLinks?.programme && <span className="font-semibold text-[#475569]"> Programme: {courseLinks.programme}</span>}
+                      Choose which delivery modules and weeks should surface this quiz to learners.
+                      {(courseLinks?.selectedProgrammeName || courseLinks?.programme) && <span className="font-semibold text-[#475569]"> Programme: {courseLinks.selectedProgrammeName || courseLinks.programme}</span>}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -1013,33 +1251,84 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                   <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">Course links are loading.</div>
                 ) : courseLinks.courses.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">
-                    No matching courses found for this programme.
+                    No matching modules found for this programme.
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto quiz-preview-scroll pr-1">
-                    {courseLinks.courses.map(course => {
-                      const selected = courseLinks.selectedIds.includes(course.id);
-                      return (
-                        <button
-                          key={course.id}
-                          type="button"
-                          onClick={() => toggleCourseLink(course.id)}
-                          className={`min-w-0 rounded-xl border p-3 text-left transition-smooth ${selected ? 'border-[#a78bfa] bg-[#f5f3ff] shadow-sm' : 'border-[#dbe3ee] bg-white hover:border-[#c4b5fd]'}`}
-                        >
-                          <div className="flex items-start gap-3">
-                            <span className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${selected ? 'bg-[#5b2dbb] border-[#5b2dbb] text-white' : 'bg-white border-[#cbd5e1] text-transparent'}`}>
-                              <AppIcon className="ri-check-line text-sm"></AppIcon>
-                            </span>
-                            <span className="min-w-0">
-                              <span className="block text-sm font-semibold text-[#0f172a] truncate">{course.module}</span>
-                              <span className="block text-xs text-[#64748b] truncate">
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[#475569]">Programme</label>
+                        <ThemedSelect
+                          value={courseLinks.selectedProgrammeId || ''}
+                          options={programmeOptions}
+                          onChange={selectCourseLinkProgramme}
+                          placeholder="Select programme"
+                          buttonClassName="h-11"
+                        />
+                      </div>
+                    </div>
+
+                    {!courseLinks.selectedProgrammeId ? (
+                      <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">
+                        Select a programme first, then choose one or more delivery modules and their learner week.
+                      </div>
+                    ) : visibleCourseLinks.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-[#cbd5e1] bg-white p-4 text-sm text-[#64748b]">
+                        No modules are available for the selected programme.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-64 overflow-y-auto quiz-preview-scroll pr-1">
+                        {visibleCourseLinks.map(course => {
+                          const selected = courseLinks.selectedIds.includes(course.id);
+                          const weekOptions = [
+                            { value: '', label: 'Select week' },
+                            ...(course.weeks ?? []).map(week => ({ value: week.id, label: week.label })),
+                          ];
+                          return (
+                            <div
+                              key={course.id}
+                              className={`min-w-0 rounded-xl border p-3 transition-smooth ${selected ? 'border-[#a78bfa] bg-[#f5f3ff] shadow-sm' : 'border-[#dbe3ee] bg-white hover:border-[#c4b5fd]'}`}
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleCourseLink(course.id)}
+                                className="w-full text-left"
+                              >
+                                <div className="flex items-start gap-3">
+                                  <span className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${selected ? 'bg-[#5b2dbb] border-[#5b2dbb] text-white' : 'bg-white border-[#cbd5e1] text-transparent'}`}>
+                                    <AppIcon className="ri-check-line text-sm"></AppIcon>
+                                  </span>
+                                  <span className="min-w-0">
+                                    <span className="block text-sm font-semibold text-[#0f172a] truncate">{course.module}</span>
+                                    <span className="block text-xs text-[#64748b] truncate">
                                 {[course.cohort ? `Cohort: ${course.cohort}` : '', course.startDate ? `Starts: ${course.startDate}` : ''].filter(Boolean).join(' · ') || course.programme}
                               </span>
                             </span>
-                          </div>
-                        </button>
-                      );
-                    })}
+                                </div>
+                              </button>
+                              {selected && (
+                                <div className="mt-3 border-t border-[#ddd6fe] pt-3">
+                                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-[#5b21b6]">Week</label>
+                                  {(course.weeks ?? []).length === 0 ? (
+                                    <div className="rounded-lg border border-dashed border-[#d8dde6] bg-white px-3 py-2 text-xs text-[#64748b]">
+                                      No learner weeks are available for this module yet.
+                                    </div>
+                                  ) : (
+                                    <ThemedSelect
+                                      value={courseLinks.selectedWeekIdsByModule?.[course.id] || ''}
+                                      options={weekOptions}
+                                      onChange={weekId => selectCourseLinkWeek(course.id, weekId)}
+                                      placeholder="Select week"
+                                      buttonClassName="h-10 bg-white"
+                                    />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </section>
