@@ -17,6 +17,20 @@ export const Route = createFileRoute("/activity")({
   component: ActivityLogPage,
 });
 
+// Colour the KSB code badge by its type: Knowledge / Skill / Behaviour.
+function ksbBadgeClass(type: string) {
+  switch ((type || "").toUpperCase()) {
+    case "K":
+      return "bg-primary/15 text-primary";
+    case "S":
+      return "bg-success/15 text-success";
+    case "B":
+      return "bg-amber-500/15 text-amber-600";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return null;
   const parsed = new Date(value.replace(" ", "T"));
@@ -172,24 +186,44 @@ function ActivityLogPage() {
                   <dt className="label-caps">Category</dt>
                   <dd className="mt-1 text-sm capitalize text-foreground">{activity.activity_category}</dd>
                 </div>
+                {activity.week && (
+                  <div>
+                    <dt className="label-caps">Lecture / week</dt>
+                    <dd className="mt-1 text-sm text-foreground">{activity.week}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="label-caps">Content creation time</dt>
                   <dd className="snapshot-value mt-1 font-mono">{formatDateTime(activity.created_at) ?? "Not recorded"}</dd>
                 </div>
               </dl>
 
-              <div className="space-y-4 border-t border-border px-6 py-6">
-                <label className="block">
-                  <span className="label-caps">Mapped KSBs</span>
-                  <textarea
-                    value={ksbsInput}
-                    onChange={(event) => setKsbsInput(event.target.value)}
-                    rows={4}
-                    placeholder="Add KSBs, e.g. K3 (Primary, 60%) – Marketing theories…"
-                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
-                  />
-                </label>
+              {/* Real KSB mapping pulled live from programme_structure. */}
+              <section className="border-t border-border px-6 py-6">
+                <h3 className="label-caps">Mapped KSBs</h3>
+                {activity.ksbs && activity.ksbs.length > 0 ? (
+                  <ul className="mt-3 space-y-3">
+                    {activity.ksbs.map((ksb, index) => (
+                      <li key={`${ksb.code}-${index}`} className="rounded-md border border-border bg-background/40 px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${ksbBadgeClass(ksb.type)}`}>{ksb.code}</span>
+                          <span className="text-xs font-medium text-muted-foreground">{ksb.type_label}</span>
+                        </div>
+                        {ksb.description && (
+                          <p className="mt-1.5 text-sm leading-6 text-foreground">{ksb.description}</p>
+                        )}
+                        {ksb.reason && (
+                          <p className="mt-1 text-xs italic leading-5 text-muted-foreground">Why: {ksb.reason}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">No KSBs mapped in programme structure.</p>
+                )}
+              </section>
 
+              <div className="space-y-4 border-t border-border px-6 py-6">
                 <label className="block">
                   <span className="label-caps">Planned hours</span>
                   <span className="mt-1.5 flex items-center gap-2">
@@ -209,6 +243,17 @@ function ActivityLogPage() {
                   <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                     Counts toward the minimum 20% off-the-job requirement. Logged time is compared against this planned duration at audit.
                   </span>
+                </label>
+
+                <label className="block">
+                  <span className="label-caps">Auditor KSB notes (optional)</span>
+                  <textarea
+                    value={ksbsInput}
+                    onChange={(event) => setKsbsInput(event.target.value)}
+                    rows={3}
+                    placeholder="Add notes or extra KSB mappings beyond those above…"
+                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
+                  />
                 </label>
 
                 <label className="block">
