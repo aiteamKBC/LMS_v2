@@ -10,6 +10,21 @@ export type Ksb = {
   reason: string | null;
 };
 
+export type BundleComponent = {
+  component_id: number | string | null;
+  title: string;
+  material_type: string;
+  material_format: string | null;
+  iframe_url: string | null;
+  status: string | null;
+  done: boolean;
+  activity_date: string | null;
+  planned_hours: number | null;
+  time_spent_formatted: string | null;
+  attempt_number: number | null;
+  highest_score: number | null;
+};
+
 export type LearnerActivity = {
   id: string;
   mre_id: string;
@@ -35,6 +50,9 @@ export type LearnerActivity = {
   configured_duration: string | null;
   week: string | null;
   ksbs: Ksb[];
+  components?: BundleComponent[];
+  completed_count?: number;
+  component_total?: number;
 };
 
 export type LearnerActivitiesResponse = {

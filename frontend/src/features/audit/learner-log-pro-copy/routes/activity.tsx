@@ -32,6 +32,21 @@ function ksbBadgeClass(type: string) {
   }
 }
 
+// Colour a bundle component badge by its material: quiz / pdf / reading.
+function materialBadgeClass(material: string) {
+  switch ((material || "").toLowerCase()) {
+    case "quiz":
+      return "bg-primary/15 text-primary";
+    case "pdf":
+      return "bg-amber-500/15 text-amber-600";
+    case "text":
+    case "reading":
+      return "bg-success/15 text-success";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return null;
   const parsed = new Date(value.replace(" ", "T"));
@@ -201,6 +216,33 @@ function ActivityLogPage() {
                         </p>
                       )
                     )}
+                  </section>
+                )}
+                {activity.components && activity.components.length > 0 && (
+                  <section>
+                    <h2 className="label-caps">Bundle contents</h2>
+                    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
+                      {activity.components.map((component, index) => (
+                        <li key={`${component.component_id}-${index}`} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(component.material_type)}`}>
+                              {component.material_type}
+                            </span>
+                            <span className="truncate text-sm text-foreground">{component.title}</span>
+                          </div>
+                          {component.iframe_url && (
+                            <a
+                              href={component.iframe_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="shrink-0 text-xs font-medium text-primary hover:underline"
+                            >
+                              Open ↗
+                            </a>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   </section>
                 )}
                 {activity.source_url && (

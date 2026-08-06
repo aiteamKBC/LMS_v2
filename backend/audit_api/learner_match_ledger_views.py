@@ -34,6 +34,7 @@ Note: ``Audit.learner_match`` lives on the ``enrolment`` Neon database (same as
 mirrors how ``audit_api/views.py`` reaches the same table.
 """
 
+import collections
 import datetime
 import html
 import json
@@ -209,6 +210,98 @@ def _recording_course(title):
 
 # --- shape mapping ---------------------------------------------------------
 
+def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
+                       planned_month_period, wrapper):
+    """Turn a ``kind: "reading+quiz"`` week-group wrapper into ONE bundle activity
+    row. The wrapper's nested materials (readings, quizzes, pdfs) are returned as
+    a ``components`` list on that single row — so the group shows as one entry in
+    the ledger and its detailed contents are revealed on the activity page. The
+    group's ``week`` and ``KSBs`` describe the whole bundle."""
+    items = [item for item in (wrapper.get("items") or []) if isinstance(item, dict)]
+    if not items:
+        return []
+    group_week = wrapper.get("week") or None
+    group_ksbs = _normalize_ksbs(wrapper.get("KSBs"))
+
+    components = []
+    planned_seconds_total = 0.0
+    actual_seconds_total = 0.0
+    completed_count = 0
+    last_date = None
+    category_counts = collections.Counter()
+    for item in items:
+        act = item.get("activity") if isinstance(item.get("activity"), dict) else {}
+        duration = act.get("content_duration") if isinstance(act.get("content_duration"), dict) else {}
+        planned_seconds = duration.get("seconds")
+        if isinstance(planned_seconds, (int, float)):
+            planned_seconds_total += planned_seconds
+        spent = act.get("time_spent_seconds")
+        if isinstance(spent, (int, float)):
+            actual_seconds_total += spent
+        done = bool(act.get("completed"))
+        if done:
+            completed_count += 1
+        item_date = _iso_date(act.get("completed_at")) or _iso_date(act.get("started_at"))
+        if item_date and (last_date is None or item_date > last_date):
+            last_date = item_date
+        material = (item.get("material_type") or "").strip() or "reading"
+        category_counts[material] += 1
+        components.append({
+            "component_id": item.get("component_id"),
+            "title": item.get("title") or "Untitled material",
+            "material_type": material,
+            "material_format": act.get("material_format") or None,
+            "iframe_url": item.get("iframe_url") or None,
+            "status": act.get("status") or None,
+            "done": done,
+            "activity_date": item_date,
+            "planned_hours": round(planned_seconds / 3600, 2) if isinstance(planned_seconds, (int, float)) and planned_seconds else None,
+            "time_spent_formatted": act.get("time_spent_formatted") or None,
+            "attempt_number": act.get("attempt_number"),
+            "highest_score": act.get("highest_score"),
+        })
+
+    total = len(components)
+    month_period = _period_of(last_date) or planned_month_period
+    # Bundle id is stable across learners for the same week group, so the
+    # cross-learner "who has this" view lines them up.
+    week_slug = _norm_group(group_week).replace(" ", "-") if group_week else f"m{month_no}"
+    bundle_id = f"rqb:{week_slug}"
+    # A concise "quizzes / readings / pdfs" descriptor for the ledger row.
+    breakdown = ", ".join(f"{count} {name}" for name, count in category_counts.most_common())
+    return [{
+        "id": f"{aptem_id}:{month_no}:rqb:{week_slug}",
+        "mre_id": bundle_id,
+        "learner": learner_name,
+        "plan_id": bundle_id,
+        "month_no": month_no,
+        "month_unit": month_unit,
+        "unit_planned_date": month_date,
+        "activity_date": last_date,
+        "learner_activity_date": last_date,
+        "activity_period": month_period,
+        "time_from_to": None,
+        "actual_lms_hours": round(actual_seconds_total / 3600, 2) if actual_seconds_total else None,
+        "activity_category": "reading+quiz",
+        "activity_unit": group_week or "Readings & quizzes",
+        # Completion counts are intentionally omitted for now — just the make-up.
+        "activity_description": breakdown or None,
+        "delivery_method": f"Readings & quizzes ({total} items)",
+        "planned_hours": round(planned_seconds_total / 3600, 2) if planned_seconds_total else None,
+        "source_course": None,
+        "source_url": None,
+        "source_basis": "reading+quiz",
+        "created_at": None,
+        "configured_duration": None,
+        "week": group_week,
+        "ksbs": group_ksbs,
+        "components": components,
+        "completed_count": completed_count,
+        "component_total": total,
+        "done": total > 0 and completed_count == total,
+    }]
+
+
 def _activities_for_row(aptem_id, learner_name, structure):
     """Flatten one learner's programme_structure into activity dicts matching
     the copy UI's ``LearnerActivity`` type (minus the removed KSB / evidence /
@@ -230,12 +323,16 @@ def _activities_for_row(aptem_id, learner_name, structure):
         for index, item in enumerate(month.get("LMS activities") or []):
             if not isinstance(item, dict):
                 continue
-            # Skip the week-group wrapper entries (shape: kind/week/items/_meta,
-            # no component_id). They bundle curriculum materials for context but
-            # carry no per-learner completion/time data — the individual activity
-            # entries that follow hold the real records. Without this guard each
-            # wrapper became a junk "Untitled activity" row.
+            # Week-group wrapper (shape: kind/week/items/_meta, no component_id at
+            # the top level). "reading+quiz" groups nest their real materials under
+            # `items`, each with its own per-learner `activity` — expand those into
+            # rows instead of dropping the whole wrapper.
             if item.get("component_id") is None:
+                if isinstance(item.get("items"), list):
+                    activities.extend(_reading_quiz_rows(
+                        aptem_id, learner_name, month_no, month_unit, month_date,
+                        planned_month_period, item,
+                    ))
                 continue
             component_id = item.get("component_id")
             activity_date = _iso_date(item.get("completed_at")) or _iso_date(item.get("started_at"))
