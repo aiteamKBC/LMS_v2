@@ -3,7 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, PenLine, RotateCcw, Save } from "lucide-react";
+import Swal from "sweetalert2";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, PenLine, RotateCcw, Save, Trash2 } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
@@ -33,7 +34,7 @@ async function getAllJournalActivities(learner: string, period: string) {
   return [...firstPage.items, ...remainingPages.flatMap((page) => page.items)];
 }
 
-function SignatureCapture({ label, signer, value, onChange }: { label: string; signer: string; value: string; onChange: (value: string) => void }) {
+function SignatureCapture({ label, signer, value, onChange, onRemove, canRemove, isRemoving }: { label: string; signer: string; value: string; onChange: (value: string) => void; onRemove: () => void; canRemove: boolean; isRemoving: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const padRef = useRef<SignaturePad | null>(null);
   const onChangeRef = useRef(onChange);
@@ -92,9 +93,16 @@ function SignatureCapture({ label, signer, value, onChange }: { label: string; s
           <p className="label-caps">{label}</p>
           <p className="mt-1 text-sm font-medium text-foreground">{signer || "—"}</p>
         </div>
-        <Button type="button" variant="outline" size="sm" disabled={!value} onClick={() => { padRef.current?.clear(); onChange(""); }}>
-          <RotateCcw className="h-3.5 w-3.5" /> Clear
-        </Button>
+        <div className="flex items-center gap-2">
+          {canRemove && (
+            <Button type="button" variant="outline" size="sm" disabled={isRemoving} onClick={onRemove} className="border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800">
+              <Trash2 className="h-3.5 w-3.5" /> Remove
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" disabled={!value || isRemoving} onClick={() => { padRef.current?.clear(); onChange(""); }}>
+            <RotateCcw className="h-3.5 w-3.5" /> Clear
+          </Button>
+        </div>
       </div>
       <div className="relative h-32 overflow-hidden rounded-md border border-border bg-white">
         <canvas ref={canvasRef} className="h-full w-full touch-none cursor-crosshair" aria-label={`${label} drawing area`} />
@@ -151,9 +159,11 @@ function JournalPage() {
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
   const [learnerSignature, setLearnerSignature] = useState("");
   const [coachSignature, setCoachSignature] = useState("");
-  const [signaturesSaved, setSignaturesSaved] = useState(false);
+  const [learnerSignatureSaved, setLearnerSignatureSaved] = useState(false);
+  const [coachSignatureSaved, setCoachSignatureSaved] = useState(false);
   const [isSavingSignatures, setIsSavingSignatures] = useState(false);
   const [signatureError, setSignatureError] = useState("");
+  const signaturesSaved = learnerSignatureSaved && coachSignatureSaved;
 
   const metadata = useQuery({ queryKey: ["journal-metadata"], queryFn: () => getLearners() });
   useEffect(() => {
@@ -203,7 +213,8 @@ function JournalPage() {
     const savedCoachSignature = savedSignoff.data.signoffs.coach?.signature_data ?? "";
     setLearnerSignature(savedLearnerSignature);
     setCoachSignature(savedCoachSignature);
-    setSignaturesSaved(Boolean(savedLearnerSignature && savedCoachSignature));
+    setLearnerSignatureSaved(Boolean(savedLearnerSignature));
+    setCoachSignatureSaved(Boolean(savedCoachSignature));
     setSignatureError("");
   }, [savedSignoff.data]);
 
@@ -246,10 +257,54 @@ function JournalPage() {
       queryClient.setQueryData(["journal-signoff", aptemId, selectedPeriod], response);
       setLearnerSignature(response.signoffs.learner?.signature_data ?? learnerSignature);
       setCoachSignature(response.signoffs.coach?.signature_data ?? coachSignature);
-      setSignaturesSaved(Boolean(response.signoffs.learner?.signature_data && response.signoffs.coach?.signature_data));
+      setLearnerSignatureSaved(Boolean(response.signoffs.learner?.signature_data));
+      setCoachSignatureSaved(Boolean(response.signoffs.coach?.signature_data));
     } catch (error) {
       setSignatureError(error instanceof Error ? error.message : "Could not save the signatures.");
       setSignaturesSaved(false);
+    } finally {
+      setIsSavingSignatures(false);
+    }
+  }
+
+  async function handleRemoveSignature(role: "learner" | "coach") {
+    const aptemId = learnerProfile.data?.aptem_id;
+    if (!aptemId || !learner) return;
+    const roleLabel = role === "learner" ? "learner" : "coach";
+    const confirmation = await Swal.fire({
+      icon: "warning",
+      title: `Remove ${roleLabel} signature?`,
+      text: `This removes the saved ${roleLabel} signature for ${monthLabel}.`,
+      showCancelButton: true,
+      confirmButtonText: "Yes, remove it",
+      cancelButtonText: "Cancel",
+      confirmButtonColor: "#b91c1c",
+      reverseButtons: true,
+    });
+    if (!confirmation.isConfirmed) return;
+    setIsSavingSignatures(true);
+    setSignatureError("");
+    try {
+      const nextLearnerSignature = role === "learner" ? "" : learnerSignature;
+      const nextCoachSignature = role === "coach" ? "" : coachSignature;
+      const now = new Date().toISOString();
+      const response = await saveAuditSignoff(aptemId, {
+        monthKey: selectedPeriod,
+        roles: {
+          learner: { signerName: learner.name, signature: nextLearnerSignature, confirmed: Boolean(nextLearnerSignature), signedAt: nextLearnerSignature ? now : "" },
+          coach: { signerName: learnerProfile.data?.coach.name ?? "", signature: nextCoachSignature, confirmed: Boolean(nextCoachSignature), signedAt: nextCoachSignature ? now : "" },
+        },
+      });
+      queryClient.setQueryData(["journal-signoff", aptemId, selectedPeriod], response);
+      setLearnerSignature(response.signoffs.learner?.signature_data ?? "");
+      setCoachSignature(response.signoffs.coach?.signature_data ?? "");
+      setLearnerSignatureSaved(Boolean(response.signoffs.learner?.signature_data));
+      setCoachSignatureSaved(Boolean(response.signoffs.coach?.signature_data));
+      await Swal.fire({ icon: "success", title: "Signature removed", text: `The ${roleLabel} signature was removed successfully.`, timer: 1800, showConfirmButton: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not remove the signature.";
+      setSignatureError(message);
+      await Swal.fire({ icon: "error", title: "Could not remove signature", text: message });
     } finally {
       setIsSavingSignatures(false);
     }
@@ -308,8 +363,8 @@ function JournalPage() {
           </div>
 
           <div className="grid gap-4 border-y border-border bg-[#fafbfc] px-7 py-5 sm:grid-cols-2">
-            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { setLearnerChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setSignaturesSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span className="label-caps">Activity month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedPeriod} onChange={(event) => { setPeriodChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setSignaturesSaved(false); }}>{metadata.data?.periods.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { setLearnerChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label><span className="label-caps">Activity month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedPeriod} onChange={(event) => { setPeriodChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.periods.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           </div>
 
           {pageError ? (
@@ -348,7 +403,20 @@ function JournalPage() {
               <TableHeader><TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]"><TableHead className="label-caps pl-7 text-white">Plan ID</TableHead><TableHead className="label-caps text-white">Date</TableHead><TableHead className="label-caps text-white">Activity</TableHead><TableHead className="label-caps text-white">Category</TableHead><TableHead className="label-caps text-white">Timestamp</TableHead><TableHead className="label-caps text-right text-white">Planned</TableHead><TableHead className="label-caps pr-7 text-right text-white">Actual</TableHead></TableRow></TableHeader>
               <TableBody>
                 {activities.data?.items.map((row) => (
-                  <TableRow key={row.id} className="odd:bg-[#f7f9fc] hover:bg-[#eef3f8]">
+                  <TableRow
+                    key={row.id}
+                    role="link"
+                    tabIndex={0}
+                    title="Open activity details"
+                    onClick={() => router.navigate({ to: "/activity", search: { learner: row.learner.toLowerCase(), activity: row.plan_id } })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        router.navigate({ to: "/activity", search: { learner: row.learner.toLowerCase(), activity: row.plan_id } });
+                      }
+                    }}
+                    className="cursor-pointer odd:bg-[#f7f9fc] hover:bg-[#eaf1f8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#673ab7]"
+                  >
                     <TableCell className="max-w-64 truncate pl-7 font-mono text-xs">{row.plan_id}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
                     <TableCell className="max-w-md"><p className="text-sm font-medium">{row.activity_unit}</p><p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p></TableCell>
@@ -386,19 +454,21 @@ function JournalPage() {
               <p className="mt-1 text-sm text-muted-foreground">Saved for this learner and month, then embedded in every downloaded PDF.</p>
               {signatureError && <p className="mt-2 text-xs text-destructive">{signatureError}</p>}
             </div>
-            <Button
-              type="button"
-              disabled={!learnerSignature || !coachSignature || isSavingSignatures || signaturesSaved}
-              onClick={handleSaveSignatures}
-              className="min-w-36 bg-[#182d48] hover:bg-[#243f61]"
-            >
-              {isSavingSignatures ? <LoaderCircle className="h-4 w-4 animate-spin" /> : signaturesSaved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
-              {isSavingSignatures ? "Saving..." : signaturesSaved ? "Saved" : "Save signatures"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                disabled={!learnerSignature || !coachSignature || isSavingSignatures || signaturesSaved}
+                onClick={handleSaveSignatures}
+                className="min-w-36 bg-[#182d48] hover:bg-[#243f61]"
+              >
+                {isSavingSignatures ? <LoaderCircle className="h-4 w-4 animate-spin" /> : signaturesSaved ? <CheckCircle2 className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+                {isSavingSignatures ? "Saving..." : signaturesSaved ? "Saved" : "Save signatures"}
+              </Button>
+            </div>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
-            <SignatureCapture label="Learner signature" signer={learner?.name ?? ""} value={learnerSignature} onChange={(value) => { setLearnerSignature(value); setSignaturesSaved(false); }} />
-            <SignatureCapture label="Coach signature" signer={learnerProfile.data?.coach.name ?? ""} value={coachSignature} onChange={(value) => { setCoachSignature(value); setSignaturesSaved(false); }} />
+            <SignatureCapture label="Learner signature" signer={learner?.name ?? ""} value={learnerSignature} onChange={(value) => { setLearnerSignature(value); setLearnerSignatureSaved(false); }} onRemove={() => handleRemoveSignature("learner")} canRemove={learnerSignatureSaved} isRemoving={isSavingSignatures} />
+            <SignatureCapture label="Coach signature" signer={learnerProfile.data?.coach.name ?? ""} value={coachSignature} onChange={(value) => { setCoachSignature(value); setCoachSignatureSaved(false); }} onRemove={() => handleRemoveSignature("coach")} canRemove={coachSignatureSaved} isRemoving={isSavingSignatures} />
           </div>
         </section>
       </main>
