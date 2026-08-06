@@ -2,6 +2,14 @@
 // via the match-ledger endpoints, not the Audit.mre ledger the FAKE tab uses.
 const API_URL = "/audit_api/match-ledger";
 
+export type Ksb = {
+  code: string;
+  type: string;
+  type_label: string;
+  description: string | null;
+  reason: string | null;
+};
+
 export type LearnerActivity = {
   id: string;
   mre_id: string;
@@ -25,6 +33,8 @@ export type LearnerActivity = {
   source_basis: string | null;
   created_at: string | null;
   configured_duration: string | null;
+  week: string | null;
+  ksbs: Ksb[];
 };
 
 export type LearnerActivitiesResponse = {

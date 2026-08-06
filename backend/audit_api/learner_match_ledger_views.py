@@ -98,6 +98,39 @@ def _lms_category(activity):
     return kind or "lesson"
 
 
+# The full names behind the K/S/B single-letter KSB groups, for display.
+_KSB_TYPE_LABELS = {"K": "Knowledge", "S": "Skill", "B": "Behaviour"}
+
+
+def _normalize_ksbs(ksbs):
+    """Flatten the ``{"K": [...], "S": [...], "B": [...]}`` KSB block that now
+    lives on every activity in programme_structure into a single ordered list of
+    ``{code, type, type_label, description, reason}`` dicts (Knowledge, then
+    Skill, then Behaviour). Returns ``[]`` when no KSBs are present."""
+    if not isinstance(ksbs, dict):
+        return []
+    result = []
+    for group in ("K", "S", "B"):
+        items = ksbs.get(group)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = (item.get("code") or "").strip()
+            if not code:
+                continue
+            group_letter = (item.get("type") or group or "").strip().upper()[:1] or group
+            result.append({
+                "code": code,
+                "type": group_letter,
+                "type_label": _KSB_TYPE_LABELS.get(group_letter, group_letter),
+                "description": (item.get("description") or "").strip() or None,
+                "reason": (item.get("reason") or "").strip() or None,
+            })
+    return result
+
+
 # --- shape mapping ---------------------------------------------------------
 
 def _activities_for_row(aptem_id, learner_name, structure):
@@ -120,6 +153,13 @@ def _activities_for_row(aptem_id, learner_name, structure):
         # 1) LMS activities (videos, pdfs, quizzes, live lessons, ...)
         for index, item in enumerate(month.get("LMS activities") or []):
             if not isinstance(item, dict):
+                continue
+            # Skip the week-group wrapper entries (shape: kind/week/items/_meta,
+            # no component_id). They bundle curriculum materials for context but
+            # carry no per-learner completion/time data — the individual activity
+            # entries that follow hold the real records. Without this guard each
+            # wrapper became a junk "Untitled activity" row.
+            if item.get("component_id") is None:
                 continue
             component_id = item.get("component_id")
             activity_date = _iso_date(item.get("completed_at")) or _iso_date(item.get("started_at"))
@@ -153,6 +193,8 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": item.get("post_type") or None,
                 "created_at": item.get("created_at") or None,
                 "configured_duration": item.get("configured_duration") or None,
+                "week": item.get("week") or None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
                 "done": bool(item.get("completed")),
             })
 
@@ -187,6 +229,8 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": "assignment",
                 "created_at": None,
                 "configured_duration": None,
+                "week": None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
                 "done": (item.get("status") or "").lower() == "completed",
             })
 
@@ -220,6 +264,8 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": "attendance",
                 "created_at": None,
                 "configured_duration": None,
+                "week": None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
                 "done": bool(attended),
             })
 
