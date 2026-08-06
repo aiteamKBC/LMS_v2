@@ -5,22 +5,43 @@ import { Link } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Database, FileText, Search } from "lucide-react";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getActivityLearners, getLearnerActivities } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { getActivityLearners, getAttendanceSession, getLearnerActivities } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 const pageSize = 20;
 
-export function MreTable({ learner, component }: { learner?: string; component?: string }) {
+export function MreTable({
+  learner,
+  component,
+  attendanceKey,
+}: {
+  learner?: string;
+  component?: string;
+  attendanceKey?: string;
+}) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
-  const byComponent = Boolean(component);
+  // Three modes: a live session's attendees (attendanceKey), all learners on one
+  // activity (component), or one learner's own records (default).
+  const bySession = Boolean(attendanceKey);
+  const byComponent = !bySession && Boolean(component);
+  const singlePage = bySession || byComponent;
   const query = useQuery({
-    queryKey: ["mre", learner, component, search, page],
+    queryKey: ["mre", learner, component, attendanceKey, search, page],
     queryFn: () =>
-      byComponent
+      bySession
+        ? getAttendanceSession(attendanceKey as string)
+        : byComponent
         ? getActivityLearners({ component: component as string, search })
         : getLearnerActivities({ learner, search, offset: page * pageSize, limit: pageSize }),
   });
-  const totalPages = byComponent ? 1 : Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
+  // The session endpoint returns every attendee at once (no server-side search),
+  // so filter client-side to keep the search box working in that mode.
+  const items = bySession && search.trim()
+    ? (query.data?.items ?? []).filter((activity) =>
+        activity.learner.toLowerCase().includes(search.trim().toLowerCase())
+      )
+    : query.data?.items ?? [];
+  const totalPages = singlePage ? 1 : Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
 
   return (
     <section className="rounded-lg border border-border bg-card shadow-panel">
@@ -31,7 +52,9 @@ export function MreTable({ learner, component }: { learner?: string; component?:
             <h2 className="font-serif text-lg text-foreground">Learner activity records</h2>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            {byComponent
+            {bySession
+              ? "All learners who attended this live session, matched by session date + group."
+              : byComponent
               ? "All learners who have this activity, with their own log entry on it."
               : learner
               ? `Live Neon activity records for ${learner}.`
@@ -76,7 +99,7 @@ export function MreTable({ learner, component }: { learner?: string; component?:
               {query.isLoading && (
                 <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading learner data from Neon…</TableCell></TableRow>
               )}
-              {query.data?.items.map((activity) => (
+              {items.map((activity) => (
                 <TableRow key={activity.id}>
                   <TableCell className="pl-7 text-sm font-medium text-foreground">{activity.learner}</TableCell>
                   <TableCell className="font-mono text-xs text-foreground">{activity.plan_id}</TableCell>
@@ -111,7 +134,7 @@ export function MreTable({ learner, component }: { learner?: string; component?:
                   </TableCell>
                 </TableRow>
               ))}
-              {query.data?.items.length === 0 && (
+              {!query.isLoading && items.length === 0 && (
                 <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No learner activity records were returned by this database branch.</TableCell></TableRow>
               )}
             </TableBody>
@@ -120,7 +143,7 @@ export function MreTable({ learner, component }: { learner?: string; component?:
       )}
 
       <footer className="flex items-center justify-between border-t border-border px-7 py-4 text-xs text-muted-foreground">
-        <span>{query.data ? `${query.data.total} records` : "Connecting…"}</span>
+        <span>{query.data ? `${bySession ? items.length : query.data.total} records` : "Connecting…"}</span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((value) => value - 1)} aria-label="Previous page">
             <ChevronLeft className="h-4 w-4" />
