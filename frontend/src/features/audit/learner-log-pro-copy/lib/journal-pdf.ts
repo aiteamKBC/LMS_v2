@@ -5,6 +5,7 @@ type JournalActivity = {
   month_unit: string;
   source_course: string | null;
   activity_unit: string;
+  section_title?: string | null;
   activity_description: string | null;
   learner_activity_date: string | null;
   plan_id: string;
@@ -211,10 +212,11 @@ export async function downloadLearnerJournalPdf(
     showHead: "everyPage",
     showFoot: "lastPage",
     rowPageBreak: "avoid",
-    head: [["Date", "Activity ID", "Activity details", "Type", "Time", "Claimed", "Accepted", "Paid"]],
+    head: [["Date", "Activity ID", "Section title", "Activity details", "Type", "Time", "Claimed", "Accepted", "Paid"]],
     body: rows.map((row) => [
       displayDate(row.learner_activity_date),
       compactId(row.plan_id || "-"),
+      row.section_title || "-",
       activityDetails(row),
       row.delivery_method || row.activity_category || "-",
       row.time_from_to ?? "-",
@@ -223,7 +225,7 @@ export async function downloadLearnerJournalPdf(
       "Yes",
     ]),
     foot: [[
-      { content: "MONTH TOTAL", colSpan: 5, styles: { halign: "right" as const } },
+      { content: "MONTH TOTAL", colSpan: 6, styles: { halign: "right" as const } },
       hours(learner.actual_hours), hours(learner.actual_hours), "",
     ]],
     styles: {
@@ -235,12 +237,13 @@ export async function downloadLearnerJournalPdf(
     footStyles: { fillColor: [238, 241, 246], textColor: navy, fontStyle: "bold", fontSize: 7.2 },
     alternateRowStyles: { fillColor: [247, 249, 252] },
     columnStyles: {
-      0: { cellWidth: 25 }, 1: { cellWidth: 28 }, 2: { cellWidth: 105 }, 3: { cellWidth: 38 },
-      4: { cellWidth: 27 }, 5: { cellWidth: 19, halign: "right", fontStyle: "bold" },
-      6: { cellWidth: 19, halign: "right", fontStyle: "bold" }, 7: { cellWidth: 12, halign: "center" },
+      0: { cellWidth: 23 }, 1: { cellWidth: 25 }, 2: { cellWidth: 38 }, 3: { cellWidth: 78 },
+      4: { cellWidth: 32 }, 5: { cellWidth: 24 },
+      6: { cellWidth: 19, halign: "right", fontStyle: "bold" },
+      7: { cellWidth: 20, halign: "right", fontStyle: "bold" }, 8: { cellWidth: 14, halign: "center" },
     },
     didParseCell: (data) => {
-      if (data.section === "body" && data.column.index === 7) {
+      if (data.section === "body" && data.column.index === 8) {
         data.cell.styles.textColor = green;
         data.cell.styles.fontStyle = "bold";
       }
