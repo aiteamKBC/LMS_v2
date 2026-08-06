@@ -35,6 +35,7 @@ mirrors how ``audit_api/views.py`` reaches the same table.
 """
 
 import datetime
+import html
 import json
 import re
 import time
@@ -129,6 +130,81 @@ def _normalize_ksbs(ksbs):
                 "reason": (item.get("reason") or "").strip() or None,
             })
     return result
+
+
+# --- attendance-session grouping + recording matching ----------------------
+#
+# An attendance key is ``<learner_id>_<YYYY-MM-DD>_<group>`` — e.g.
+# ``471_2026-07-03_project_planning_and_control_ppc_andrew``. Two learners
+# attended the *same* live session when the last two parts (date + group) match;
+# the group text is spelled inconsistently across learners (``ray-project...``
+# vs ``ray_project...`` vs ``Ray - Project ...``) so it's normalised first.
+#
+# The recording of that session lives as ordinary LMS lesson(s) whose *title*
+# starts with the session date in ``D-M-YYYY`` form and names the course, e.g.
+# ``26-6-2026 Project Planning & Control - Andrew Millington Part 1``. So a
+# recording belongs to a session when its title-date equals the session date and
+# its course name overlaps the session group. (Per-activity ``created_at`` /
+# ``completed_at`` are upload / watch timestamps and don't identify the session.)
+
+_ATT_KEY_RE = re.compile(r"^(\d+)_(\d{4}-\d{2}-\d{2})_(.+)$")
+# A D-M-YYYY / D/M/YYYY date appearing ANYWHERE in a recording title. Some
+# courses date-stamp the front ("26-6-2026 Project Planning…"), others the tail
+# ("… Customer Experience - 17/7/2026"), so it is not start-anchored.
+_TITLE_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?!\d)")
+
+# Filler words that carry no course identity — dropped before comparing a
+# session group against a recording's course name.
+_TOKEN_STOP = {
+    "and", "the", "of", "a", "an", "part", "parts", "session", "sessions",
+    "recorded", "live", "lecture", "lesson", "qualification", "module",
+    "group", "online",
+}
+
+
+def _norm_group(value):
+    """Lower-case and collapse all non-alphanumerics to single spaces, so the
+    ``-``/``_``/space/case spelling variants of a group name unify."""
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _significant_tokens(text):
+    """Meaningful word set of a group/course name (stop-words and bare numbers
+    removed) — used to score whether a recording's course matches a session."""
+    return {t for t in _norm_group(text).split() if t not in _TOKEN_STOP and not t.isdigit()}
+
+
+def _parse_attendance_key(key):
+    match = _ATT_KEY_RE.match(key or "")
+    if not match:
+        return None
+    return match.group(1), match.group(2), match.group(3)
+
+
+def _clean_title(title):
+    """Un-escape HTML entities (``&amp;``) and drop zero-width spaces that some
+    recording titles carry, so parsing/matching sees plain text."""
+    return html.unescape(title or "").replace("​", " ")
+
+
+def _title_session_date(title):
+    """Parse the ``D-M-YYYY`` date somewhere in a recording's title into an ISO
+    ``YYYY-MM-DD`` string (the live-session date), or None if absent."""
+    match = _TITLE_DATE_RE.search(_clean_title(title))
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _recording_course(title):
+    """Strip the date and any ``Part N`` marker out of a recording title,
+    leaving just the course/topic words for token matching."""
+    text = _TITLE_DATE_RE.sub(" ", _clean_title(title))
+    text = re.sub(r"(?i)\bpart\s*\d+\b", " ", text)
+    return text.strip(" -–—")
 
 
 # --- shape mapping ---------------------------------------------------------
@@ -241,6 +317,11 @@ def _activities_for_row(aptem_id, learner_name, structure):
             activity_date = _iso_date(item.get("date"))
             month_period = _period_of(activity_date) or planned_month_period
             attended = item.get("attended")
+            # Session identity from the key (date + normalised group) — lets us
+            # gather every learner who attended the same live session.
+            parsed_key = _parse_attendance_key(item.get("key"))
+            session_date = parsed_key[1] if parsed_key else activity_date
+            session_group = _norm_group(parsed_key[2]) if parsed_key else ""
             activities.append({
                 "id": f"{aptem_id}:{month_no}:att:{item.get('key')}:{index}",
                 "mre_id": str(item.get("key") or ""),
@@ -266,6 +347,8 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "configured_duration": None,
                 "week": None,
                 "ksbs": _normalize_ksbs(item.get("KSBs")),
+                "session_date": session_date,
+                "session_group": session_group,
                 "done": bool(attended),
             })
 
@@ -986,6 +1069,97 @@ def activity_learners(request: HttpRequest) -> JsonResponse:
         "planned_total": planned_total,
         "actual_total": actual_total,
         "limit": len(rows),
+        "offset": 0,
+    })
+
+
+@require_GET
+def attendance_session(request: HttpRequest) -> JsonResponse:
+    """Everything about one live session, given any one learner's attendance key.
+
+    Returns (a) every learner who attended the *same* session — matched by the
+    key's date + normalised group, not the per-learner key — as activity rows
+    the "Learner activity records" table can render, and (b) the session's
+    recordings (LMS lessons whose title-date equals the session date and whose
+    course name overlaps the group), for the content-preview panel."""
+    key = request.GET.get("key", "").strip()
+    parsed = _parse_attendance_key(key)
+    if not parsed:
+        return JsonResponse({"error": "key must look like <learner_id>_<YYYY-MM-DD>_<group>"}, status=400)
+    _learner_part, date, group_raw = parsed
+    norm_group = _norm_group(group_raw)
+
+    try:
+        learners_raw = _load_rows()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse(
+            {"error": "Could not read Audit.learner_match from the enrolment database.", "details": str(error)},
+            status=503,
+        )
+
+    # (a) attendees — same date + same normalised group, one row per learner.
+    attendees = []
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            if item.get("session_date") == date and item.get("session_group") == norm_group:
+                attendees.append(item)
+    attendees.sort(key=lambda item: item["learner"])
+
+    # (b) recordings — LMS lessons whose title is dated to this session day. On a
+    # given day more than one course can run (e.g. a PPC session and a PMO
+    # session), so rather than a fixed word-overlap threshold we assign each
+    # dated recording to whichever of that day's sessions its course name best
+    # matches, and keep the ones that land on THIS session. This copes with
+    # topical titles that share only one word with the group ("… PMO …").
+    sessions_on_date = {}  # normalised group -> significant-token set
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            group = item.get("session_group")
+            if item.get("session_date") == date and group and group not in sessions_on_date:
+                sessions_on_date[group] = _significant_tokens(group)
+
+    recordings = {}
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            source_url = item.get("source_url")
+            if not source_url:
+                continue
+            title = item.get("activity_unit")
+            if _title_session_date(title) != date:
+                continue
+            course_tokens = _significant_tokens(_recording_course(title))
+            scores = {group: len(course_tokens & tokens) for group, tokens in sessions_on_date.items()}
+            best = max(scores.values(), default=0)
+            # Keep only if this session is (one of) the best match and it is a
+            # real match (>0 shared words), so unrelated same-day courses split.
+            if best <= 0 or scores.get(norm_group, 0) != best:
+                continue
+            component = item.get("plan_id")
+            if component in recordings:
+                continue
+            recordings[component] = {
+                "component_id": component,
+                "title": _clean_title(title),
+                "preview_url": source_url,
+                "week": item.get("week"),
+            }
+    recordings_list = sorted(recordings.values(), key=lambda rec: rec["title"])
+
+    planned_total = round(sum(item["planned_hours"] or 0 for item in attendees), 2)
+    actual_total = round(sum(item["actual_lms_hours"] or 0 for item in attendees), 2)
+    return JsonResponse({
+        "session": {
+            "date": date,
+            "group": group_raw,
+            "group_label": norm_group,
+            "module": attendees[0]["activity_unit"] if attendees else None,
+        },
+        "recordings": recordings_list,
+        "items": attendees,
+        "total": len(attendees),
+        "planned_total": planned_total,
+        "actual_total": actual_total,
+        "limit": len(attendees),
         "offset": 0,
     })
 

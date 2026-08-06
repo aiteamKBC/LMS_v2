@@ -199,6 +199,29 @@ export function getActivityLearners(params: { component: string; search?: string
   return getJson<LearnerActivitiesResponse>(`/activity-learners?${query}`);
 }
 
+export type SessionRecording = {
+  component_id: string;
+  title: string;
+  preview_url: string | null;
+  week: string | null;
+};
+
+export type AttendanceSessionResponse = LearnerActivitiesResponse & {
+  session: {
+    date: string;
+    group: string;
+    group_label: string;
+    module: string | null;
+  } | null;
+  recordings: SessionRecording[];
+};
+
+// All learners who attended the SAME live session as this attendance record
+// (matched by the key's date + group), plus that session's recordings.
+export function getAttendanceSession(key: string) {
+  return getJson<AttendanceSessionResponse>(`/attendance-session?key=${encodeURIComponent(key)}`);
+}
+
 export type ActivityAnnotation = {
   component_id?: string;
   planned_hours: number | null;
