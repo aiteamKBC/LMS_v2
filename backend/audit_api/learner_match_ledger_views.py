@@ -275,17 +275,38 @@ def _fetch_rows():
         # read the programme name — roughly halves the query time.
         cur.execute(
             '''
-            select aptem_id, learner_name, programme_structure
-            from "Audit".learner_match
-            where programme_structure ->> 'programme' = %s
-            order by learner_name, aptem_id
+            select lm.aptem_id, lm.learner_name, lm.learner_email,
+                   lm.programme_structure, lm.aptem_training_plan,
+                   lm.programme_name, profile.program_status,
+                   profile.break_in_learning, owner.coach_name,
+                   owner.coach_email
+            from "Audit".learner_match lm
+            left join lateral (
+                select program_status, "Break in learning" as break_in_learning
+                from fetching_evidence.aptem_cv_contracts_probe
+                where learner_id = lm.aptem_id
+                order by fetched_at desc nulls last, id desc
+                limit 1
+            ) profile on true
+            left join lateral (
+                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
+                from "LMS"."Aptem_users"
+                where "ID" = lm.aptem_id
+                limit 1
+            ) owner on true
+            where lm.programme_structure ->> 'programme' = %s
+            order by lm.learner_name, lm.aptem_id
             ''',
             [PROGRAMME_NAME],
         )
         rows = cur.fetchall()
 
     learners = []
-    for aptem_id, learner_name, structure in rows:
+    for (
+        aptem_id, learner_name, learner_email, structure, training_plan,
+        programme_name, program_status, break_in_learning, coach_name,
+        coach_email,
+    ) in rows:
         # psycopg may hand json/jsonb back as a decoded dict or as raw text
         # depending on the configured loaders — normalise to a dict either way.
         if isinstance(structure, str):
@@ -293,10 +314,33 @@ def _fetch_rows():
                 structure = json.loads(structure)
             except ValueError:
                 structure = None
+        if isinstance(training_plan, str):
+            try:
+                training_plan = json.loads(training_plan)
+            except ValueError:
+                training_plan = None
+        if isinstance(break_in_learning, str):
+            try:
+                break_in_learning = json.loads(break_in_learning)
+            except ValueError:
+                break_in_learning = None
+        break_in_learning = break_in_learning if isinstance(break_in_learning, dict) else {}
         name = learner_name or f"Learner {aptem_id}"
         learners.append({
             "aptem_id": aptem_id,
             "name": name,
+            "email": learner_email,
+            "programme_name": programme_name or PROGRAMME_NAME,
+            "program_status": program_status or "Unknown",
+            "has_break_in_learning": (
+                bool(break_in_learning.get("has_break_in_learning"))
+                or str(program_status or "").strip().lower() == "onbreak"
+            ),
+            "coach": {
+                "name": coach_name or None,
+                "email": coach_email or None,
+            },
+            "training_plan": training_plan if isinstance(training_plan, list) else [],
             "activities": _activities_for_row(aptem_id, name, structure),
             "month_hours": _month_hours_for_row(structure),
         })
@@ -385,6 +429,9 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             "actual_hours": round(actual, 2),
             "gap_hours": round(actual - planned, 2),
             "last_activity_date": max(dates) if dates else None,
+            "program_status": learner.get("program_status") or "Unknown",
+            "has_break_in_learning": bool(learner.get("has_break_in_learning")),
+            "coach": learner.get("coach") or {"name": None, "email": None},
         })
 
     if search:
@@ -407,6 +454,372 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             for value in ordered_periods
         ],
     })
+
+
+@require_GET
+def learner_profile(request: HttpRequest) -> JsonResponse:
+    """Return the cross-source profile for one REAL-workspace learner."""
+    learner_key = request.GET.get("learner", "").strip().lower()
+    if not learner_key or len(learner_key) > 200:
+        return JsonResponse({"error": "A valid learner is required."}, status=400)
+
+    try:
+        learners = _load_rows()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse(
+            {"error": "Could not read Audit.learner_match from the enrolment database.", "details": str(error)},
+            status=503,
+        )
+
+    learner = next(
+        (
+            item for item in learners
+            if learner_key in (_learner_id(item["name"]), str(item["aptem_id"]).lower())
+        ),
+        None,
+    )
+    if learner is None:
+        return JsonResponse({"error": "Learner not found."}, status=404)
+
+    try:
+        sources = _load_profile_sources(learner["aptem_id"], learner.get("email"))
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not load the learner profile sources.", "details": str(error)},
+            status=503,
+        )
+
+    training_months = []
+    total_modules = 0
+    completed_modules = 0
+    for month in learner.get("training_plan") or []:
+        if not isinstance(month, dict):
+            continue
+        modules = []
+        for item in month.get("modules") or []:
+            if not isinstance(item, dict):
+                continue
+            component = item.get("components") if isinstance(item.get("components"), dict) else {}
+            status = component.get("status") or "Unknown"
+            total_modules += 1
+            if str(status).strip().lower() == "completed":
+                completed_modules += 1
+            modules.append({
+                "name": item.get("module") or "Untitled module",
+                "type": component.get("type") or "",
+                "status": status,
+            })
+        training_months.append({
+            "month": month.get("month") or "",
+            "date": _iso_date(month.get("date")),
+            "modules": modules,
+        })
+
+    return JsonResponse({
+        "id": _learner_id(learner["name"]),
+        "aptem_id": str(learner["aptem_id"]),
+        "name": learner["name"],
+        "email": learner.get("email"),
+        "programme": learner.get("programme_name") or PROGRAMME_NAME,
+        "programme_status": sources["programme_status"],
+        "break_in_learning": sources["break_in_learning"],
+        "coach": learner.get("coach") or {"name": None, "email": None},
+        "planned_hours": sources["learning_delivery"].get("planned_hours"),
+        "learning_delivery": sources["learning_delivery"],
+        "contracts": sources["contracts"],
+        "training_plan": {
+            "total_modules": total_modules,
+            "completed_modules": completed_modules,
+            "months": training_months,
+        },
+        "skills_radar": sources["skills_radar"],
+        "certifications": sources["certifications"],
+        "employment": sources["employment"],
+        "programme_understanding": sources["programme_understanding"],
+    })
+
+
+def _load_profile_sources(aptem_id, learner_email):
+    """Read the profile's external sources without retaining user selection.
+
+    Every query is keyed by this request's learner id/email. The returned data
+    is request-local and safe when different learners are viewed concurrently.
+    """
+    contracts = []
+    skill_groups = {}
+    certifications = []
+    employment = None
+    learning_delivery = {}
+    programme_understanding = {
+        "understanding_programme": None,
+        "career_development_progression": None,
+    }
+    programme_status = "Unknown"
+    break_in_learning = {
+        "has_break_in_learning": False,
+        "last_learning_date": None,
+        "expected_return_date": None,
+        "has_return_to_learning": False,
+        "return_to_learning_date": None,
+        "revised_learning_planned_end_date": None,
+    }
+
+    with connections[CONN].cursor() as cursor:
+        cursor.execute(
+            '''
+            select id, document_name, status, date, learner_signed_date,
+                   fully_signed_date, requested_date, program_name,
+                   program_start_date, planned_end_date, file
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+            order by date desc nulls last, id desc
+            ''',
+            [aptem_id],
+        )
+        for row in cursor.fetchall():
+            contracts.append({
+                "id": str(row[0]),
+                "document_name": row[1] or "Contract",
+                "status": row[2] or "Unknown",
+                "date": row[3],
+                "learner_signed_date": row[4],
+                "fully_signed_date": row[5],
+                "requested_date": row[6],
+                "programme": row[7],
+                "programme_start_date": row[8],
+                "planned_end_date": row[9],
+                "file": row[10],
+            })
+
+        cursor.execute(
+            '''
+            select program_status, "Break in learning"
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+            order by fetched_at desc nulls last, id desc
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        status_row = cursor.fetchone()
+        if status_row:
+            programme_status = status_row[0] or "Unknown"
+            break_value = status_row[1]
+            if isinstance(break_value, str):
+                try:
+                    break_value = json.loads(break_value)
+                except ValueError:
+                    break_value = None
+            if isinstance(break_value, dict):
+                break_in_learning = {
+                    "has_break_in_learning": bool(break_value.get("has_break_in_learning")),
+                    "last_learning_date": break_value.get("last_learning_date"),
+                    "expected_return_date": break_value.get("expected_return_date"),
+                    "has_return_to_learning": bool(break_value.get("has_return_to_learning")),
+                    "return_to_learning_date": break_value.get("return_to_learning_date"),
+                    "revised_learning_planned_end_date": break_value.get("revised_learning_planned_end_date"),
+                }
+            if str(programme_status).strip().lower() == "onbreak":
+                break_in_learning["has_break_in_learning"] = True
+
+        cursor.execute(
+            '''
+            select
+                coalesce(
+                    "Programme understanding" ->> 'understanding_programme',
+                    "Programme understanding" -> 'raw' ->> 'ExtendedILRModel_UnderstandingProgramme'
+                ),
+                coalesce(
+                    "Programme understanding" ->> 'career_development_progression',
+                    "Programme understanding" -> 'raw' ->> 'ExtendedILRModel_CareerDevelopmentProgression'
+                )
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+              and "Programme understanding" is not null
+            order by fetched_at desc nulls last, id desc
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        understanding_row = cursor.fetchone()
+        if understanding_row:
+            programme_understanding = {
+                "understanding_programme": understanding_row[0] or None,
+                "career_development_progression": understanding_row[1] or None,
+            }
+
+        cursor.execute(
+            '''
+            select characteristic_name, assessed_level
+            from fetching_evidence.aptem_skills_radar_probe
+            where learner_id = %s and assessed_level is not null
+            order by characteristic_name
+            ''',
+            [aptem_id],
+        )
+        for characteristic, assessed_level in cursor.fetchall():
+            match = re.match(
+                r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
+                characteristic or "",
+            )
+            domain = match.group(1).strip() if match else (characteristic or "Skill").split(" - ")[0].strip()
+            score = max(0, min(8, int(assessed_level)))
+            score_type = match.group(2).lower() if match else "skill"
+            field = {"knowledge": "knowledge", "skill": "skill_score", "behaviour": "behaviour"}[score_type]
+            skill_groups.setdefault(domain, {})[field] = score
+
+        cursor.execute(
+            '''
+            select certifications, employment_details
+            from fetching_evidence.aptem_cv_certifications
+            where learner_id = %s
+            order by updated_at desc nulls last, id desc
+            ''',
+            [aptem_id],
+        )
+        seen_certifications = set()
+        for certification_value, employment_value in cursor.fetchall():
+            if isinstance(certification_value, str):
+                try:
+                    certification_value = json.loads(certification_value)
+                except ValueError:
+                    certification_value = []
+            if isinstance(employment_value, str):
+                try:
+                    employment_value = json.loads(employment_value)
+                except ValueError:
+                    employment_value = []
+            if isinstance(certification_value, list):
+                for certification in certification_value:
+                    if not isinstance(certification, dict):
+                        continue
+                    key = (
+                        str(certification.get("name") or "").strip().lower(),
+                        str(certification.get("issuer") or "").strip().lower(),
+                    )
+                    if key in seen_certifications or not key[0]:
+                        continue
+                    seen_certifications.add(key)
+                    certifications.append(certification)
+            if employment is None:
+                employment = _first_employment_details(employment_value)
+
+        if learner_email:
+            cursor.execute(
+                '''
+                select learn_ref_number, planned_hours, otj_actual_hours,
+                       learn_start_date, learn_plan_end_date, completion_status
+                from "Audit".ilr_learning_deliveries
+                where lower(email) = lower(%s) and planned_hours is not null
+                order by aim_seq_number, updated_at desc nulls last, id desc
+                limit 1
+                ''',
+                [learner_email],
+            )
+            delivery = cursor.fetchone()
+            if delivery:
+                learning_delivery = {
+                    "learner_reference": delivery[0],
+                    "planned_hours": delivery[1],
+                    "actual_hours": delivery[2],
+                    "start_date": delivery[3],
+                    "planned_end_date": delivery[4],
+                    "completion_status": delivery[5],
+                    "first_evidence_date": None,
+                    "first_evidence_items": [],
+                }
+                cursor.execute(
+                    '''
+                    with raw_candidates as (
+                        select
+                            item ->> 'id' as evidence_id,
+                            item ->> 'name' as evidence_name,
+                            item ->> 'component_name' as component_name,
+                            item ->> 'kind' as evidence_kind,
+                            item ->> 'status' as evidence_status,
+                            item ->> 'file' as evidence_file,
+                            item ->> 'content' as evidence_content,
+                            substring(item ->> 'created_date' from 1 for 10)::date as evidence_date
+                        from fetching_evidence.learner_evidence learner_evidence
+                        cross join lateral jsonb_array_elements(
+                            case
+                                when jsonb_typeof(learner_evidence.evidence) = 'array'
+                                    then learner_evidence.evidence
+                                else '[]'::jsonb
+                            end
+                        ) item
+                        where learner_evidence.learner_id = %s
+                          and ltrim(lower(coalesce(item ->> 'name', ''))) not like 'welcome%%'
+                          and ltrim(lower(coalesce(item ->> 'component_name', ''))) not like 'welcome%%'
+                          and coalesce(item ->> 'created_date', '') ~ '^\\d{4}-\\d{2}-\\d{2}'
+                          and substring(item ->> 'created_date' from 1 for 10)::date >= %s
+                    ), candidates as (
+                        select distinct on (evidence_id)
+                            evidence_id, evidence_name, component_name, evidence_kind,
+                            evidence_status, evidence_file, evidence_content, evidence_date
+                        from raw_candidates
+                        order by evidence_id, evidence_date
+                    )
+                    select evidence_id, evidence_name, component_name, evidence_kind,
+                           evidence_status, evidence_file, evidence_content, evidence_date
+                    from candidates
+                    where evidence_date = (select min(evidence_date) from candidates)
+                    order by evidence_id
+                    ''',
+                    [aptem_id, delivery[3]],
+                )
+                first_evidence_rows = cursor.fetchall()
+                if first_evidence_rows:
+                    learning_delivery["first_evidence_date"] = first_evidence_rows[0][7]
+                    learning_delivery["first_evidence_items"] = [
+                        {
+                            "id": row[0],
+                            "name": row[1] or "Untitled evidence",
+                            "component_name": row[2] or "",
+                            "kind": row[3] or "",
+                            "status": row[4] or "",
+                            "file": row[5],
+                            "content": row[6],
+                            "date": row[7],
+                        }
+                        for row in first_evidence_rows
+                    ]
+
+    skills_radar = [
+        {
+            "skill": domain,
+            "knowledge": scores.get("knowledge"),
+            "skill_score": scores.get("skill_score"),
+            "behaviour": scores.get("behaviour"),
+            "maximum": 8,
+        }
+        for domain, scores in sorted(skill_groups.items())
+    ]
+    return {
+        "contracts": contracts,
+        "skills_radar": skills_radar,
+        "certifications": certifications,
+        "employment": employment,
+        "learning_delivery": learning_delivery,
+        "programme_understanding": programme_understanding,
+        "programme_status": programme_status,
+        "break_in_learning": break_in_learning,
+    }
+
+
+def _first_employment_details(value):
+    if isinstance(value, dict):
+        nested = value.get("employment_details")
+        if isinstance(nested, dict) and nested.get("section_found", True):
+            return nested
+        if value.get("employer_name") and value.get("section_found", True):
+            return value
+    if isinstance(value, list):
+        for item in value:
+            details = _first_employment_details(item)
+            if details:
+                return details
+    return None
 
 
 def _period_label(value):

@@ -250,3 +250,125 @@ class AptemLmsAuditPayloadTests(SimpleTestCase):
 
         self.assertTrue(row["is_stale"])
         self.assertIn("requires renewal", row["status_message"])
+
+
+class LearnerMatchProfileTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        self.learner = {
+            "aptem_id": 1234,
+            "name": "Test Learner",
+            "email": "test@example.com",
+            "programme_name": "Level 6 Project Controls Professional",
+            "coach": {"name": "Example Coach", "email": "coach@example.com"},
+            "training_plan": [{
+                "month": "July 2026",
+                "date": "2026-07-01",
+                "modules": [
+                    {"module": "Introduction", "components": {"type": "Digital learning", "status": "Completed"}},
+                    {"module": "Project plan", "components": {"type": "Assignment", "status": "Not started"}},
+                ],
+            }],
+            "month_hours": {
+                "2026-06": {"planned": 20.0, "completed": 18.5},
+                "2026-07": {"planned": 12.0, "completed": 14.0},
+            },
+            "activities": [
+                {
+                    "id": "1234:one",
+                    "activity_date": "2026-07-10",
+                    "activity_period": "2026-07",
+                    "activity_category": "video",
+                    "activity_unit": "Introduction",
+                    "plan_id": "one",
+                    "month_unit": "July 2026",
+                    "actual_lms_hours": 1.0,
+                    "done": True,
+                },
+                {
+                    "id": "1234:two",
+                    "activity_date": "2026-06-03",
+                    "activity_period": "2026-06",
+                    "activity_category": "assignment",
+                    "activity_unit": "Project plan",
+                    "plan_id": "two",
+                    "month_unit": "June 2026",
+                    "actual_lms_hours": None,
+                    "done": False,
+                },
+            ],
+        }
+
+    @patch("audit_api.learner_match_ledger_views._load_profile_sources")
+    @patch("audit_api.learner_match_ledger_views._load_rows")
+    def test_profile_is_selected_by_request_learner(self, load_rows, load_sources):
+        load_rows.return_value = [self.learner]
+        load_sources.return_value = {
+            "contracts": [{"id": "10", "document_name": "Training Plan", "status": "Verified"}],
+            "skills_radar": [{"skill": "Communication", "knowledge": 2, "skill_score": 3, "behaviour": 2, "maximum": 8}],
+            "certifications": [{"name": "PRINCE2"}],
+            "employment": {"employer_name": "Example Ltd", "job_title": "Project Lead"},
+            "programme_understanding": {
+                "understanding_programme": "I understand the programme structure.",
+                "career_development_progression": "It supports my progression.",
+            },
+            "programme_status": "OnBreak",
+            "break_in_learning": {
+                "has_break_in_learning": True,
+                "last_learning_date": "2026-01-15",
+                "expected_return_date": "2026-03-15",
+                "has_return_to_learning": True,
+                "return_to_learning_date": "2026-03-10",
+                "revised_learning_planned_end_date": "2027-11-30",
+            },
+            "learning_delivery": {
+                "planned_hours": 867,
+                "start_date": "2024-10-01",
+                "first_evidence_date": "2024-10-01",
+                "first_evidence_items": [{
+                    "id": "20",
+                    "name": "Project plan evidence",
+                    "component_name": "Day 1 Learning",
+                    "kind": "File",
+                    "status": "Accepted",
+                    "file": "https://example.com/evidence/20",
+                    "content": None,
+                    "date": "2024-10-01",
+                }],
+            },
+        }
+
+        response = self.client.get(
+            "/audit_api/match-ledger/learner-profile",
+            {"learner": "test learner"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["name"], "Test Learner")
+        self.assertEqual(payload["aptem_id"], "1234")
+        self.assertEqual(payload["planned_hours"], 867)
+        self.assertEqual(payload["learning_delivery"]["first_evidence_date"], "2024-10-01")
+        self.assertEqual(payload["learning_delivery"]["first_evidence_items"][0]["name"], "Project plan evidence")
+        self.assertEqual(payload["contracts"][0]["document_name"], "Training Plan")
+        self.assertEqual(payload["skills_radar"][0]["maximum"], 8)
+        self.assertEqual(payload["employment"]["employer_name"], "Example Ltd")
+        self.assertEqual(payload["programme_status"], "OnBreak")
+        self.assertEqual(payload["coach"]["name"], "Example Coach")
+        self.assertEqual(payload["break_in_learning"]["last_learning_date"], "2026-01-15")
+        self.assertEqual(payload["break_in_learning"]["return_to_learning_date"], "2026-03-10")
+        self.assertEqual(
+            payload["programme_understanding"]["understanding_programme"],
+            "I understand the programme structure.",
+        )
+        self.assertEqual(payload["training_plan"]["total_modules"], 2)
+        self.assertEqual(payload["training_plan"]["completed_modules"], 1)
+
+    @patch("audit_api.learner_match_ledger_views._load_rows", return_value=[])
+    def test_unknown_learner_returns_404(self, _load_rows):
+        response = self.client.get(
+            "/audit_api/match-ledger/learner-profile",
+            {"learner": "missing learner"},
+        )
+
+        self.assertEqual(response.status_code, 404)

@@ -7,6 +7,7 @@ from .learner_match_ledger_views import (
     activity_learners as match_activity_learners,
     health as match_health,
     learner_activities as match_learner_activities,
+    learner_profile as match_learner_profile,
     learner_summaries as match_learner_summaries,
     save_activity_annotation as match_save_activity_annotation,
 )
@@ -25,6 +26,7 @@ urlpatterns = [
     path("match-ledger/activity-annotation", match_activity_annotation, name="match-ledger-activity-annotation"),
     path("match-ledger/activity-annotation/save", match_save_activity_annotation, name="match-ledger-activity-annotation-save"),
     path("match-ledger/learners", match_learner_summaries, name="match-ledger-learners"),
+    path("match-ledger/learner-profile", match_learner_profile, name="match-ledger-learner-profile"),
     path("learners/", learner_audit_list, name="audit-learners"),
     path("learners/stats/", learner_activity_stats, name="audit-learner-activity-stats"),
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
