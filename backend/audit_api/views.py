@@ -2424,13 +2424,22 @@ def _ensure_signoff_table(cur):
         delete from "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" existing
         using "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" duplicate
         where existing.learner_id = duplicate.learner_id
+          and existing.programme_key = duplicate.programme_key
+          and existing.report_month = duplicate.report_month
+          and existing.signer_role = duplicate.signer_role
           and existing.ctid < duplicate.ctid
         """
     )
     cur.execute(
         f"""
-        create unique index if not exists "{SIGNOFF_TABLE}_learner_id_uidx"
-        on "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}" (learner_id)
+        drop index if exists "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}_learner_id_uidx"
+        """
+    )
+    cur.execute(
+        f"""
+        create unique index if not exists "{SIGNOFF_TABLE}_scope_uidx"
+        on "{AUDIT_SCHEMA}"."{SIGNOFF_TABLE}"
+        (learner_id, programme_key, report_month, signer_role)
         """
     )
 
