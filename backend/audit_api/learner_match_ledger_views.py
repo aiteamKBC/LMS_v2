@@ -104,6 +104,22 @@ def _lms_category(activity):
 _KSB_TYPE_LABELS = {"K": "Knowledge", "S": "Skill", "B": "Behaviour"}
 
 
+def _completion_records(item):
+    """Clean an activity's per-completion history (each start/finish + time)."""
+    records = []
+    for record in item.get("completion_records") or []:
+        if not isinstance(record, dict):
+            continue
+        records.append({
+            "record_id": record.get("record_id"),
+            "started_at": record.get("started_at"),
+            "completed_at": record.get("completed_at"),
+            "time_spent_seconds": record.get("time_spent_seconds"),
+            "time_spent_formatted": record.get("time_spent_formatted"),
+        })
+    return records
+
+
 def _normalize_ksbs(ksbs):
     """Flatten the ``{"K": [...], "S": [...], "B": [...]}`` KSB block that now
     lives on every activity in programme_structure into a single ordered list of
@@ -235,7 +251,10 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
         planned_seconds = duration.get("seconds")
         if isinstance(planned_seconds, (int, float)):
             planned_seconds_total += planned_seconds
-        spent = act.get("time_spent_seconds")
+        # Actual = engineered OTJH-credited seconds (activity["otjh"]), not raw time.
+        item_otjh = act.get("otjh") if isinstance(act.get("otjh"), dict) else {}
+        otjh_seconds = _to_float(item_otjh.get("seconds"))
+        spent = otjh_seconds if otjh_seconds is not None else act.get("time_spent_seconds")
         if isinstance(spent, (int, float)):
             actual_seconds_total += spent
         done = bool(act.get("completed"))
@@ -246,6 +265,7 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
             last_date = item_date
         material = (item.get("material_type") or "").strip() or "reading"
         category_counts[material] += 1
+        attempt_records = act.get("quiz_attempt_records") or 0
         components.append({
             "component_id": item.get("component_id"),
             "title": item.get("title") or "Untitled material",
@@ -256,9 +276,18 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
             "done": done,
             "activity_date": item_date,
             "planned_hours": round(planned_seconds / 3600, 2) if isinstance(planned_seconds, (int, float)) and planned_seconds else None,
-            "time_spent_formatted": act.get("time_spent_formatted") or None,
+            "time_spent_formatted": item_otjh.get("logged_time") or act.get("time_spent_formatted") or None,
+            "otjh_hours": _to_float(item_otjh.get("hours")),
+            "otjh_credited": bool(item_otjh.get("credited")) if item_otjh else None,
             "attempt_number": act.get("attempt_number"),
             "highest_score": act.get("highest_score"),
+            # Quiz result fields (null for readings/pdfs).
+            "score_percent": act.get("score_percent"),
+            "answered_questions": act.get("answered_questions"),
+            "correct_answers": act.get("correct_answers"),
+            "incorrect_answers": act.get("incorrect_answers"),
+            # Whether a graded body exists to open (from the quiz_attempts column).
+            "has_body": material == "quiz" and bool(attempt_records),
         })
 
     total = len(components)
@@ -284,6 +313,7 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
         "actual_lms_hours": round(actual_seconds_total / 3600, 2) if actual_seconds_total else None,
         "activity_category": "reading+quiz",
         "activity_unit": group_week or "Readings & quizzes",
+        "section_title": group_week or None,
         # Completion counts are intentionally omitted for now — just the make-up.
         "activity_description": breakdown or None,
         "delivery_method": f"Readings & quizzes ({total} items)",
@@ -339,8 +369,14 @@ def _activities_for_row(aptem_id, learner_name, structure):
             # An activity's "period" is the month it actually happened; if it was
             # never started, bucket it under its planned month.
             month_period = _period_of(activity_date) or planned_month_period
+            # Actual = the engineered OTJH-credited hours for this activity
+            # (item["otjh"]["hours"]); fall back to raw tracked time when absent.
+            otjh = item.get("otjh") if isinstance(item.get("otjh"), dict) else {}
+            otjh_hours = _to_float(otjh.get("hours"))
             seconds = item.get("time_spent_seconds")
-            actual_hours = round(seconds / 3600, 2) if isinstance(seconds, (int, float)) and seconds else None
+            actual_hours = otjh_hours if otjh_hours is not None else (
+                round(seconds / 3600, 2) if isinstance(seconds, (int, float)) and seconds else None
+            )
             planned_seconds = item.get("configured_duration_seconds")
             planned_hours = round(planned_seconds / 3600, 2) if isinstance(planned_seconds, (int, float)) and planned_seconds else None
             activities.append({
@@ -354,8 +390,9 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
-                "time_from_to": item.get("time_spent_formatted") or None,
+                "time_from_to": otjh.get("logged_time") or item.get("time_spent_formatted") or None,
                 "actual_lms_hours": actual_hours,
+                "otjh_credited": bool(otjh.get("credited")) if otjh else None,
                 "activity_category": _lms_category(item),
                 "activity_unit": item.get("title") or "Untitled activity",
                 "section_title": item.get("section_title") or item.get("section") or item.get("week") or None,
@@ -369,6 +406,7 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "configured_duration": item.get("configured_duration") or None,
                 "week": item.get("week") or None,
                 "ksbs": _normalize_ksbs(item.get("KSBs")),
+                "completion_records": _completion_records(item),
                 "done": bool(item.get("completed")),
             })
 
@@ -477,6 +515,28 @@ def _month_hours_for_row(structure):
     return result
 
 
+def _otjh_for_row(structure):
+    """Pull the off-the-job-hours adjustment data out of a learner's structure:
+    the top-level ``otjh_summary`` and a ``{period -> months[].otjh_adjustment}``
+    map. These carry the engineered per-month hour breakdown (att/asg/lms vs the
+    Aptem actual) and the review ``flagged`` status."""
+    summary = structure.get("otjh_summary") if isinstance(structure, dict) else None
+    summary = summary if isinstance(summary, dict) else None
+    months_map = {}
+    months = structure.get("months") if isinstance(structure, dict) else None
+    if isinstance(months, list):
+        for month in months:
+            if not isinstance(month, dict):
+                continue
+            adjustment = month.get("otjh_adjustment")
+            if not isinstance(adjustment, dict):
+                continue
+            period = _period_of(_iso_date(month.get("date")))
+            if period:
+                months_map[period] = adjustment
+    return summary, months_map
+
+
 # Each programme_structure blob is multi-megabyte (thousands of activities), and
 # the UI fires several calls per page. Cache the flattened result briefly so the
 # repeated fetch+parse+flatten cost is paid once, not on every request.
@@ -555,9 +615,12 @@ def _fetch_rows():
                 break_in_learning = None
         break_in_learning = break_in_learning if isinstance(break_in_learning, dict) else {}
         name = learner_name or f"Learner {aptem_id}"
+        otjh_summary, otjh_months = _otjh_for_row(structure)
         learners.append({
             "aptem_id": aptem_id,
             "name": name,
+            "otjh_summary": otjh_summary,
+            "otjh_months": otjh_months,
             "email": learner_email,
             "programme_name": programme_name or PROGRAMME_NAME,
             "program_status": program_status or "Unknown",
@@ -650,6 +713,9 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             item["activity_date"] for item in activities
             if item["activity_date"] and item["activity_date"][:7] <= current_period
         ]
+        otjh_summary = learner.get("otjh_summary") or {}
+        otjh_months = learner.get("otjh_months") or {}
+        month_adjustment = otjh_months.get(period) if period else None
         summaries.append({
             "id": _learner_id(learner["name"]),
             "name": learner["name"],
@@ -661,6 +727,20 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             "program_status": learner.get("program_status") or "Unknown",
             "has_break_in_learning": bool(learner.get("has_break_in_learning")),
             "coach": learner.get("coach") or {"name": None, "email": None},
+            # Off-the-job-hours adjustment: the whole-programme summary plus, when
+            # a period is selected, that month's specific breakdown + flag.
+            "otjh": {
+                "adjusted": bool(otjh_summary.get("adjusted")),
+                "applied_date": otjh_summary.get("applied_date"),
+                "note": otjh_summary.get("note"),
+                "flagged_count": otjh_summary.get("flagged_count") or 0,
+                "status_counts": otjh_summary.get("status_counts") or {},
+                "band_target_h": otjh_summary.get("band_target_h"),
+                "band_correct_h": otjh_summary.get("band_correct_h"),
+                "flagged_months": otjh_summary.get("flagged_months") or [],
+                "month": month_adjustment if isinstance(month_adjustment, dict) else None,
+                "month_flagged": bool(month_adjustment.get("flagged")) if isinstance(month_adjustment, dict) else False,
+            },
         })
 
     if search:
@@ -1123,6 +1203,16 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
     planned_total = round(planned_total, 2)
     actual_total = round(actual_total, 2)
     total = len(rows)
+    # For the single-learner + single-month view (the monthly report/journal),
+    # surface that month's OTJH adjustment (hour breakdown + flag).
+    otjh_month = None
+    if period and len(in_scope) == 1:
+        candidate = in_scope[0].get("otjh_months", {}).get(period)
+        if isinstance(candidate, dict):
+            # Attach the programme-level applied timestamp so the monthly report
+            # can show when the OTJH adjustment was run.
+            summary = in_scope[0].get("otjh_summary") or {}
+            otjh_month = {**candidate, "applied_date": summary.get("applied_date"), "note": summary.get("note")}
     return JsonResponse({
         "items": rows[offset : offset + limit],
         "total": total,
@@ -1130,6 +1220,7 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
         "actual_total": actual_total,
         "limit": limit,
         "offset": offset,
+        "otjh": otjh_month,
     })
 
 
@@ -1262,6 +1353,42 @@ def attendance_session(request: HttpRequest) -> JsonResponse:
         "limit": len(attendees),
         "offset": 0,
     })
+
+
+@require_GET
+def quiz_attempt(request: HttpRequest) -> JsonResponse:
+    """Return one learner's graded quiz body for a quiz component, read from the
+    Audit.learner_match.quiz_attempts jsonb column (keyed by component id,
+    attempted quizzes only). Shape: {title, status, quiz_body: {questions: [...]}}.
+    Uses the jsonb ``->`` operator to extract just the one quiz rather than
+    hauling the whole (large) column back."""
+    learner = request.GET.get("learner", "").strip().lower()
+    component = request.GET.get("component", "").strip()
+    if not learner or not component:
+        return JsonResponse({"error": "learner and component are required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            cur.execute(
+                '''
+                select quiz_attempts -> %s
+                from "Audit".learner_match
+                where lower(learner_name) = %s
+                  and programme_structure ->> 'programme' = %s
+                limit 1
+                ''',
+                [component, learner, PROGRAMME_NAME],
+            )
+            row = cur.fetchone()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not read quiz attempts.", "details": str(error)}, status=503)
+
+    attempt = row[0] if row else None
+    if isinstance(attempt, str):
+        try:
+            attempt = json.loads(attempt)
+        except ValueError:
+            attempt = None
+    return JsonResponse({"component_id": component, "attempt": attempt or None})
 
 
 # --- manual auditor annotations (KSBs + planned hours) per activity ---------

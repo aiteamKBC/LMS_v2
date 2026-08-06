@@ -134,6 +134,58 @@ function Stat({ label, value, tone = "navy" }: { label: string; value: string; t
   );
 }
 
+function otjhStatusLabel(status: string) {
+  switch ((status || "").toLowerCase()) {
+    case "over_target": return "Over target";
+    case "below_target": return "Below target";
+    case "happy_conflict": return "Conflict";
+    case "rebuilt": return "Rebuilt (in band)";
+    case "happy": return "In band";
+    case "skipped_empty": return "No activity";
+    default: return status || "—";
+  }
+}
+
+// Per-month off-the-job-hours adjustment: the engineered hour breakdown vs the
+// Aptem actual, plus the review flag.
+function OtjhCard({ otjh }: { otjh?: any }) {
+  if (!otjh) return null;
+  const hour = (value: number | null | undefined) =>
+    value == null ? "—" : `${Number(value).toFixed(2)} h`;
+  const flagged = Boolean(otjh.flagged);
+  return (
+    <div className={`rounded-lg border px-5 py-4 ${flagged ? "border-red-300 bg-red-50" : "border-border bg-[#f6f8fb]"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours (engineered)</p>
+          {otjh.applied_date && <p className="mt-0.5 text-xs text-muted-foreground">Adjustment applied {otjh.applied_date}</p>}
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
+          {flagged ? "⚑ " : ""}{otjhStatusLabel(otjh.status)}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div><p className="text-[10px] uppercase text-muted-foreground">Attendance</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.att_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Assignments</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.asg_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">LMS</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.lms_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Computed total</p><p className="mt-0.5 font-mono text-sm font-semibold text-[#182d48]">{hour(otjh.computed_total_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Aptem actual</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.aptem_actual_h)}</p></div>
+      </div>
+      {(otjh.n_media != null || otjh.n_bundles != null || otjh.n_reading_items != null) && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {otjh.n_media ?? 0} media · {otjh.n_bundles ?? 0} bundles · {otjh.n_reading_items ?? 0} reading items
+        </p>
+      )}
+      {flagged && (
+        <p className="mt-2 text-xs font-medium text-red-700">Flagged for manual review — best-effort engineered hours may not match the Aptem actual.</p>
+      )}
+      {otjh.note && (
+        <p className="mt-2 border-t border-border/60 pt-2 text-xs italic leading-5 text-muted-foreground">{otjh.note}</p>
+      )}
+    </div>
+  );
+}
+
 function ProfileGroup({ label, value, secondaryLabel, secondaryValue }: { label: string; value: string; secondaryLabel: string; secondaryValue: string }) {
   return (
     <div className="space-y-4 px-5 py-4 first:pl-0 last:pr-0 lg:border-r lg:border-border lg:last:border-r-0">
@@ -386,6 +438,7 @@ function JournalPage() {
                 <Stat label="Accepted" value={`${learner.actual_hours.toFixed(2)} h`} tone="success" />
                 <Stat label="Variance" value={`${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
               </div>
+              <OtjhCard otjh={activities.data?.otjh} />
             </div>
           ) : null}
         </section>

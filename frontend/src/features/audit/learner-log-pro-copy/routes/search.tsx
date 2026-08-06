@@ -46,6 +46,27 @@ function learnerStatusClass(status: string) {
   return "bg-muted text-muted-foreground";
 }
 
+// Human label + colour for an OTJH month status.
+function otjhLabel(status: string) {
+  switch ((status || "").toLowerCase()) {
+    case "over_target": return "over target";
+    case "below_target": return "below target";
+    case "happy_conflict": return "conflict";
+    case "rebuilt": return "rebuilt";
+    case "happy": return "in band";
+    case "skipped_empty": return "no activity";
+    default: return status || "—";
+  }
+}
+function otjhChipClass(status: string) {
+  switch ((status || "").toLowerCase()) {
+    case "below_target": return "bg-destructive/10 text-destructive ring-1 ring-destructive/40";
+    case "over_target":
+    case "happy_conflict": return "bg-warning/20 text-foreground ring-1 ring-warning/40";
+    default: return "bg-muted text-muted-foreground";
+  }
+}
+
 function StyledFilterSelect({
   value,
   options,
@@ -247,6 +268,11 @@ function SearchPage() {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
                           {learner.has_break_in_learning && <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">Break in learning</span>}
+                          {learner.otjh?.month_flagged && learner.otjh.month ? (
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${otjhChipClass(learner.otjh.month.status)}`}>⚑ OTJH: {otjhLabel(learner.otjh.month.status)}</span>
+                          ) : (learner.otjh?.flagged_count ?? 0) > 0 ? (
+                            <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">⚑ {learner.otjh.flagged_count} OTJH flag{learner.otjh.flagged_count === 1 ? "" : "s"}</span>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell>

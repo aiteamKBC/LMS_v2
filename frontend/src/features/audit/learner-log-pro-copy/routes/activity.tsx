@@ -7,6 +7,7 @@ import {
   getActivityAnnotation,
   getAttendanceSession,
   getLearnerActivities,
+  getQuizAttempt,
   saveActivityAnnotation,
 } from "@/features/audit/learner-log-pro-copy/lib/api";
 
@@ -45,6 +46,119 @@ function materialBadgeClass(material: string) {
     default:
       return "bg-muted text-muted-foreground";
   }
+}
+
+// Colour a quiz score chip by pass/fail status.
+function scoreClass(status: string | null) {
+  const value = (status || "").toLowerCase();
+  if (value === "passed") return "bg-success/15 text-success";
+  if (value === "failed") return "bg-destructive/15 text-destructive";
+  return "bg-muted text-muted-foreground";
+}
+
+// The graded body of one learner's quiz attempt, shown as text.
+function QuizBody({ learner, component }: { learner: string; component: string | number }) {
+  const query = useQuery({
+    queryKey: ["quiz-attempt", learner, String(component)],
+    queryFn: () => getQuizAttempt({ learner, component: String(component) }),
+    enabled: Boolean(learner && component),
+  });
+  if (query.isLoading) return <p className="px-3 py-2 text-xs text-muted-foreground">Loading quiz…</p>;
+  if (query.isError) return <p className="px-3 py-2 text-xs text-destructive">Could not load the quiz body.</p>;
+  const attempt = query.data?.attempt;
+  if (!attempt) return <p className="px-3 py-2 text-xs text-muted-foreground">No graded attempt stored for this quiz.</p>;
+  const questions = attempt.quiz_body?.questions ?? [];
+  return (
+    <div className="space-y-3 px-3 py-3">
+      {questions.map((question, qi) => (
+        <div key={question.question_id ?? qi} className="rounded-md border border-border bg-background/40 p-3">
+          <p className="text-sm leading-6 text-foreground">
+            <span className="mr-1.5 font-semibold text-muted-foreground">Q{question.question_order ?? qi + 1}.</span>
+            {question.question_text}
+            <span className={`ml-2 text-xs font-semibold ${question.is_correct ? "text-success" : "text-destructive"}`}>
+              {question.is_correct ? "✓ correct" : "✗ incorrect"}
+            </span>
+          </p>
+          <ul className="mt-2 space-y-1">
+            {(question.answer_options ?? []).map((option, oi) => (
+              <li
+                key={oi}
+                className={`flex items-start gap-2 rounded-sm px-2 py-1 text-sm ${
+                  option.is_correct
+                    ? "bg-success/10 text-foreground"
+                    : option.is_selected
+                    ? "bg-destructive/10 text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                <span className="mt-0.5 shrink-0 text-xs">
+                  {option.is_correct ? "✓" : option.is_selected ? "✗" : "•"}
+                </span>
+                <span>
+                  {option.option_text}
+                  {option.is_selected && <span className="ml-1.5 text-xs font-medium text-muted-foreground">(learner's answer)</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A reading+quiz bundle's contents: each item as a row; quizzes show their
+// score and can be opened to reveal the graded body inline.
+function BundleContents({ components, learner }: { components: any[]; learner: string }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  return (
+    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
+      {components.map((component, index) => {
+        const rowKey = `${component.component_id}-${index}`;
+        const isQuiz = component.material_type === "quiz";
+        const canOpen = isQuiz && component.has_body;
+        const open = openKey === rowKey;
+        return (
+          <li key={rowKey} className="px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(component.material_type)}`}>
+                  {component.material_type}
+                </span>
+                <span className="truncate text-sm text-foreground">{component.title}</span>
+                {isQuiz && component.score_percent != null && (
+                  <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold ${scoreClass(component.status)}`}>
+                    {component.score_percent}%{component.status ? ` · ${component.status}` : ""}
+                  </span>
+                )}
+              </div>
+              {canOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setOpenKey(open ? null : rowKey)}
+                  className="shrink-0 text-xs font-medium text-primary hover:underline"
+                >
+                  {open ? "Hide quiz" : "View quiz"}
+                </button>
+              ) : component.iframe_url ? (
+                <a href={component.iframe_url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-primary hover:underline">
+                  Open ↗
+                </a>
+              ) : null}
+            </div>
+            {isQuiz && component.correct_answers != null && component.answered_questions != null && (
+              <p className="mt-1 text-xs text-muted-foreground">{component.correct_answers}/{component.answered_questions} correct</p>
+            )}
+            {open && (
+              <div className="mt-2 overflow-hidden rounded-md border border-border bg-card">
+                <QuizBody learner={learner} component={component.component_id} />
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function formatDateTime(value: string | null) {
@@ -221,28 +335,7 @@ function ActivityLogPage() {
                 {activity.components && activity.components.length > 0 && (
                   <section>
                     <h2 className="label-caps">Bundle contents</h2>
-                    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
-                      {activity.components.map((component, index) => (
-                        <li key={`${component.component_id}-${index}`} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(component.material_type)}`}>
-                              {component.material_type}
-                            </span>
-                            <span className="truncate text-sm text-foreground">{component.title}</span>
-                          </div>
-                          {component.iframe_url && (
-                            <a
-                              href={component.iframe_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="shrink-0 text-xs font-medium text-primary hover:underline"
-                            >
-                              Open ↗
-                            </a>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
+                    <BundleContents components={activity.components} learner={(activity.learner || "").toLowerCase()} />
                   </section>
                 )}
                 {activity.source_url && (
@@ -281,6 +374,21 @@ function ActivityLogPage() {
                     <p className="mt-1 text-xs text-muted-foreground">{activity.source_course || activity.source_basis || "Programme structure"}</p>
                   </section>
                 </div>
+                {activity.completion_records && activity.completion_records.length > 0 && (
+                  <section className="border-t border-border pt-5">
+                    <h2 className="label-caps">Completion history</h2>
+                    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
+                      {activity.completion_records.map((record, index) => (
+                        <li key={record.record_id ?? index} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+                          <span className="font-mono text-muted-foreground">
+                            {formatDateTime(record.started_at) ?? "—"} → {formatDateTime(record.completed_at) ?? "in progress"}
+                          </span>
+                          {record.time_spent_formatted && <span className="font-mono text-foreground">{record.time_spent_formatted}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
               </div>
             </article>
 
@@ -310,19 +418,25 @@ function ActivityLogPage() {
               <section className="border-t border-border px-6 py-6">
                 <h3 className="label-caps">Mapped KSBs</h3>
                 {activity.ksbs && activity.ksbs.length > 0 ? (
-                  <ul className="mt-3 space-y-3">
+                  <ul className="mt-3 space-y-2">
                     {activity.ksbs.map((ksb, index) => (
-                      <li key={`${ksb.code}-${index}`} className="rounded-md border border-border bg-background/40 px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${ksbBadgeClass(ksb.type)}`}>{ksb.code}</span>
-                          <span className="text-xs font-medium text-muted-foreground">{ksb.type_label}</span>
-                        </div>
-                        {ksb.description && (
-                          <p className="mt-1.5 text-sm leading-6 text-foreground">{ksb.description}</p>
-                        )}
-                        {ksb.reason && (
-                          <p className="mt-1 text-xs italic leading-5 text-muted-foreground">Why: {ksb.reason}</p>
-                        )}
+                      <li key={`${ksb.code}-${index}`}>
+                        {/* Each KSB collapses on its own — closed by default, code shown. */}
+                        <details className="rounded-md border border-border bg-background/40 px-3 py-2">
+                          <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+                            <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${ksbBadgeClass(ksb.type)}`}>{ksb.code}</span>
+                            <span className="ml-auto text-xs text-muted-foreground">▸</span>
+                          </summary>
+                          <div className="mt-2">
+                            <span className="text-xs font-medium text-muted-foreground">{ksb.type_label}</span>
+                            {ksb.description && (
+                              <p className="mt-1 text-sm leading-6 text-foreground">{ksb.description}</p>
+                            )}
+                            {ksb.reason && (
+                              <p className="mt-1 text-xs italic leading-5 text-muted-foreground">Why: {ksb.reason}</p>
+                            )}
+                          </div>
+                        </details>
                       </li>
                     ))}
                   </ul>
