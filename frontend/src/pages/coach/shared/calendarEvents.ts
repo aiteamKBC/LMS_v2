@@ -2,7 +2,23 @@ import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 
 export const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 
-const API_ENDPOINT = `/coach_api/coach/timetable?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
+interface CoachCalendarFetchOptions {
+  start?: string;
+  end?: string;
+  includeLiveSessions?: boolean;
+  includeSchedulerQueues?: boolean;
+}
+
+function coachTimetableEndpoint(ownerEmail = DEFAULT_COACH_EMAIL, options: CoachCalendarFetchOptions = {}) {
+  const params = new URLSearchParams({
+    owner_email: ownerEmail,
+  });
+  if (options.start) params.set('start', options.start);
+  if (options.end) params.set('end', options.end);
+  if (options.includeLiveSessions === false) params.set('include_live_sessions', '0');
+  if (options.includeSchedulerQueues === false) params.set('include_scheduler_queues', '0');
+  return `/coach_api/coach/timetable?${params.toString()}`;
+}
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
 
@@ -85,8 +101,12 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-export async function fetchCoachCalendarEvents(signal?: AbortSignal) {
-  return fetchSharedJsonGet<CoachTimetableResponse>(API_ENDPOINT, { signal });
+export async function fetchCoachCalendarEvents(
+  signal?: AbortSignal,
+  ownerEmail = DEFAULT_COACH_EMAIL,
+  options: CoachCalendarFetchOptions = {},
+) {
+  return fetchSharedJsonGet<CoachTimetableResponse>(coachTimetableEndpoint(ownerEmail, options), { signal });
 }
 
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {

@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, FileText, Search } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Search, UserRound } from "lucide-react";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
   Select,
@@ -36,6 +36,14 @@ function Filter({ label, children }: { label: string; children: React.ReactNode 
       <span className="mt-1.5 block">{children}</span>
     </label>
   );
+}
+
+function learnerStatusClass(status: string) {
+  const value = status.trim().toLowerCase();
+  if (value === "active" || value === "completed") return "bg-success/10 text-success";
+  if (value === "onbreak") return "bg-warning/20 text-foreground ring-1 ring-warning/40";
+  if (value === "withdrawn" || value === "nonstarter") return "bg-destructive/10 text-destructive";
+  return "bg-muted text-muted-foreground";
 }
 
 function StyledFilterSelect({
@@ -217,21 +225,34 @@ function SearchPage() {
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="label-caps pl-7">Learner</TableHead>
+                    <TableHead className="label-caps">Status</TableHead>
+                    <TableHead className="label-caps">Coach</TableHead>
                     <TableHead className="label-caps text-right">Activities</TableHead>
                     <TableHead className="label-caps text-right">Planned hours</TableHead>
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
                     <TableHead className="label-caps text-right">Actual vs plan</TableHead>
                     <TableHead className="label-caps">Last activity</TableHead>
+                    <TableHead className="label-caps text-right">Learner profile</TableHead>
                     <TableHead className="label-caps pr-7 text-right">Details</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
                   )}
                   {summaries.data?.learners.map((learner) => (
-                    <TableRow key={learner.id}>
+                    <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
                       <TableCell className="pl-7 text-sm font-semibold text-foreground">{learner.name}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
+                          {learner.has_break_in_learning && <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">Break in learning</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm font-medium text-foreground">{learner.coach.name ?? "—"}</p>
+                        {learner.coach.email && <p className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</p>}
+                      </TableCell>
                       <TableCell className="text-right font-mono text-sm">{learner.entries}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{formatHours(learner.planned_hours)}</TableCell>
                       <TableCell className="text-right font-mono text-sm text-success">{formatHours(learner.actual_hours)}</TableCell>
@@ -239,6 +260,15 @@ function SearchPage() {
                         {learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{learner.last_activity_date ?? "—"}</TableCell>
+                      <TableCell className="text-right">
+                        <Link
+                          to="/learner/$learnerId"
+                          params={{ learnerId: learner.id }}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-secondary"
+                        >
+                          <UserRound className="h-3.5 w-3.5" /> View profile
+                        </Link>
+                      </TableCell>
                       <TableCell className="pr-7 text-right">
                         <Link
                           to="/journal"

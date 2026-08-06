@@ -54,6 +54,12 @@ export type LearnerSummary = {
   actual_hours: number;
   gap_hours: number;
   last_activity_date: string | null;
+  program_status: string;
+  has_break_in_learning: boolean;
+  coach: {
+    name: string | null;
+    email: string | null;
+  };
 };
 
 export type LearnersResponse = {
@@ -61,6 +67,98 @@ export type LearnersResponse = {
   months: Array<{ number: number; label: string }>;
   categories: string[];
   periods: Array<{ value: string; label: string }>;
+};
+
+export type LearnerProfile = {
+  id: string;
+  aptem_id: string;
+  name: string;
+  email: string | null;
+  programme: string;
+  programme_status: string;
+  break_in_learning: {
+    has_break_in_learning: boolean;
+    last_learning_date: string | null;
+    expected_return_date: string | null;
+    has_return_to_learning: boolean;
+    return_to_learning_date: string | null;
+    revised_learning_planned_end_date: string | null;
+  };
+  coach: {
+    name: string | null;
+    email: string | null;
+  };
+  planned_hours: number | null;
+  learning_delivery: {
+    learner_reference?: string;
+    planned_hours?: number;
+    actual_hours?: number | null;
+    start_date?: string;
+    first_evidence_date?: string | null;
+    first_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+    }>;
+    planned_end_date?: string;
+    completion_status?: number;
+  };
+  contracts: Array<{
+    id: string;
+    document_name: string;
+    status: string;
+    date: string | null;
+    learner_signed_date: string | null;
+    fully_signed_date: string | null;
+    requested_date: string | null;
+    programme: string | null;
+    programme_start_date: string | null;
+    planned_end_date: string | null;
+    file: string | null;
+  }>;
+  training_plan: {
+    total_modules: number;
+    completed_modules: number;
+    months: Array<{
+      month: string;
+      date: string | null;
+      modules: Array<{ name: string; type: string; status: string }>;
+    }>;
+  };
+  skills_radar: Array<{
+    skill: string;
+    knowledge: number | null;
+    skill_score: number | null;
+    behaviour: number | null;
+    maximum: 8;
+  }>;
+  certifications: Array<{
+    name: string;
+    issuer?: string | null;
+    issued_date?: string | null;
+    expiry_date?: string | null;
+    credential_id?: string | null;
+    evidence_text?: string | null;
+  }>;
+  employment: {
+    employer_name?: string | null;
+    job_title?: string | null;
+    workplace_address?: string | null;
+    employment_start_date?: string | null;
+    contracted_hours_per_week?: number | null;
+    employment_type?: string | null;
+    working_pattern?: string | null;
+    line_manager?: { name?: string | null; email?: string | null; phone?: string | null; job_title?: string | null };
+  } | null;
+  programme_understanding: {
+    understanding_programme: string | null;
+    career_development_progression: string | null;
+  };
 };
 
 async function getJson<T>(path: string): Promise<T> {
@@ -138,4 +236,8 @@ export function getLearners(params: { period?: string; search?: string; position
   if (params.position) query.set("position", params.position);
   const suffix = query.size ? `?${query}` : "";
   return getJson<LearnersResponse>(`/learners${suffix}`);
+}
+
+export function getLearnerProfile(learnerId: string) {
+  return getJson<LearnerProfile>(`/learner-profile?learner=${encodeURIComponent(learnerId)}`);
 }

@@ -847,6 +847,10 @@ export function fetchCurriculumProgrammes(signal?: AbortSignal): Promise<Curricu
   return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal });
 }
 
+export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
+  return fetchCollection<CurriculumGroup>('/curriculum/groups/', { signal });
+}
+
 export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<CurriculumKsbFramework[]> {
   return fetchCollection<CurriculumKsbFramework>('/curriculum/ksb-frameworks/', { signal });
 }
