@@ -25,6 +25,7 @@ from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
+    DEFAULT_PROGRAMME_STATUS,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
 )
@@ -38,7 +39,7 @@ from .mappers import (
     write_fields,
     write_staff_fields,
 )
-from .models import CommercialUser, EnrolmentUser, LearnerProfile, StaffUser
+from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, StaffUser
 
 
 def _parse_body(request):
@@ -52,6 +53,20 @@ def _parse_body(request):
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+def _check_employer_id(fields):
+    """Reject an "Employer_id" that names no employer record.
+
+    The column is a plain integer rather than a real FK (these tables are
+    unmanaged), so this is where referential integrity is actually enforced.
+    Clearing it to None is always allowed.
+    """
+    employer_id = fields.get("employer_id")
+    if employer_id is None:
+        return
+    if not Employer.objects.filter(pk=employer_id).exists():
+        raise ValidationError(f"Unknown employerId: {employer_id}")
 
 
 def _profile_is_apprenticeship(profile):
@@ -126,7 +141,7 @@ def _profile_enrolment_board(profile):
             "type": "Delivery",
             "name": profile.programme or "",
             "cohort": profile.cohort or "",
-            "status": profile.programme_status or "Non starter",
+            "status": profile.programme_status or DEFAULT_PROGRAMME_STATUS,
             "startDate": profile.start_date.isoformat() if profile.start_date else "",
             "endDate": profile.end_date.isoformat() if profile.end_date else "",
             "enrolledAt": "",
@@ -306,6 +321,7 @@ def enrolment_users(request):
         try:
             payload = _parse_body(request)
             fields = write_fields(payload, require_create=True)
+            _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
 
@@ -358,11 +374,21 @@ def enrolment_user_detail(request, pk):
     if user is None:
         return _error("User not found.", 404)
     if request.method == "GET":
+        # Safety net: a learner whose onboarding reviews are all signed belongs in
+        # Delivery. The sign endpoint normally moves them the moment the last
+        # signature lands, but reviews signed before that hook existed were never
+        # re-evaluated — so opening the learner re-checks and heals them.
+        from .learning_plan import promote_learner_if_ready
+
+        learner_kind = str(getattr(user, "learner_type", "") or "").strip() or "apprenticeship"
+        if promote_learner_if_ready(learner_kind, user.pk):
+            user.refresh_from_db()
         return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
         try:
             payload = _parse_body(request)
             fields = write_fields(payload)
+            _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
         try:

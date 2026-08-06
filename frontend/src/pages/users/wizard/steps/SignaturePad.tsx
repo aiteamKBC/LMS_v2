@@ -1,280 +1,143 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { btnPrimary, btnSecondary } from '../../components/ui';
+import { useAuth } from '@/hooks/useAuth';
+import {
+  SIGNATURE_FONT_FAMILY,
+  createTypedSignature,
+  ensureSignatureFont,
+} from '@/lib/typedSignature';
 
 /**
- * Signature capture: draw one by hand, or upload an image of an existing one.
+ * Signature capture: the signatory's own name, set in a script face.
  *
- * Both routes produce a PNG data URL, which is what `signatureUrl` already held
- * (previously the literal string 'Signed digitally'), so the stored shape and
- * the PDF's signature block need no schema change — see ilrDocument.sigRow,
- * which renders a data URL as an image and anything else as italic text.
+ * This replaced a draw-or-upload pad. Typing the name means one person's
+ * signature is identical every time they sign and is legible in the document,
+ * and there is nothing to redraw badly on a trackpad.
+ *
+ * The name defaults to the signed-in account holder's, so the common case is
+ * simply to confirm. It stays editable because the account name is not always
+ * the legal name that belongs on a statutory form — and because a learner may
+ * be signing on a page opened by staff.
+ *
+ * The committed value is still a PNG data URL, exactly as the drawn pad
+ * produced. That is deliberate: every signature column, PDF signature block and
+ * `startsWith('data:image/')` guard keeps working untouched, and signatures
+ * captured before this change still render.
  */
+export function SignaturePad({
+  onCommit,
+  onCancel,
+  defaultName,
+}: {
+  onCommit: (dataUrl: string) => void;
+  onCancel: () => void;
+  /** Overrides the signed-in account's name (e.g. staff opening a learner's form). */
+  defaultName?: string;
+}) {
+  const { auth } = useAuth();
+  const accountName = defaultName || auth.user?.fullName || '';
 
-/** Drawn strokes are trimmed and downscaled to keep the stored data URL small. */
-const MAX_WIDTH_PX = 600;
-/** Refuse oversized uploads: the whole ILR document is capped server-side at 512KB. */
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
-const ACCEPTED = ['image/png', 'image/jpeg', 'image/webp'];
-
-type Mode = 'draw' | 'upload';
-
-/** Crops transparent margins so a small squiggle doesn't render as a tiny mark
- *  in a wide box, then scales the result down to MAX_WIDTH_PX. */
-function trimmedDataUrl(source: HTMLCanvasElement): string | null {
-  const w = source.width;
-  const h = source.height;
-  const ctx = source.getContext('2d');
-  if (!ctx) return null;
-  const { data } = ctx.getImageData(0, 0, w, h);
-
-  let minX = w;
-  let minY = h;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      // Alpha channel only — the canvas starts fully transparent.
-      if (data[(y * w + x) * 4 + 3] > 0) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  if (maxX < 0) return null; // nothing drawn
-
-  const pad = 8;
-  minX = Math.max(0, minX - pad);
-  minY = Math.max(0, minY - pad);
-  maxX = Math.min(w - 1, maxX + pad);
-  maxY = Math.min(h - 1, maxY + pad);
-
-  const cropW = maxX - minX + 1;
-  const cropH = maxY - minY + 1;
-  const scale = Math.min(1, MAX_WIDTH_PX / cropW);
-
-  const out = document.createElement('canvas');
-  out.width = Math.round(cropW * scale);
-  out.height = Math.round(cropH * scale);
-  const octx = out.getContext('2d');
-  if (!octx) return null;
-  octx.drawImage(source, minX, minY, cropW, cropH, 0, 0, out.width, out.height);
-  return out.toDataURL('image/png');
-}
-
-/** Downscale an uploaded image so a phone photo of a signature isn't stored at full size. */
-function normaliseUpload(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Could not read that file.'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('That file is not a readable image.'));
-      img.onload = () => {
-        const scale = Math.min(1, MAX_WIDTH_PX / img.width);
-        const c = document.createElement('canvas');
-        c.width = Math.round(img.width * scale);
-        c.height = Math.round(img.height * scale);
-        const ctx = c.getContext('2d');
-        if (!ctx) return reject(new Error('Could not process that image.'));
-        ctx.drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/png'));
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: string) => void; onCancel: () => void }) {
-  const [mode, setMode] = useState<Mode>('draw');
-  const [hasInk, setHasInk] = useState(false);
+  const [name, setName] = useState(accountName);
+  const [fontReady, setFontReady] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const drawing = useRef(false);
 
-  // Size the backing store to the element's CSS size × DPR, so strokes are
-  // crisp on retina screens and coordinates map 1:1 to what the user sees.
-  //
-  // Re-measured whenever the element's box changes, not just on mount: the pad
-  // is a `w-full` canvas inside dialogs that are still settling when it first
-  // renders (and can be resized afterwards). Measuring once left the backing
-  // store at a stale width, which offsets every stroke from the cursor —
-  // setting canvas.width also wipes the bitmap, so this must not fire mid-draw.
+  // The preview must not render in a fallback face before the script font
+  // loads, or it misrepresents what will be stored.
   useEffect(() => {
-    if (mode !== 'draw') return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    let lastW = 0;
-    let lastH = 0;
-    const size = () => {
-      // A resize resets the bitmap, so never re-size out from under a stroke
-      // in progress or after the user has drawn something worth keeping.
-      if (drawing.current || hasInk) return;
-      const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const w = Math.round(rect.width * dpr);
-      const h = Math.round(rect.height * dpr);
-      if (w === 0 || h === 0 || (w === lastW && h === lastH)) return;
-      lastW = w;
-      lastH = h;
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      // setTransform, not scale: width/height assignment resets the transform,
-      // but this runs repeatedly and scale() would compound.
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.lineWidth = 2;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = '#111827';
+    let cancelled = false;
+    void ensureSignatureFont().then(() => {
+      if (!cancelled) setFontReady(true);
+    });
+    return () => {
+      cancelled = true;
     };
+  }, []);
 
-    size();
-    const ro = new ResizeObserver(size);
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, [mode, hasInk]);
+  // Adopt the account name once it resolves, but never overwrite what the
+  // signatory has typed.
+  useEffect(() => {
+    setName((current) => current || accountName);
+  }, [accountName]);
 
-  const pos = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-  };
+  const trimmed = useMemo(() => name.trim(), [name]);
 
-  const start = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const ctx = canvasRef.current?.getContext('2d');
-    if (!ctx) return;
-    // Capture the pointer so a stroke continuing outside the canvas still tracks.
-    e.currentTarget.setPointerCapture(e.pointerId);
-    drawing.current = true;
-    const { x, y } = pos(e);
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    // A single tap should leave a visible dot, not nothing.
-    ctx.lineTo(x + 0.01, y);
-    ctx.stroke();
-    setHasInk(true);
-  };
-
-  const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current) return;
-    const ctx = canvasRef.current?.getContext('2d');
-    if (!ctx) return;
-    const { x, y } = pos(e);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  };
-
-  const end = () => {
-    drawing.current = false;
-  };
-
-  const clear = () => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
-    // Reset in device pixels, ignoring the DPR transform.
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
-    setHasInk(false);
-  };
-
-  const commitDrawing = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const url = trimmedDataUrl(canvas);
-    if (!url) {
-      setErr('Please draw your signature first.');
+  const commit = async () => {
+    if (!trimmed) {
+      setErr('Enter the name to sign with.');
       return;
     }
-    onCommit(url);
-  };
-
-  const pickFile = async (file?: File) => {
+    setSaving(true);
     setErr(null);
-    if (!file) return;
-    if (!ACCEPTED.includes(file.type)) {
-      setErr('Please choose a PNG, JPEG or WebP image.');
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setErr('That image is larger than 2 MB. Please use a smaller file.');
-      return;
-    }
     try {
-      onCommit(await normaliseUpload(file));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not process that image.');
+      const dataUrl = await createTypedSignature(trimmed);
+      if (!dataUrl) {
+        setErr('Could not create the signature. Please try again.');
+        return;
+      }
+      onCommit(dataUrl);
+    } finally {
+      setSaving(false);
     }
   };
-
-  const tab = (m: Mode, label: string, icon: string) => (
-    <button
-      onClick={() => { setMode(m); setErr(null); }}
-      className={`px-3 py-1.5 rounded-lg text-[12px] font-medium inline-flex items-center gap-1.5 cursor-pointer transition-smooth border ${
-        mode === m ? 'bg-primary-50 text-primary-700 border-primary-300/60' : 'text-foreground-500 border-transparent hover:bg-background-100'
-      }`}
-    >
-      <i className={icon} />{label}
-    </button>
-  );
 
   return (
-    <div className="border border-foreground-200 rounded-xl p-3 max-w-md">
-      <div className="flex items-center gap-1.5 mb-3">
-        {tab('draw', 'Draw', 'ri-pen-nib-line')}
-        {tab('upload', 'Upload', 'ri-upload-2-line')}
+    <div className="border border-foreground-200 rounded-xl p-3 max-w-md space-y-3">
+      <label className="block">
+        <span className="text-[12px] text-foreground-700 block mb-1">
+          Full name <span className="text-red-500">*</span>
+        </span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Your full name"
+          className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2.5 py-2 text-[13px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
+        />
+      </label>
+
+      {/* Exactly what will be stored. */}
+      <div className="rounded-lg border-2 border-dashed border-foreground-200 bg-background-50 px-3 py-4 min-h-[80px] flex items-center justify-center overflow-x-auto">
+        {trimmed ? (
+          <span
+            className="text-foreground-900 whitespace-nowrap"
+            style={{
+              fontFamily: `"${SIGNATURE_FONT_FAMILY}", cursive`,
+              fontSize: '32px',
+              lineHeight: 1.4,
+              // Hide the fallback face until the real one is ready.
+              opacity: fontReady ? 1 : 0,
+              transition: 'opacity 120ms ease',
+            }}
+          >
+            {trimmed}
+          </span>
+        ) : (
+          <span className="text-[12px] text-foreground-400">
+            Type your name above to preview your signature
+          </span>
+        )}
       </div>
 
-      {mode === 'draw' ? (
-        <>
-          <canvas
-            ref={canvasRef}
-            onPointerDown={start}
-            onPointerMove={move}
-            onPointerUp={end}
-            onPointerLeave={end}
-            className="w-full h-32 border-2 border-dashed border-foreground-200 rounded-lg bg-background-50 touch-none cursor-crosshair"
-          />
-          <p className="text-[11px] text-foreground-400 mt-1.5">Sign inside the box using a mouse, trackpad or finger.</p>
-          <div className="flex items-center gap-2 mt-3">
-            <button className={btnPrimary} onClick={commitDrawing} disabled={!hasInk}>
-              <i className="ri-check-line" />Use signature
-            </button>
-            <button className={btnSecondary} onClick={clear} disabled={!hasInk}><i className="ri-eraser-line" />Clear</button>
-            <button className={btnSecondary} onClick={onCancel}>Cancel</button>
-          </div>
-        </>
-      ) : (
-        <>
-          <label className="w-full h-32 border-2 border-dashed border-foreground-200 rounded-lg bg-background-50 flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500 transition-smooth cursor-pointer">
-            <i className="ri-image-add-line text-2xl mb-1" />
-            <span className="text-[12px]">Choose a signature image</span>
-            <span className="text-[11px] text-foreground-300 mt-0.5">PNG, JPEG or WebP · max 2 MB</span>
-            <input
-              type="file"
-              accept={ACCEPTED.join(',')}
-              className="hidden"
-              onChange={(e) => {
-                void pickFile(e.target.files?.[0]);
-                // Reset so re-picking the same file fires change again.
-                e.target.value = '';
-              }}
-            />
-          </label>
-          <p className="text-[11px] text-foreground-400 mt-1.5">A photo or scan of an existing signature works. A transparent PNG looks best.</p>
-          <div className="flex items-center gap-2 mt-3">
-            <button className={btnSecondary} onClick={onCancel}>Cancel</button>
-          </div>
-        </>
-      )}
+      <p className="text-[11px] text-foreground-400">
+        Typing your name and confirming has the same effect as signing by hand.
+      </p>
 
-      {err && <p className="text-[12px] text-red-600 mt-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
+      {err && <p className="text-[12px] text-red-600">{err}</p>}
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className={btnPrimary}
+          onClick={() => void commit()}
+          disabled={saving || !trimmed}
+        >
+          <i className="ri-check-line" />
+          {saving ? 'Signing…' : 'Use signature'}
+        </button>
+        <button type="button" className={btnSecondary} onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

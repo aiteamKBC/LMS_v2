@@ -96,6 +96,12 @@ export interface ReviewSignature {
 export interface ReviewSignatures {
   learner: ReviewSignature;
   admin: ReviewSignature;
+  /**
+   * The learner's employer, on reviews that attest to employment facts (Health &
+   * Safety, Eligibility). `required` is false on reviews the employer has no part
+   * in — the RPL review — where this block is omitted from the document entirely.
+   */
+  employer?: ReviewSignature & { required?: boolean };
   /** False until the form is completed — an unfinished review cannot be signed. */
   signable: boolean;
   /**

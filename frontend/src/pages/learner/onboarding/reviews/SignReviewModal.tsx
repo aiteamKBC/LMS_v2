@@ -8,7 +8,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 /**
  * Sign-off dialog for a completed review, shared by both sides.
  *
- * Reuses the enrolment wizard's SignaturePad (draw or upload → PNG data URL), so
+ * Reuses the enrolment wizard's SignaturePad (typed name in a script face → PNG data URL), so
  * a review signature is captured and stored the same way as an ILR one.
  */
 export default function SignReviewModal({
@@ -33,7 +33,7 @@ export default function SignReviewModal({
   const existing = signatures[party];
   // The learner signed once during enrolment, so that signature is the default
   // here — drawing a new one is the fallback, not the main path. Staff have no
-  // stored signature, so they always draw.
+  // stored signature, so they type their name instead.
   const saved = party === 'learner' ? signatures.savedLearnerSignature : undefined;
   const savedSignature = saved?.signature ?? '';
 

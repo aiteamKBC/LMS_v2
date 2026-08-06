@@ -13,6 +13,10 @@ export const learnerNavItems: SidebarNavItem[] = [
   // available afterwards as a record of what they submitted.
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
 
+  // Statutory paperwork the learner signs (Apprenticeship Agreement today, the
+  // rest of DOC_TYPES as their generators land).
+  { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
+
   // Learning group
   {
     id: 'learner-group-learning',

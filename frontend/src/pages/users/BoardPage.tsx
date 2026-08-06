@@ -1,18 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
-import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, uploadEnrolmentDocument, type EnrolmentDocument, type EnrolmentDocType } from '@/api/enrolmentDocuments';
-import { fetchReviewDocuments, fetchReviewForm, type ReviewDocument, type ReviewFormResponse } from '@/api/reviewForm';
+import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, uploadEnrolmentDocument, DOC_SIGNING_PARTIES, type EnrolmentDocument, type EnrolmentDocType } from '@/api/enrolmentDocuments';
+import { fetchAgreement, issueAgreement, type Agreement } from '@/api/apprenticeshipAgreement';
+import { renderAgreementPdf, agreementFilename } from '@/lib/apprenticeshipAgreementPdf';
+import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument } from '@/api/ilrDocument';
+import { SignaturePad } from './wizard/steps/SignaturePad';
+import { useAuth } from '@/hooks/useAuth';
+import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
+
+/** Render the agreement from its record and save it. */
+function downloadAgreement(agreement: Agreement) {
+  renderAgreementPdf(agreement).save(agreementFilename(agreement.particulars.apprenticeName));
+}
+
+/** Likewise for the ILR. */
+function downloadIlr(document: IlrDocument) {
+  const { givenNames, familyName } = document.learnerDetails;
+  renderIlrPdf(document).save(ilrFilename([givenNames, familyName].filter(Boolean).join(' ')));
+}
+import { fetchReviewDocuments, fetchReviewForm, type ReviewDocument, type ReviewFormResponse, type ReviewSignatures } from '@/api/reviewForm';
 import SignReviewModal from '@/pages/learner/onboarding/reviews/SignReviewModal';
 import { downloadReviewPdf } from '@/pages/learner/onboarding/reviews/reviewDocument';
 import { REVIEW_QUESTION_LABELS } from '@/pages/learner/onboarding/reviews/questions';
 import type { LearnerKind } from '@/api/extendedIlr';
 import type { EnrolmentBoard, FsBlock } from './types';
-import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, FileList, Pagination, Hero, HeroStat, iconBtn, btnSecondary } from './components/ui';
+import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, FileList, Pagination, iconBtn, btnSecondary } from './components/ui';
 
 const enrolmentNav = roleNavMap.apprentice;
 
@@ -53,11 +70,120 @@ function downloadCsv(filename: string, headers: string[], rows: (string | number
   URL.revokeObjectURL(url);
 }
 
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+/** One labelled fact in the learner header's meta row. */
+function MetaItem({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wider text-white/50 mb-0.5">{label}</p>
+      <p className="text-[13px] text-white/90 font-medium flex items-center gap-1.5 min-w-0">
+        <i className={`${icon} text-white/40 shrink-0`} />
+        <span className="truncate" title={value}>{value}</span>
+      </p>
+    </div>
+  );
+}
+
 /**
- * Programme status, set from the page hero.
+ * The learner board's header.
+ *
+ * Deliberately not the shared <Hero>: that takes one free-text subtitle, so
+ * owner / programme / employer had to be concatenated into a single string that
+ * wrapped badly and gave no visual separation between a label and its value.
+ *
+ * Instead the identity block gets its own row (name + reference always on one
+ * line at the top), the facts below it are a responsive grid of labelled cells,
+ * and the controls sit in a bottom row that can't compress the name. Values
+ * truncate with a `title` tooltip rather than wrapping, so the header height is
+ * stable no matter how long an employer or programme name is.
+ */
+function LearnerHeader({
+  name,
+  reference,
+  owner,
+  programme,
+  employer,
+  onboardingStatus,
+  status,
+  actions,
+}: {
+  name: string;
+  reference: string;
+  owner: string;
+  programme: string;
+  employer?: string;
+  onboardingStatus: string;
+  status: ReactNode;
+  actions: ReactNode;
+}) {
+  // Only the facts that exist — an "Employer: —" cell on every learner without
+  // one is noise. Owner is always shown: "unassigned" is itself worth knowing.
+  const meta = [
+    { icon: 'ri-user-star-line', label: 'Owner', value: owner || 'Unassigned' },
+    ...(programme ? [{ icon: 'ri-book-open-line', label: 'Programme', value: programme }] : []),
+    ...(employer ? [{ icon: 'ri-briefcase-line', label: 'Employer', value: employer }] : []),
+  ];
+
+  return (
+    <div
+      className="relative rounded-2xl overflow-hidden"
+      style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 55%, oklch(var(--primary-800)) 100%)' }}
+    >
+      <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
+      {/* Soft highlight behind the avatar, purely decorative. */}
+      <div className="absolute -top-16 -left-10 w-56 h-56 rounded-full bg-white/[0.06] blur-2xl pointer-events-none" />
+
+      <div className="relative p-5 sm:p-6 space-y-5">
+        {/* Identity */}
+        <div className="flex items-center gap-4 min-w-0">
+          <span className="w-12 h-12 rounded-xl bg-white/15 backdrop-blur-sm border border-white/20 flex items-center justify-center shrink-0 text-[15px] font-bold text-white">
+            {initials(name) || <i className="ri-user-3-line text-xl" />}
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-[19px] sm:text-[21px] font-heading font-bold text-white leading-tight truncate" title={name}>
+              {name}
+            </h2>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {reference && (
+                <span className="text-[11px] font-medium text-white/70 bg-white/10 border border-white/15 rounded-md px-2 py-0.5 truncate max-w-[260px]" title={reference}>
+                  {reference}
+                </span>
+              )}
+              {onboardingStatus && (
+                <span className="text-[11px] font-medium text-white/70 bg-white/10 border border-white/15 rounded-md px-2 py-0.5">
+                  Onboarding: {onboardingStatus}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Facts */}
+        {meta.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 pt-4 border-t border-white/10">
+            {meta.map((m) => <MetaItem key={m.label} {...m} />)}
+          </div>
+        )}
+
+        {/* Controls — their own row, so a long name never squeezes them and they
+            never squeeze the name. */}
+        <div className="flex items-end justify-between gap-4 flex-wrap pt-4 border-t border-white/10">
+          {status}
+          <div className="flex items-center gap-2 flex-wrap">{actions}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Programme status, set from the page header.
  *
  * Replaced the separate "Enrolled learners" delivery list, which re-listed the
- * same learners this page already covers. Styled for the hero's dark gradient
+ * same learners this page already covers. Styled for the header's dark gradient
  * rather than with the standard light `inputClass`. The pick is held locally
  * until Save, so a mis-click never writes to the learner's record.
  */
@@ -213,16 +339,139 @@ function FunctionalSkill({ subject, block }: { subject: string; block: FsBlock }
  * enrolment."Enrolment_Documents"; opening one mints a short-lived SAS URL so the
  * Azure container itself stays private.
  */
+/**
+ * Who has signed a generated document: one chip per party it needs, ticked when
+ * they have. Reads the same way as SignatureParties on the reviews panel.
+ *
+ * Only the parties the doc type actually asks for are shown — rendering an
+ * unsigned "Employer" cell on a learner-only document would imply a signature
+ * was expected and missing.
+ */
+function DocumentParties({ doc }: { doc: EnrolmentDocument }) {
+  const required = DOC_SIGNING_PARTIES[doc.docType] ?? ['employer'];
+  const state: Record<string, { signed: boolean; name?: string; at?: string | null }> = {
+    learner: { signed: Boolean(doc.learner?.signed), name: doc.learner?.name, at: doc.learner?.signedAt },
+    employer: { signed: Boolean(doc.employer?.signed), name: doc.employer?.name, at: doc.employer?.signedAt },
+  };
+  const labels: Record<string, { label: string; icon: string }> = {
+    learner: { label: 'Learner', icon: 'ri-user-line' },
+    employer: { label: 'Employer', icon: 'ri-briefcase-line' },
+  };
+
+  return (
+    <span className="flex items-center gap-1.5">
+      {required.map((party) => {
+        const { signed, name, at } = state[party];
+        const { label, icon } = labels[party];
+        return (
+          <span
+            key={party}
+            title={
+              signed
+                ? `${label} signed${name ? ` by ${name}` : ''}${at ? ` on ${new Date(at).toLocaleDateString('en-GB')}` : ''}`
+                : `${label} has not signed yet`
+            }
+            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+              signed
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+            }`}
+          >
+            <i className={`${signed ? 'ri-check-line' : icon} text-[11px]`} />
+            {label}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+/** Who has signed the Apprenticeship Agreement: apprentice and employer only. */
+function AgreementParties({ agreement }: { agreement: Agreement }) {
+  const parties = [
+    { key: 'apprentice', label: 'Learner', icon: 'ri-user-line', state: agreement.signatures.apprentice },
+    { key: 'employer', label: 'Employer', icon: 'ri-briefcase-line', state: agreement.signatures.employer },
+  ];
+  return (
+    <span className="flex items-center gap-1.5">
+      {parties.map((p) => (
+        <span
+          key={p.key}
+          title={
+            p.state.signed
+              ? `${p.label} signed${p.state.name ? ` by ${p.state.name}` : ''}${p.state.signedAt ? ` on ${new Date(p.state.signedAt).toLocaleDateString('en-GB')}` : ''}`
+              : `${p.label} has not signed yet`
+          }
+          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+            p.state.signed
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+              : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+          }`}
+        >
+          <i className={`${p.state.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
+          {p.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Who has signed the ILR: the learner and the provider. No employer party. */
+function IlrParties({ document }: { document: IlrDocument }) {
+  const parties = [
+    { key: 'learner', label: 'Learner', icon: 'ri-user-line', state: document.signatures.learner },
+    { key: 'provider', label: 'Provider', icon: 'ri-shield-user-line', state: document.signatures.provider },
+  ];
+  return (
+    <span className="flex items-center gap-1.5">
+      {parties.map((p) => (
+        <span
+          key={p.key}
+          title={
+            p.state.signed
+              ? `${p.label} signed${p.state.name ? ` by ${p.state.name}` : ''}${p.state.signedAt ? ` on ${new Date(p.state.signedAt).toLocaleDateString('en-GB')}` : ''}`
+              : `${p.label} has not signed yet`
+          }
+          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+            p.state.signed
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+              : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+          }`}
+        >
+          <i className={`${p.state.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
+          {p.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind; learnerId: string; programme: string }) {
   const [docs, setDocs] = useState<EnrolmentDocument[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+
+  // The Apprenticeship Agreement lives in its own table, so it is fetched
+  // separately and shown alongside the generic documents as one list.
+  const [agreement, setAgreement] = useState<Agreement | null>(null);
+  // The ILR likewise has its own table. Signed by the learner and the provider;
+  // never shown to the employer.
+  const [ilr, setIlr] = useState<IlrDocument | null>(null);
+  // Whoever is signed in signs the provider declaration in their own name.
+  const { auth } = useAuth();
+  const providerName = auth.user?.fullName || 'Enrolment Officer';
 
   useEffect(() => {
     let cancelled = false;
     fetchEnrolmentDocuments(kind, learnerId)
       .then((r) => !cancelled && setDocs(r))
       .catch((e: Error) => !cancelled && setErr(e.message));
+    fetchAgreement(learnerId)
+      .then((r) => !cancelled && setAgreement(r.agreement))
+      .catch(() => { /* No agreement yet is normal, not an error worth showing. */ });
+    fetchIlrDocument(learnerId)
+      .then((r) => !cancelled && setIlr(r.document))
+      .catch(() => { /* Likewise for the ILR. */ });
     return () => { cancelled = true; };
   }, [kind, learnerId]);
 
@@ -237,12 +486,158 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     }
   };
 
+  // Issuing is the provider's job: the agreement must exist before either the
+  // learner or the employer can sign it, and neither of them should be the one
+  // to create it. Freezes the current particulars onto a new record.
+  const [issuing, setIssuing] = useState<'agreement' | 'ilr' | null>(null);
+  const issue = async () => {
+    setIssuing('agreement');
+    setErr(null);
+    try {
+      await issueAgreement(learnerId);
+      setAgreement((await fetchAgreement(learnerId)).agreement);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not issue the agreement');
+    } finally {
+      setIssuing(null);
+    }
+  };
+
+  const issueIlr = async () => {
+    setIssuing('ilr');
+    setErr(null);
+    try {
+      await issueIlrDocument(learnerId);
+      setIlr((await fetchIlrDocument(learnerId)).document);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not issue the ILR');
+    } finally {
+      setIssuing(null);
+    }
+  };
+
+  // The provider's side of the ILR — the Provider/Sub-contractor declaration.
+  const [signingIlr, setSigningIlr] = useState(false);
+  const signIlrAsProvider = async (mark: string) => {
+    setErr(null);
+    try {
+      setIlr(await signIlrDocument(learnerId, 'provider', providerName || 'Provider', mark));
+      setSigningIlr(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save the signature');
+    }
+  };
+
   return (
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
       {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
-      {docs !== null && docs.length === 0 && <EmptyState text="No documents" />}
+      {docs !== null && docs.length === 0 && !agreement && !ilr && <EmptyState text="No documents" />}
+      {/* Until the agreement is issued neither party can sign it, and it does
+          not appear in the employer's portal — so offer it here. */}
+      {agreement === null && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
+          <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
+            <i className="ri-file-add-line text-foreground-400 shrink-0" />
+            <span className="truncate">Apprenticeship Agreement not issued yet</span>
+          </span>
+          <ActionLink
+            label={issuing === 'agreement' ? 'Issuing…' : 'Issue agreement'}
+            icon="ri-quill-pen-line"
+            onClick={() => { void issue(); }}
+          />
+        </div>
+      )}
+      {agreement && (
+        <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg mb-2">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
+              <i className="ri-file-pdf-line text-red-500 shrink-0" />
+              <span className="truncate">Apprenticeship Agreement</span>
+              {agreement.fullySigned && (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>
+              )}
+            </span>
+            <span className="flex items-center gap-3 shrink-0">
+              {/* Apprentice and employer only — the provider does not sign it. */}
+              <AgreementParties agreement={agreement} />
+              <span className="text-[11px] text-foreground-400">
+                {agreement.createdAt ? new Date(agreement.createdAt).toLocaleString('en-GB') : ''}
+              </span>
+              {/* Rendered from the agreement record on demand rather than
+                  downloaded from storage, so it always carries the signatures
+                  actually on record and the particulars that were signed. */}
+              <ActionLink
+                label="Download"
+                icon="ri-download-line"
+                onClick={() => downloadAgreement(agreement)}
+              />
+            </span>
+          </div>
+        </div>
+      )}
+      {/* The Individual Learner Record. Signed by the learner and the provider;
+          the employer has no part in it and never sees it. */}
+      {ilr === null && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
+          <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
+            <i className="ri-file-add-line text-foreground-400 shrink-0" />
+            <span className="truncate">Individual Learner Record not issued yet</span>
+          </span>
+          <ActionLink
+            label={issuing === 'ilr' ? 'Issuing…' : 'Issue ILR'}
+            icon="ri-quill-pen-line"
+            onClick={() => { void issueIlr(); }}
+          />
+        </div>
+      )}
+      {ilr && (
+        <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg mb-2">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
+              <i className="ri-file-pdf-line text-red-500 shrink-0" />
+              <span className="truncate">Individual Learner Record</span>
+              {ilr.fullySigned && (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>
+              )}
+            </span>
+            <span className="flex items-center gap-3 shrink-0">
+              <IlrParties document={ilr} />
+              <span className="text-[11px] text-foreground-400">
+                {ilr.createdAt ? new Date(ilr.createdAt).toLocaleString('en-GB') : ''}
+              </span>
+              {!ilr.signatures.provider.signed && (
+                <ActionLink
+                  label="Sign as provider"
+                  icon="ri-quill-pen-line"
+                  onClick={() => setSigningIlr(true)}
+                />
+              )}
+              <ActionLink
+                label="Download"
+                icon="ri-download-line"
+                onClick={() => downloadIlr(ilr)}
+              />
+            </span>
+          </div>
+          {/* The Provider/Sub-contractor declaration: confirms identity,
+              immigration permission and eligibility evidence were seen. */}
+          {signingIlr && (
+            <div className="px-3 py-3 space-y-2">
+              <p className="text-[11px] text-foreground-500">
+                Signing confirms you have seen evidence to verify the learner's identity,
+                immigration permission (if applicable) and eligibility for this funding.
+              </p>
+              <SignaturePad
+                defaultName={providerName}
+                onCommit={(dataUrl) => { void signIlrAsProvider(dataUrl); }}
+                onCancel={() => setSigningIlr(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
       {docs !== null && docs.length > 0 && (
         <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
           {docs.map((d) => (
@@ -253,8 +648,12 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
                 {d.signed && <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>}
               </span>
               <span className="flex items-center gap-3 shrink-0">
+                {/* Who has signed and who hasn't — the same read as the reviews
+                    panel below, so a part-signed document is visible at a glance
+                    instead of just looking unsigned. */}
+                <DocumentParties doc={d} />
                 <span className="text-[11px] text-foreground-400">{d.generatedAt ? new Date(d.generatedAt).toLocaleString('en-GB') : ''}</span>
-                <ActionLink label={opening === d.id ? 'Opening…' : 'View'} icon="ri-external-link-line" onClick={() => open(d.id)} />
+                <ActionLink label={opening === d.id ? 'Opening…' : 'Download'} icon="ri-download-line" onClick={() => open(d.id)} />
               </span>
             </div>
           ))}
@@ -271,6 +670,66 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
  *
  * "Open" goes to the same form the learner uses — staff and learner share it.
  */
+/**
+ * Who has signed a review: one cell per party, ticked when they have.
+ *
+ * The employer cell is omitted on reviews that don't ask for an employer
+ * signature (`required` is false) — an empty "Employer ✗" would read as an
+ * outstanding signature rather than one that was never needed.
+ *
+ * Signed cells carry the signatory's name in a tooltip, since three names would
+ * not fit on the row.
+ */
+function SignatureParties({ signatures }: { signatures: ReviewSignatures }) {
+  const parties: { key: string; label: string; icon: string; signed: boolean; name: string; at: string | null }[] = [
+    {
+      key: 'learner', label: 'Learner', icon: 'ri-user-line',
+      signed: signatures.learner.signed,
+      name: signatures.learner.name,
+      at: signatures.learner.signedAt,
+    },
+    {
+      key: 'admin', label: 'Admin', icon: 'ri-shield-user-line',
+      signed: signatures.admin.signed,
+      name: signatures.admin.name,
+      at: signatures.admin.signedAt,
+    },
+  ];
+  if (signatures.employer?.required) {
+    parties.push({
+      key: 'employer', label: 'Employer', icon: 'ri-briefcase-line',
+      signed: signatures.employer.signed,
+      name: signatures.employer.name,
+      at: signatures.employer.signedAt,
+    });
+  }
+
+  return (
+    <span className="flex items-center gap-1.5">
+      {parties.map((p) => {
+        const when = p.at ? new Date(p.at).toLocaleDateString('en-GB') : '';
+        const title = p.signed
+          ? `${p.label} signed${p.name ? ` — ${p.name}` : ''}${when ? ` on ${when}` : ''}`
+          : `${p.label} has not signed yet`;
+        return (
+          <span
+            key={p.key}
+            title={title}
+            className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+              p.signed
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+                : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+            }`}
+          >
+            <i className={`${p.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
+            <span className="hidden sm:inline">{p.label}</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function ReviewDocuments({ kind, learnerId, programme }: { kind: LearnerKind; learnerId: string; programme: string }) {
   const navigate = useNavigate();
   const [docs, setDocs] = useState<ReviewDocument[] | null>(null);
@@ -325,10 +784,12 @@ function ReviewDocuments({ kind, learnerId, programme }: { kind: LearnerKind; le
                 )}
               </span>
               <span className="flex items-center gap-3 shrink-0">
-                {d.signatures.learner.signed && (
-                  <span className="text-[10px] text-emerald-700" title="Learner signed"><i className="ri-user-line" /> signed</span>
-                )}
-                {d.reviewedBy && <span className="text-[11px] text-foreground-400 hidden lg:inline">{d.reviewedBy}</span>}
+                {/* Who has signed, one cell per party. Replaces a lone "signed"
+                    that only ever reflected the learner and a "Signed" that only
+                    reflected the admin — neither said whose signature was
+                    missing, which is the thing you actually need to chase. */}
+                <SignatureParties signatures={d.signatures} />
+                {d.reviewedBy && <span className="text-[11px] text-foreground-400 hidden xl:inline">{d.reviewedBy}</span>}
                 {/* Sign-off and export are only meaningful on a finished review. */}
                 {d.completed && (
                   <>
@@ -512,17 +973,25 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
   return (
     <WorkspaceShell role="compliance" roleLabel={enrolmentNav.label} navItems={enrolmentNav.items} workspaceLabel={enrolmentNav.workspaceLabel} pageTitle="Enrolment Details" pageSubtitle={board.user.name} userName="Enrolment Officer" userRole="Enrolment Officer">
       <div className="p-6 max-w-5xl mx-auto">
-        {/* Hero */}
+        {/* Learner header.
+            Purpose-built rather than the shared <Hero>: that one takes a single
+            free-text subtitle, which forced owner / programme / employer into one
+            run-on string. In a narrow column it wrapped to four lines and the
+            facts ran together with no way to tell a label from a value. Here they
+            are discrete labelled cells that reflow instead of wrapping mid-fact,
+            and the actions get their own row so they never squeeze the name. */}
         <div className="animate-fade-in-up mb-6">
-          <Hero
-            icon="ri-user-3-line"
-            title={board.user.reference ? `${board.user.name} · ${board.user.reference}` : board.user.name}
-            subtitle={<>Owner: {board.user.owner || '—'}{board.programme.name ? ` · ${board.programme.name}` : ''}</>}
-            right={
+          <LearnerHeader
+            name={board.user.name}
+            reference={board.user.reference}
+            owner={board.user.owner}
+            programme={board.programme.name}
+            employer={board.user.employer}
+            onboardingStatus={board.programme.onboardingStatus}
+            status={<HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />}
+            actions={
               <>
-                <HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />
-                <HeroStat value={board.programme.onboardingStatus} label="Onboarding" />
-                <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white text-primary-700 rounded-xl text-[13px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer shadow-lg shadow-black/10">
+                <button onClick={showWizard} className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-lg text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer">
                   <i className="ri-magic-line" />Show Wizard
                 </button>
                 <FinishEnrolment learnerId={userId} status={board.programme.status || ''} onFinished={onReload} />
@@ -542,6 +1011,10 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             <FieldRow readonly label="Phone number" value={board.contact.phone} />
             <FieldRow readonly label="Date of birth" value={board.contact.dob} />
             <FieldRow readonly label="Group membership of user" value={board.contact.groupMembership} />
+            {/* Resolved server-side from Employer_id, so it tracks a renamed
+                employer. Learners created before employer profiles existed have
+                no id and fall back to the name typed on their record. */}
+            <FieldRow readonly label="Employer" value={board.user.employer || '—'} />
             <FieldRow readonly label="Signature (no mandate)" value={
               <div className="flex items-center gap-3 flex-wrap">
                 {board.contact.signatureUrl ? <img src={board.contact.signatureUrl} alt="Signature" className="h-12 border border-foreground-100 rounded" /> : <span className="text-foreground-300 italic">No signature</span>}

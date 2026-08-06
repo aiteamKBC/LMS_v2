@@ -1,12 +1,37 @@
 from django.urls import path
 
-from . import absence_reports, attendance, calendar, components, curriculum, calendar_connections,employers, evidence, learner_detail, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, learner_detail, learning_plan, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
     path("enrolment-users/<int:pk>/finish/", views.enrolment_user_finish, name="enrolment-user-finish"),
+    # The learner's learning plan: their group's modules, editable within the
+    # same programme. Offered once the learner reaches Delivery.
+    path("learning-plan/<int:pk>/", learning_plan.learning_plan, name="learning-plan"),
+    # The statutory Apprenticeship Agreement, filled from the learner's record,
+    # their group's delivery window and their learning plan's total hours.
+    path(
+        "apprenticeship-agreement/<int:pk>/",
+        apprenticeship_agreement.apprenticeship_agreement,
+        name="apprenticeship-agreement",
+    ),
+    path(
+        "apprenticeship-agreement/<int:pk>/issue/",
+        apprenticeship_agreement.issue_agreement,
+        name="apprenticeship-agreement-issue",
+    ),
+    path(
+        "apprenticeship-agreement/<int:pk>/sign/",
+        apprenticeship_agreement.sign_agreement,
+        name="apprenticeship-agreement-sign",
+    ),
+    # The Individual Learner Record: signed by the learner and the provider.
+    # Never shown to the employer.
+    path("ilr-document/<int:pk>/", ilr_document.ilr_document, name="ilr-document"),
+    path("ilr-document/<int:pk>/issue/", ilr_document.issue_ilr, name="ilr-document-issue"),
+    path("ilr-document/<int:pk>/sign/", ilr_document.sign_ilr, name="ilr-document-sign"),
     path("commercial-users/", views.commercial_users, name="commercial-users"),
     path("commercial-users/<int:pk>/", views.commercial_user_detail, name="commercial-user-detail"),
     path("staff-users/", views.staff_users, name="staff-users"),
@@ -17,6 +42,16 @@ urlpatterns = [
     path("organisations/", employers.organisations, name="organisations"),
     path("organisations/<int:pk>/", employers.organisation_detail, name="organisation-detail"),
     path("employers/", employers.employers, name="employers"),
+    # The employer-facing portal: their learners, and the documents they must sign.
+    # Declared before "employers/<int:pk>/" is irrelevant (different prefix), but
+    # the signature route is declared before the learner route for clarity.
+    path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
+    path("employer-portal/<int:employer_id>/signature/", employer_portal.employer_signature, name="employer-portal-signature"),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
+        employer_portal.employer_portal_learner,
+        name="employer-portal-learner",
+    ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),

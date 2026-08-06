@@ -14,9 +14,14 @@ import { CreateAdminModal } from './components/CreateAdminModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
 import { EditStaffModal } from './components/EditStaffModal';
+import { LearningPlanModal } from './components/LearningPlanModal';
 
 const enrolmentNav = roleNavMap.apprentice;
 const PAGE_SIZE = 8;
+// The learning plan is only editable once the three onboarding reviews are
+// signed and the learner has moved into delivery — see the backend's
+// promote_to_delivery_if_ready.
+const DELIVERY_STATUS = 'Delivery';
 
 /**
  * A directory row. Learner rows are plain UserListRows; staff rows carry the
@@ -148,6 +153,9 @@ export default function UsersListPage() {
   const [editStaff, setEditStaff] = useState<StaffUserRow | null>(null);
   // Likewise for employer contacts.
   const [editEmployer, setEditEmployer] = useState<EmployerRow | null>(null);
+  // The learner whose learning plan is open, if any. Only offered once a learner
+  // reaches Delivery — before that their modules aren't settled.
+  const [planFor, setPlanFor] = useState<UserListRow | null>(null);
 
   // One directory for the whole enrolment section: every learner — both
   // apprenticeship and commercial — comes from the single Enrolment_Users table
@@ -366,12 +374,14 @@ export default function UsersListPage() {
                   const isLearner = row.type === 'User';
                   const isStaff = row.source === 'staff';
                   const isEmployer = row.source === 'employer';
-                  // Neither has a profile page, so their name opens their edit
-                  // modal rather than routing to a learner record.
+                  // Neither has a learner record, so their name never routes to
+                  // one. Staff open their edit modal in place; an employer opens
+                  // their own side page, which is where their learners and the
+                  // documents they must sign live.
                   const openInPlace = isStaff
                     ? () => openStaffEdit(row)
-                    : isEmployer && row.employer
-                      ? () => setEditEmployer(row.employer!)
+                    : isEmployer
+                      ? () => navigate(`/employers/${row.id}`)
                       : null;
                   return (
                   <tr key={`${row.source ?? 'apprenticeship'}-${row.id}`} className={`border-b border-foreground-100 hover:bg-primary-50/30 transition-smooth ${i % 2 === 1 ? 'bg-background-100/20' : ''}`}>
@@ -397,17 +407,46 @@ export default function UsersListPage() {
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
-                    <td className="py-2.5 px-3">{isLearner && row.learningPlan ? <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button> : null}</td>
+                    <td className="py-2.5 px-3">
+                      {isLearner && row.programmeStatus === DELIVERY_STATUS ? (
+                        <button
+                          onClick={() => setPlanFor(row)}
+                          title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                        >
+                          <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line`} />
+                          {row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}
+                        </button>
+                      ) : isLearner && row.learningPlan ? (
+                        <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button>
+                      ) : null}
+                    </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
                     <td className="py-2.5 px-3">
                       {openInPlace ? (
-                        <button
-                          onClick={openInPlace}
-                          title={`Edit ${row.name}'s details`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
-                        >
-                          <i className="ri-edit-line text-[13px]" />Edit
-                        </button>
+                        <span className="flex items-center gap-2">
+                          <button
+                            onClick={openInPlace}
+                            title={isEmployer ? `Open ${row.name}'s employer page` : `Edit ${row.name}'s details`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                          >
+                            {isEmployer
+                              ? <><i className="ri-external-link-line text-[13px]" />View</>
+                              : <><i className="ri-edit-line text-[13px]" />Edit</>}
+                          </button>
+                          {/* An employer's own details are still editable — the
+                              primary action is now their page, so this is a
+                              secondary link rather than the main button. */}
+                          {isEmployer && row.employer && (
+                            <button
+                              onClick={() => setEditEmployer(row.employer!)}
+                              title={`Edit ${row.name}'s details`}
+                              className="text-[12px] text-foreground-400 hover:text-primary-600 hover:underline cursor-pointer whitespace-nowrap"
+                            >
+                              Edit
+                            </button>
+                          )}
+                        </span>
                       ) : isLearner ? (
                         <button
                           onClick={() => openLearnerPage(row)}
@@ -438,6 +477,14 @@ export default function UsersListPage() {
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {createAdminOpen && <CreateAdminModal onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
+      {planFor && (
+        <LearningPlanModal
+          learnerId={planFor.id}
+          learnerName={planFor.name}
+          onClose={() => setPlanFor(null)}
+          onSaved={load}
+        />
+      )}
       {/* Organisations are companies rather than people, so they don't belong in
           a directory of users — creating one just confirms and closes. Employers
           are people and do get listed. */}

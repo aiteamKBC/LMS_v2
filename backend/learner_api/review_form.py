@@ -25,6 +25,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent
 
+from .constants import PROGRAMME_STATUS_CHOICES
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s
 from .models import EnrolmentReview
@@ -68,14 +69,9 @@ def sections_for(review_type):
         _s(review_type), SECTIONS_BY_REVIEW["eligibility-review"]
     )
 
-# Programme Status dropdown. Mirrors the values the rest of the console uses.
-PROGRAMME_STATUS_OPTIONS = (
-    "Onboarding",
-    "Active",
-    "On a break",
-    "Withdrawn",
-    "Completed",
-)
+# Programme Status dropdown. Mirrors the values the rest of the console uses —
+# see PROGRAMME_STATUS_CHOICES in constants.py.
+PROGRAMME_STATUS_OPTIONS = tuple(PROGRAMME_STATUS_CHOICES)
 
 # "Highest level qualification you wish to report in the ILR" on the PLR panel.
 PRIOR_ATTAINMENT_OPTIONS = (
@@ -263,6 +259,26 @@ def _saved_learner_signature(review):
     }
 
 
+# Review types an employer is asked to sign, when the row itself doesn't say.
+# Every onboarding review: the employer is a party to the whole onboarding record,
+# not only the parts that name them. Per-row `Employer_signature_required` still
+# overrides this, so a specific review can be opted out without changing code.
+EMPLOYER_SIGNED_REVIEWS = ("training-plan", "eligibility-review", "workspace")
+
+
+def employer_signature_required(review):
+    """Whether this review wants an employer signature.
+
+    The column wins when set, so a specific review can be opted in or out;
+    otherwise it falls back to the review type. That keeps the decision data-driven
+    without needing a value backfilled onto every existing row.
+    """
+    explicit = review.employer_signature_required
+    if explicit is not None:
+        return bool(explicit)
+    return _s(review.review_type) in EMPLOYER_SIGNED_REVIEWS
+
+
 def _signatures(review, *, include_saved=True):
     """Sign-off state for both parties.
 
@@ -283,8 +299,17 @@ def _signatures(review, *, include_saved=True):
             "signedAt": _iso(review.admin_signed_at),
             "signed": bool(_s(review.admin_signature)),
         },
+        "employer": {
+            "signature": _s(review.employer_signature),
+            "name": _s(review.employer_signed_name),
+            "signedAt": _iso(review.employer_signed_at),
+            "signed": bool(_s(review.employer_signature)),
+            # Whether this review wants an employer sign-off at all — the
+            # employer's "needs signing" list is built from this.
+            "required": employer_signature_required(review),
+        },
         # A review is only signable once its form is finished, so an unfinished
-        # review cannot be signed off by either side.
+        # review cannot be signed off by any party.
         "signable": bool(review.form_completed),
         # The learner's signature from enrolment, offered as the default.
         "savedLearnerSignature": _saved_learner_signature(review) if include_saved else {},
@@ -433,7 +458,7 @@ def enrolment_review_form(request, kind, pk, event_key):
 # A drawn signature is a PNG data URL. Capped so a huge upload cannot be stored
 # in a text column that is later embedded in a PDF.
 MAX_SIGNATURE_CHARS = 400_000
-SIGNATURE_PARTIES = ("learner", "admin")
+SIGNATURE_PARTIES = ("learner", "admin", "employer")
 
 
 @csrf_exempt
@@ -486,6 +511,10 @@ def enrolment_review_sign(request, kind, pk, event_key):
             review.learner_signature = signature
             review.learner_signed_name = name if signature else ""
             review.learner_signed_at = now
+        elif party == "employer":
+            review.employer_signature = signature
+            review.employer_signed_name = name if signature else ""
+            review.employer_signed_at = now
         else:
             review.admin_signature = signature
             review.admin_signed_name = name if signature else ""
@@ -495,7 +524,17 @@ def enrolment_review_sign(request, kind, pk, event_key):
         logger.exception("enrolment_review_sign: save failed")
         return _error(f"Database error: {exc}", 502)
 
-    return JsonResponse(_serialize_form(review, learner, event))
+    # Signing the last outstanding review finishes onboarding, which moves the
+    # learner into Delivery. Deliberately after the signature is committed and
+    # non-fatal: the sign-off is the user's action and must stand on its own.
+    from .learning_plan import promote_to_delivery_if_ready
+
+    promoted = promote_to_delivery_if_ready(review) if signature else None
+
+    payload = _serialize_form(review, learner, event)
+    if promoted:
+        payload["programmeStatusChangedTo"] = promoted
+    return JsonResponse(payload)
 
 
 def _progress(review):

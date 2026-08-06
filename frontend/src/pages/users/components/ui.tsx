@@ -184,11 +184,17 @@ export function YesNoRadio({
 }
 
 // ---- Status badge (RAG / programme status) ----
+// Tints for the programme statuses in PROGRAMME_STATUS_OPTIONS. Statuses saved
+// before that list was trimmed still render, falling back to the neutral tint.
 const STATUS_TINTS: Record<string, string> = {
+  'Fresh user': 'bg-background-100 text-foreground-600 border-foreground-200/60',
+  Onboarding: 'bg-amber-50 text-amber-700 border-amber-200/50',
+  Delivery: 'bg-secondary-100 text-secondary-700 border-secondary-200/50',
+  'Ready to enrol': 'bg-primary-50 text-primary-700 border-primary-200/50',
   Active: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
+  Withdrawn: 'bg-red-50 text-red-700 border-red-200/50',
+  'On break': 'bg-amber-50 text-amber-700 border-amber-200/50',
   Completed: 'bg-blue-50 text-blue-700 border-blue-200/50',
-  'Entered EPA': 'bg-secondary-100 text-secondary-700 border-secondary-200/50',
-  'Non starter': 'bg-amber-50 text-amber-700 border-amber-200/50',
   Finished: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
 };
 

@@ -25,9 +25,21 @@ export interface EnrolmentDocument {
   filename: string;
   path: string;
   sizeBytes: number | null;
+  /** True only once every party this doc type needs has signed. */
   signed: boolean;
   generatedAt: string | null;
+  /** Per-party sign-off, so a part-signed document reads correctly. */
+  learner?: { name: string; signedAt: string | null; signed: boolean };
+  employer?: { name: string; signedAt: string | null; signed: boolean };
 }
+
+/**
+ * Which parties each document type is signed by. Mirrors SIGNING_PARTIES in
+ * backend/enrolment_api/documents.py; types not listed are employer-only.
+ */
+export const DOC_SIGNING_PARTIES: Record<string, ReadonlyArray<'learner' | 'employer'>> = {
+  'apprenticeship-agreement': ['learner', 'employer'],
+};
 
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();

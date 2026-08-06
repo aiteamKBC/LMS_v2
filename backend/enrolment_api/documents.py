@@ -15,6 +15,7 @@ itself stays private.
     GET  /enrolment_api/documents/<kind>/<id>/<doc_id>/download/
     GET  /enrolment_api/document-types/
 """
+import json
 import logging
 import uuid
 
@@ -68,12 +69,33 @@ def _row_to_json(r):
         "sizeBytes": r[4],
         "signed": r[5],
         "generatedAt": r[6].isoformat() if r[6] else None,
+        # Per-party sign-off. The Apprenticeship Agreement is signed by the
+        # apprentice AND the employer, so each side is reported separately;
+        # "signed" above stays as the summary flag.
+        "learner": {
+            "name": r[7] or "",
+            "signedAt": r[8].isoformat() if r[8] else None,
+            "signed": bool(r[9]),
+        },
+        "employer": {
+            "name": r[10] or "",
+            "signedAt": r[11].isoformat() if r[11] else None,
+            "signed": bool(r[12]),
+        },
     }
 
 
 SELECT_COLS = (
-    'id, "Doc_type", "Doc_name", "Doc_path", "Size_bytes", "Signed", "Generated_at"'
+    'id, "Doc_type", "Doc_name", "Doc_path", "Size_bytes", "Signed", "Generated_at", '
+    '"Learner_signed_name", "Learner_signed_at", ("Learner_signature" is not null and "Learner_signature" <> \'\'), '
+    '"Employer_signed_name", "Employer_signed_at", ("Employer_signature" is not null and "Employer_signature" <> \'\')'
 )
+
+# Which parties must sign before a document counts as fully signed. Documents not
+# listed keep the previous behaviour: the employer alone signs them.
+SIGNING_PARTIES = {
+    "apprenticeship-agreement": ("learner", "employer"),
+}
 
 
 def document_types(request):
@@ -204,3 +226,176 @@ def download_document(request, kind, learner_id, doc_id):
         return _error("Document not found.", 404)
 
     return JsonResponse({"url": get_download_sas(row[0], row[1])})
+
+
+# A drawn signature is a PNG data URL. Same cap as review signing
+# (learner_api/review_form.MAX_SIGNATURE_CHARS) so one oversized image can't be
+# stored in a text column that later gets embedded in a PDF.
+MAX_SIGNATURE_CHARS = 400_000
+
+
+@csrf_exempt
+def replace_document_file(request, kind, learner_id, doc_id):
+    """Swap the stored PDF on an existing document row, keeping its signatures.
+
+        POST /enrolment_api/documents/<kind>/<learner_id>/<doc_id>/file/
+        (multipart: file=<pdf>)
+
+    A document is generated before anyone signs it, so the filed PDF shows empty
+    signature blocks. Once a party signs, the PDF is rebuilt with their mark and
+    posted here — this replaces the blob in place rather than inserting a new
+    row, so the id, the recorded signatures and the sign-off state all survive.
+
+    Posting to the collection endpoint instead would create a *new* document and
+    strand the signature on the old row.
+
+    The blob name is timestamped, so the previous version stays in storage as
+    the copy that was filed at the time.
+    """
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    if not azure_configured():
+        return _error("Document storage is not configured.", 503)
+
+    f = request.FILES.get("file")
+    if f is None:
+        return _error("A 'file' part is required.", 400)
+    if f.content_type not in ALLOWED_TYPES:
+        return _error("Only PDF documents are accepted.", 400)
+    if f.size > MAX_BYTES:
+        return _error("Document exceeds the 25 MB size limit.", 400)
+
+    ensure_enrolment_documents_table()
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                'select "Doc_type", "Container" from enrolment."Enrolment_Documents" '
+                'where id = %s and "Learner_kind" = %s and "Learner_id" = %s',
+                [str(doc_id), kind, int(learner_id)],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not look up document for replacement: %s", exc)
+        return _error("Could not load the document.", 502)
+    if not row:
+        return _error("Document not found.", 404)
+
+    doc_type, container = row[0], row[1] or settings.AZURE_ENROLMENT_DOCS_CONTAINER
+    stamp = timezone.now().strftime("%Y%m%dT%H%M%S")
+    blob_name = f"{kind}/{learner_id}/{doc_type}/{stamp}-{doc_id}.pdf"
+
+    try:
+        upload_blob(f, container, blob_name, "application/pdf")
+    except Exception as exc:  # SDK / network errors
+        logger.warning("Enrolment document replacement upload failed: %s", exc)
+        return _error("Upload to storage failed.", 502)
+
+    path = blob_url(container, blob_name)
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                f'''
+                update enrolment."Enrolment_Documents"
+                set "Blob_name" = %s, "Doc_path" = %s, "Size_bytes" = %s
+                where id = %s and "Learner_kind" = %s and "Learner_id" = %s
+                returning {SELECT_COLS}
+                ''',
+                [blob_name, path, f.size, str(doc_id), kind, int(learner_id)],
+            )
+            updated = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not record document replacement: %s", exc)
+        return _error("Document stored but could not be recorded.", 502)
+
+    if not updated:
+        return _error("Document not found.", 404)
+    return JsonResponse(_row_to_json(updated))
+
+
+@csrf_exempt
+def sign_document(request, kind, learner_id, doc_id):
+    """Record an employer's signature on a generated compliance document.
+
+        POST /enrolment_api/documents/<kind>/<learner_id>/<doc_id>/sign/
+        {"name": "...", "signature": "data:image/png;base64,..."}
+
+    These PDFs previously had only a bare "Signed" boolean with nowhere to record
+    who signed or what mark they gave. Validation mirrors the review sign endpoint
+    so both document kinds behave the same way; posting an empty signature clears
+    the sign-off, letting a mistaken signature be withdrawn.
+
+    "Signed" is kept in step as the summary flag the existing documents list reads.
+    """
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except (ValueError, UnicodeDecodeError):
+        return _error("Invalid JSON body.", 400)
+    if not isinstance(payload, dict):
+        return _error("Request body must be a JSON object.", 400)
+
+    signature = str(payload.get("signature") or "").strip()
+    name = str(payload.get("name") or "").strip()
+    if signature:
+        if len(signature) > MAX_SIGNATURE_CHARS:
+            return _error("That signature image is too large.", 400)
+        if not signature.startswith("data:image/"):
+            return _error("signature must be a PNG data URL.", 400)
+        if not name:
+            return _error("name is required when signing.", 400)
+
+    # Which side is signing. Defaults to employer so existing callers, which
+    # predate two-party signing, keep working unchanged.
+    party = str(payload.get("party") or "employer").strip().lower()
+    if party not in ("learner", "employer"):
+        return _error("party must be 'learner' or 'employer'.", 400)
+    column = "Learner" if party == "learner" else "Employer"
+
+    ensure_enrolment_documents_table()
+    now = timezone.now() if signature else None
+    try:
+        with _conn().cursor() as cur:
+            cur.execute(
+                f'''
+                update enrolment."Enrolment_Documents"
+                set "{column}_signature" = %s,
+                    "{column}_signed_name" = %s,
+                    "{column}_signed_at" = %s
+                where id = %s and "Learner_kind" = %s and "Learner_id" = %s
+                returning {SELECT_COLS}
+                ''',
+                [
+                    signature,
+                    name if signature else "",
+                    now,
+                    str(doc_id),
+                    kind,
+                    int(learner_id),
+                ],
+            )
+            row = cur.fetchone()
+            if not row:
+                return _error("Document not found.", 404)
+
+            # "Signed" is the summary flag the documents list reads: true only
+            # once every party this document type needs has signed.
+            doc = _row_to_json(row)
+            required = SIGNING_PARTIES.get(doc["docType"], ("employer",))
+            complete = all(doc[p]["signed"] for p in required)
+            cur.execute(
+                f'update enrolment."Enrolment_Documents" set "Signed" = %s '
+                f'where id = %s returning {SELECT_COLS}',
+                [complete, str(doc_id)],
+            )
+            row = cur.fetchone()
+    except DatabaseError as exc:
+        logger.warning("Could not sign enrolment document: %s", exc)
+        return _error("Could not save the signature.", 502)
+
+    return JsonResponse({
+        **_row_to_json(row),
+        "signedName": name if signature else "",
+        "signedAt": now.isoformat() if now else None,
+    })
