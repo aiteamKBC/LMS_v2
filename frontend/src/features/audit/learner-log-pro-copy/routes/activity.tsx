@@ -5,6 +5,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { MreTable } from "@/features/audit/learner-log-pro-copy/components/MreTable";
 import {
   getActivityAnnotation,
+  getAttendanceSession,
   getLearnerActivities,
   saveActivityAnnotation,
 } from "@/features/audit/learner-log-pro-copy/lib/api";
@@ -51,6 +52,18 @@ function ActivityLogPage() {
   });
   const activity = overview.data?.items[0];
   const component = activity?.plan_id;
+
+  // Attendance rows represent a live session; the preview panel shows that
+  // session's recordings and the records table shows everyone who attended it.
+  const isAttendance = Boolean(
+    activity && (activity.activity_category === "attendance" || activity.delivery_method === "attendance"),
+  );
+  const session = useQuery({
+    queryKey: ["attendance-session", component],
+    queryFn: () => getAttendanceSession(component as string),
+    enabled: Boolean(isAttendance && component),
+  });
+  const recordings = session.data?.recordings ?? [];
 
   // Auditor-entered KSBs + planned hours for this activity (saved per component).
   const queryClient = useQueryClient();
@@ -137,6 +150,59 @@ function ActivityLogPage() {
                 <h1 className="mt-3 font-serif text-2xl text-foreground">{activity.activity_unit}</h1>
               </header>
               <div className="space-y-6 px-7 py-6">
+                {isAttendance && (
+                  <section>
+                    <div className="flex items-center justify-between">
+                      <h2 className="label-caps">Session recordings</h2>
+                      <span className="text-xs text-muted-foreground">
+                        {session.isLoading
+                          ? "Matching recordings…"
+                          : `${recordings.length} part${recordings.length === 1 ? "" : "s"} · matched by session date`}
+                      </span>
+                    </div>
+                    {recordings.length > 0 ? (
+                      <div className="mt-3 space-y-5">
+                        {recordings.map((recording) => (
+                          <div key={recording.component_id}>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-foreground">{recording.title}</p>
+                              {recording.preview_url && (
+                                <a
+                                  href={recording.preview_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 text-xs font-medium text-primary hover:underline"
+                                >
+                                  Open in new tab ↗
+                                </a>
+                              )}
+                            </div>
+                            {recording.week && <p className="text-xs text-muted-foreground">{recording.week}</p>}
+                            {recording.preview_url && (
+                              <div className="mt-2 aspect-video w-full overflow-hidden rounded-md border border-border bg-black/5">
+                                <iframe
+                                  src={recording.preview_url}
+                                  title={recording.title}
+                                  className="h-full w-full"
+                                  loading="lazy"
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                  allowFullScreen
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      !session.isLoading && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          No recording is linked to this session date in the programme structure. Recordings are matched to a
+                          session when an LMS lesson's title is dated to the session day and names the same course.
+                        </p>
+                      )
+                    )}
+                  </section>
+                )}
                 {activity.source_url && (
                   <section>
                     <div className="flex items-center justify-between">
@@ -292,7 +358,11 @@ function ActivityLogPage() {
           </div>
         )}
 
-        <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        {isAttendance ? (
+          <MreTable attendanceKey={activity?.plan_id} />
+        ) : (
+          <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        )}
         <p className="pb-4 text-xs text-muted-foreground">
           All values on this page are loaded from the Neon <span className="font-mono">Audit.learner_match</span> table.
         </p>
