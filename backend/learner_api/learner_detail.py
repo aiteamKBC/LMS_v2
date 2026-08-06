@@ -269,52 +269,324 @@ def _resolve_week_ids(weeks):
     return resolved
 
 
+_MODULE_ASSESSMENTS_WEEK_LABEL = "Module assessments"
+
+
+def _module_assessment_week_id(module_id):
+    return f"quiz-module-assessments::{module_id or 'legacy'}"
+
+
+def _normalise_quiz_scope_value(value):
+    return _s(value).strip().lower()
+
+
+def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_module_ids):
+    scoped_explicit = [module_id for module_id in explicit_module_ids if module_id in modules_by_id]
+    if scoped_explicit:
+        return scoped_explicit
+
+    quiz_module = _normalise_quiz_scope_value(quiz_record.get("module"))
+    quiz_programme_id = _normalise_quiz_scope_value(quiz_record.get("programme_id"))
+    quiz_programme = _normalise_quiz_scope_value(quiz_record.get("programme"))
+    if not quiz_module:
+        return []
+
+    exact_matches = []
+    fuzzy_matches = []
+    for module_id, meta in modules_by_id.items():
+        module_name = _normalise_quiz_scope_value(meta.get("module"))
+        if not module_name:
+            continue
+        module_matches_exact = module_name == quiz_module
+        module_matches_fuzzy = module_matches_exact or quiz_module in module_name or module_name in quiz_module
+        if not module_matches_fuzzy:
+            continue
+
+        programme_matches = False
+        if quiz_programme_id and _normalise_quiz_scope_value(meta.get("programmeId")) == quiz_programme_id:
+            programme_matches = True
+        elif quiz_programme and (
+            _normalise_quiz_scope_value(meta.get("programme")) == quiz_programme
+            or _normalise_quiz_scope_value(meta.get("programmeId")) == quiz_programme
+        ):
+            programme_matches = True
+        elif not quiz_programme_id and not quiz_programme:
+            programme_matches = True
+
+        if not programme_matches:
+            continue
+        if module_matches_exact:
+            exact_matches.append(module_id)
+        else:
+            fuzzy_matches.append(module_id)
+
+    if exact_matches:
+        return exact_matches
+    if fuzzy_matches:
+        if quiz_programme_id or quiz_programme:
+            return fuzzy_matches
+        programme_keys = {
+            (
+                _normalise_quiz_scope_value(modules_by_id[module_id].get("programmeId")),
+                _normalise_quiz_scope_value(modules_by_id[module_id].get("programme")),
+            )
+            for module_id in fuzzy_matches
+        }
+        if len(programme_keys) == 1:
+            return fuzzy_matches
+    return []
+
+
 def _append_week_quizzes(weeks, components):
-    """Append each week's curriculum.quizzes row (matched by week_id) as the
-    last component in that week. A week's plan may have no linked quiz yet
-    (quizzes.week_id defaults to '' until authored/linked), in which case
-    nothing is appended for it."""
+    """Append published quizzes for the learner's weeks/modules.
+
+    Visibility now honours explicit module assignments (curriculum.quiz_course_links)
+    and falls back to the quiz's own programme/module metadata when older records
+    were never backfilled into the link table. When no valid real week can be
+    resolved, quizzes land in a synthetic "Module assessments" bucket inside the
+    assigned module instead of silently disappearing.
+    """
     week_ids_by_key = _resolve_week_ids(weeks)
-    ids = sorted({wid for wid in week_ids_by_key.values() if wid})
-    if not ids:
-        return components
+    resolved_week_ids = sorted({week_id for week_id in week_ids_by_key.values() if week_id})
+    weeks_by_module_id = {}
+    module_order = []
+    module_titles_by_id = {}
+    for week in weeks:
+        module_id = _s(week.get("moduleId"))
+        if not module_id:
+            continue
+        if module_id not in module_order:
+            module_order.append(module_id)
+        module_titles_by_id.setdefault(module_id, _s(week.get("module")))
+        weeks_by_module_id.setdefault(module_id, []).append({
+            "weekId": week_ids_by_key.get((week.get("module"), week.get("week"))) or _s(week.get("weekId")),
+            "week": _s(week.get("week")),
+            "module": _s(week.get("module")),
+        })
+
+    if not resolved_week_ids and not module_order:
+        return weeks, components
+
+    modules_by_id = {}
+    explicit_module_ids_by_quiz = {}
+    explicit_week_ids_by_quiz_module = {}
+    quiz_rows_by_id = {}
+
+    def store_quiz_rows(rows):
+        for row in rows:
+            quiz_rows_by_id[row[0]] = {
+                "id": row[0],
+                "weekId": _s(row[1]),
+                "title": _s(row[2]),
+                "questions": row[3],
+                "duration": row[4],
+                "timeUnit": row[5],
+                "programme_id": _s(row[6]),
+                "programme": _s(row[7]),
+                "module": _s(row[8]),
+            }
 
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT id, week_id, title, questions, duration, time_unit FROM curriculum.quizzes "
-                "WHERE week_id = ANY(%s)",
-                [ids],
-            )
-            quizzes_by_week_id = {}
-            for quiz_id, week_id, title, questions, duration, time_unit in cur.fetchall():
-                quizzes_by_week_id.setdefault(week_id, []).append((quiz_id, title, questions, duration, time_unit))
+            if module_order:
+                cur.execute(
+                    """
+                    SELECT module_catalogue_id, title, COALESCE(programme_id, ''), COALESCE(programme_name, '')
+                    FROM curriculum.modules
+                    WHERE module_catalogue_id = ANY(%s)
+                    """,
+                    [module_order],
+                )
+                for module_id, module_title, programme_id, programme_name in cur.fetchall():
+                    module_id = _s(module_id)
+                    if not module_id:
+                        continue
+                    modules_by_id[module_id] = {
+                        "module": _s(module_title) or module_titles_by_id.get(module_id) or module_id,
+                        "programmeId": _s(programme_id),
+                        "programme": _s(programme_name),
+                    }
+            if resolved_week_ids:
+                cur.execute(
+                    """
+                    SELECT id, week_id, title, questions, duration, time_unit,
+                           COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
+                    FROM curriculum.quizzes
+                    WHERE lower(COALESCE(status, '')) = 'published'
+                      AND week_id = ANY(%s)
+                    """,
+                    [resolved_week_ids],
+                )
+                store_quiz_rows(cur.fetchall())
+            if module_order:
+                try:
+                    cur.execute(
+                        """
+                        SELECT quiz_id, module_catalogue_id, COALESCE(week_id, '')
+                        FROM curriculum.quiz_course_links
+                        WHERE module_catalogue_id = ANY(%s)
+                        """,
+                        [module_order],
+                    )
+                    for quiz_id, module_id, week_id in cur.fetchall():
+                        module_id = _s(module_id)
+                        if module_id:
+                            explicit_module_ids_by_quiz.setdefault(quiz_id, set()).add(module_id)
+                            explicit_week_ids_by_quiz_module.setdefault(quiz_id, {})[module_id] = _s(week_id)
+                except DatabaseError:
+                    explicit_module_ids_by_quiz = {}
+                    explicit_week_ids_by_quiz_module = {}
+
+                explicit_quiz_ids = sorted(explicit_module_ids_by_quiz)
+                if explicit_quiz_ids:
+                    cur.execute(
+                        """
+                        SELECT id, week_id, title, questions, duration, time_unit,
+                               COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
+                        FROM curriculum.quizzes
+                        WHERE lower(COALESCE(status, '')) = 'published'
+                          AND id = ANY(%s)
+                        """,
+                        [explicit_quiz_ids],
+                    )
+                    store_quiz_rows(cur.fetchall())
+
+                module_titles = sorted({
+                    _normalise_quiz_scope_value(meta.get("module"))
+                    for meta in modules_by_id.values()
+                    if _normalise_quiz_scope_value(meta.get("module"))
+                })
+                if module_titles:
+                    cur.execute(
+                        """
+                        SELECT id, week_id, title, questions, duration, time_unit,
+                               COALESCE(programme_id, ''), COALESCE(programme, ''), COALESCE(module, '')
+                        FROM curriculum.quizzes
+                        WHERE lower(COALESCE(status, '')) = 'published'
+                          AND lower(COALESCE(module, '')) = ANY(%s)
+                        """,
+                        [module_titles],
+                    )
+                    store_quiz_rows(cur.fetchall())
     except DatabaseError as exc:
-        logger.warning("Could not look up week quizzes: %s", exc)
-        return components
+        logger.warning("Could not look up learner-visible quizzes: %s", exc)
+        return weeks, components
 
-    if not quizzes_by_week_id:
-        return components
+    if not quiz_rows_by_id:
+        return weeks, components
 
-    existing_quiz_ids = {
-        component.get("quizMeta", {}).get("quizId")
-        for component in components
-        if component.get("isQuiz") and isinstance(component.get("quizMeta"), dict)
-    }
-
-    for w in weeks:
-        week_id = week_ids_by_key.get((w.get("module"), w.get("week")))
-        for quiz_id, title, questions, duration, time_unit in quizzes_by_week_id.get(week_id, []):
-            if quiz_id in existing_quiz_ids:
+    week_quizzes_by_week_id = {}
+    module_level_quizzes_by_module_id = {}
+    for quiz in quiz_rows_by_id.values():
+        explicit_module_ids = explicit_module_ids_by_quiz.get(quiz["id"], set())
+        explicit_week_ids_by_module = explicit_week_ids_by_quiz_module.get(quiz["id"], {})
+        matched_module_ids = _matching_module_ids_for_quiz_record(quiz, modules_by_id, explicit_module_ids)
+        placed_module_ids = set()
+        for module_id in matched_module_ids:
+            module_week_ids = {
+                item["weekId"]
+                for item in weeks_by_module_id.get(module_id, [])
+                if item.get("weekId")
+            }
+            explicit_week_id = _s(explicit_week_ids_by_module.get(module_id))
+            target_week_id = ""
+            if explicit_week_id and explicit_week_id in module_week_ids:
+                target_week_id = explicit_week_id
+            elif quiz["weekId"] and quiz["weekId"] in module_week_ids:
+                target_week_id = quiz["weekId"]
+            if target_week_id:
+                week_quizzes_by_week_id.setdefault(target_week_id, []).append(quiz)
+                placed_module_ids.add(module_id)
+        if not matched_module_ids and quiz["weekId"] and quiz["weekId"] in resolved_week_ids:
+            week_quizzes_by_week_id.setdefault(quiz["weekId"], []).append(quiz)
+            continue
+        for module_id in matched_module_ids:
+            if module_id in placed_module_ids:
                 continue
-            components.append({
-                "module": w.get("module"), "week": w.get("week"),
-                "component": _display_quiz_title(title),
-                "moduleId": w.get("moduleId"), "weekId": week_id, "componentId": None,
-                "expectedOtjh": None, "isQuiz": True,
-                "quizMeta": {"quizId": quiz_id, "questions": questions, "duration": duration, "timeUnit": time_unit},
+            module_level_quizzes_by_module_id.setdefault(module_id, []).append(quiz)
+
+    if not week_quizzes_by_week_id and not module_level_quizzes_by_module_id:
+        return weeks, components
+
+    next_weeks = list(weeks)
+    next_components = list(components)
+    seen_positions = set()
+    for component in next_components:
+        quiz_meta = component.get("quizMeta")
+        if not component.get("isQuiz") or not isinstance(quiz_meta, dict):
+            continue
+        quiz_id = quiz_meta.get("quizId")
+        if quiz_id is None:
+            continue
+        seen_positions.add((
+            _s(component.get("moduleId")) or _s(component.get("module")),
+            _s(component.get("weekId")) or _s(component.get("week")),
+            str(quiz_id),
+        ))
+
+    for week in weeks:
+        module_id = _s(week.get("moduleId")) or _s(week.get("module"))
+        week_id = week_ids_by_key.get((week.get("module"), week.get("week"))) or _s(week.get("weekId"))
+        for quiz in week_quizzes_by_week_id.get(week_id, []):
+            key = (module_id, week_id or _s(week.get("week")), str(quiz["id"]))
+            if key in seen_positions:
+                continue
+            next_components.append({
+                "module": week.get("module"),
+                "week": week.get("week"),
+                "component": _display_quiz_title(quiz["title"]),
+                "moduleId": week.get("moduleId"),
+                "weekId": week_id,
+                "componentId": None,
+                "expectedOtjh": None,
+                "isQuiz": True,
+                "quizMeta": {
+                    "quizId": quiz["id"],
+                    "questions": quiz["questions"],
+                    "duration": quiz["duration"],
+                    "timeUnit": quiz["timeUnit"],
+                },
             })
-    return components
+            seen_positions.add(key)
+
+    existing_week_ids = {_s(week.get("weekId")) for week in next_weeks if _s(week.get("weekId"))}
+    for module_id in module_order:
+        queued = module_level_quizzes_by_module_id.get(module_id, [])
+        if not queued:
+            continue
+        module_title = modules_by_id.get(module_id, {}).get("module") or module_titles_by_id.get(module_id) or module_id
+        synthetic_week_id = _module_assessment_week_id(module_id)
+        if synthetic_week_id not in existing_week_ids:
+            next_weeks.append({
+                "module": module_title,
+                "week": _MODULE_ASSESSMENTS_WEEK_LABEL,
+                "moduleId": module_id,
+                "weekId": synthetic_week_id,
+            })
+            existing_week_ids.add(synthetic_week_id)
+        for quiz in queued:
+            key = (module_id, synthetic_week_id, str(quiz["id"]))
+            if key in seen_positions:
+                continue
+            next_components.append({
+                "module": module_title,
+                "week": _MODULE_ASSESSMENTS_WEEK_LABEL,
+                "component": _display_quiz_title(quiz["title"]),
+                "moduleId": module_id,
+                "weekId": synthetic_week_id,
+                "componentId": None,
+                "expectedOtjh": None,
+                "isQuiz": True,
+                "quizMeta": {
+                    "quizId": quiz["id"],
+                    "questions": quiz["questions"],
+                    "duration": quiz["duration"],
+                    "timeUnit": quiz["timeUnit"],
+                },
+            })
+            seen_positions.add(key)
+
+    return next_weeks, next_components
 
 
 def _otjh_status(variance):
@@ -549,7 +821,10 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
             resolved_detail["modules"], resolved_detail["week"], resolved_detail["components"]
         )
         resolved_detail["components"], resolved_detail["totalExpectedOtjh"] = _annotate_otjh(resolved_detail["components"])
-        resolved_detail["components"] = _append_week_quizzes(resolved_detail["week"], resolved_detail["components"])
+        resolved_detail["week"], resolved_detail["components"] = _append_week_quizzes(
+            resolved_detail["week"],
+            resolved_detail["components"],
+        )
 
     snapshot = _live_otjh_snapshot(resolved_detail, learner_profile)
     _apply_live_otjh_snapshot(resolved_detail, snapshot)
@@ -928,7 +1203,7 @@ def learner_detail(request, kind, pk):
         detail["modules"], detail["week"], detail["components"]
     )
     detail["components"], detail["totalExpectedOtjh"] = _annotate_otjh(detail["components"])
-    detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
+    detail["week"], detail["components"] = _append_week_quizzes(detail["week"], detail["components"])
     snapshot = _live_otjh_snapshot(detail, learner_profile)
     _apply_live_otjh_snapshot(detail, snapshot)
     if learner_profile is not None:

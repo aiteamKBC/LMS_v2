@@ -1060,33 +1060,50 @@ def _training_plan_programme_map(plan_ids):
 
 
 def _ensure_quiz_course_links_table():
-    if not _curriculum_table_exists("Training_plan"):
-        return
     with connection.cursor() as cursor:
-        if _training_plan_table_exists():
+        cursor.execute(
+            """
+            create table if not exists curriculum.quiz_course_links (
+              id bigserial primary key,
+              quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
+              module_catalogue_id varchar(128) not null default '',
+              week_id varchar(128) not null default '',
+              created_at timestamptz not null default now()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            alter table curriculum.quiz_course_links
+            add column if not exists module_catalogue_id varchar(128) not null default ''
+            """
+        )
+        cursor.execute(
+            """
+            alter table curriculum.quiz_course_links
+            add column if not exists week_id varchar(128) not null default ''
+            """
+        )
+        if _curriculum_column_exists("quiz_course_links", "training_plan_id"):
             cursor.execute(
                 """
-                create table if not exists curriculum.quiz_course_links (
-                  id bigserial primary key,
-                  quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
-                  training_plan_id integer not null references curriculum."Training_plan"(id) on delete cascade,
-                  created_at timestamptz not null default now(),
-                  unique (quiz_id, training_plan_id)
-                )
+                update curriculum.quiz_course_links
+                set module_catalogue_id = coalesce(nullif(module_catalogue_id, ''), training_plan_id::varchar)
                 """
             )
-        else:
-            cursor.execute(
-                """
-                create table if not exists curriculum.quiz_course_links (
-                  id bigserial primary key,
-                  quiz_id bigint not null references curriculum.quizzes(id) on delete cascade,
-                  training_plan_id integer not null,
-                  created_at timestamptz not null default now(),
-                  unique (quiz_id, training_plan_id)
-                )
-                """
-            )
+        cursor.execute(
+            """
+            alter table curriculum.quiz_course_links
+            alter column module_catalogue_id type varchar(128)
+            using module_catalogue_id::varchar
+            """
+        )
+        cursor.execute(
+            """
+            create unique index if not exists quiz_course_links_quiz_module_catalogue_key
+            on curriculum.quiz_course_links (quiz_id, module_catalogue_id)
+            """
+        )
 
 
 def _ensure_quiz_component_links_table():
@@ -1105,15 +1122,83 @@ def _ensure_quiz_component_links_table():
 
 
 def _quiz_course_link_ids(quiz_id):
+    return [row["moduleCatalogueId"] for row in _quiz_course_link_rows(quiz_id)]
+
+
+def _quiz_course_link_rows(quiz_id):
     if not _curriculum_table_exists("quiz_course_links"):
         return []
     _ensure_quiz_course_links_table()
     with connection.cursor() as cursor:
         cursor.execute(
-            "select module_catalogue_id from curriculum.quiz_course_links where quiz_id = %s order by module_catalogue_id",
+            "select module_catalogue_id, coalesce(week_id, '') from curriculum.quiz_course_links where quiz_id = %s order by module_catalogue_id",
             [quiz_id],
         )
-        return [row[0] for row in cursor.fetchall()]
+        return [
+            {
+                "moduleCatalogueId": str(row[0] or "").strip(),
+                "weekId": str(row[1] or "").strip(),
+            }
+            for row in cursor.fetchall()
+            if str(row[0] or "").strip()
+        ]
+
+
+def _format_module_week_label(week_title, week_number):
+    title = str(week_title or "").strip()
+    if week_number in (None, ""):
+        return title or "Untitled week"
+    prefix = f"Week {week_number}"
+    if title and title.lower() != prefix.lower():
+        return f"{prefix} - {title}"
+    return prefix
+
+
+def _quiz_module_week_options(module_ids):
+    module_ids = sorted({str(module_id or "").strip() for module_id in (module_ids or []) if str(module_id or "").strip()})
+    weeks_table = _first_existing_curriculum_table("weeks", "module_authoring_weeks")
+    if not weeks_table or not module_ids or not _curriculum_column_exists(weeks_table, "module_catalogue_id"):
+        return {}
+
+    def column_sql(table, alias, column, fallback):
+        return f"{alias}.{_quote_ident(column)}" if _curriculum_column_exists(table, column) else fallback
+
+    title_sql = column_sql(weeks_table, "w", "title", "''")
+    week_number_sql = column_sql(weeks_table, "w", "week_number", "null")
+    display_order_sql = column_sql(weeks_table, "w", "display_order", week_number_sql)
+    try:
+        with connection.cursor() as cursor:
+            placeholders = ", ".join(["%s"] * len(module_ids))
+            cursor.execute(
+                f"""
+                select
+                  w.id,
+                  w.module_catalogue_id,
+                  coalesce({title_sql}, '') as week_title,
+                  {week_number_sql} as week_number,
+                  {display_order_sql} as display_order
+                from {_curriculum_table_name(weeks_table)} w
+                where coalesce(trim(w.module_catalogue_id), '') <> ''
+                  and w.module_catalogue_id in ({placeholders})
+                order by w.module_catalogue_id, coalesce({display_order_sql}, 0), coalesce({week_number_sql}, 0), w.id
+                """,
+                module_ids,
+            )
+            rows = cursor.fetchall()
+    except Exception:
+        return {}
+
+    options_by_module = {}
+    for week_id, module_id, week_title, week_number, _display_order in rows:
+        module_key = str(module_id or "").strip()
+        week_key = str(week_id or "").strip()
+        if not module_key or not week_key:
+            continue
+        options_by_module.setdefault(module_key, []).append({
+            "id": week_key,
+            "label": _format_module_week_label(week_title, week_number),
+        })
+    return options_by_module
 
 
 def _quiz_component_link_ids(quiz_id):
@@ -1124,6 +1209,197 @@ def _quiz_component_link_ids(quiz_id):
             [quiz_id],
         )
         return [row[0] for row in cursor.fetchall()]
+
+
+def _quiz_module_options(quiz, include_all_programmes=False):
+    programme_id = str(quiz.programme_id or "").strip()
+    programme = str(quiz.programme or "").strip()
+    modules_table = _first_existing_curriculum_table("modules", "module_authoring_modules")
+    if not modules_table or not _curriculum_column_exists(modules_table, "module_catalogue_id"):
+        return []
+
+    def column_sql(table, alias, column, fallback="''"):
+        return f"{alias}.{_quote_ident(column)}" if _curriculum_column_exists(table, column) else fallback
+
+    title_sql = column_sql(modules_table, "m", "title", "m.module_catalogue_id")
+    programme_id_sql = column_sql(modules_table, "m", "programme_id", "''")
+    programme_name_sql = column_sql(modules_table, "m", "programme_name", programme_id_sql)
+    cohort_sql = column_sql(modules_table, "m", "cohort_name", "''")
+    group_sql = column_sql(modules_table, "m", "group_name", "''")
+    start_date_sql = column_sql(modules_table, "m", "start_date", "null")
+    clauses = [
+        "coalesce(trim(m.module_catalogue_id), '') <> ''",
+        f"coalesce(trim(coalesce(nullif({title_sql}, ''), m.module_catalogue_id)), '') <> ''",
+    ]
+    params = []
+    if (programme_id or programme) and not include_all_programmes:
+        programme_clauses = []
+        if programme_id:
+            programme_clauses.extend([
+                f"lower({programme_id_sql}) = lower(%s)",
+                f"lower({programme_name_sql}) = lower(%s)",
+            ])
+            params.extend([programme_id, programme_id])
+        if programme:
+            programme_clauses.extend([
+                f"lower({programme_name_sql}) = lower(%s)",
+                f"lower(%s) like lower({programme_name_sql}) || ' %%'",
+                f"lower({programme_id_sql}) = lower(%s)",
+            ])
+            params.extend([programme, programme, programme])
+        if programme_clauses:
+            clauses.append(f"({' or '.join(programme_clauses)})")
+
+    where_sql = " and ".join(clauses)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                select
+                  m.module_catalogue_id,
+                  coalesce(nullif({title_sql}, ''), m.module_catalogue_id) as module_title,
+                  coalesce(nullif({programme_name_sql}, ''), nullif({programme_id_sql}, ''), 'Unassigned programme') as programme_name,
+                  coalesce(nullif({programme_id_sql}, ''), nullif({programme_name_sql}, ''), '') as programme_id,
+                  coalesce({cohort_sql}, '') as cohort_name,
+                  coalesce({group_sql}, '') as group_name,
+                  {start_date_sql} as start_date
+                from {_curriculum_table_name(modules_table)} m
+                where {where_sql}
+                order by programme_name, module_title, cohort_name, m.module_catalogue_id
+                """
+                ,
+                params,
+            )
+            rows = cursor.fetchall()
+    except Exception:
+        return []
+
+    weeks_by_module = _quiz_module_week_options(module_catalogue_id for module_catalogue_id, *_rest in rows)
+    options = []
+    seen = set()
+    for module_catalogue_id, module_title, programme_name, option_programme_id, cohort_name, group_name, start_date in rows:
+        module_id = str(module_catalogue_id or "").strip()
+        if not module_id or module_id in seen:
+            continue
+        seen.add(module_id)
+        label_parts = [module_title or module_id]
+        if cohort_name:
+            label_parts.append(str(cohort_name))
+        if start_date:
+            label_parts.append(str(start_date))
+        options.append({
+            "id": module_id,
+            "moduleCatalogueId": module_id,
+            "label": " - ".join(part for part in label_parts if part),
+            "programme": str(programme_name or programme or ""),
+            "programmeId": str(option_programme_id or ""),
+            "module": str(module_title or module_id),
+            "cohort": str(cohort_name or ""),
+            "group": str(group_name or ""),
+            "groups": [str(group_name).strip()] if str(group_name or "").strip() else [],
+            "startDate": str(start_date or ""),
+            "component": "",
+            "componentType": "quiz",
+            "week": "",
+            "weekId": "",
+            "weeks": weeks_by_module.get(module_id, []),
+            "source": "module-assignment",
+            "selected": False,
+        })
+    return options
+
+
+def _linked_component_module_ids_for_quiz(quiz):
+    module_ids = set()
+    for option in _merge_quiz_component_options(quiz):
+        if str(option.get("linkedQuizId") or "").strip() != str(quiz.id):
+            continue
+        module_id = str(option.get("moduleCatalogueId") or "").strip()
+        if module_id:
+            module_ids.add(module_id)
+
+    components_table = _first_existing_curriculum_table("components", "module_authoring_components")
+    if not components_table or not _curriculum_column_exists(components_table, "module_catalogue_id"):
+        return module_ids
+
+    try:
+        _ensure_quiz_component_links_table()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                select distinct c.module_catalogue_id
+                from curriculum.quiz_component_links qcl
+                join {_curriculum_table_name(components_table)} c
+                  on c.id = qcl.component_id
+                where qcl.quiz_id = %s
+                  and coalesce(trim(c.module_catalogue_id), '') <> ''
+                """,
+                [quiz.id],
+            )
+            module_ids.update(str(row[0] or "").strip() for row in cursor.fetchall() if str(row[0] or "").strip())
+    except Exception:
+        pass
+
+    return module_ids
+
+
+def _infer_quiz_module_link_ids(quiz, options, preferred_ids=None):
+    if not options:
+        return set()
+
+    valid_ids = {str(option["id"]) for option in options}
+    preferred = {
+        str(value or "").strip()
+        for value in (preferred_ids or [])
+        if str(value or "").strip()
+    } & valid_ids
+    if preferred:
+        return preferred
+
+    quiz_module = str(quiz.module or "").strip().lower()
+    quiz_programme_id = str(quiz.programme_id or "").strip().lower()
+    quiz_programme = str(quiz.programme or "").strip().lower()
+    if not quiz_module:
+        return {next(iter(valid_ids))} if len(valid_ids) == 1 else set()
+
+    exact_matches = [
+        option
+        for option in options
+        if str(option.get("module") or "").strip().lower() == quiz_module
+    ]
+    if exact_matches:
+        if quiz_programme_id or quiz_programme:
+            return {str(option["id"]) for option in exact_matches}
+        programme_keys = {
+            (
+                str(option.get("programmeId") or "").strip().lower(),
+                str(option.get("programme") or "").strip().lower(),
+            )
+            for option in exact_matches
+        }
+        if len(programme_keys) == 1:
+            return {str(option["id"]) for option in exact_matches}
+
+    fuzzy_matches = [
+        option
+        for option in options
+        if quiz_module in str(option.get("module") or "").strip().lower()
+        or str(option.get("module") or "").strip().lower() in quiz_module
+    ]
+    if fuzzy_matches:
+        if quiz_programme_id or quiz_programme:
+            return {str(option["id"]) for option in fuzzy_matches}
+        programme_keys = {
+            (
+                str(option.get("programmeId") or "").strip().lower(),
+                str(option.get("programme") or "").strip().lower(),
+            )
+            for option in fuzzy_matches
+        }
+        if len(programme_keys) == 1:
+            return {str(option["id"]) for option in fuzzy_matches}
+
+    return {next(iter(valid_ids))} if len(valid_ids) == 1 else set()
 
 
 def _quiz_component_options(quiz):
@@ -1508,6 +1784,216 @@ def _sync_quiz_linked_component_counts(quizzes):
         count = len(linked_component_ids.get(str(quiz.id), set()))
         quiz._linked_group_count = len(linked_group_names.get(str(quiz.id), set()))
         if count and quiz.linked_courses != count:
+            quiz.linked_courses = count
+            quiz.save(update_fields=["linked_courses", "updated_at"])
+    return quizzes
+
+
+def _distinct_assignment_group_count(options, selected_ids):
+    names = set()
+    for option in options:
+        if str(option.get("id")) not in selected_ids:
+            continue
+        group_name = str(option.get("group") or "").strip()
+        if group_name:
+            names.add(group_name.lower())
+        for name in (option.get("groups") or []):
+            cleaned = str(name).strip()
+            if cleaned:
+                names.add(cleaned.lower())
+    return len(names)
+
+
+def _selected_quiz_module_link_ids(quiz, module_options):
+    valid_ids = {str(option["id"]) for option in module_options}
+    selected_ids = set(_quiz_course_link_ids(quiz.id)) & valid_ids
+    if selected_ids:
+        return selected_ids
+    return _infer_quiz_module_link_ids(
+        quiz,
+        module_options,
+        preferred_ids=_linked_component_module_ids_for_quiz(quiz),
+    ) & valid_ids
+
+
+def _selected_quiz_module_link_assignments(quiz, module_options):
+    option_by_id = {str(option["id"]): option for option in module_options}
+    valid_ids = set(option_by_id)
+    rows = [
+        row
+        for row in _quiz_course_link_rows(quiz.id)
+        if str(row.get("moduleCatalogueId") or "").strip() in valid_ids
+    ]
+    if rows:
+        assignments = []
+        for row in rows:
+            module_id = str(row.get("moduleCatalogueId") or "").strip()
+            week_id = str(row.get("weekId") or "").strip()
+            valid_week_ids = {
+                str(week.get("id") or "").strip()
+                for week in (option_by_id.get(module_id, {}).get("weeks") or [])
+                if str(week.get("id") or "").strip()
+            }
+            assignments.append({
+                "moduleCatalogueId": module_id,
+                "weekId": week_id if not valid_week_ids or week_id in valid_week_ids else "",
+            })
+        return assignments
+
+    selected_ids = sorted(_selected_quiz_module_link_ids(quiz, module_options))
+    if len(selected_ids) == 1:
+        module_id = selected_ids[0]
+        valid_week_ids = {
+            str(week.get("id") or "").strip()
+            for week in (option_by_id.get(module_id, {}).get("weeks") or [])
+            if str(week.get("id") or "").strip()
+        }
+        if str(quiz.week_id or "").strip() and (
+            not valid_week_ids or str(quiz.week_id).strip() in valid_week_ids
+        ):
+            return [{
+                "moduleCatalogueId": module_id,
+                "weekId": str(quiz.week_id or "").strip(),
+            }]
+    return [{"moduleCatalogueId": module_id, "weekId": ""} for module_id in selected_ids]
+
+
+def _sync_quiz_assignment_count(quiz):
+    try:
+        _ensure_quiz_component_links_table()
+        _ensure_quiz_course_links_table()
+        component_options = _merge_quiz_component_options(quiz)
+        valid_component_ids = {str(option["id"]) for option in component_options}
+        selected_component_ids = set(_quiz_component_link_ids(quiz.id)) & valid_component_ids
+        if not selected_component_ids:
+            selected_component_ids = _infer_quiz_component_link_ids(quiz, component_options) & valid_component_ids
+
+        module_options = _quiz_module_options(quiz)
+        selected_module_ids = _selected_quiz_module_link_ids(quiz, module_options)
+        count = len(selected_module_ids) if selected_module_ids else len(selected_component_ids)
+        quiz._linked_group_count = _distinct_assignment_group_count(
+            module_options if selected_module_ids else component_options,
+            selected_module_ids if selected_module_ids else selected_component_ids,
+        )
+    except Exception:
+        return quiz
+
+    if quiz.linked_courses != count:
+        quiz.linked_courses = count
+        quiz.save(update_fields=["linked_courses", "updated_at"])
+    return quiz
+
+
+def _sync_quiz_assignment_counts(quizzes):
+    quizzes = list(quizzes)
+    if not quizzes:
+        return quizzes
+
+    quiz_ids = {str(quiz.id) for quiz in quizzes}
+    linked_component_ids = defaultdict(set)
+    linked_module_ids = defaultdict(set)
+    linked_group_names = defaultdict(set)
+    components_table = _first_existing_curriculum_table("components", "module_authoring_components")
+    if components_table and _curriculum_column_exists(components_table, "settings_json"):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    select id, settings_json
+                    from {_curriculum_table_name(components_table)}
+                    where lower(coalesce(type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+                for component_id, settings_json in cursor.fetchall():
+                    if isinstance(settings_json, str):
+                        try:
+                            settings_json = json.loads(settings_json or "{}")
+                        except json.JSONDecodeError:
+                            settings_json = {}
+                    if not isinstance(settings_json, dict):
+                        continue
+                    linked_quiz_id = str(settings_json.get("linkedQuizId") or "").strip()
+                    if linked_quiz_id in quiz_ids:
+                        linked_component_ids[linked_quiz_id].add(str(component_id))
+                        raw_groups = settings_json.get("selectedGroupNames")
+                        if isinstance(raw_groups, list):
+                            for name in raw_groups:
+                                cleaned = str(name).strip()
+                                if cleaned:
+                                    linked_group_names[linked_quiz_id].add(cleaned.lower())
+        except Exception:
+            pass
+
+    if _curriculum_table_exists("week_template_components"):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select id, settings_json
+                    from curriculum."week_template_components"
+                    where lower(coalesce(type, '')) in ('quiz', 'checkpoint')
+                    """
+                )
+                for component_id, settings_json in cursor.fetchall():
+                    if isinstance(settings_json, str):
+                        try:
+                            settings_json = json.loads(settings_json or "{}")
+                        except json.JSONDecodeError:
+                            settings_json = {}
+                    if not isinstance(settings_json, dict):
+                        continue
+                    linked_quiz_id = str(settings_json.get("linkedQuizId") or "").strip()
+                    if linked_quiz_id in quiz_ids:
+                        linked_component_ids[linked_quiz_id].add(str(component_id))
+                        raw_groups = settings_json.get("selectedGroupNames")
+                        if isinstance(raw_groups, list):
+                            for name in raw_groups:
+                                cleaned = str(name).strip()
+                                if cleaned:
+                                    linked_group_names[linked_quiz_id].add(cleaned.lower())
+        except Exception:
+            pass
+
+    try:
+        _ensure_quiz_component_links_table()
+        placeholders = ", ".join(["%s"] * len(quiz_ids))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"select quiz_id, component_id from curriculum.quiz_component_links where quiz_id in ({placeholders})",
+                list(quiz_ids),
+            )
+            for quiz_id, component_id in cursor.fetchall():
+                linked_component_ids[str(quiz_id)].add(str(component_id))
+    except Exception:
+        pass
+
+    try:
+        _ensure_quiz_course_links_table()
+        placeholders = ", ".join(["%s"] * len(quiz_ids))
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"select quiz_id, module_catalogue_id from curriculum.quiz_course_links where quiz_id in ({placeholders})",
+                list(quiz_ids),
+            )
+            for quiz_id, module_catalogue_id in cursor.fetchall():
+                module_id = str(module_catalogue_id or "").strip()
+                if module_id:
+                    linked_module_ids[str(quiz_id)].add(module_id)
+    except Exception:
+        pass
+
+    for quiz in quizzes:
+        quiz_id = str(quiz.id)
+        count = len(linked_module_ids.get(quiz_id, set())) or len(linked_component_ids.get(quiz_id, set()))
+        group_count = len(linked_group_names.get(quiz_id, set()))
+        if not count:
+            module_options = _quiz_module_options(quiz)
+            inferred_module_ids = _infer_quiz_module_link_ids(quiz, module_options)
+            count = len(inferred_module_ids)
+            if inferred_module_ids:
+                group_count = _distinct_assignment_group_count(module_options, inferred_module_ids)
+        quiz._linked_group_count = group_count
+        if quiz.linked_courses != count:
             quiz.linked_courses = count
             quiz.save(update_fields=["linked_courses", "updated_at"])
     return quizzes
@@ -2615,9 +3101,9 @@ def quizzes(request):
                 queryset = queryset.filter(status=status)
         if query:
             queryset = queryset.filter(title__icontains=query)
-        quizzes_to_serialize = _sync_quiz_linked_component_counts(queryset)
+        quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
         if status == "trash":
-            quizzes_to_serialize = [_sync_quiz_linked_component_count(quiz) for quiz in quizzes_to_serialize]
+            quizzes_to_serialize = [_sync_quiz_assignment_count(quiz) for quiz in quizzes_to_serialize]
         return JsonResponse({"results": [_serialize_quiz(quiz) for quiz in quizzes_to_serialize]})
 
     uploaded_file = request.FILES.get("file")
@@ -2641,7 +3127,7 @@ def quizzes(request):
         week_value = request.POST.get("week") or request.POST.get("weekNumber") or title
         week_id = request.POST.get("weekId") or _build_week_id(programme_id, week_value)
         supplied_question_count = int(request.POST.get("questions") or 0)
-        linked_courses = int(request.POST.get("linkedCourses") or (1 if programme_id else 0))
+        linked_courses = int(request.POST.get("linkedCourses") or 0)
         final_question_count = len(parsed_questions) or question_count or supplied_question_count
         if package_type in {"excel", "csv"} and not parsed_questions:
             valid = False
@@ -2671,7 +3157,7 @@ def quizzes(request):
                 linked_courses=linked_courses,
             )
             _save_questions(quiz, parsed_questions)
-        return JsonResponse(_serialize_quiz(_sync_quiz_linked_component_count(quiz)), status=201)
+        return JsonResponse(_serialize_quiz(_sync_quiz_assignment_count(quiz)), status=201)
 
     try:
         payload = json.loads(request.body or "{}")
@@ -2702,9 +3188,9 @@ def quizzes(request):
         schema_valid=bool(payload.get("schemaValid", True)),
         mapped_components=int(payload.get("mappedComponents") or 0),
         author=payload.get("author", "Curriculum Team"),
-        linked_courses=int(payload.get("linkedCourses") or (1 if manual_programme_id else 0)),
+        linked_courses=int(payload.get("linkedCourses") or 0),
     )
-    return JsonResponse(_serialize_quiz(_sync_quiz_linked_component_count(quiz)), status=201)
+    return JsonResponse(_serialize_quiz(_sync_quiz_assignment_count(quiz)), status=201)
 
 
 def _parse_grade_percent(value):
@@ -2969,67 +3455,200 @@ def quiz_course_links(request, pk):
     except Exception as exc:
         return JsonResponse({"error": f"Could not prepare course links table: {exc}"}, status=500)
 
-    programme = quiz.programme or _training_plan_programme_for_id(quiz.programme_id)
-    component_options = _merge_quiz_component_options(quiz)
+    programme = quiz.programme or _authoring_programme_map([quiz.programme_id]).get(str(quiz.programme_id or "").strip(), "") or _training_plan_programme_for_id(quiz.programme_id)
+    module_options = _quiz_module_options(quiz, include_all_programmes=True)
     if request.method == "PATCH":
         try:
             payload = json.loads(request.body or "{}")
         except json.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
-        requested_component_ids = payload.get("componentIds")
-        if requested_component_ids is None:
-            requested_component_ids = payload.get("courseIds")
-        if requested_component_ids is None:
-            requested_component_ids = payload.get("trainingPlanIds", [])
-        if not isinstance(requested_component_ids, list):
-            return JsonResponse({"error": "componentIds must be a list"}, status=400)
+        requested_assignments = payload.get("moduleAssignments")
+        if requested_assignments is not None and not isinstance(requested_assignments, list):
+            return JsonResponse({"error": "moduleAssignments must be a list"}, status=400)
 
-        valid_ids = {str(course["id"]) for course in component_options}
-        selected_ids = []
-        for raw_id in requested_component_ids:
-            component_id = str(raw_id or "").strip()
-            if component_id in valid_ids and component_id not in selected_ids:
-                selected_ids.append(component_id)
+        requested_module_ids = payload.get("moduleCatalogueIds")
+        if requested_module_ids is None:
+            requested_module_ids = payload.get("componentIds")
+        if requested_module_ids is None:
+            requested_module_ids = payload.get("courseIds")
+        if requested_module_ids is None:
+            requested_module_ids = payload.get("trainingPlanIds", [])
+        if not isinstance(requested_module_ids, list):
+            return JsonResponse({"error": "moduleCatalogueIds must be a list"}, status=400)
+
+        requested_programme_id = str(payload.get("programmeId") or "").strip()
+        requested_programme_name = str(payload.get("programmeName") or "").strip()
+
+        valid_ids = {str(course["id"]) for course in module_options}
+        selected_option_map = {str(course["id"]): course for course in module_options}
+        week_ids_by_module = {
+            str(course["id"]): {
+                str(week.get("id") or "").strip()
+                for week in (course.get("weeks") or [])
+                if str(week.get("id") or "").strip()
+            }
+            for course in module_options
+        }
+        programme_name_map = {
+            str(course.get("programmeId") or "").strip(): str(course.get("programme") or "").strip()
+            for course in module_options
+            if str(course.get("programmeId") or "").strip()
+        }
+        selected_assignments = []
+        selected_assignment_map = {}
+        if requested_assignments is not None:
+            for item in requested_assignments:
+                if not isinstance(item, dict):
+                    return JsonResponse({"error": "Each module assignment must be an object"}, status=400)
+                module_id = str(
+                    item.get("moduleCatalogueId")
+                    or item.get("moduleId")
+                    or item.get("id")
+                    or ""
+                ).strip()
+                week_id = str(item.get("weekId") or "").strip()
+                if module_id in valid_ids and module_id not in selected_assignment_map:
+                    selected_assignment_map[module_id] = {
+                        "moduleCatalogueId": module_id,
+                        "weekId": week_id,
+                    }
+        else:
+            for raw_id in requested_module_ids:
+                module_id = str(raw_id or "").strip()
+                if module_id in valid_ids and module_id not in selected_assignment_map:
+                    selected_assignment_map[module_id] = {
+                        "moduleCatalogueId": module_id,
+                        "weekId": "",
+                    }
+        selected_assignments = list(selected_assignment_map.values())
+        selected_ids = [assignment["moduleCatalogueId"] for assignment in selected_assignments]
+
+        if selected_ids:
+            requested_programme_id = str(selected_option_map.get(selected_ids[0], {}).get("programmeId") or requested_programme_id).strip()
+            requested_programme_name = str(selected_option_map.get(selected_ids[0], {}).get("programme") or requested_programme_name).strip()
+        elif requested_programme_id and not requested_programme_name:
+            requested_programme_name = programme_name_map.get(requested_programme_id, "")
+
+        valid_programme_ids = {programme_id for programme_id in programme_name_map if programme_id}
+        if requested_programme_id and requested_programme_id not in valid_programme_ids:
+            return JsonResponse({"error": "programmeId is not valid for the available module catalogue"}, status=400)
+
+        for assignment in selected_assignments:
+            module_id = assignment["moduleCatalogueId"]
+            selected_week_id = assignment["weekId"]
+            valid_week_ids = week_ids_by_module.get(module_id, set())
+            if selected_week_id and selected_week_id not in valid_week_ids:
+                return JsonResponse({"error": "One or more selected weeks are not valid for the chosen module."}, status=400)
+            if valid_week_ids and not selected_week_id:
+                module_name = str(selected_option_map.get(module_id, {}).get("module") or module_id).strip()
+                return JsonResponse({"error": f"Select a delivery week for {module_name} before saving."}, status=400)
 
         with transaction.atomic():
             with connection.cursor() as cursor:
-                cursor.execute("delete from curriculum.quiz_component_links where quiz_id = %s", [quiz.id])
-                for component_id in selected_ids:
+                cursor.execute("delete from curriculum.quiz_course_links where quiz_id = %s", [quiz.id])
+                for assignment in selected_assignments:
                     cursor.execute(
                         """
-                        insert into curriculum.quiz_component_links (quiz_id, component_id)
-                        values (%s, %s)
-                        on conflict (quiz_id, component_id) do nothing
+                        insert into curriculum.quiz_course_links (quiz_id, module_catalogue_id, week_id)
+                        values (%s, %s, %s)
+                        on conflict (quiz_id, module_catalogue_id) do nothing
                         """,
-                        [quiz.id, component_id],
+                        [quiz.id, assignment["moduleCatalogueId"], assignment["weekId"]],
                     )
+                components_table = _first_existing_curriculum_table("components", "module_authoring_components")
+                if components_table:
+                    if selected_ids:
+                        placeholders = ", ".join(["%s"] * len(selected_ids))
+                        cursor.execute(
+                            f"""
+                            delete from curriculum.quiz_component_links qcl
+                            where qcl.quiz_id = %s
+                              and exists (
+                                select 1
+                                from {_curriculum_table_name(components_table)} c
+                                where c.id = qcl.component_id
+                                  and coalesce(trim(c.module_catalogue_id), '') <> ''
+                                  and c.module_catalogue_id not in ({placeholders})
+                              )
+                            """,
+                            [quiz.id, *selected_ids],
+                        )
+                    else:
+                        cursor.execute(
+                            f"""
+                            delete from curriculum.quiz_component_links qcl
+                            where qcl.quiz_id = %s
+                              and exists (
+                                select 1
+                                from {_curriculum_table_name(components_table)} c
+                                where c.id = qcl.component_id
+                              )
+                            """,
+                            [quiz.id],
+                        )
             quiz.linked_courses = len(selected_ids)
-            if not quiz.programme_id:
-                quiz.programme_id = _match_programme_catalogue_id(quiz.programme, quiz.module, quiz.title)
-                quiz.save(update_fields=["linked_courses", "programme_id", "updated_at"])
+            update_fields = ["linked_courses", "updated_at"]
+            if len(selected_ids) == 1:
+                selected_module_id = selected_ids[0]
+                selected_module_name = str(selected_option_map.get(selected_module_id, {}).get("module") or "").strip()
+                selected_week_id = str(selected_assignment_map.get(selected_module_id, {}).get("weekId") or "").strip()
+                if quiz.module != selected_module_name:
+                    quiz.module = selected_module_name
+                    update_fields.append("module")
+                if quiz.week_id != selected_week_id:
+                    quiz.week_id = selected_week_id
+                    update_fields.append("week_id")
             else:
-                quiz.save(update_fields=["linked_courses", "updated_at"])
+                if quiz.module:
+                    quiz.module = ""
+                    update_fields.append("module")
+                if quiz.week_id:
+                    quiz.week_id = ""
+                    update_fields.append("week_id")
+            if requested_programme_id:
+                if quiz.programme_id != requested_programme_id:
+                    quiz.programme_id = requested_programme_id
+                    update_fields.append("programme_id")
+                resolved_programme_name = requested_programme_name or programme_name_map.get(requested_programme_id, "")
+                if resolved_programme_name and quiz.programme != resolved_programme_name:
+                    quiz.programme = resolved_programme_name
+                    update_fields.append("programme")
+            elif selected_ids and not quiz.programme_id:
+                quiz.programme_id = (
+                    str(selected_option_map.get(selected_ids[0], {}).get("programmeId") or "").strip()
+                    or _match_programme_catalogue_id(quiz.programme, quiz.module, quiz.title)
+                )
+                if quiz.programme_id:
+                    update_fields.append("programme_id")
+                    resolved_programme_name = str(selected_option_map.get(selected_ids[0], {}).get("programme") or "").strip()
+                    if resolved_programme_name and quiz.programme != resolved_programme_name:
+                        quiz.programme = resolved_programme_name
+                        update_fields.append("programme")
+            quiz.save(update_fields=list(dict.fromkeys(update_fields)))
+        programme = quiz.programme or _authoring_programme_map([quiz.programme_id]).get(str(quiz.programme_id or "").strip(), "") or _training_plan_programme_for_id(quiz.programme_id)
+        module_options = _quiz_module_options(quiz, include_all_programmes=True)
 
-    valid_course_ids = {str(course["id"]) for course in component_options}
-    selected_ids = set(_quiz_component_link_ids(quiz.id)) & valid_course_ids
-    if not selected_ids:
-        selected_ids = _infer_quiz_component_link_ids(quiz, component_options) & valid_course_ids
+    selected_assignments = _selected_quiz_module_link_assignments(quiz, module_options)
+    selected_ids = {assignment["moduleCatalogueId"] for assignment in selected_assignments}
 
     if quiz.linked_courses != len(selected_ids):
         quiz.linked_courses = len(selected_ids)
         quiz.save(update_fields=["linked_courses", "updated_at"])
 
-    quiz._linked_group_count = _distinct_group_count(component_options, selected_ids)
+    quiz._linked_group_count = _distinct_assignment_group_count(module_options, selected_ids)
 
     return JsonResponse({
         "programme": programme or "",
-        "linkType": "components",
+        "selectedProgrammeId": str(quiz.programme_id or "").strip(),
+        "selectedProgrammeName": programme or "",
+        "linkType": "modules",
         "selectedIds": sorted(selected_ids),
         "selectedModuleCatalogueIds": sorted(selected_ids),
+        "selectedAssignments": selected_assignments,
         "courses": [
             {**course, "selected": course["id"] in selected_ids}
-            for course in component_options
+            for course in module_options
         ],
         "quiz": _serialize_quiz(quiz),
     })
