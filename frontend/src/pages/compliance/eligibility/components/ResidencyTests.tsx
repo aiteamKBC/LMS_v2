@@ -37,7 +37,7 @@ export function ResidencyTests({ tests }: ResidencyTestsProps) {
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${config.iconBg}`}>
-                    <i className={`${config.icon} ${config.iconColor} text-sm`}></i>
+                    <AppIcon className={`${config.icon} ${config.iconColor} text-sm`}></AppIcon>
                   </span>
                   <div className="min-w-0">
                     <p className="text-[13px] font-medium text-foreground-800">{test.label}</p>
@@ -48,7 +48,7 @@ export function ResidencyTests({ tests }: ResidencyTestsProps) {
                   <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${config.badgeBg} ${config.badgeText}`}>
                     {config.badgeLabel}
                   </span>
-                  <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></i>
+                  <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></AppIcon>
                 </div>
               </button>
               {isExpanded && (
@@ -69,7 +69,7 @@ export function ResidencyTests({ tests }: ResidencyTestsProps) {
                   </div>
                   {test.reviewedBy && (
                     <div className="flex items-center gap-2 text-[11px] text-foreground-400">
-                      <i className="ri-user-line text-xs"></i>
+                      <AppIcon className="ri-user-line text-xs"></AppIcon>
                       <span>Reviewed by <span className="font-medium text-foreground-600">{test.reviewedBy}</span></span>
                       <span className="text-foreground-300">on</span>
                       <span>{formatDate(test.reviewedAt)}</span>

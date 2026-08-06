@@ -36,7 +36,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-radar-line text-primary-500"></i> Review Snapshot
+              <AppIcon className="ri-radar-line text-primary-500"></AppIcon> Review Snapshot
             </h2>
             {evidence && (
               <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${queueBadge(evidence)}`}>
@@ -81,7 +81,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-route-line text-accent-500"></i> Planned Evidence Opportunities
+              <AppIcon className="ri-route-line text-accent-500"></AppIcon> Planned Evidence Opportunities
             </h2>
             <span className="text-[11px] text-foreground-400">{opportunityRows.length} live plan item(s)</span>
           </div>
@@ -95,7 +95,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
                   <div key={`${item.module}-${item.week}-${item.title}-${index}`} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-4">
                     <div className="flex items-start gap-3">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${meta.bg}`}>
-                        <i className={`${meta.icon} text-base ${meta.color}`}></i>
+                        <AppIcon className={`${meta.icon} text-base ${meta.color}`}></AppIcon>
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
@@ -122,7 +122,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-questionnaire-line text-secondary-500"></i> Assessment Evidence Links
+              <AppIcon className="ri-questionnaire-line text-secondary-500"></AppIcon> Assessment Evidence Links
             </h2>
             <span className="text-[11px] text-foreground-400">{assessmentSignals.length} recent linked attempt(s)</span>
           </div>
@@ -136,7 +136,7 @@ export default function EvidenceTab({ data }: CaseFileTabProps) {
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                       attempt.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-700'
                     }`}>
-                      <i className="ri-question-answer-line text-base"></i>
+                      <AppIcon className="ri-question-answer-line text-base"></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
@@ -212,7 +212,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
@@ -235,7 +235,7 @@ function DetailCard({
     <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
       <div className="flex items-center gap-2 mb-2">
         <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
-          <i className={`${icon} text-sm text-foreground-600`}></i>
+          <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>

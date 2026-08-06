@@ -59,7 +59,7 @@ export default function EmployerApprentices() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-star-line text-white text-2xl"></i>
+              <AppIcon className="ri-star-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">My Apprentices</h2>
@@ -87,7 +87,7 @@ export default function EmployerApprentices() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search apprentices..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -136,15 +136,15 @@ export default function EmployerApprentices() {
                 </div>
               </div>
               <div className="flex items-center gap-4 text-[10px] text-foreground-400">
-                <span><i className="ri-time-line mr-0.5 text-foreground-300"></i> {app.otjhCompleted}/{app.otjhTarget}h</span>
-                <span><i className="ri-user-heart-line mr-0.5 text-foreground-300"></i> {app.coach}</span>
+                <span><AppIcon className="ri-time-line mr-0.5 text-foreground-300"></AppIcon> {app.otjhCompleted}/{app.otjhTarget}h</span>
+                <span><AppIcon className="ri-user-heart-line mr-0.5 text-foreground-300"></AppIcon> {app.coach}</span>
               </div>
               <div className="flex items-center gap-3 mt-3 pt-3 border-t border-background-100">
                 <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center">
-                  <i className="ri-eye-line mr-1"></i> View Profile
+                  <AppIcon className="ri-eye-line mr-1"></AppIcon> View Profile
                 </button>
                 <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-mail-line mr-1"></i> Message
+                  <AppIcon className="ri-mail-line mr-1"></AppIcon> Message
                 </button>
               </div>
             </div>
@@ -166,7 +166,7 @@ export default function EmployerApprentices() {
                   </div>
                 </div>
                 <button onClick={() => setSelectedApprentice(null)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-                  <i className="ri-close-line text-foreground-500"></i>
+                  <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
                 </button>
               </div>
               <div className="p-6 space-y-5">
@@ -183,7 +183,7 @@ export default function EmployerApprentices() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-file-chart-line mr-1"></i> Full Profile
+                    <AppIcon className="ri-file-chart-line mr-1"></AppIcon> Full Profile
                   </button>
                   <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap" onClick={() => setSelectedApprentice(null)}>
                     Close
@@ -211,7 +211,7 @@ function QuickStat({ label, value, color }: { label: string; value: string; colo
 function InfoRow({ label, value, icon, risk }: { label: string; value: string; icon: string; risk?: string }) {
   return (
     <div className="flex items-center gap-3">
-      <i className={`${icon} text-foreground-400 text-sm w-5`}></i>
+      <AppIcon className={`${icon} text-foreground-400 text-sm w-5`}></AppIcon>
       <span className="text-[11px] text-foreground-500 w-24">{label}</span>
       <span className={`text-[11px] font-medium ${risk === 'Red' ? 'text-red-600' : risk === 'Amber' ? 'text-amber-600' : 'text-foreground-900'}`}>{value}</span>
     </div>

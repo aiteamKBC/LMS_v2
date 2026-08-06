@@ -38,7 +38,7 @@ export default function AchievementPipelinePage() {
             {PIPELINE_STAGES.map((ps, i) => (
               <div key={ps.stage} className="flex flex-col items-center">
                 <div className={`w-14 h-14 rounded-xl ${ps.color} flex items-center justify-center mb-2`}>
-                  <i className={`${ps.icon} text-white text-xl`}></i>
+                  <AppIcon className={`${ps.icon} text-white text-xl`}></AppIcon>
                 </div>
                 <span className="text-xs font-semibold text-foreground-900 text-center leading-tight">{ps.stage}</span>
                 <span className="text-xl font-heading font-bold text-foreground-900">{ps.count}</span>
@@ -47,7 +47,7 @@ export default function AchievementPipelinePage() {
                 </div>
                 <span className="text-[9px] text-foreground-400 mt-0.5">{ps.target > 0 ? `${ps.count}/${ps.target}` : 'N/A'}</span>
                 {i < PIPELINE_STAGES.length - 1 && (
-                  <span className="text-foreground-300 text-sm mt-1"><i className="ri-arrow-down-line"></i></span>
+                  <span className="text-foreground-300 text-sm mt-1"><AppIcon className="ri-arrow-down-line"></AppIcon></span>
                 )}
               </div>
             ))}

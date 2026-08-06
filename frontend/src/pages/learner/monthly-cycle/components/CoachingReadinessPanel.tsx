@@ -21,7 +21,7 @@ export default function CoachingReadinessPanel() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <i className="ri-shield-check-line text-foreground-600 text-sm"></i>
+            <AppIcon className="ri-shield-check-line text-foreground-600 text-sm"></AppIcon>
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Coaching Readiness</h3>
           </div>
           <p className="text-sm text-foreground-400">{d.message}</p>
@@ -65,7 +65,7 @@ export default function CoachingReadinessPanel() {
             >
               <div className="flex items-center gap-2">
                 <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${isDone ? 'bg-foreground-900 border-foreground-900' : 'border-foreground-300'}`}>
-                  {isDone && <i className="ri-check-line text-white text-[8px]"></i>}
+                  {isDone && <AppIcon className="ri-check-line text-white text-[8px]"></AppIcon>}
                 </span>
                 <span className="text-sm text-foreground-700">{item.label}</span>
               </div>

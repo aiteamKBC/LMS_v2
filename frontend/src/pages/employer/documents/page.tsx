@@ -60,7 +60,7 @@ export default function EmployerDocumentsToSign() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-pen-nib-line text-white text-2xl"></i>
+              <AppIcon className="ri-pen-nib-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Documents to Sign</h2>
@@ -85,14 +85,14 @@ export default function EmployerDocumentsToSign() {
         {overdue > 0 && (
           <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-              <i className="ri-error-warning-line text-red-600 text-base"></i>
+              <AppIcon className="ri-error-warning-line text-red-600 text-base"></AppIcon>
             </span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-red-800">{overdue} document{overdue > 1 ? 's' : ''} overdue!</p>
               <p className="text-[12px] text-red-600 mt-0.5">Overdue documents may affect funding compliance. Please sign immediately.</p>
             </div>
             <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-pen-nib-line mr-1"></i> Sign Overdue
+              <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Overdue
             </button>
           </div>
         )}
@@ -100,7 +100,7 @@ export default function EmployerDocumentsToSign() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search documents..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -130,7 +130,7 @@ export default function EmployerDocumentsToSign() {
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-3">
                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${doc.status === 'Overdue' ? 'bg-red-100 text-red-600' : doc.status === 'Awaiting Signature' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                      <i className={`${typeIcon[doc.type] || 'ri-file-text-line'} text-sm`}></i>
+                      <AppIcon className={`${typeIcon[doc.type] || 'ri-file-text-line'} text-sm`}></AppIcon>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-foreground-900">{doc.title}</p>
@@ -157,9 +157,9 @@ export default function EmployerDocumentsToSign() {
                 <p className="text-[11px] text-foreground-500 mb-3">{doc.description}</p>
 
                 <div className="flex items-center gap-4 text-[11px] text-foreground-400 mb-3">
-                  <span><i className="ri-calendar-line mr-1"></i> Issued: {doc.issuedDate}</span>
+                  <span><AppIcon className="ri-calendar-line mr-1"></AppIcon> Issued: {doc.issuedDate}</span>
                   <span className={doc.status === 'Overdue' ? 'text-red-500 font-semibold' : ''}>
-                    <i className="ri-timer-line mr-1"></i> Due: {doc.dueDate}
+                    <AppIcon className="ri-timer-line mr-1"></AppIcon> Due: {doc.dueDate}
                   </span>
                 </div>
 
@@ -167,19 +167,19 @@ export default function EmployerDocumentsToSign() {
                   {doc.status !== 'Signed' ? (
                     <>
                       <button onClick={() => handleSign(doc.id)} disabled={signingDoc[doc.id]} className="flex-1 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 text-center">
-                        {signingDoc[doc.id] ? <><i className="ri-check-line mr-1"></i> Signed!</> : <><i className="ri-pen-nib-line mr-1"></i> Sign Now</>}
+                        {signingDoc[doc.id] ? <><AppIcon className="ri-check-line mr-1"></AppIcon> Signed!</> : <><AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Now</>}
                       </button>
                       <button className="px-3 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-file-search-line mr-1"></i> Preview
+                        <AppIcon className="ri-file-search-line mr-1"></AppIcon> Preview
                       </button>
                     </>
                   ) : (
                     <div className="flex items-center gap-2 w-full">
                       <button className="flex-1 px-4 py-2 bg-background-100 text-emerald-700 rounded-lg text-[12px] font-semibold cursor-pointer whitespace-nowrap text-center">
-                        <i className="ri-check-double-line mr-1"></i> Signed
+                        <AppIcon className="ri-check-double-line mr-1"></AppIcon> Signed
                       </button>
                       <button className="px-3 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-download-line mr-1"></i> Download
+                        <AppIcon className="ri-download-line mr-1"></AppIcon> Download
                       </button>
                     </div>
                   )}

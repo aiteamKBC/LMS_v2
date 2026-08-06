@@ -33,7 +33,7 @@ function InfoTooltip({ label, text }: { label: string; text: string }) {
       onMouseLeave={() => setPos(null)}
       className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-background-200/70 text-foreground-500 hover:bg-primary-100 hover:text-primary-600 cursor-help transition-smooth"
     >
-      <i className="ri-question-line text-[10px]"></i>
+      <AppIcon className="ri-question-line text-[10px]"></AppIcon>
       {pos && createPortal(
         <div
           className="fixed z-[100] w-56 -translate-x-1/2 -translate-y-full rounded-lg bg-foreground-900 text-white text-[11px] leading-snug px-3 py-2 shadow-xl pointer-events-none"
@@ -321,23 +321,23 @@ export default function PointsRulesPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/rewards-shop')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-shopping-bag-3-line text-sm"></i> Rewards Shop
+            <AppIcon className="ri-shopping-bag-3-line text-sm"></AppIcon> Rewards Shop
           </button>
           <button onClick={() => navigate('/engagement/voucher-claims')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-coupon-line text-sm"></i> Voucher Claims
+            <AppIcon className="ri-coupon-line text-sm"></AppIcon> Voucher Claims
           </button>
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-thumb-up-line text-sm"></i> Recognition
+            <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
         {/* Filters + Search + Add */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search rules..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
@@ -351,11 +351,11 @@ export default function PointsRulesPage() {
             onClick={() => setActiveOnly(a => !a)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer border ${activeOnly ? 'bg-primary-50 text-primary-700 border-primary-200/50' : 'bg-background-100 text-foreground-500 border-transparent hover:text-foreground-700'}`}
           >
-            <i className={activeOnly ? 'ri-toggle-fill text-sm' : 'ri-toggle-line text-sm'}></i> Active only
+            <AppIcon className={activeOnly ? 'ri-toggle-fill text-sm' : 'ri-toggle-line text-sm'}></AppIcon> Active only
           </button>
           <div className="flex-1"></div>
           <button onClick={openAddModal} className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-            <i className="ri-add-line mr-1"></i> Add Rule
+            <AppIcon className="ri-add-line mr-1"></AppIcon> Add Rule
           </button>
         </div>
 
@@ -369,7 +369,7 @@ export default function PointsRulesPage() {
           ]).map(opt => (
             <button key={opt.key} onClick={() => handleSort(opt.key)} className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-smooth cursor-pointer whitespace-nowrap ${sortKey === opt.key ? 'bg-primary-50 text-primary-700 border border-primary-200/50' : 'text-foreground-500 hover:text-foreground-700 border border-transparent'}`}>
               {opt.label}
-              {sortKey === opt.key && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>}
+              {sortKey === opt.key && <AppIcon className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>}
             </button>
           ))}
         </div>
@@ -383,7 +383,7 @@ export default function PointsRulesPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-search-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No rules match this view</p>
             <p className="text-[11px] text-foreground-400">Try clearing the search, switching the category filter, or add a rule.</p>
           </div>
@@ -419,13 +419,13 @@ export default function PointsRulesPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => openEditModal(rule)} className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-edit-line mr-1"></i> Edit
+                    <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit
                   </button>
                   <button onClick={() => setStatsRuleId(rule.id)} className="flex-1 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-bar-chart-line mr-1"></i> Stats
+                    <AppIcon className="ri-bar-chart-line mr-1"></AppIcon> Stats
                   </button>
                   <button onClick={() => setLogsRuleId(rule.id)} className="flex-1 px-3 py-1.5 bg-primary-50 border border-primary-200/50 text-primary-700 rounded-lg text-[10px] font-medium hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-history-line mr-1"></i> Logs
+                    <AppIcon className="ri-history-line mr-1"></AppIcon> Logs
                   </button>
                 </div>
               </div>
@@ -441,13 +441,13 @@ export default function PointsRulesPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-gift-2-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-gift-2-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Add Rule</h3>
                   <p className="text-[11px] text-foreground-400">Create a new way for learners to earn points</p>
                 </div>
               </div>
-              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto">
               <RuleForm form={addForm} errors={addErrors} setForm={setAddForm} setErrors={setAddErrors} categories={categories} />
@@ -455,7 +455,7 @@ export default function PointsRulesPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleAdd} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600">
-                <i className="ri-add-line"></i> Create Rule
+                <AppIcon className="ri-add-line"></AppIcon> Create Rule
               </button>
             </div>
           </div>
@@ -469,13 +469,13 @@ export default function PointsRulesPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><i className="ri-edit-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><AppIcon className="ri-edit-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Edit Rule</h3>
                   <p className="text-[11px] text-foreground-400">Update points, category, how to obtain, and status</p>
                 </div>
               </div>
-              <button onClick={() => setEditRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setEditRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto">
               <RuleForm form={editForm} errors={editErrors} setForm={setEditForm} setErrors={setEditErrors} categories={categories} />
@@ -483,7 +483,7 @@ export default function PointsRulesPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setEditRuleId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleEdit} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-accent-500 text-white hover:bg-accent-600">
-                <i className="ri-save-line"></i> Save Changes
+                <AppIcon className="ri-save-line"></AppIcon> Save Changes
               </button>
             </div>
           </div>
@@ -497,13 +497,13 @@ export default function PointsRulesPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-md w-full overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><i className="ri-bar-chart-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-secondary-100 text-secondary-600 flex items-center justify-center"><AppIcon className="ri-bar-chart-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">{statsRule.name}</h3>
                   <p className="text-[11px] text-foreground-400">Rule performance</p>
                 </div>
               </div>
-              <button onClick={() => setStatsRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setStatsRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 space-y-3">
               <div className="grid grid-cols-2 gap-3 text-[11px]">
@@ -539,23 +539,23 @@ export default function PointsRulesPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-md w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-history-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-history-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">{logsRule.name}</h3>
                   <p className="text-[11px] text-foreground-400">Most recent learners granted this rule</p>
                 </div>
               </div>
-              <button onClick={() => setLogsRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setLogsRuleId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="overflow-y-auto">
               {logsLoading ? (
                 <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
-                  <i className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></i>
+                  <AppIcon className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></AppIcon>
                   <p className="text-[12px] font-semibold text-foreground-700">Loading grant history…</p>
                 </div>
               ) : logsEntries.length === 0 ? (
                 <div className="p-8 flex flex-col items-center justify-center text-center gap-2">
-                  <i className="ri-history-line text-2xl text-foreground-300"></i>
+                  <AppIcon className="ri-history-line text-2xl text-foreground-300"></AppIcon>
                   <p className="text-[12px] font-semibold text-foreground-700">No grants recorded yet</p>
                   <p className="text-[11px] text-foreground-400">This rule hasn't been awarded to any learner.</p>
                 </div>

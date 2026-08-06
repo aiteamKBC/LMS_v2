@@ -59,7 +59,7 @@ export default function TeachingSessionsPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-presentation-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-presentation-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Teaching Sessions</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{upcoming} upcoming this week · {completed} completed · {totalRecordings} recordings available · Avg attendance {avgAttendance}%</p>
@@ -84,7 +84,7 @@ export default function TeachingSessionsPage() {
                 <button key={s} onClick={() => setFilterStatus(s)} className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filterStatus === s ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>{s === 'all' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}</button>
               ))}
             </div>
-            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-add-line mr-1"></i> New Session</button>
+            <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-add-line mr-1"></AppIcon> New Session</button>
           </div>
         </div>
 
@@ -101,7 +101,7 @@ export default function TeachingSessionsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-foreground-900">{s.module} — {s.type}</p>
                     <div className="flex items-center gap-x-2 gap-y-1 flex-wrap mt-0.5 text-[11px] text-foreground-400">
-                      <span><i className="ri-time-line mr-0.5 text-[10px]"></i>{s.time}</span>
+                      <span><AppIcon className="ri-time-line mr-0.5 text-[10px]"></AppIcon>{s.time}</span>
                       <span className="text-[8px] text-foreground-300">&middot;</span>
                       <span>{s.cohort}</span>
                       <span className="text-[8px] text-foreground-300">&middot;</span>
@@ -112,7 +112,7 @@ export default function TeachingSessionsPage() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${s.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : s.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : s.status === 'cancelled' ? 'bg-red-100 text-red-700' : 'bg-foreground-100 text-foreground-500'}`}>{s.status}</span>
-                    <i className={expandedSession === s.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></i>
+                    <AppIcon className={expandedSession === s.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></AppIcon>
                   </div>
                 </div>
                 {expandedSession === s.id && (
@@ -127,11 +127,11 @@ export default function TeachingSessionsPage() {
                         <div key={st.l} className="bg-background-100/50 rounded-lg p-2.5"><p className="text-[9px] text-foreground-400 uppercase tracking-wider">{st.l}</p><p className="text-[12px] font-medium text-foreground-900 truncate">{st.v}</p></div>
                       ))}
                     </div>
-                    {s.feedback && <p className="text-[11px] text-foreground-400 mb-3 bg-background-100/50 p-2 rounded-lg"><i className="ri-chat-3-line mr-1"></i>{s.feedback}</p>}
+                    {s.feedback && <p className="text-[11px] text-foreground-400 mb-3 bg-background-100/50 p-2 rounded-lg"><AppIcon className="ri-chat-3-line mr-1"></AppIcon>{s.feedback}</p>}
                     <div className="flex items-center gap-2">
-                      {s.status === 'upcoming' && <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-video-line mr-1"></i> Start Session</button>}
-                      {s.recording && <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-play-circle-line mr-1"></i> Watch Recording</button>}
-                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-settings-3-line mr-1"></i> Edit</button>
+                      {s.status === 'upcoming' && <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-video-line mr-1"></AppIcon> Start Session</button>}
+                      {s.recording && <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-play-circle-line mr-1"></AppIcon> Watch Recording</button>}
+                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-settings-3-line mr-1"></AppIcon> Edit</button>
                     </div>
                   </div>
                 )}

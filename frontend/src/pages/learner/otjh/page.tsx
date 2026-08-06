@@ -279,7 +279,7 @@ function MockOtjhPage() {
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Monthly Planned vs Actual</h3>
                 <Link to="/learner/progress-reviews" className="text-xs font-medium text-primary-600 hover:text-primary-700 cursor-pointer whitespace-nowrap">
-                  View Progress Reviews <i className="ri-arrow-right-line ml-0.5"></i>
+                  View Progress Reviews <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                 </Link>
               </div>
               <p className="text-sm text-foreground-400 mb-5">
@@ -329,7 +329,7 @@ function MockOtjhPage() {
                   return (
                     <div key={tb.type} className="flex items-center gap-3">
                       <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${tc.bg} ${tc.text}`}>
-                        <i className={`${tc.icon} text-xs`}></i>
+                        <AppIcon className={`${tc.icon} text-xs`}></AppIcon>
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-0.5">
@@ -353,7 +353,7 @@ function MockOtjhPage() {
           <SectionReveal delay={120}>
             <div className="bg-amber-50/60 border border-amber-200/50 rounded-xl p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <span className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-                <i className="ri-speed-up-line text-amber-600 text-lg"></i>
+                <AppIcon className="ri-speed-up-line text-amber-600 text-lg"></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <h3 className="text-sm font-heading font-semibold text-amber-900 mb-1">You are behind on OTJH this month</h3>
@@ -367,7 +367,7 @@ function MockOtjhPage() {
                   onClick={() => setShowForm(true)}
                   className="px-4 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-semibold hover:bg-amber-700 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-add-line mr-1"></i> Log Hours Now
+                  <AppIcon className="ri-add-line mr-1"></AppIcon> Log Hours Now
                 </button>
                 <Link
                   to="/learner/evidence"
@@ -394,7 +394,7 @@ function MockOtjhPage() {
                 onClick={() => setShowForm(!showForm)}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-add-line"></i> {showForm ? 'Close Form' : 'Add Entry'}
+                <AppIcon className="ri-add-line"></AppIcon> {showForm ? 'Close Form' : 'Add Entry'}
               </button>
             </div>
 
@@ -433,7 +433,7 @@ function MockOtjhPage() {
                 </div>
                 <div className="flex items-center gap-3 mt-5">
                   <button className="px-5 py-2.5 bg-primary-500 text-background-50 dark:text-foreground-950 rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-check-line mr-1"></i> Submit for Validation
+                    <AppIcon className="ri-check-line mr-1"></AppIcon> Submit for Validation
                   </button>
                   <button onClick={() => setShowForm(false)} className="px-5 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-medium text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                     Cancel
@@ -446,7 +446,7 @@ function MockOtjhPage() {
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 mb-4">
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
                     type="text"
                     placeholder="Search by title, type, or KSB code..."
@@ -466,7 +466,7 @@ function MockOtjhPage() {
                   onClick={() => setSortBy(sortBy === 'date' ? 'hours' : 'date')}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-background-100 text-xs font-semibold text-foreground-500 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className={`${sortBy === 'date' ? 'ri-sort-desc' : 'ri-sort-number-desc'} text-sm`}></i>
+                  <AppIcon className={`${sortBy === 'date' ? 'ri-sort-desc' : 'ri-sort-number-desc'} text-sm`}></AppIcon>
                   {sortBy === 'date' ? 'By Date' : 'By Hours'}
                 </button>
               </div>
@@ -505,7 +505,7 @@ function MockOtjhPage() {
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">
                               <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${tc.bg} ${tc.text}`}>
-                                <i className={`${tc.icon} text-sm`}></i>
+                                <AppIcon className={`${tc.icon} text-sm`}></AppIcon>
                               </span>
                               <div className="min-w-0">
                                 <p className="text-sm font-medium text-foreground-800 leading-snug truncate max-w-[240px]">{entry.title}</p>
@@ -533,7 +533,7 @@ function MockOtjhPage() {
                           <td className="px-4 py-3">
                             {entry.paid ? (
                               <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-100 px-2 py-1 rounded-full">
-                                <i className="ri-check-line text-[10px]"></i> Paid
+                                <AppIcon className="ri-check-line text-[10px]"></AppIcon> Paid
                               </span>
                             ) : (
                               <span className="text-xs text-foreground-400">—</span>
@@ -547,9 +547,9 @@ function MockOtjhPage() {
                           </td>
                           <td className="px-4 py-3">
                             {selectedEntry?.id === entry.id ? (
-                              <i className="ri-arrow-up-s-line text-foreground-400 text-sm"></i>
+                              <AppIcon className="ri-arrow-up-s-line text-foreground-400 text-sm"></AppIcon>
                             ) : (
-                              <i className="ri-arrow-down-s-line text-foreground-400 text-sm"></i>
+                              <AppIcon className="ri-arrow-down-s-line text-foreground-400 text-sm"></AppIcon>
                             )}
                           </td>
                         </tr>
@@ -562,7 +562,7 @@ function MockOtjhPage() {
               {filteredEntries.length === 0 && (
                 <div className="py-12 text-center">
                   <span className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-search-line text-foreground-300 text-xl"></i>
+                    <AppIcon className="ri-search-line text-foreground-300 text-xl"></AppIcon>
                   </span>
                   <p className="text-sm text-foreground-500">No entries match your filters</p>
                   <button onClick={() => { setFilterStatus('All'); setSearchQuery(''); }} className="mt-2 text-xs font-semibold text-primary-600 hover:text-primary-700 cursor-pointer">
@@ -578,7 +578,7 @@ function MockOtjhPage() {
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${(typeConfig[selectedEntry.type] || typeConfig.Document).bg} ${(typeConfig[selectedEntry.type] || typeConfig.Document).text}`}>
-                      <i className={`${(typeConfig[selectedEntry.type] || typeConfig.Document).icon} text-lg`}></i>
+                      <AppIcon className={`${(typeConfig[selectedEntry.type] || typeConfig.Document).icon} text-lg`}></AppIcon>
                     </span>
                     <div>
                       <h4 className="text-sm font-heading font-semibold text-foreground-900">{selectedEntry.title}</h4>
@@ -586,7 +586,7 @@ function MockOtjhPage() {
                     </div>
                   </div>
                   <button onClick={() => setSelectedEntry(null)} className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className="ri-close-line"></i>
+                    <AppIcon className="ri-close-line"></AppIcon>
                   </button>
                 </div>
 
@@ -639,7 +639,7 @@ function MockOtjhPage() {
                 )}
               </div>
               <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground-500 hover:text-foreground-700 cursor-pointer whitespace-nowrap">
-                <i className="ri-download-line"></i> Export OTJH Log
+                <AppIcon className="ri-download-line"></AppIcon> Export OTJH Log
               </button>
             </div>
           </section>
@@ -654,7 +654,7 @@ function MockOtjhPage() {
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 md:p-6">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-9 h-9 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-                  <i className="ri-lightbulb-line text-primary-600"></i>
+                  <AppIcon className="ri-lightbulb-line text-primary-600"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">OTJH Guidance</h3>
@@ -674,7 +674,7 @@ function MockOtjhPage() {
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 md:p-6">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-9 h-9 rounded-xl bg-accent-100 flex items-center justify-center shrink-0">
-                  <i className="ri-shield-check-line text-accent-600"></i>
+                  <AppIcon className="ri-shield-check-line text-accent-600"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Policy & Quick Links</h3>
@@ -684,43 +684,43 @@ function MockOtjhPage() {
               <div className="space-y-2">
                 <Link to="/learner/evidence" className="flex items-center gap-3 p-3 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer group">
                   <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-                    <i className="ri-upload-cloud-line text-primary-600 text-sm"></i>
+                    <AppIcon className="ri-upload-cloud-line text-primary-600 text-sm"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground-800 group-hover:text-primary-700 transition-smooth">Upload Evidence</p>
                     <p className="text-xs text-foreground-400">Submit supporting evidence for your OTJH entries</p>
                   </div>
-                  <i className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></i>
+                  <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></AppIcon>
                 </Link>
                 <Link to="/learner/ksbs" className="flex items-center gap-3 p-3 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer group">
                   <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center shrink-0">
-                    <i className="ri-book-open-line text-accent-600 text-sm"></i>
+                    <AppIcon className="ri-book-open-line text-accent-600 text-sm"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground-800 group-hover:text-primary-700 transition-smooth">KSB Progress</p>
                     <p className="text-xs text-foreground-400">Track your Knowledge, Skills & Behaviours development</p>
                   </div>
-                  <i className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></i>
+                  <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></AppIcon>
                 </Link>
                 <Link to="/learner/progress-reviews" className="flex items-center gap-3 p-3 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer group">
                   <span className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className="ri-file-chart-line text-secondary-600 text-sm"></i>
+                    <AppIcon className="ri-file-chart-line text-secondary-600 text-sm"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground-800 group-hover:text-primary-700 transition-smooth">Progress Reviews</p>
                     <p className="text-xs text-foreground-400">View your quarterly review history and OTJH validation status</p>
                   </div>
-                  <i className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></i>
+                  <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></AppIcon>
                 </Link>
                 <Link to="/learner/gateway" className="flex items-center gap-3 p-3 rounded-lg hover:bg-background-100 transition-smooth cursor-pointer group">
                   <span className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                    <i className="ri-flag-line text-emerald-600 text-sm"></i>
+                    <AppIcon className="ri-flag-line text-emerald-600 text-sm"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground-800 group-hover:text-primary-700 transition-smooth">Gateway Readiness</p>
                     <p className="text-xs text-foreground-400">Check your overall readiness for the Gateway assessment</p>
                   </div>
-                  <i className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></i>
+                  <AppIcon className="ri-arrow-right-line text-foreground-300 group-hover:text-primary-500 transition-smooth"></AppIcon>
                 </Link>
               </div>
             </div>
@@ -747,7 +747,7 @@ function StatsCard({ label, value, sub, icon, color }: { label: string; value: s
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-xs text-foreground-400 font-medium">{label}</span>
       </div>
@@ -771,7 +771,7 @@ function GuidanceItem({ icon, color, text }: { icon: string; color: string; text
   const colorMap: Record<string, string> = { emerald: 'text-emerald-500', primary: 'text-primary-500', accent: 'text-accent-500' };
   return (
     <div className="flex items-start gap-2.5">
-      <i className={`${icon} ${colorMap[color] || 'text-emerald-500'} mt-0.5 shrink-0`}></i>
+      <AppIcon className={`${icon} ${colorMap[color] || 'text-emerald-500'} mt-0.5 shrink-0`}></AppIcon>
       <span className="text-sm text-foreground-600 leading-relaxed">{text}</span>
     </div>
   );

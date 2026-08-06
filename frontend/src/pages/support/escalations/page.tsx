@@ -32,7 +32,7 @@ export default function SupportEscalations() {
               <div key={esc.id} className="p-4 md:p-5 hover:bg-background-50/60 transition-smooth">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                    <i className="ri-alert-line text-red-600 text-lg"></i>
+                    <AppIcon className="ri-alert-line text-red-600 text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -52,10 +52,10 @@ export default function SupportEscalations() {
                     </div>
                     <div className="flex items-center gap-3 mt-3">
                       <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-search-eye-line mr-1"></i> Investigate
+                        <AppIcon className="ri-search-eye-line mr-1"></AppIcon> Investigate
                       </button>
                       <button className="px-3 py-1.5 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-check-line mr-1"></i> Mark Resolved
+                        <AppIcon className="ri-check-line mr-1"></AppIcon> Mark Resolved
                       </button>
                     </div>
                   </div>

@@ -71,7 +71,7 @@ export default function MessageInfo({ isOpen, onClose, messageText, sentTime, de
         <div className="flex items-center justify-between px-5 py-4 border-b border-background-200/70">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center text-primary-500">
-              <i className="ri-information-line text-sm"></i>
+              <AppIcon className="ri-information-line text-sm"></AppIcon>
             </div>
             <div>
               <h3 className="text-sm font-semibold text-foreground-800">Message Info</h3>
@@ -82,7 +82,7 @@ export default function MessageInfo({ isOpen, onClose, messageText, sentTime, de
             onClick={onClose}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
           >
-            <i className="ri-close-line text-sm"></i>
+            <AppIcon className="ri-close-line text-sm"></AppIcon>
           </button>
         </div>
 
@@ -100,7 +100,7 @@ export default function MessageInfo({ isOpen, onClose, messageText, sentTime, de
               {/* Timeline line */}
               <div className="flex flex-col items-center">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-smooth ${item.active ? item.color : 'bg-background-200'}`}>
-                  <i className={`${item.icon} text-sm ${item.active ? 'text-white' : 'text-foreground-400'}`}></i>
+                  <AppIcon className={`${item.icon} text-sm ${item.active ? 'text-white' : 'text-foreground-400'}`}></AppIcon>
                 </div>
                 {index < timeline.length - 1 && (
                   <div className={`w-0.5 h-10 mt-1 ${item.active && timeline[index + 1].active ? 'bg-primary-300' : 'bg-background-200'}`}></div>
@@ -124,7 +124,7 @@ export default function MessageInfo({ isOpen, onClose, messageText, sentTime, de
 
         {/* Footer */}
         <div className="px-5 py-3 border-t border-background-200/70 bg-background-100/30 flex items-center justify-center gap-2">
-          <i className="ri-shield-check-line text-[10px] text-foreground-400"></i>
+          <AppIcon className="ri-shield-check-line text-[10px] text-foreground-400"></AppIcon>
           <p className="text-[10px] text-foreground-400">End-to-end encrypted</p>
         </div>
       </div>

@@ -63,7 +63,7 @@ function AddSelect({
         {options.map((o) => <option key={o.id} value={o.id}>{o.title}</option>)}
       </select>
       <button type="button" className={`${btnPrimary} !py-2 shrink-0`} onClick={add} disabled={disabled || !value}>
-        <i className="ri-add-line" />Add
+        <AppIcon className="ri-add-line" />Add
       </button>
     </div>
   );
@@ -343,7 +343,7 @@ export default function TrainingPlanPage() {
                       : state === 'done' ? 'bg-primary-50 text-primary-600 border-primary-200'
                       : 'bg-background-100 text-foreground-400 border-foreground-200'
                     }`}>
-                      {state === 'done' ? <i className="ri-check-line" /> : s.n}
+                      {state === 'done' ? <AppIcon className="ri-check-line" /> : s.n}
                     </span>
                     <span className={`text-[13px] font-medium hidden sm:inline ${state === 'todo' ? 'text-foreground-400' : 'text-foreground-800'}`}>{s.label}</span>
                   </button>
@@ -356,7 +356,7 @@ export default function TrainingPlanPage() {
 
         {hydrating ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center card-premium">
-            <i className="ri-loader-4-line animate-spin text-2xl text-primary-500" />
+            <AppIcon className="ri-loader-4-line animate-spin text-2xl text-primary-500" />
             <p className="text-[13px] text-foreground-500 mt-2">Loading…</p>
           </div>
         ) : (
@@ -412,14 +412,14 @@ export default function TrainingPlanPage() {
                     return (
                       <li key={m.id} className="flex items-center justify-between gap-3 rounded-xl border border-foreground-200/70 px-4 py-3 bg-background-100/40">
                         <span className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
-                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                          <AppIcon className="ri-book-2-line text-primary-600" />{m.title}
                         </span>
                         <div className="flex items-center gap-3">
                           <span className="text-[11px] text-foreground-500">
                             {weekCount} {weekCount === 1 ? 'week' : 'weeks'} · {compCount} {compCount === 1 ? 'component' : 'components'} · {formatHoursMinutes(hours)} OTJ
                           </span>
                           <button onClick={() => removeModule(m.id)} className="text-red-500 hover:text-red-600 cursor-pointer" aria-label={`Remove ${m.title}`}>
-                            <i className="ri-delete-bin-line" />
+                            <AppIcon className="ri-delete-bin-line" />
                           </button>
                         </div>
                       </li>
@@ -454,7 +454,7 @@ export default function TrainingPlanPage() {
                     {plan.map((m) => (
                       <div key={m.id} className="rounded-xl border border-foreground-100 p-4">
                         <p className="text-[13px] font-semibold text-foreground-900 inline-flex items-center gap-2">
-                          <i className="ri-book-2-line text-primary-600" />{m.title}
+                          <AppIcon className="ri-book-2-line text-primary-600" />{m.title}
                           <span className="text-[11px] font-normal text-foreground-400">· {formatHoursMinutes(moduleHours(m))} OTJ</span>
                         </p>
                         {m.weeks.length === 0 ? (
@@ -480,15 +480,15 @@ export default function TrainingPlanPage() {
             <div className="flex items-center justify-between gap-3">
               <button className={btnSecondary} onClick={() => navigate(backHref)}>Cancel</button>
               <div className="flex items-center gap-3">
-                {step > 1 && <button className={btnSecondary} onClick={back}><i className="ri-arrow-left-line" />Back</button>}
+                {step > 1 && <button className={btnSecondary} onClick={back}><AppIcon className="ri-arrow-left-line" />Back</button>}
                 {step < 3 && (
                   <button className={btnPrimary} onClick={next} disabled={!canNext}>
-                    Next<i className="ri-arrow-right-line" />
+                    Next<AppIcon className="ri-arrow-right-line" />
                   </button>
                 )}
                 {step === 3 && (
                   <button className={btnPrimary} onClick={handleSave} disabled={saving}>
-                    {saving ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-save-line" />Save plan</>}
+                    {saving ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-save-line" />Save plan</>}
                   </button>
                 )}
               </div>

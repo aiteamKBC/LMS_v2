@@ -66,7 +66,7 @@ function StatsBanner() {
           <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-3.5 card-premium cursor-pointer">
             <div className="flex items-center gap-3">
               <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
-                <i className={`${stat.icon} text-sm`}></i>
+                <AppIcon className={`${stat.icon} text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-2xl font-heading font-semibold text-foreground-900">{stat.value}</p>

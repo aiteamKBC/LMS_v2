@@ -49,7 +49,7 @@ export default function ClubBadgeDetailPage() {
       >
         <div className="p-6 flex flex-col items-center justify-center py-24">
           <span className="w-20 h-20 rounded-3xl bg-foreground-100 flex items-center justify-center mb-6">
-            <i className="ri-emotion-sad-line text-foreground-300 text-3xl"></i>
+            <AppIcon className="ri-emotion-sad-line text-foreground-300 text-3xl"></AppIcon>
           </span>
           <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Badge Not Found</h2>
           <p className="text-sm text-foreground-500 mb-6">We couldn&apos;t find a community badge with that identifier.</p>
@@ -57,7 +57,7 @@ export default function ClubBadgeDetailPage() {
             to="/learner/clubs"
             className="px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-all whitespace-nowrap"
           >
-            <i className="ri-arrow-left-line mr-1.5"></i> Back to Clubs
+            <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Back to Clubs
           </Link>
         </div>
       </WorkspaceShell>
@@ -103,7 +103,7 @@ export default function ClubBadgeDetailPage() {
             <div className="bg-background-50 rounded-2xl px-8 py-6 shadow-xl border border-accent-200/60 animate-in zoom-in-50 bounce-in duration-500">
               <div className="text-center">
                 <span className={`w-16 h-16 rounded-2xl ${colors.bg} ${colors.text} flex items-center justify-center mx-auto mb-3 ring-4 ring-background-50`}>
-                  <i className={`${badge.icon} text-2xl`}></i>
+                  <AppIcon className={`${badge.icon} text-2xl`}></AppIcon>
                 </span>
                 <h3 className="text-lg font-heading font-bold text-foreground-900">Badge Earned!</h3>
                 <p className="text-sm text-foreground-500 mt-1">Congratulations! You earned the <strong>{badge.title}</strong> badge</p>
@@ -121,7 +121,7 @@ export default function ClubBadgeDetailPage() {
           onClick={() => navigate('/learner/clubs')}
           className="inline-flex items-center gap-1.5 text-sm text-foreground-500 hover:text-foreground-700 transition-all cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-arrow-left-line"></i>
+          <AppIcon className="ri-arrow-left-line"></AppIcon>
           Back to Community
         </button>
 
@@ -132,7 +132,7 @@ export default function ClubBadgeDetailPage() {
           <div className="relative p-6 sm:p-8">
             <div className="flex flex-col sm:flex-row items-start gap-5">
               <span className={`w-20 h-20 rounded-2xl flex items-center justify-center shrink-0 ${colors.bg} ${colors.text} ring-4 ring-background-50`}>
-                <i className={`${badge.icon} text-3xl`}></i>
+                <AppIcon className={`${badge.icon} text-3xl`}></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -156,12 +156,12 @@ export default function ClubBadgeDetailPage() {
                 <div className="flex items-center gap-3 mt-4 pt-4 border-t border-background-200/60">
                   {badge.earned ? (
                     <div className="flex items-center gap-1.5">
-                      <i className="ri-calendar-check-line text-foreground-400 text-sm"></i>
+                      <AppIcon className="ri-calendar-check-line text-foreground-400 text-sm"></AppIcon>
                       <span className="text-sm text-foreground-600">Earned on <strong>{badge.earnedDate}</strong></span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-1.5">
-                      <i className="ri-timer-line text-foreground-400 text-sm"></i>
+                      <AppIcon className="ri-timer-line text-foreground-400 text-sm"></AppIcon>
                       <span className="text-sm text-foreground-600">
                         Progress: <strong>{badge.progress}/{badge.progressTarget} {badge.progressLabel}</strong>
                       </span>
@@ -183,7 +183,7 @@ export default function ClubBadgeDetailPage() {
             <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 animate-in slide-in-from-bottom-4 duration-400">
               <div className="flex items-center gap-2 mb-4">
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${colors.bg}`}>
-                  <i className={`ri-book-open-line text-sm ${colors.text}`}></i>
+                  <AppIcon className={`ri-book-open-line text-sm ${colors.text}`}></AppIcon>
                 </span>
                 <h2 className="text-sm font-heading font-semibold text-foreground-900">Why This Badge Matters</h2>
               </div>
@@ -194,7 +194,7 @@ export default function ClubBadgeDetailPage() {
             <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 animate-in slide-in-from-bottom-4 duration-400" style={{ animationDelay: '100ms' }}>
               <div className="flex items-center gap-2 mb-4">
                 <span className="w-8 h-8 rounded-lg flex items-center justify-center bg-emerald-100">
-                  <i className="ri-check-double-line text-emerald-600 text-sm"></i>
+                  <AppIcon className="ri-check-double-line text-emerald-600 text-sm"></AppIcon>
                 </span>
                 <h2 className="text-sm font-heading font-semibold text-foreground-900">How to Earn This Badge</h2>
               </div>
@@ -203,7 +203,7 @@ export default function ClubBadgeDetailPage() {
                 {badge.unlockCriteria.map((criterion, i) => (
                   <div key={i} className="flex items-start gap-3 py-2.5 relative">
                     <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 relative z-10 bg-emerald-100 text-emerald-600 ring-2 ring-background-50">
-                      <i className="ri-check-line text-xs"></i>
+                      <AppIcon className="ri-check-line text-xs"></AppIcon>
                     </span>
                     <span className="text-sm text-foreground-700 pt-0.5">{criterion}</span>
                   </div>
@@ -247,26 +247,26 @@ export default function ClubBadgeDetailPage() {
                 {badge.earned && badge.earnedDate && (
                   <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                     <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                      <i className="ri-calendar-line"></i> Earned Date
+                      <AppIcon className="ri-calendar-line"></AppIcon> Earned Date
                     </span>
                     <span className="text-xs font-semibold text-foreground-900">{badge.earnedDate}</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-price-tag-3-line"></i> Category
+                    <AppIcon className="ri-price-tag-3-line"></AppIcon> Category
                   </span>
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>Community Badge</span>
                 </div>
                 <div className="flex items-center justify-between py-2 border-b border-background-200/40">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-checkbox-circle-line"></i> Criteria
+                    <AppIcon className="ri-checkbox-circle-line"></AppIcon> Criteria
                   </span>
                   <span className="text-xs font-semibold text-foreground-600">{badge.unlockCriteria.length} requirements</span>
                 </div>
                 <div className="flex items-center justify-between py-2">
                   <span className="text-xs text-foreground-500 flex items-center gap-1.5">
-                    <i className="ri-shield-check-line"></i> Status
+                    <AppIcon className="ri-shield-check-line"></AppIcon> Status
                   </span>
                   {badge.earned ? (
                     <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1">
@@ -286,7 +286,7 @@ export default function ClubBadgeDetailPage() {
               to="/learner/clubs"
               className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-background-200/60 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-all cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-gallery-line"></i> View All Community Badges
+              <AppIcon className="ri-gallery-line"></AppIcon> View All Community Badges
             </Link>
           </div>
         </div>

@@ -275,7 +275,7 @@ export default function EngagementDashboard() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm border-accent-400' : 'text-foreground-500 hover:text-foreground-700 border-transparent'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.badge != null && tab.badge > 0 && (
                 <span className="bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
@@ -328,7 +328,7 @@ export default function EngagementDashboard() {
                         <p className={`text-[10px] font-medium flex items-center justify-end gap-0.5 ${
                           l.monthlyTrend === 'up' ? 'text-emerald-600' : l.monthlyTrend === 'down' ? 'text-red-600' : 'text-foreground-400'
                         }`}>
-                          <i className={l.monthlyTrend === 'up' ? 'ri-arrow-up-line' : l.monthlyTrend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></i>
+                          <AppIcon className={l.monthlyTrend === 'up' ? 'ri-arrow-up-line' : l.monthlyTrend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></AppIcon>
                           +{l.pointsThisMonth} this month
                         </p>
                       </div>
@@ -380,7 +380,7 @@ export default function EngagementDashboard() {
                       <span className={`font-medium ${
                         l.trend === 'up' ? 'text-emerald-600' : l.trend === 'down' ? 'text-red-600' : 'text-foreground-500'
                       }`}>
-                        <i className={`${l.trend === 'up' ? 'ri-arrow-up-line' : l.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'} text-[9px] mr-0.5`}></i>
+                        <AppIcon className={`${l.trend === 'up' ? 'ri-arrow-up-line' : l.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'} text-[9px] mr-0.5`}></AppIcon>
                         {l.trend}
                       </span>
                     </div>
@@ -601,7 +601,7 @@ export default function EngagementDashboard() {
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Programme Comparison</h3>
                     <p className="text-[11px] text-foreground-400 mt-0.5">Average engagement and attendance by programme</p>
                   </div>
-                  <div className="flex items-center gap-3 text-[10px] text-foreground-400"><span><i className="ri-checkbox-blank-circle-fill text-primary-500 mr-1"></i>Engagement</span><span><i className="ri-checkbox-blank-circle-fill text-accent-500 mr-1"></i>Attendance</span></div>
+                  <div className="flex items-center gap-3 text-[10px] text-foreground-400"><span><AppIcon className="ri-checkbox-blank-circle-fill text-primary-500 mr-1"></AppIcon>Engagement</span><span><AppIcon className="ri-checkbox-blank-circle-fill text-accent-500 mr-1"></AppIcon>Attendance</span></div>
                 </div>
                 <ResponsiveContainer width="100%" height={210}>
                   <BarChart data={programmeComparison} layout="vertical" margin={{ top: 0, right: 10, left: 5, bottom: 0 }} barGap={3}>
@@ -623,9 +623,9 @@ export default function EngagementDashboard() {
                     <p className="text-[11px] text-foreground-400 mt-0.5">Each dot is a learner: attendance on X, engagement on Y</p>
                   </div>
                   <div className="flex items-center gap-2 text-[9px] font-medium text-foreground-500">
-                    <span><i className="ri-checkbox-blank-circle-fill text-emerald-500 mr-1"></i>On track</span>
-                    <span><i className="ri-checkbox-blank-circle-fill text-amber-500 mr-1"></i>Watch</span>
-                    <span><i className="ri-checkbox-blank-circle-fill text-red-500 mr-1"></i>Priority</span>
+                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-emerald-500 mr-1"></AppIcon>On track</span>
+                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-amber-500 mr-1"></AppIcon>Watch</span>
+                    <span><AppIcon className="ri-checkbox-blank-circle-fill text-red-500 mr-1"></AppIcon>Priority</span>
                   </div>
                 </div>
                 <ResponsiveContainer width="100%" height={210}>
@@ -641,8 +641,8 @@ export default function EngagementDashboard() {
                   </ScatterChart>
                 </ResponsiveContainer>
                 <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] text-foreground-400 mt-1">
-                  <span><i className="ri-error-warning-fill text-red-500 mr-1"></i>Bottom-left: priority follow-up</span>
-                  <span><i className="ri-checkbox-circle-fill text-emerald-500 mr-1"></i>Top-right: on track</span>
+                  <span><AppIcon className="ri-error-warning-fill text-red-500 mr-1"></AppIcon>Bottom-left: priority follow-up</span>
+                  <span><AppIcon className="ri-checkbox-circle-fill text-emerald-500 mr-1"></AppIcon>Top-right: on track</span>
                 </div>
               </div>
             </div>
@@ -685,7 +685,7 @@ export default function EngagementDashboard() {
                     </div>
                   </div>
                   <div className="mt-3 bg-amber-50/50 rounded-lg p-3 flex items-start gap-2">
-                    <i className="ri-alert-line text-amber-600 text-sm mt-0.5"></i>
+                    <AppIcon className="ri-alert-line text-amber-600 text-sm mt-0.5"></AppIcon>
                     <div>
                       <p className="text-[11px] font-medium text-amber-800">Recommended Action</p>
                       <p className="text-[11px] text-amber-700">{l.action}</p>
@@ -709,7 +709,7 @@ export default function EngagementDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">Comprehensive engagement scores based on attendance, evidence, OTJH, and activity</p>
               </div>
               <button className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
-                <i className="ri-download-line mr-1"></i> Export Report
+                <AppIcon className="ri-download-line mr-1"></AppIcon> Export Report
               </button>
             </div>
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm overflow-hidden">
@@ -741,7 +741,7 @@ export default function EngagementDashboard() {
                       }`}>{l.riskLevel.toUpperCase()}</span>
                       {l.flags.length > 0 && l.riskLevel !== 'green' && (
                         <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold shadow-lg shadow-primary-500/20 hover:bg-primary-600 hover:shadow-primary-500/30 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-phone-line mr-1"></i> Contact
+                          <AppIcon className="ri-phone-line mr-1"></AppIcon> Contact
                         </button>
                       )}
                     </div>
@@ -768,7 +768,7 @@ export default function EngagementDashboard() {
               className="flex flex-col items-center gap-2 px-3 py-4 bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm text-[11px] font-medium text-foreground-600 hover:-translate-y-0.5 hover:shadow-md hover:border-primary-200/50 transition-smooth cursor-pointer"
             >
               <span className="w-9 h-9 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center">
-                <i className={`${link.icon} text-sm`}></i>
+                <AppIcon className={`${link.icon} text-sm`}></AppIcon>
               </span>
               <span className="text-center whitespace-nowrap">{link.label}</span>
             </button>
@@ -783,7 +783,7 @@ export default function EngagementDashboard() {
 function ProgrammeEmptyState({ message }: { message: string }) {
   return (
     <div className="p-6 text-center text-[11px] text-foreground-400">
-      <i className="ri-filter-off-line text-lg text-foreground-300 block mb-1"></i>
+      <AppIcon className="ri-filter-off-line text-lg text-foreground-300 block mb-1"></AppIcon>
       {message}
     </div>
   );
@@ -809,7 +809,7 @@ function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champi
       <div className="relative z-20 p-6 sm:p-8">
         <div className="text-center mb-8">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-3 py-1 rounded-full mb-3 border bg-white/10 text-accent-200 border-white/20">
-            <i className="ri-trophy-line"></i> Engagement Sprint
+            <AppIcon className="ri-trophy-line"></AppIcon> Engagement Sprint
           </span>
           <h3 className="text-xl font-heading font-medium text-white">Champions</h3>
           <p className="text-[12px] mt-1 text-white/65">Celebrating this month's top performers by points earned</p>
@@ -829,7 +829,7 @@ function CourseChampionsPodium({ champions, onViewAll, onOpenProfile }: { champi
 
         <div className="text-center mt-6">
           <button onClick={onViewAll} className="text-[11px] font-medium text-accent-200 hover:text-white transition-smooth cursor-pointer">
-            View full leaderboard <i className="ri-arrow-right-line ml-1"></i>
+            View full leaderboard <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
           </button>
         </div>
       </div>
@@ -941,7 +941,7 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
       {/* Avatar with a white ring gap; badge is punched out with a panel-colored border */}
       <div className="relative mb-3">
         {isFirst && (
-          <i className="ri-vip-crown-fill absolute -top-8 left-1/2 -translate-x-1/2 text-3xl drop-shadow-lg" style={{ color: GOLD }}></i>
+          <AppIcon className="ri-vip-crown-fill absolute -top-8 left-1/2 -translate-x-1/2 text-3xl drop-shadow-lg" style={{ color: GOLD }}></AppIcon>
         )}
         <div className={`${styles.avatarSize} rounded-full border-4 border-white bg-primary-700 shrink-0 overflow-hidden`} style={styles.ringStyle}>
           {learner.avatarImg ? (
@@ -962,7 +962,7 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
 
       <p className="text-[13px] font-medium text-center truncate max-w-full px-1 text-white group-hover:underline">{learner.name}</p>
       <span className="mt-1 inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide" style={{ color: RANK_COLORS[rank === 1 ? 'first' : rank === 2 ? 'second' : 'third'] }}>
-        <i className={rank === 1 ? 'ri-trophy-fill' : 'ri-medal-fill'}></i>{medalLabel}
+        <AppIcon className={rank === 1 ? 'ri-trophy-fill' : 'ri-medal-fill'}></AppIcon>{medalLabel}
       </span>
       <p className="text-[12px] font-semibold mt-1 text-accent-200">{displayedPoints.toLocaleString()} pts</p>
       <p className="text-[9px] text-center min-h-3 mt-0.5 px-1 text-white/55">{gapLabel}</p>
@@ -973,7 +973,7 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
           className="inline-flex items-center gap-1 mt-2 px-2.5 py-1 rounded-full text-[9px] font-medium shadow-[0_1px_2px_rgba(0,0,0,0.15)]"
           style={{ background: `linear-gradient(135deg, ${GOLD} 0%, ${lighten(GOLD, 0.35)} 100%)`, color: TEXT_DARK }}
         >
-          <i className="ri-vip-crown-fill text-[10px]"></i> Grand champion
+          <AppIcon className="ri-vip-crown-fill text-[10px]"></AppIcon> Grand champion
         </span>
       )}
 
@@ -982,7 +982,7 @@ function PodiumSpot({ learner, rank, revealDelay, gapLabel, reduceMotion, onOpen
         className={`w-full ${styles.barHeight} rounded-t-xl mt-3 flex items-start justify-center pt-3`}
         style={styles.barStyle}
       >
-        <i className={`${styles.barIcon} text-3xl`} style={styles.barIconStyle}></i>
+        <AppIcon className={`${styles.barIcon} text-3xl`} style={styles.barIconStyle}></AppIcon>
       </div>
     </button>
   );
@@ -1006,7 +1006,7 @@ function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
       {/* Name + role */}
       <div className="min-w-0 flex-1">
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-medium bg-accent-50 text-accent-600 border border-accent-200/60 mb-1">
-          <i className="ri-vip-crown-fill text-[10px]"></i> Top achiever
+          <AppIcon className="ri-vip-crown-fill text-[10px]"></AppIcon> Top achiever
         </span>
         <p className="text-sm font-medium truncate" style={{ color: TEXT_DARK }}>{learner.name}</p>
         <p className="text-[11px] truncate" style={{ color: TEXT_MUTED }}>{learner.programme}</p>
@@ -1019,7 +1019,7 @@ function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
           <span className="text-[9px] font-medium ml-1" style={{ color: TEXT_MUTED }}>pts</span>
         </p>
         <p className="mt-0.5 flex items-center justify-end gap-1 text-[11px] font-medium" style={{ color: trendColor }}>
-          <i className={trendIcon}></i> +{learner.pointsThisMonth} this month
+          <AppIcon className={trendIcon}></AppIcon> +{learner.pointsThisMonth} this month
         </p>
       </div>
     </div>
@@ -1209,14 +1209,14 @@ function EngagementStatCard({ label, value, sub, trend, trendUp, icon, color }: 
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-sm p-4 card-premium hover:-translate-y-0.5 cursor-pointer">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-11 h-11 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-base`}></i>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </span>
       </div>
       <p className="text-[10px] font-semibold text-foreground-400 uppercase tracking-widest mb-1">{label}</p>
       <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
       {trend ? (
         <p className={`mt-2 flex items-center gap-1 text-[11px] font-medium ${trendUp ? 'text-emerald-600' : 'text-red-600'}`}>
-          <i className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>
+          <AppIcon className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>
           {trend}
         </p>
       ) : (

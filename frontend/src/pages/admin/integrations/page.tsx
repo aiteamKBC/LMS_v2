@@ -43,7 +43,7 @@ export default function AdminIntegrationsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-plug-line text-white text-2xl"></i>
+              <AppIcon className="ri-plug-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Integration Hub</h2>
@@ -90,7 +90,7 @@ export default function AdminIntegrationsPage() {
         {/* Filters */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search integrations..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -123,7 +123,7 @@ export default function AdminIntegrationsPage() {
               return (
                 <div key={i.id} onClick={() => setSelectedIntegration(i.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedIntegration === i.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
                   <div className="w-12 h-12 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-                    <i className={`${categoryIcons[i.category] || 'ri-plug-line'} text-primary-600 text-lg`}></i>
+                    <AppIcon className={`${categoryIcons[i.category] || 'ri-plug-line'} text-primary-600 text-lg`}></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -137,7 +137,7 @@ export default function AdminIntegrationsPage() {
                     <p>{i.syncFreq}</p>
                     <p className="text-[10px] text-foreground-400">{i.lastSync}</p>
                   </div>
-                  <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedIntegration === i.id ? 'text-primary-500' : ''}`}></i>
+                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedIntegration === i.id ? 'text-primary-500' : ''}`}></AppIcon>
                 </div>
               );
             })}
@@ -149,7 +149,7 @@ export default function AdminIntegrationsPage() {
               <div className="space-y-5">
                 <div>
                   <div className="w-14 h-14 rounded-xl bg-primary-100 flex items-center justify-center mb-3">
-                    <i className="ri-plug-line text-primary-600 text-2xl"></i>
+                    <AppIcon className="ri-plug-line text-primary-600 text-2xl"></AppIcon>
                   </div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{integration.name}</h3>
                   <p className="text-[12px] text-foreground-500 mt-1">{integration.category}</p>
@@ -169,7 +169,7 @@ export default function AdminIntegrationsPage() {
                   <div className="space-y-1">
                     {integration.endpoints.map(ep => (
                       <div key={ep} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-background-100 text-[12px] text-foreground-600">
-                        <i className="ri-link text-foreground-400 text-xs"></i>
+                        <AppIcon className="ri-link text-foreground-400 text-xs"></AppIcon>
                         {ep}
                       </div>
                     ))}
@@ -199,7 +199,7 @@ export default function AdminIntegrationsPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-plug-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-plug-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select an integration to view details</p>
               </div>

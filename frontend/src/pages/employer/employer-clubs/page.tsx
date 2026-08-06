@@ -47,7 +47,7 @@ export default function EmployerEmployerClubs() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-building-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-building-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Employer Clubs</h2>
@@ -60,7 +60,7 @@ export default function EmployerEmployerClubs() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clubs..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -76,7 +76,7 @@ export default function EmployerEmployerClubs() {
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-3">
                   <div className={`w-11 h-11 rounded-xl flex items-center justify-center ${club.joined ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-400'}`}>
-                    <i className={`${club.category === 'Industry Network' ? 'ri-global-line' : club.category === 'Sector Forum' ? 'ri-message-3-line' : club.category === 'Partnership' ? 'ri-chat-smile-2-line' : club.category === 'Programme Community' ? 'ri-stack-line' : club.category === 'Peer Support' ? 'ri-user-heart-line' : club.category === 'Regional' ? 'ri-map-pin-line' : 'ri-terminal-box-line'} text-lg`}></i>
+                    <AppIcon className={`${club.category === 'Industry Network' ? 'ri-global-line' : club.category === 'Sector Forum' ? 'ri-message-3-line' : club.category === 'Partnership' ? 'ri-chat-smile-2-line' : club.category === 'Programme Community' ? 'ri-stack-line' : club.category === 'Peer Support' ? 'ri-user-heart-line' : club.category === 'Regional' ? 'ri-map-pin-line' : 'ri-terminal-box-line'} text-lg`}></AppIcon>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-foreground-900">{club.name}</p>
@@ -85,7 +85,7 @@ export default function EmployerEmployerClubs() {
                 </div>
                 {club.joined ? (
                   <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
-                    <i className="ri-check-line text-[8px]"></i> Member
+                    <AppIcon className="ri-check-line text-[8px]"></AppIcon> Member
                   </span>
                 ) : (
                   <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">
@@ -95,23 +95,23 @@ export default function EmployerEmployerClubs() {
               </div>
               <p className="text-[12px] text-foreground-500 leading-relaxed mb-4">{club.description}</p>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-foreground-400 mb-4">
-                <span><i className="ri-group-line mr-1"></i> {club.members} employers</span>
-                <span><i className="ri-user-line mr-1"></i> {club.apprentices} apprentices</span>
-                {club.nextEvent !== '—' && <span><i className="ri-calendar-line mr-1"></i> Next: {club.nextEvent}</span>}
+                <span><AppIcon className="ri-group-line mr-1"></AppIcon> {club.members} employers</span>
+                <span><AppIcon className="ri-user-line mr-1"></AppIcon> {club.apprentices} apprentices</span>
+                {club.nextEvent !== '—' && <span><AppIcon className="ri-calendar-line mr-1"></AppIcon> Next: {club.nextEvent}</span>}
               </div>
               <div className="flex items-center gap-2">
                 {club.joined ? (
                   <>
                     <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center">
-                      <i className="ri-eye-line mr-1"></i> View Club
+                      <AppIcon className="ri-eye-line mr-1"></AppIcon> View Club
                     </button>
                     <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-mail-line mr-1"></i> Notifications
+                      <AppIcon className="ri-mail-line mr-1"></AppIcon> Notifications
                     </button>
                   </>
                 ) : club.status === 'active' ? (
                   <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center">
-                    <i className="ri-add-circle-line mr-1"></i> Join Club
+                    <AppIcon className="ri-add-circle-line mr-1"></AppIcon> Join Club
                   </button>
                 ) : (
                   <button className="flex-1 px-3 py-1.5 bg-background-100 text-foreground-400 rounded-lg text-[11px] font-medium cursor-not-allowed whitespace-nowrap text-center" disabled>
@@ -125,7 +125,7 @@ export default function EmployerEmployerClubs() {
 
         <div className="bg-background-100/50 rounded-xl border border-background-200/30 p-4">
           <div className="flex items-start gap-3">
-            <i className="ri-information-line text-foreground-400 mt-0.5"></i>
+            <AppIcon className="ri-information-line text-foreground-400 mt-0.5"></AppIcon>
             <div>
               <p className="text-[12px] font-medium text-foreground-700">Employer Club Access Rules</p>
               <p className="text-[11px] text-foreground-400">Employer clubs are professional spaces for line managers and employers. You can join approved clubs, attend employer-facing events, see club announcements, and comment where allowed. Private learner discussions, internal tutor notes, safeguarding information, and non-approved content are not visible in this space.</p>

@@ -72,7 +72,7 @@ export default function ReportAbsenceModal({ open, onClose, userName, coachName 
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={handleClose}></div>
       <div className="relative bg-background-50 rounded-2xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto shadow-2xl">
         <button onClick={handleClose} className="absolute top-4 right-4 w-8 h-8 rounded-full bg-background-100 hover:bg-background-200 flex items-center justify-center text-foreground-400 hover:text-foreground-600 transition-smooth cursor-pointer z-10">
-          <i className="ri-close-line"></i>
+          <AppIcon className="ri-close-line"></AppIcon>
         </button>
 
         {step === 'form' ? (
@@ -80,7 +80,7 @@ export default function ReportAbsenceModal({ open, onClose, userName, coachName 
             <div className="mb-6">
               <div className="flex items-center gap-3 mb-2">
                 <span className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center">
-                  <i className="ri-calendar-close-line text-amber-600 text-lg"></i>
+                  <AppIcon className="ri-calendar-close-line text-amber-600 text-lg"></AppIcon>
                 </span>
                 <h3 className="text-lg font-heading font-semibold text-foreground-900">Report Absence</h3>
               </div>
@@ -149,9 +149,9 @@ export default function ReportAbsenceModal({ open, onClose, userName, coachName 
               <button type="submit" className="flex-1 px-5 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={!formData.sessionTitle || !formData.sessionDate || !formData.category || !formData.reason || isSubmitting}>
                 {isSubmitting ? (
-                  <><i className="ri-loader-4-line animate-spin mr-1.5"></i> Sending...</>
+                  <><AppIcon className="ri-loader-4-line animate-spin mr-1.5"></AppIcon> Sending...</>
                 ) : (
-                  <><i className="ri-send-plane-line mr-1.5"></i> Submit Absence Report</>
+                  <><AppIcon className="ri-send-plane-line mr-1.5"></AppIcon> Submit Absence Report</>
                 )}
               </button>
               <button type="button" onClick={handleClose} className="px-4 py-2.5 bg-background-50 border border-background-200/50 rounded-lg text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
@@ -160,42 +160,42 @@ export default function ReportAbsenceModal({ open, onClose, userName, coachName 
         ) : (
           <div className="p-6 text-center">
             <div className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-              <i className="ri-check-line text-emerald-600 text-2xl"></i>
+              <AppIcon className="ri-check-line text-emerald-600 text-2xl"></AppIcon>
             </div>
             <h3 className="text-lg font-heading font-semibold text-emerald-900 mb-2">Absence Submitted</h3>
             <p className="text-sm text-emerald-700 mb-5">Your absence has been recorded and the relevant people have been notified.</p>
             <div className="space-y-2.5 text-left bg-emerald-50/60 rounded-lg p-4 mb-5">
               <div className="flex items-center gap-2 text-sm">
-                <i className="ri-checkbox-circle-line text-emerald-500"></i>
+                <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon>
                 <span className="text-foreground-700">Coach {coachName} has been notified</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
-                <i className="ri-checkbox-circle-line text-emerald-500"></i>
+                <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon>
                 <span className="text-foreground-700">Tutor notified automatically</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
-                <i className="ri-mail-check-line text-emerald-500"></i>
+                <AppIcon className="ri-mail-check-line text-emerald-500"></AppIcon>
                 <span className="text-foreground-700">Email notification sent to coach</span>
               </div>
               {formData.requestCatchUp && (
                 <div className="flex items-center gap-2 text-sm">
-                  <i className="ri-checkbox-circle-line text-emerald-500"></i>
+                  <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon>
                   <span className="text-foreground-700">Catch-up support requested — you will need to complete this</span>
                 </div>
               )}
               <div className="flex items-center gap-2 text-sm">
-                <i className="ri-checkbox-circle-line text-emerald-500"></i>
+                <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon>
                 <span className="text-foreground-700">Session recording will be available when published</span>
               </div>
               {formData.informedEmployer && (
                 <div className="flex items-center gap-2 text-sm">
-                  <i className="ri-checkbox-circle-line text-emerald-500"></i>
+                  <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon>
                   <span className="text-foreground-700">Employer informed — recorded in your attendance log</span>
                 </div>
               )}
               {submittedData && (
                 <div className="flex items-center gap-2 text-xs text-foreground-400 mt-2 pt-2 border-t border-emerald-200/50">
-                  <i className="ri-time-line"></i>
+                  <AppIcon className="ri-time-line"></AppIcon>
                   <span>Submitted {submittedData.submittedAt}</span>
                 </div>
               )}

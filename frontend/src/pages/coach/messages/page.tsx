@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
-import { bootstrapChatSession, chatSocketUrl, type ChatSocketMessage } from '@/api/chat';
+import { chatSocketUrl, type ChatSocketMessage } from '@/api/chat';
 import {
   fetchCoachMessageThread,
   fetchCoachMessageThreads,
@@ -140,7 +139,6 @@ function mergeCoachThreads(current: CoachMessageThread[], incoming: CoachMessage
 }
 
 export default function CoachMessagesPage() {
-  const { auth } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialLearnerIdRef = useRef(searchParams.get('learner'));
@@ -302,15 +300,6 @@ export default function CoachMessagesPage() {
       if (!conversationId || !Number.isFinite(conversationId) || cancelled) return;
 
       try {
-        if (auth.user?.email) {
-          try {
-            await bootstrapChatSession(auth.user.email);
-          } catch {
-            // A production Django session may already be active.
-          }
-        }
-        if (cancelled) return;
-
         socket = new WebSocket(chatSocketUrl(conversationId));
         socket.onmessage = (event) => {
           if (cancelled) return;
@@ -344,7 +333,7 @@ export default function CoachMessagesPage() {
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       socket?.close();
     };
-  }, [activeThread?.conversationId, auth.user?.email, ownerEmail, selectedLearnerId]);
+  }, [activeThread?.conversationId, ownerEmail, selectedLearnerId]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
 
@@ -463,7 +452,7 @@ export default function CoachMessagesPage() {
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
               <div className="relative w-full sm:w-[320px] shrink-0">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                 <input
                   type="text"
                   value={search}
@@ -518,7 +507,7 @@ export default function CoachMessagesPage() {
                 ) : error ? (
                   <div className="p-6 text-center">
                     <div className="w-14 h-14 mx-auto rounded-2xl bg-red-50 text-red-500 flex items-center justify-center mb-3">
-                      <i className="ri-error-warning-line text-xl"></i>
+                      <AppIcon className="ri-error-warning-line text-xl"></AppIcon>
                     </div>
                     <p className="text-sm font-semibold text-foreground-800">Unable to load learner messages</p>
                     <p className="text-xs text-red-500 mt-2">{error}</p>
@@ -526,7 +515,7 @@ export default function CoachMessagesPage() {
                 ) : filteredThreads.length === 0 ? (
                   <div className="p-6 text-center">
                     <div className="w-14 h-14 mx-auto rounded-2xl bg-background-100 text-foreground-300 flex items-center justify-center mb-3">
-                      <i className="ri-message-3-line text-xl"></i>
+                      <AppIcon className="ri-message-3-line text-xl"></AppIcon>
                     </div>
                     <p className="text-sm font-semibold text-foreground-700">No learner conversations match</p>
                     <p className="text-xs text-foreground-400 mt-2">Try clearing the search or switching filters.</p>
@@ -605,7 +594,7 @@ export default function CoachMessagesPage() {
                         aria-label="Back to messages"
                         className="w-9 h-9 shrink-0 inline-flex items-center justify-center rounded-full border border-foreground-200 text-foreground-600 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 transition-smooth cursor-pointer"
                       >
-                        <i className="ri-arrow-left-line text-base"></i>
+                        <AppIcon className="ri-arrow-left-line text-base"></AppIcon>
                       </button>
                       <button
                         onClick={openLearnerProfile}
@@ -623,7 +612,7 @@ export default function CoachMessagesPage() {
                         onClick={openLearnerProfile}
                         className="ml-auto inline-flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-xl bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                       >
-                        <i className="ri-user-3-line"></i><span className="hidden sm:inline">Open Profile</span>
+                        <AppIcon className="ri-user-3-line"></AppIcon><span className="hidden sm:inline">Open Profile</span>
                       </button>
                     </div>
                   </div>
@@ -668,7 +657,7 @@ export default function CoachMessagesPage() {
                           onClick={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(activeThread.learnerId)}`)}
                           className="px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                         >
-                          <i className="ri-user-3-line mr-1.5"></i> Open Profile
+                          <AppIcon className="ri-user-3-line mr-1.5"></AppIcon> Open Profile
                         </button>
                       </div>
                     </div>
@@ -703,7 +692,7 @@ export default function CoachMessagesPage() {
                     ) : detailError ? (
                       <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center">
                         <div className="w-14 h-14 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center mb-3">
-                          <i className="ri-error-warning-line text-xl"></i>
+                          <AppIcon className="ri-error-warning-line text-xl"></AppIcon>
                         </div>
                         <p className="text-sm font-semibold text-foreground-800">Unable to load the conversation</p>
                         <p className="text-xs text-red-500 mt-2">{detailError}</p>
@@ -711,7 +700,7 @@ export default function CoachMessagesPage() {
                     ) : messages.length === 0 ? (
                       <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center">
                         <div className="w-16 h-16 rounded-2xl bg-primary-50 text-primary-500 flex items-center justify-center mb-4">
-                          <i className="ri-message-3-line text-2xl"></i>
+                          <AppIcon className="ri-message-3-line text-2xl"></AppIcon>
                         </div>
                         <p className="text-sm font-semibold text-foreground-800">Start the first conversation</p>
                         <p className="text-xs text-foreground-400 mt-2 max-w-sm">
@@ -755,7 +744,7 @@ export default function CoachMessagesPage() {
                                       {message.editedAt && <span>Edited</span>}
                                       {isCoachMessage && (
                                         <span className={`inline-flex items-center ${messageStatusTone(message.status)}`}>
-                                          <i className={`${messageStatusIcon(message.status)} text-xs`}></i>
+                                          <AppIcon className={`${messageStatusIcon(message.status)} text-xs`}></AppIcon>
                                         </span>
                                       )}
                                     </div>
@@ -795,7 +784,7 @@ export default function CoachMessagesPage() {
                               : 'bg-background-200 text-foreground-300 cursor-not-allowed'
                           }`}
                         >
-                          <i className="ri-send-plane-fill mr-1.5"></i>
+                          <AppIcon className="ri-send-plane-fill mr-1.5"></AppIcon>
                           {sending ? 'Sending...' : 'Send'}
                         </button>
                       </div>
@@ -805,7 +794,7 @@ export default function CoachMessagesPage() {
               ) : (
                 <div className="flex-1 min-h-[500px] flex flex-col items-center justify-center text-center px-6">
                   <div className="w-20 h-20 rounded-3xl bg-background-100 text-foreground-300 flex items-center justify-center mb-4">
-                    <i className="ri-mail-open-line text-3xl"></i>
+                    <AppIcon className="ri-mail-open-line text-3xl"></AppIcon>
                   </div>
                   <h2 className="text-lg font-heading font-semibold text-foreground-800">Select a learner conversation</h2>
                   <p className="text-sm text-foreground-400 mt-2 max-w-md">
@@ -840,7 +829,7 @@ function SummaryCard({
     <div className="rounded-xl border border-foreground-200/60 bg-background-100 px-2.5 py-2 min-w-[104px]">
       <div className="flex items-center gap-2">
         <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${toneMap[tone]}`}>
-          <i className={`${icon} text-lg`}></i>
+          <AppIcon className={`${icon} text-lg`}></AppIcon>
         </div>
         <p className="text-[10px] font-semibold leading-tight text-foreground-500">{label}</p>
       </div>

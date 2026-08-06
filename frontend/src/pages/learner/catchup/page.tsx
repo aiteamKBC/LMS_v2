@@ -49,7 +49,7 @@ export default function CatchUpPage() {
               {/* Left: Icon + Title + Donut */}
               <div className="flex items-center gap-4 flex-1 min-w-0">
                 <span className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
-                  <i className="ri-timer-flash-line text-white text-xl"></i>
+                  <AppIcon className="ri-timer-flash-line text-white text-xl"></AppIcon>
                 </span>
                 <div className="flex-1 min-w-0">
                   <h2 className="text-lg font-heading font-bold text-white mb-1">Catch-Up Learning Hub</h2>
@@ -94,7 +94,7 @@ export default function CatchUpPage() {
                     onClick={() => setPanelView('recording')}
                     className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-accent-500 text-white text-sm font-semibold hover:bg-accent-600 hover:scale-105 active:scale-95 transition-all duration-200 whitespace-nowrap cursor-pointer"
                   >
-                    <i className="ri-play-circle-line"></i> Start Catch-Up
+                    <AppIcon className="ri-play-circle-line"></AppIcon> Start Catch-Up
                   </button>
                 )}
               </div>
@@ -114,12 +114,12 @@ export default function CatchUpPage() {
                       step.status === 'in-progress' ? 'bg-amber-400 text-white' :
                       'bg-white/10 text-white/40'
                     }`}>
-                      {step.status === 'completed' ? <i className="ri-check-line"></i> : step.step}
+                      {step.status === 'completed' ? <AppIcon className="ri-check-line"></AppIcon> : step.step}
                     </span>
                     <span className="whitespace-nowrap">{step.label}</span>
                   </div>
                   {i < CATCH_UP_JOURNEY_STEPS.length - 1 && (
-                    <i className="ri-arrow-right-s-line text-white/20 text-[9px]"></i>
+                    <AppIcon className="ri-arrow-right-s-line text-white/20 text-[9px]"></AppIcon>
                   )}
                 </div>
               ))}
@@ -132,7 +132,7 @@ export default function CatchUpPage() {
           <section className="relative rounded-xl overflow-hidden bg-gradient-to-r from-amber-50 via-amber-50 to-amber-100/40 border border-amber-200/50">
             <div className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4">
               <span className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shrink-0">
-                <i className="ri-alert-line text-white text-lg"></i>
+                <AppIcon className="ri-alert-line text-white text-lg"></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -148,7 +148,7 @@ export default function CatchUpPage() {
                 onClick={() => setPanelView('recording')}
                 className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-primary-500 text-background-50 text-sm font-semibold hover:bg-primary-600 hover:scale-105 active:scale-95 transition-all duration-200 whitespace-nowrap cursor-pointer"
               >
-                <i className="ri-play-circle-line"></i> Complete Catch-Up
+                <AppIcon className="ri-play-circle-line"></AppIcon> Complete Catch-Up
               </button>
             </div>
           </section>
@@ -160,11 +160,11 @@ export default function CatchUpPage() {
         {/* ── Compact footer ── */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-3 border-t border-background-200/40 text-[11px] text-foreground-400">
           <div className="flex items-center gap-1.5">
-            <i className="ri-information-line text-secondary-400"></i>
+            <AppIcon className="ri-information-line text-secondary-400"></AppIcon>
             <span>Catch-up must be completed within 7 days. Evidence needs coach approval to restore attendance.</span>
           </div>
           <a href="/learner/attendance" className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
-            <i className="ri-arrow-left-line"></i> Back to Attendance
+            <AppIcon className="ri-arrow-left-line"></AppIcon> Back to Attendance
           </a>
         </div>
 

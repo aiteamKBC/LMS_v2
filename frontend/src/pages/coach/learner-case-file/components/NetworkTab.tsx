@@ -77,7 +77,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
 
       <section className="flex items-center gap-3">
         <div className="relative flex-1">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input
             type="text"
             placeholder="Search by learner, employer, or group..."
@@ -93,7 +93,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-team-line text-primary-500"></i> Cohort Connections
+              <AppIcon className="ri-team-line text-primary-500"></AppIcon> Cohort Connections
             </h2>
             <span className="text-[11px] text-foreground-400">Live caseload cohort view</span>
           </div>
@@ -139,7 +139,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-bar-chart-grouped-line text-accent-500"></i> Cohort Leaderboard
+              <AppIcon className="ri-bar-chart-grouped-line text-accent-500"></AppIcon> Cohort Leaderboard
             </h2>
             <span className="text-[11px] text-foreground-400">Ranked by overall progress</span>
           </div>
@@ -158,7 +158,7 @@ export default function NetworkTab({ data }: CaseFileTabProps) {
                 {leaderboard.map((row, index) => (
                   <tr key={row.id} className={`border-b border-background-100 transition-all ${row.isSelected ? 'bg-primary-50/30' : 'hover:bg-background-100/30'}`}>
                     <td className="py-2.5 text-[12px] font-bold text-foreground-400">
-                      {index === 0 ? <i className="ri-medal-fill text-amber-500"></i> : <span className="text-[11px]">{index + 1}</span>}
+                      {index === 0 ? <AppIcon className="ri-medal-fill text-amber-500"></AppIcon> : <span className="text-[11px]">{index + 1}</span>}
                     </td>
                     <td className="py-2.5">
                       <div className="flex items-center gap-2">
@@ -237,7 +237,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>

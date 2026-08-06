@@ -112,7 +112,7 @@ export default function MisLearnerAllocationPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -139,7 +139,7 @@ export default function MisLearnerAllocationPage() {
               </div>
             </div>
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search learners..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
             </div>
             <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
@@ -171,7 +171,7 @@ export default function MisLearnerAllocationPage() {
             </div>
             {filteredLearners.length === 0 && (
               <div className="text-center py-12">
-                <i className="ri-user-add-line text-foreground-300 text-2xl mb-2"></i>
+                <AppIcon className="ri-user-add-line text-foreground-300 text-2xl mb-2"></AppIcon>
                 <p className="text-[12px] text-foreground-400">All learners have been assigned</p>
               </div>
             )}
@@ -236,13 +236,13 @@ export default function MisLearnerAllocationPage() {
                 </p>
                 {(matchWarning || regionMismatch) && (
                   <div className="mt-1 space-y-0.5">
-                    {matchWarning && <p className="text-[11px] text-amber-600"><i className="ri-alert-line mr-1"></i>{matchWarning}</p>}
-                    {regionMismatch && <p className="text-[11px] text-amber-600"><i className="ri-alert-line mr-1"></i>{regionMismatch}</p>}
+                    {matchWarning && <p className="text-[11px] text-amber-600"><AppIcon className="ri-alert-line mr-1"></AppIcon>{matchWarning}</p>}
+                    {regionMismatch && <p className="text-[11px] text-amber-600"><AppIcon className="ri-alert-line mr-1"></AppIcon>{regionMismatch}</p>}
                   </div>
                 )}
               </div>
               <button onClick={() => setShowConfirm(true)} className="px-5 py-2 bg-accent-500 text-white rounded-lg text-[12px] font-semibold hover:bg-accent-600 transition-colors cursor-pointer whitespace-nowrap">
-                <i className="ri-check-line mr-1"></i> Confirm Allocation
+                <AppIcon className="ri-check-line mr-1"></AppIcon> Confirm Allocation
               </button>
             </div>
           </div>
@@ -280,8 +280,8 @@ export default function MisLearnerAllocationPage() {
           <div className="bg-background-50 rounded-2xl border border-background-200 w-full max-w-md p-6">
             <h2 className="text-base font-heading font-semibold text-foreground-900 mb-2">Confirm Allocation</h2>
             <p className="text-[13px] text-foreground-600 mb-4">Are you sure you want to assign <strong className="text-foreground-900">{learner?.name}</strong> to <strong className="text-foreground-900">{cohort?.name}</strong>?</p>
-            {matchWarning && <p className="text-[12px] text-amber-600 mb-3"><i className="ri-alert-line mr-1"></i>{matchWarning}</p>}
-            {regionMismatch && <p className="text-[12px] text-amber-600 mb-3"><i className="ri-alert-line mr-1"></i>{regionMismatch}</p>}
+            {matchWarning && <p className="text-[12px] text-amber-600 mb-3"><AppIcon className="ri-alert-line mr-1"></AppIcon>{matchWarning}</p>}
+            {regionMismatch && <p className="text-[12px] text-amber-600 mb-3"><AppIcon className="ri-alert-line mr-1"></AppIcon>{regionMismatch}</p>}
             <div className="flex items-center justify-end gap-3">
               <button onClick={() => setShowConfirm(false)} className="px-4 py-2 text-[12px] font-medium text-foreground-600 bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleAssign} className="px-4 py-2 text-[12px] font-semibold text-white bg-accent-500 rounded-lg hover:bg-accent-600 cursor-pointer whitespace-nowrap">Confirm Assignment</button>
@@ -293,7 +293,7 @@ export default function MisLearnerAllocationPage() {
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 bg-emerald-500 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2">
-          <i className="ri-checkbox-circle-line"></i>
+          <AppIcon className="ri-checkbox-circle-line"></AppIcon>
           <span className="text-[13px] font-medium">{toast}</span>
         </div>
       )}

@@ -88,7 +88,7 @@ export default function MisModuleAllocationPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -99,7 +99,7 @@ export default function MisModuleAllocationPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search module, programme..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -138,7 +138,7 @@ export default function MisModuleAllocationPage() {
                     <span className="text-foreground-300">|</span>
                     <span>{mod.ksbCount} KSBs</span>
                     <button onClick={() => setExpandedId(isExpanded ? null : mod.id)} className="w-7 h-7 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-                      <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></i>
+                      <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -165,10 +165,10 @@ export default function MisModuleAllocationPage() {
                       <p className="text-[10px] uppercase tracking-wide text-foreground-400 mb-2 font-medium">Actions</p>
                       <div className="flex flex-col gap-2">
                         <Link to="/curriculum/module-builder" className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-edit-line mr-1"></i> Edit Module
+                          <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit Module
                         </Link>
                         <Link to="/mis/timetables" className="px-3 py-1.5 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap text-center">
-                          <i className="ri-calendar-line mr-1"></i> View Timetable
+                          <AppIcon className="ri-calendar-line mr-1"></AppIcon> View Timetable
                         </Link>
                       </div>
                     </div>

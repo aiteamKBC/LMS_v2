@@ -43,7 +43,7 @@ export default function QAAuditPage() {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     cr.outcome.includes('Satisfactory') ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
                   }`}>
-                    <i className="ri-search-eye-line text-lg"></i>
+                    <AppIcon className="ri-search-eye-line text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">
@@ -74,7 +74,7 @@ export default function QAAuditPage() {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     audit.rating === 'Outstanding' ? 'bg-emerald-100 text-emerald-600' : 'bg-secondary-100 text-secondary-600'
                   }`}>
-                    <i className="ri-history-line text-lg"></i>
+                    <AppIcon className="ri-history-line text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">
@@ -105,7 +105,7 @@ export default function QAAuditPage() {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     pol.status === 'Current' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
                   }`}>
-                    <i className="ri-file-text-line text-lg"></i>
+                    <AppIcon className="ri-file-text-line text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">

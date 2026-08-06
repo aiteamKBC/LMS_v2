@@ -706,11 +706,11 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
           <div>
             {onClose ? (
               <button type="button" onClick={onClose} className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
-                <i className="ri-arrow-left-line mr-1"></i> Back to week
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to week
               </button>
             ) : (
               <Link to="/curriculum/quiz-xml" className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
-                <i className="ri-arrow-left-line mr-1"></i> Back to Quiz Workspace
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to Quiz Workspace
               </Link>
             )}
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">{data.quiz.title}</h2>
@@ -747,7 +747,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                 onClick={() => setActiveTab(tab.id)}
                 className={`h-10 rounded-lg text-sm font-semibold transition-smooth ${activeTab === tab.id ? 'bg-white text-[#43207d] shadow-sm' : 'text-[#526173] hover:bg-white/65'}`}
               >
-                {'icon' in tab && <i className={`${tab.icon} mr-1.5 align-[-1px]`}></i>}
+                {'icon' in tab && <AppIcon className={`${tab.icon} mr-1.5 align-[-1px]`}></AppIcon>}
                 {tab.label}
                 {'count' in tab && <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-[#dce3ec] text-[#526173]">{tab.count}</span>}
               </button>
@@ -763,11 +763,11 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                   disabled={savingQuestions}
                   className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#5b2dbb] text-sm font-semibold text-white transition-smooth hover:bg-[#4c1d95] disabled:cursor-wait disabled:opacity-50"
                 >
-                  <i className="ri-add-line"></i>
+                  <AppIcon className="ri-add-line"></AppIcon>
                   Add question
                 </button>
                 <div className="mb-3 rounded-xl bg-[#f2f0ff] border border-[#ded8ff] px-3 py-2 text-[11px] text-[#5b2dbb] flex items-center gap-2">
-                  <i className="ri-draggable"></i>
+                  <AppIcon className="ri-draggable"></AppIcon>
                   Drag questions to reorder, then save changes.
                 </div>
                 <div className="space-y-2">
@@ -793,7 +793,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                     >
                       <div className="flex items-start gap-2 px-3 py-2">
                         <span className="w-6 h-8 rounded-md bg-[#f1f5f9] text-[#94a3b8] flex items-center justify-center shrink-0" title="Drag to reorder">
-                          <i className="ri-draggable text-sm"></i>
+                          <AppIcon className="ri-draggable text-sm"></AppIcon>
                         </span>
                         <button onClick={() => setActiveQuestionId(question.id)} className="flex-1 min-w-0 text-left">
                           <div className="flex items-center gap-2 mb-1">
@@ -802,7 +802,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                           </div>
                           <p className="text-xs text-foreground-800 line-clamp-2">{question.text}</p>
                         </button>
-                        <button onClick={() => void archiveQuestion(question.id)} disabled={savingQuestions} title="Archive question" className="w-7 h-7 rounded-md bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5] shrink-0 disabled:opacity-50 disabled:cursor-wait"><i className="ri-archive-line text-xs"></i></button>
+                        <button onClick={() => void archiveQuestion(question.id)} disabled={savingQuestions} title="Archive question" className="w-7 h-7 rounded-md bg-[#fff7ed] text-[#c2410c] hover:bg-[#ffedd5] shrink-0 disabled:opacity-50 disabled:cursor-wait"><AppIcon className="ri-archive-line text-xs"></AppIcon></button>
                       </div>
                     </div>
                   ))}
@@ -816,7 +816,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                         <label className="block text-xs font-semibold text-foreground-600">Question text</label>
                         <button onClick={() => void archiveQuestion(activeQuestion.id)} disabled={savingQuestions} className="h-8 px-2 rounded-lg bg-[#fff7ed] text-xs font-semibold text-[#c2410c] hover:bg-[#ffedd5] self-start sm:self-auto disabled:opacity-50 disabled:cursor-wait">
-                          <i className="ri-archive-line mr-1"></i>Archive
+                          <AppIcon className="ri-archive-line mr-1"></AppIcon>Archive
                         </button>
                       </div>
                       <textarea value={activeQuestion.text} onChange={event => updateQuestion(activeQuestion.id, { text: event.target.value })} className="w-full min-h-36 rounded-xl border border-[#d8dde6] bg-white p-4 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
@@ -845,7 +845,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                           <p className="text-xs text-[#647083] mt-1">{activeAnswerCopy.hint}</p>
                         </div>
                         <button onClick={() => addAnswer(activeQuestion.id)} className="h-9 px-3 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95]">
-                          <i className="ri-add-line mr-1"></i>{activeAnswerCopy.addLabel}
+                          <AppIcon className="ri-add-line mr-1"></AppIcon>{activeAnswerCopy.addLabel}
                         </button>
                       </div>
                       <div className="space-y-3">
@@ -894,7 +894,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                               <div className={`flex gap-3 ${isPair ? 'items-start' : 'items-center'}`}>
                                 {isOrdering && (
                                   <span className="w-8 h-8 rounded-lg bg-[#f4f1ff] text-[#5b2dbb] border border-[#ddd6fe] flex items-center justify-center shrink-0">
-                                    <i className="ri-draggable text-sm"></i>
+                                    <AppIcon className="ri-draggable text-sm"></AppIcon>
                                   </span>
                                 )}
                                 <span className={`${isOrdering ? 'w-8 h-8 rounded-lg bg-[#5b2dbb] text-white border-[#5b2dbb]' : 'w-7 h-7 rounded-full bg-white text-[#647083] border-[#d8dde6]'} border flex items-center justify-center text-xs font-bold shrink-0`}>
@@ -910,7 +910,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                                       className="min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]"
                                     />
                                     <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]">
-                                      <i className="ri-arrow-right-line"></i>
+                                      <AppIcon className="ri-arrow-right-line"></AppIcon>
                                     </span>
                                     <input
                                       value={pair?.right ?? ''}
@@ -930,11 +930,11 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
 
                                 {isOrdering ? (
                                   <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-[#f2f0ff] px-2.5 py-1.5 text-xs font-semibold text-[#5b2dbb] shrink-0">
-                                    <i className="ri-sort-asc"></i>Order {answerIndex + 1}
+                                    <AppIcon className="ri-sort-asc"></AppIcon>Order {answerIndex + 1}
                                   </span>
                                 ) : isAlwaysCorrectType(activeQuestion.questionType) ? (
                                   <span className="hidden sm:inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 shrink-0">
-                                    <i className="ri-check-line"></i>Accepted
+                                    <AppIcon className="ri-check-line"></AppIcon>Accepted
                                   </span>
                                 ) : (
                                   <label className="inline-flex items-center gap-2 text-sm text-foreground-700 shrink-0">
@@ -964,7 +964,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                       disabled={savingQuestions}
                       className="mt-4 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[#5b2dbb] px-4 text-sm font-semibold text-white transition-smooth hover:bg-[#4c1d95] disabled:cursor-wait disabled:opacity-50"
                     >
-                      <i className="ri-add-line"></i>
+                      <AppIcon className="ri-add-line"></AppIcon>
                       Add question
                     </button>
                   </div>
@@ -985,7 +985,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="w-8 h-8 rounded-lg bg-[#f2edff] text-[#5b21b6] flex items-center justify-center">
-                        <i className="ri-links-line"></i>
+                        <AppIcon className="ri-links-line"></AppIcon>
                       </span>
                       <h3 className="text-sm font-heading font-bold text-[#0f172a]">Linked courses</h3>
                     </div>
@@ -1028,7 +1028,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                         >
                           <div className="flex items-start gap-3">
                             <span className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 ${selected ? 'bg-[#5b2dbb] border-[#5b2dbb] text-white' : 'bg-white border-[#cbd5e1] text-transparent'}`}>
-                              <i className="ri-check-line text-sm"></i>
+                              <AppIcon className="ri-check-line text-sm"></AppIcon>
                             </span>
                             <span className="min-w-0">
                               <span className="block text-sm font-semibold text-[#0f172a] truncate">{course.module}</span>
@@ -1098,7 +1098,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                   <div className="h-11 bg-[#f8fafc] border-b border-[#e2e8f0] flex items-center gap-3 px-3 text-xs text-[#526173]">
                     <span>View</span><span>Format</span><span>Table</span><span>Tools</span>
                     <span className="ml-4 font-semibold">B</span><span className="italic font-semibold">I</span><span className="underline font-semibold">U</span>
-                    <i className="ri-link"></i><i className="ri-image-line"></i><i className="ri-video-line"></i>
+                    <AppIcon className="ri-link"></AppIcon><AppIcon className="ri-image-line"></AppIcon><AppIcon className="ri-video-line"></AppIcon>
                   </div>
                   <textarea value={settings.lessonContent} onChange={event => setSettings({ ...settings, lessonContent: event.target.value })} className="w-full min-h-72 bg-white p-4 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-[#ede9fe]" />
                 </div>
@@ -1116,7 +1116,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
             <div className="w-full max-w-4xl">
               <div className="rounded-xl border border-[#fed7aa] bg-[#fffaf2] p-4 mb-4 grid grid-cols-1 sm:grid-cols-[auto_1fr_auto] sm:items-center gap-3">
                 <span className="w-9 h-9 rounded-lg bg-white text-[#c2410c] border border-[#fed7aa] flex items-center justify-center shrink-0">
-                  <i className="ri-archive-line"></i>
+                  <AppIcon className="ri-archive-line"></AppIcon>
                 </span>
                 <div className="min-w-0">
                   <h3 className="text-sm font-heading font-bold text-foreground-900">Archived questions</h3>
@@ -1128,7 +1128,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
               {archivedQuestions.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[#d8dde6] bg-[#fbfcfe] px-4 py-8 text-center">
                   <span className="w-10 h-10 rounded-xl bg-white border border-[#e2e8f0] text-[#94a3b8] flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-inbox-archive-line text-lg"></i>
+                    <AppIcon className="ri-inbox-archive-line text-lg"></AppIcon>
                   </span>
                   <p className="text-sm font-semibold text-foreground-700">No archived questions</p>
                   <p className="text-xs text-foreground-400 mt-1">Archived questions will appear here after you archive them from the Questions tab.</p>
@@ -1150,10 +1150,10 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                         </div>
                         <div className="flex flex-col sm:flex-row md:justify-end items-stretch sm:items-center gap-2 md:pl-3">
                           <button onClick={() => restoreQuestion(question.id)} disabled={savingQuestions} className="h-9 px-3 rounded-lg bg-emerald-50 text-xs font-bold text-emerald-700 hover:bg-emerald-100 whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
-                            <i className="ri-arrow-go-back-line mr-1"></i>Restore
+                            <AppIcon className="ri-arrow-go-back-line mr-1"></AppIcon>Restore
                           </button>
                           <button onClick={() => void deleteQuestionForever(question.id)} disabled={savingQuestions} className="h-9 px-3 rounded-lg bg-red-50 text-xs font-bold text-red-700 hover:bg-red-100 whitespace-nowrap disabled:opacity-50 disabled:cursor-wait">
-                            <i className="ri-delete-bin-line mr-1"></i>Delete
+                            <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete
                           </button>
                         </div>
                       </div>
@@ -1175,7 +1175,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
               <div className="rounded-2xl border border-[#dfe4ec] bg-[#f8fafc] p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-start gap-3">
                   <span className="w-10 h-10 rounded-xl bg-white text-[#5b2dbb] border border-[#e4def8] flex items-center justify-center shrink-0">
-                    <i className="ri-eye-line text-lg"></i>
+                    <AppIcon className="ri-eye-line text-lg"></AppIcon>
                   </span>
                   <div>
                     <p className="text-sm font-heading font-bold text-foreground-900">Learner preview - {settings.quizStyle === 'pagination' ? 'Pagination' : settings.quizStyle === 'global' ? 'Global' : 'Default'}</p>
@@ -1214,14 +1214,14 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                           disabled={qaPageIndex === 0}
                           className="h-10 px-4 rounded-lg border border-[#d8dde6] bg-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#f8fafc]"
                         >
-                          <i className="ri-arrow-left-line mr-1"></i>Previous
+                          <AppIcon className="ri-arrow-left-line mr-1"></AppIcon>Previous
                         </button>
                         <button
                           onClick={() => setQaPageIndex(index => Math.min(index + 1, activeQuestions.length - 1))}
                           disabled={qaPageIndex === activeQuestions.length - 1}
                           className="h-10 px-4 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-[#4c1d95]"
                         >
-                          Next<i className="ri-arrow-right-line ml-1"></i>
+                          Next<AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
                         </button>
                       </div>
                     </>
@@ -1269,7 +1269,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
               <div className="flex items-center justify-between gap-4 mb-5">
                 <h3 className="text-xl font-heading font-bold text-foreground-900">Grades Table</h3>
                 <button onClick={() => setShowGradesTable(false)} className="w-8 h-8 rounded-full bg-foreground-100 text-foreground-400 hover:bg-foreground-200 hover:text-foreground-700 transition-smooth">
-                  <i className="ri-close-line text-lg"></i>
+                  <AppIcon className="ri-close-line text-lg"></AppIcon>
                 </button>
               </div>
               <div className="overflow-hidden">

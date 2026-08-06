@@ -59,7 +59,7 @@ export default function RbacManagementPage() {
               ))}
             </div>
             <div className="relative">
-              <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-300 text-xs"></i>
+              <AppIcon className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-300 text-xs"></AppIcon>
               <input
                 type="text"
                 value={searchQuery}
@@ -94,12 +94,12 @@ export default function RbacManagementPage() {
                   : role.category === 'management' ? 'bg-secondary-100 text-secondary-600'
                   : 'bg-red-100 text-red-600'
               }`}>
-                <i className={`${
+                <AppIcon className={`${
                   role.slug === 'super-admin' ? 'ri-shield-star-line'
                     : role.slug === 'tenant-admin' ? 'ri-shield-user-line'
                     : role.slug === 'auditor' ? 'ri-search-eye-line'
                     : 'ri-user-line'
-                } text-xs`}></i>
+                } text-xs`}></AppIcon>
               </span>
               <div className="min-w-0 flex-1">
                 <p className={`text-sm truncate ${selectedRole.id === role.id ? 'text-primary-700 font-semibold' : 'text-foreground-800 font-medium'}`}>
@@ -182,7 +182,7 @@ function RoleDetailView({ role }: { role: RoleDef }) {
             : role.category === 'management' ? 'bg-secondary-100 text-secondary-600'
             : 'bg-red-100 text-red-600'
         }`}>
-          <i className="ri-shield-user-line text-lg"></i>
+          <AppIcon className="ri-shield-user-line text-lg"></AppIcon>
         </span>
         <div>
           <h3 className="text-xl font-heading font-semibold text-foreground-950">{role.name}</h3>

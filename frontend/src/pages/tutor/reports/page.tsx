@@ -49,7 +49,7 @@ export default function TutorReportsPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-bar-chart-box-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-bar-chart-box-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Tutor Reports</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{REPORTS.length} report templates available · {generatedCount} recently generated · Export to PDF or Excel</p>
@@ -72,7 +72,7 @@ export default function TutorReportsPage() {
           {filtered.map(r => (
             <div key={r.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 card-premium flex flex-col">
               <div className="flex items-start justify-between mb-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center"><i className={`${r.icon} text-lg`}></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className={`${r.icon} text-lg`}></AppIcon></span>
                 {r.lastGenerated != null ? (
                   <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Generated</span>
                 ) : (
@@ -95,13 +95,13 @@ export default function TutorReportsPage() {
                   className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex-1 disabled:opacity-50"
                 >
                   {generating === r.id ? (
-                    <><i className="ri-loader-4-line animate-spin mr-1"></i> Generating...</>
+                    <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon> Generating...</>
                   ) : (
-                    <><i className="ri-download-line mr-1"></i> {r.lastGenerated ? 'Regenerate' : 'Generate'}</>
+                    <><AppIcon className="ri-download-line mr-1"></AppIcon> {r.lastGenerated ? 'Regenerate' : 'Generate'}</>
                   )}
                 </button>
                 {r.lastGenerated != null && (
-                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-eye-line mr-1"></i> View</button>
+                  <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-eye-line mr-1"></AppIcon> View</button>
                 )}
               </div>
             </div>

@@ -25,7 +25,7 @@ export function EvidenceCoverage() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-4">
         <span className="w-9 h-9 rounded-lg bg-accent-100 flex items-center justify-center shrink-0">
-          <i className="ri-pie-chart-line text-accent-700"></i>
+          <AppIcon className="ri-pie-chart-line text-accent-700"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Evidence Coverage Analysis</h3>
@@ -41,7 +41,7 @@ export function EvidenceCoverage() {
             <div key={cat.category} className="bg-background-100/50 rounded-lg p-3.5 border border-background-200/30">
               <div className="flex items-center gap-2 mb-2">
                 <span className={`w-7 h-7 rounded-lg ${getBgColor(cat.color)} flex items-center justify-center`}>
-                  <i className={`${cat.icon} text-sm ${getTextColor(cat.color)}`}></i>
+                  <AppIcon className={`${cat.icon} text-sm ${getTextColor(cat.color)}`}></AppIcon>
                 </span>
                 <span className="text-sm font-semibold text-foreground-900">{cat.category}</span>
               </div>
@@ -54,7 +54,7 @@ export function EvidenceCoverage() {
               </div>
               {isWeak && (
                 <div className="mt-2 flex items-center gap-1 text-[9px] text-red-700 bg-red-50 rounded-md px-2 py-1">
-                  <i className="ri-error-warning-line"></i>
+                  <AppIcon className="ri-error-warning-line"></AppIcon>
                   <span>Weak area — needs more evidence</span>
                 </div>
               )}
@@ -65,7 +65,7 @@ export function EvidenceCoverage() {
 
       <div className="mt-3 bg-background-100 rounded-lg p-3 border border-background-200/30">
         <p className="text-xs text-foreground-500">
-          <i className="ri-information-line text-primary-500 mr-1"></i>
+          <AppIcon className="ri-information-line text-primary-500 mr-1"></AppIcon>
           <strong>Insight:</strong> Your <strong>Behaviours</strong> category has the lowest evidence count. Behaviours KSBs are often demonstrated through reflections, coaching sessions, and workplace observations. Make sure you are logging these regularly.
         </p>
       </div>

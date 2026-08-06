@@ -14,7 +14,7 @@ export function AiModeToggle({ aiMode, onToggle }: AiModeToggleProps) {
             : 'text-foreground-400 hover:text-foreground-600'
         }`}
       >
-        <i className="ri-tools-line mr-1 text-[10px]"></i>
+        <AppIcon className="ri-tools-line mr-1 text-[10px]"></AppIcon>
         Manual
       </button>
       <button
@@ -25,7 +25,7 @@ export function AiModeToggle({ aiMode, onToggle }: AiModeToggleProps) {
             : 'text-foreground-400 hover:text-foreground-600'
         }`}
       >
-        <i className="ri-sparkling-2-line mr-1 text-[10px]"></i>
+        <AppIcon className="ri-sparkling-2-line mr-1 text-[10px]"></AppIcon>
         AI-Assisted
       </button>
     </div>

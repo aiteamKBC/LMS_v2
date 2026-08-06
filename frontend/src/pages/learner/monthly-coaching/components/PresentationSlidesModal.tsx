@@ -93,7 +93,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
     <div className="flex flex-col items-center justify-center min-h-[440px] text-center px-10">
       <div className="mb-6 relative">
         <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center relative z-10 shadow-[0_0_40px_-8px_var(--glow-purple)]">
-          <i className="ri-presentation-line text-3xl text-foreground-950" />
+          <AppIcon className="ri-presentation-line text-3xl text-foreground-950" />
         </div>
         <div className="absolute inset-0 w-20 h-20 rounded-2xl bg-primary-500/20 blur-xl animate-pulse" style={{ animationDuration: '3s' }} />
       </div>
@@ -285,7 +285,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           </div>
           {slide.editable && (
             <button onClick={() => handleEditToggle(slide.id)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer whitespace-nowrap transition-all duration-300 ${isEditing ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30' : 'bg-foreground-100/50 text-foreground-600 border border-foreground-200/50 hover:bg-foreground-100/80 hover:text-foreground-800'}`}>
-              <i className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
+              <AppIcon className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
               {isEditing ? 'Done Editing' : 'Edit'}
             </button>
           )}
@@ -338,7 +338,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           </p>
           {slide.content.achievements.map((a: string, i: number) => (
             <div key={i} className="flex items-start gap-2.5 py-1.5">
-              <i className="ri-check-line text-emerald-400 text-sm mt-px" />
+              <AppIcon className="ri-check-line text-emerald-400 text-sm mt-px" />
               <span className="text-xs text-foreground-950/55">{a}</span>
             </div>
           ))}
@@ -349,7 +349,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           </p>
           {slide.content.improvements.map((imp: string, i: number) => (
             <div key={i} className="flex items-start gap-2.5 py-1.5">
-              <i className="ri-arrow-up-line text-primary-400 text-sm mt-px" />
+              <AppIcon className="ri-arrow-up-line text-primary-400 text-sm mt-px" />
               <span className="text-xs text-foreground-950/55">{imp}</span>
             </div>
           ))}
@@ -379,7 +379,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           </div>
           {slide.editable && (
             <button onClick={() => handleEditToggle(slide.id)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer whitespace-nowrap transition-all duration-300 ${isEditing ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30' : 'bg-foreground-100/50 text-foreground-600 border border-foreground-200/50 hover:bg-foreground-100/80 hover:text-foreground-800'}`}>
-              <i className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
+              <AppIcon className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
               {isEditing ? 'Done Editing' : 'Edit'}
             </button>
           )}
@@ -419,7 +419,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           <p className="text-xs font-medium text-foreground-500 uppercase tracking-wider mb-2">Barriers</p>
           {slide.content.barriers.map((b: string, i: number) => (
             <div key={i} className="flex items-center gap-2 text-xs text-foreground-600 py-1">
-              <i className="ri-error-warning-line text-amber-400/60" /> {b}
+              <AppIcon className="ri-error-warning-line text-amber-400/60" /> {b}
             </div>
           ))}
         </div>
@@ -454,7 +454,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           </div>
           {slide.editable && (
             <button onClick={() => handleEditToggle(slide.id)} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer whitespace-nowrap transition-all duration-300 ${isEditing ? 'bg-primary-500/20 text-primary-300 border border-primary-500/30' : 'bg-foreground-100/50 text-foreground-600 border border-foreground-200/50 hover:bg-foreground-100/80 hover:text-foreground-800'}`}>
-              <i className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
+              <AppIcon className={`text-xs ${isEditing ? 'ri-check-line' : 'ri-edit-line'}`} />
               {isEditing ? 'Done Editing' : 'Edit'}
             </button>
           )}
@@ -496,7 +496,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
         </div>
         <div className="text-center pt-2">
           <p className="text-sm text-foreground-500">
-            <i className="ri-calendar-check-line mr-1" />
+            <AppIcon className="ri-calendar-check-line mr-1" />
             Next Coaching: {slide.content.nextCoachingDate}
           </p>
         </div>
@@ -594,7 +594,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           <div className="relative z-10 flex items-center justify-between px-8 py-5 border-b border-foreground-200/50">
             <div className="flex items-center gap-5">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center shadow-[0_0_16px_-4px_var(--glow-purple)]">
-                <i className="ri-presentation-line text-sm text-foreground-950" />
+                <AppIcon className="ri-presentation-line text-sm text-foreground-950" />
               </div>
               <div>
                 <h2 className="text-sm font-heading font-semibold text-foreground-950">AI-Generated Coaching Presentation</h2>
@@ -603,10 +603,10 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
             </div>
             <div className="flex items-center gap-2">
               <button onClick={onPreview} className="inline-flex items-center gap-1.5 px-4 py-2 bg-foreground-100/80 text-foreground-900 rounded-lg text-xs font-semibold hover:bg-background-100 transition-all duration-300 cursor-pointer whitespace-nowrap border border-foreground-200/50">
-                <i className="ri-play-circle-line" /> Preview
+                <AppIcon className="ri-play-circle-line" /> Preview
               </button>
               <button onClick={handleClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-500 hover:text-foreground-900 hover:bg-foreground-100/50 transition-all duration-300 cursor-pointer">
-                <i className="ri-close-line" />
+                <AppIcon className="ri-close-line" />
               </button>
             </div>
           </div>
@@ -627,7 +627,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
                   idx === currentSlide ? 'bg-primary-500 text-foreground-950 shadow-[0_0_10px_-3px_var(--glow-purple)]' : 'bg-foreground-100/80 text-foreground-500'
                 }`}>{idx + 1}</span>
                 <span className="hidden lg:inline">{s.title}</span>
-                {s.editable && <i className="ri-edit-line text-[10px]" />}
+                {s.editable && <AppIcon className="ri-edit-line text-[10px]" />}
               </button>
             ))}
           </div>
@@ -643,7 +643,7 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
                 <span className="text-xs font-semibold text-foreground-400 uppercase tracking-wider">{currentSlideData.title}</span>
                 {currentSlideData.editable && (
                   <span className="text-xs text-primary-300/70 bg-primary-500/10 px-1.5 py-0.5 rounded border border-primary-500/15">
-                    <i className="ri-edit-line mr-0.5 text-[10px]" />Editable
+                    <AppIcon className="ri-edit-line mr-0.5 text-[10px]" />Editable
                   </span>
                 )}
               </div>
@@ -657,11 +657,11 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
             {/* Slide nav arrows */}
             <div className="flex items-center justify-between mt-5">
               <button onClick={() => setCurrentSlide(Math.max(0, currentSlide - 1))} disabled={currentSlide === 0} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border border-foreground-200/50 text-foreground-600 hover:text-foreground-900 hover:bg-foreground-100/50 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer transition-all duration-300 whitespace-nowrap">
-                <i className="ri-arrow-left-line" /> Previous
+                <AppIcon className="ri-arrow-left-line" /> Previous
               </button>
               <span className="text-xs text-foreground-950/20 font-mono">{currentSlide + 1} / {totalSlides}</span>
               <button onClick={() => setCurrentSlide(Math.min(totalSlides - 1, currentSlide + 1))} disabled={currentSlide === totalSlides - 1} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border border-foreground-200/50 text-foreground-600 hover:text-foreground-900 hover:bg-foreground-100/50 disabled:opacity-20 disabled:cursor-not-allowed cursor-pointer transition-all duration-300 whitespace-nowrap">
-                Next <i className="ri-arrow-right-line" />
+                Next <AppIcon className="ri-arrow-right-line" />
               </button>
             </div>
           </div>
@@ -669,21 +669,21 @@ export default function PresentationSlidesModal({ open, onClose, onPreview }: Pr
           {/* Footer */}
           <div className="relative z-10 border-t border-foreground-200/50 px-8 py-4 flex items-center justify-between bg-background-100 backdrop-blur-sm">
             <p className="text-xs text-foreground-950/20">
-              <i className="ri-magic-line mr-1" /> Auto-generated from platform data
+              <AppIcon className="ri-magic-line mr-1" /> Auto-generated from platform data
             </p>
             <div className="flex items-center gap-2">
               <button onClick={handleShareWithCoach} disabled={isSharing} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border cursor-pointer transition-all duration-300 whitespace-nowrap ${
                 isSharing ? 'bg-primary-500/10 border-primary-500/20 text-primary-300/60 cursor-wait' : 'bg-primary-500/10 border-primary-500/20 text-primary-300 hover:bg-primary-500/20 hover:border-primary-500/30'
               }`}>
-                {isSharing ? <><i className="ri-loader-4-line animate-spin" /> Sharing...</> : <><i className="ri-send-plane-line" /> Share with Coach</>}
+                {isSharing ? <><AppIcon className="ri-loader-4-line animate-spin" /> Sharing...</> : <><AppIcon className="ri-send-plane-line" /> Share with Coach</>}
               </button>
               <button onClick={handleExportPDF} disabled={isExporting} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium border cursor-pointer transition-all duration-300 whitespace-nowrap ${
                 isExporting ? 'text-foreground-950/15 border-foreground-200/50 cursor-wait' : 'text-foreground-500 border-foreground-200/50 hover:text-foreground-700 hover:bg-foreground-100/50'
               }`}>
-                {isExporting ? <><i className="ri-loader-4-line animate-spin" /> Exporting...</> : <><i className="ri-download-line" /> Export PDF</>}
+                {isExporting ? <><AppIcon className="ri-loader-4-line animate-spin" /> Exporting...</> : <><AppIcon className="ri-download-line" /> Export PDF</>}
               </button>
               <button onClick={onPreview} className="inline-flex items-center gap-1.5 px-4 py-2 bg-white text-[#0a0a14] rounded-lg text-xs font-semibold hover:bg-white/90 cursor-pointer transition-all duration-300 whitespace-nowrap">
-                <i className="ri-slideshow-line" /> Present
+                <AppIcon className="ri-slideshow-line" /> Present
               </button>
             </div>
           </div>

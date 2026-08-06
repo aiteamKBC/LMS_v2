@@ -80,7 +80,7 @@ export default function AdminAuditLogsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-history-line text-white text-2xl"></i>
+              <AppIcon className="ri-history-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Audit Trail</h2>
@@ -136,7 +136,7 @@ export default function AdminAuditLogsPage() {
         {/* Filters */}
         <div className="flex flex-col xl:flex-row items-start xl:items-center gap-3">
           <div className="relative flex-1 w-full xl:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search audit logs..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -157,7 +157,7 @@ export default function AdminAuditLogsPage() {
               <option value="failed">Failed</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-download-line mr-1.5"></i> Export CSV
+              <AppIcon className="ri-download-line mr-1.5"></AppIcon> Export CSV
             </button>
           </div>
         </div>
@@ -168,7 +168,7 @@ export default function AdminAuditLogsPage() {
             {filtered.map(l => (
               <div key={l.id} onClick={() => setSelectedLog(l.id)} className={`flex items-start gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedLog === l.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
                 <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${l.status === 'success' ? 'bg-emerald-100' : l.status === 'warning' ? 'bg-accent-100' : 'bg-red-100'}`}>
-                  <i className={`${getTypeIcon(l.targetType)} text-sm ${l.status === 'success' ? 'text-emerald-600' : l.status === 'warning' ? 'text-accent-600' : 'text-red-600'}`}></i>
+                  <AppIcon className={`${getTypeIcon(l.targetType)} text-sm ${l.status === 'success' ? 'text-emerald-600' : l.status === 'warning' ? 'text-accent-600' : 'text-red-600'}`}></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -178,12 +178,12 @@ export default function AdminAuditLogsPage() {
                   </div>
                   <p className="text-[11px] text-foreground-400 mt-0.5">Target: {l.target}</p>
                   <div className="flex items-center gap-3 mt-1.5 text-[11px] text-foreground-400">
-                    <span><i className="ri-user-line mr-1"></i>{l.user}</span>
-                    <span><i className="ri-time-line mr-1"></i>{l.timestamp}</span>
-                    <span><i className="ri-global-line mr-1"></i>{l.ip}</span>
+                    <span><AppIcon className="ri-user-line mr-1"></AppIcon>{l.user}</span>
+                    <span><AppIcon className="ri-time-line mr-1"></AppIcon>{l.timestamp}</span>
+                    <span><AppIcon className="ri-global-line mr-1"></AppIcon>{l.ip}</span>
                   </div>
                 </div>
-                <i className={`ri-arrow-right-s-line text-foreground-300 mt-1 ${selectedLog === l.id ? 'text-primary-500' : ''}`}></i>
+                <AppIcon className={`ri-arrow-right-s-line text-foreground-300 mt-1 ${selectedLog === l.id ? 'text-primary-500' : ''}`}></AppIcon>
               </div>
             ))}
           </div>
@@ -194,7 +194,7 @@ export default function AdminAuditLogsPage() {
               <div className="space-y-5">
                 <div>
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-3 ${log.status === 'success' ? 'bg-emerald-100' : log.status === 'warning' ? 'bg-accent-100' : 'bg-red-100'}`}>
-                    <i className={`${getTypeIcon(log.targetType)} text-lg ${log.status === 'success' ? 'text-emerald-600' : log.status === 'warning' ? 'text-accent-600' : 'text-red-600'}`}></i>
+                    <AppIcon className={`${getTypeIcon(log.targetType)} text-lg ${log.status === 'success' ? 'text-emerald-600' : log.status === 'warning' ? 'text-accent-600' : 'text-red-600'}`}></AppIcon>
                   </div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{log.action}</h3>
                   <p className="text-[12px] text-foreground-500 mt-1">{log.targetType} action</p>
@@ -229,7 +229,7 @@ export default function AdminAuditLogsPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-history-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-history-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select an event to view details</p>
               </div>

@@ -25,7 +25,7 @@ export default function RecordingCatchUpForm() {
     return (
       <div className="text-center py-8">
         <span className="w-14 h-14 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-          <i className="ri-check-line text-emerald-600 text-2xl"></i>
+          <AppIcon className="ri-check-line text-emerald-600 text-2xl"></AppIcon>
         </span>
         <h4 className="text-base font-heading font-semibold text-foreground-900 mb-2">Evidence Submitted!</h4>
         <p className="text-sm text-foreground-500 max-w-sm mx-auto leading-relaxed">
@@ -46,7 +46,7 @@ export default function RecordingCatchUpForm() {
       <div className="mb-5">
         <div className="flex items-center gap-2.5 mb-1">
           <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center">
-            <i className="ri-play-circle-line text-accent-600 text-sm"></i>
+            <AppIcon className="ri-play-circle-line text-accent-600 text-sm"></AppIcon>
           </span>
           <h4 className="text-sm font-heading font-semibold text-foreground-900">Recording Catch-Up Evidence</h4>
         </div>
@@ -99,7 +99,7 @@ export default function RecordingCatchUpForm() {
             type="submit"
             className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-lg bg-primary-500 text-background-50 text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-upload-cloud-2-line"></i> Submit Evidence
+            <AppIcon className="ri-upload-cloud-2-line"></AppIcon> Submit Evidence
           </button>
           <button
             type="button"

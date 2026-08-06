@@ -78,7 +78,7 @@ export default function QARejectedPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'red' ? 'bg-red-100 text-red-700' : s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'primary' ? 'bg-primary-100 text-primary-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -118,7 +118,7 @@ export default function QARejectedPage() {
                 <p className="text-[10px] text-red-500 mt-1">Rejected by: {item.rejectedBy}</p>
               </div>
               <div className="flex items-center gap-2 text-[10px] text-foreground-400 mb-3">
-                <span><i className="ri-calendar-line mr-0.5"></i>Resubmit by: {item.resubmissionDeadline}</span>
+                <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon>Resubmit by: {item.resubmissionDeadline}</span>
               </div>
               <div className="flex items-center gap-2">
                 {item.status === 'Resubmit Required' && (

@@ -106,7 +106,7 @@ export default function LoginPage() {
               </label>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <i className="ri-mail-line text-[15px]"></i>
+                  <AppIcon className="ri-mail-line text-[15px]"></AppIcon>
                 </span>
                 <input
                   id="email"
@@ -131,7 +131,7 @@ export default function LoginPage() {
               </div>
               <div className="relative">
                 <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <i className="ri-lock-line text-[15px]"></i>
+                  <AppIcon className="ri-lock-line text-[15px]"></AppIcon>
                 </span>
                 <input
                   id="password"
@@ -154,7 +154,7 @@ export default function LoginPage() {
                 className="flex items-center gap-2 cursor-pointer group"
               >
                 <div className={`w-4 h-4 rounded border transition-all duration-200 flex items-center justify-center ${rememberMe ? 'bg-primary-500 border-primary-500' : 'border-background-300 bg-background-50 group-hover:border-background-400'}`}>
-                  {rememberMe && <i className="ri-check-line text-[10px] text-white" />}
+                  {rememberMe && <AppIcon className="ri-check-line text-[10px] text-white" />}
                 </div>
                 <span className="text-[12px] text-foreground-500 font-medium">Remember me</span>
               </button>
@@ -163,7 +163,7 @@ export default function LoginPage() {
             {/* Error message */}
             {error && (
               <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-700">
-                <i className="ri-error-warning-line text-sm shrink-0"></i>
+                <AppIcon className="ri-error-warning-line text-sm shrink-0"></AppIcon>
                 <span>{error}</span>
               </div>
             )}
@@ -175,7 +175,7 @@ export default function LoginPage() {
             >
               {isLoading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <i className="ri-loader-4-line animate-spin"></i>
+                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
                   Signing in...
                 </span>
               ) : (
@@ -194,11 +194,11 @@ export default function LoginPage() {
           {/* Social / Demo hint */}
           <div className="flex items-center justify-center gap-3 animate-login-slide-up" style={{ animationDelay: '500ms' }}>
             <button type="button" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-background-200 text-[13px] text-foreground-600 hover:bg-background-100 hover:border-background-300 transition-all duration-200 cursor-pointer">
-              <i className="ri-google-fill text-[16px] text-foreground-500"></i>
+              <AppIcon className="ri-google-fill text-[16px] text-foreground-500"></AppIcon>
               <span className="hidden sm:inline">Google</span>
             </button>
             <button type="button" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-background-200 text-[13px] text-foreground-600 hover:bg-background-100 hover:border-background-300 transition-all duration-200 cursor-pointer">
-              <i className="ri-microsoft-fill text-[16px] text-foreground-500"></i>
+              <AppIcon className="ri-microsoft-fill text-[16px] text-foreground-500"></AppIcon>
               <span className="hidden sm:inline">Microsoft</span>
             </button>
           </div>
@@ -207,7 +207,7 @@ export default function LoginPage() {
           <div className="mt-8 pt-6 border-t border-background-200 animate-login-slide-up" style={{ animationDelay: '600ms' }}>
             <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
               <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-200/50">
-                <i className="ri-shield-check-line text-[10px]"></i>
+                <AppIcon className="ri-shield-check-line text-[10px]"></AppIcon>
                 Full RBAC Enabled
               </span>
               <span className="text-[10px] text-foreground-300">&middot; 11 roles &middot; 65+ permissions</span>

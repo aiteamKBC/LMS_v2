@@ -86,14 +86,14 @@ export function QuizTable({ quizzes, onQuizClick }: QuizTableProps) {
                         quiz.isPriority ? 'bg-amber-100' :
                         'bg-background-100'
                       }`}>
-                        <i className={`${
+                        <AppIcon className={`${
                           quiz.status === 'Passed' ? 'ri-check-double-line text-emerald-600' :
                           quiz.status === 'Failed' ? 'ri-close-circle-line text-red-500' :
                           quiz.status === 'Retake Required' ? 'ri-refresh-line text-red-400' :
                           quiz.status === 'Locked' ? 'ri-lock-line text-foreground-300' :
                           quiz.isPriority ? 'ri-alert-line text-amber-600' :
                           'ri-questionnaire-line text-foreground-400'
-                        } text-sm`}></i>
+                        } text-sm`}></AppIcon>
                       </span>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-foreground-900 truncate">{quiz.title}</p>
@@ -147,7 +147,7 @@ export function QuizTable({ quizzes, onQuizClick }: QuizTableProps) {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                    <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                   </td>
                 </tr>
               );
@@ -156,7 +156,7 @@ export function QuizTable({ quizzes, onQuizClick }: QuizTableProps) {
               <tr>
                 <td colSpan={9} className="px-4 py-10 text-center">
                   <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-inbox-line text-foreground-300 text-xl"></i>
+                    <AppIcon className="ri-inbox-line text-foreground-300 text-xl"></AppIcon>
                   </span>
                   <p className="text-sm font-medium text-foreground-500">No quizzes match this filter</p>
                   <p className="text-xs text-foreground-400 mt-1">Try a different category</p>

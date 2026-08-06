@@ -328,7 +328,7 @@ export default function ProgressReviewSlidesModal({
                   disabled={isExporting}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <i className={isExporting ? 'ri-loader-4-line animate-spin' : 'ri-download-line'}></i>
+                  <AppIcon className={isExporting ? 'ri-loader-4-line animate-spin' : 'ri-download-line'}></AppIcon>
                   {isExporting ? 'Exporting PDF' : 'Export PDF'}
                 </button>
                 <button
@@ -336,7 +336,7 @@ export default function ProgressReviewSlidesModal({
                   onClick={onClose}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground-950 px-4 text-[12px] font-semibold text-white transition hover:bg-foreground-800"
                 >
-                  <i className="ri-close-line"></i>Close
+                  <AppIcon className="ri-close-line"></AppIcon>Close
                 </button>
               </div>
             </div>
@@ -390,7 +390,7 @@ export default function ProgressReviewSlidesModal({
                 disabled={currentSlide === 0}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-white px-4 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <i className="ri-arrow-left-line"></i>Previous
+                <AppIcon className="ri-arrow-left-line"></AppIcon>Previous
               </button>
               <button
                 type="button"
@@ -398,7 +398,7 @@ export default function ProgressReviewSlidesModal({
                 disabled={currentSlide === deck.slides.length - 1}
                 className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground-950 px-4 text-[12px] font-semibold text-white transition hover:bg-foreground-800 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Next<i className="ri-arrow-right-line"></i>
+                Next<AppIcon className="ri-arrow-right-line"></AppIcon>
               </button>
             </div>
           </footer>

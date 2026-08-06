@@ -32,13 +32,13 @@ export default function KSBPresentationSection() {
           <div className="mb-6">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                <i className="ri-presentation-line text-primary-700" />
+                <AppIcon className="ri-presentation-line text-primary-700" />
               </div>
               <h2 className="text-lg font-heading font-semibold text-foreground-900">My KSB Progression Presentation</h2>
             </div>
             <p className="text-sm text-foreground-500 max-w-2xl">{p.subtitle}</p>
             <div className="flex items-center gap-2 mt-2 text-xs text-primary-600">
-              <i className="ri-magic-line" />
+              <AppIcon className="ri-magic-line" />
               <span className="font-medium">AI-powered — auto-generated from your platform data</span>
             </div>
           </div>
@@ -74,10 +74,10 @@ export default function KSBPresentationSection() {
                     </div>
                     <div className="flex items-center gap-3 text-xs text-foreground-400">
                       <span className="flex items-center gap-1">
-                        <i className="ri-folder-upload-line" /> {section.evidenceLinked} evidence
+                        <AppIcon className="ri-folder-upload-line" /> {section.evidenceLinked} evidence
                       </span>
                       <span className="flex items-center gap-1">
-                        <i className="ri-chat-quote-line" /> {section.reflectionLinked} reflection
+                        <AppIcon className="ri-chat-quote-line" /> {section.reflectionLinked} reflection
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1 mt-3">
@@ -124,12 +124,12 @@ export default function KSBPresentationSection() {
             >
               {isGenerating ? (
                 <>
-                  <i className="ri-loader-4-line animate-spin" />
+                  <AppIcon className="ri-loader-4-line animate-spin" />
                   Generating from your data...
                 </>
               ) : (
                 <>
-                  <i className="ri-magic-line" />
+                  <AppIcon className="ri-magic-line" />
                   Generate Presentation
                 </>
               )}
@@ -138,7 +138,7 @@ export default function KSBPresentationSection() {
               onClick={() => setShowPreview(true)}
               className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-background-100 text-foreground-700 rounded-lg text-sm font-semibold border border-background-200/50 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-play-circle-line" />
+              <AppIcon className="ri-play-circle-line" />
               Preview Presentation
             </button>
           </div>
@@ -146,7 +146,7 @@ export default function KSBPresentationSection() {
           {/* Generation tip */}
           {!isGenerating && (
             <p className="text-xs text-foreground-400 mt-3 flex items-center gap-1">
-              <i className="ri-information-line" />
+              <AppIcon className="ri-information-line" />
               The presentation is auto-generated from your platform data. You can edit Workplace Examples, Challenges, Support Needed, and Goals before your coaching meeting.
             </p>
           )}

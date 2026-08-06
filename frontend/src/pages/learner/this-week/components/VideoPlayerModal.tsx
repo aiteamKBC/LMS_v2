@@ -426,7 +426,7 @@ export function VideoPlayerModal({
           <div className="flex items-center justify-between px-4 md:px-5 py-3 border-b border-foreground-200/70 shrink-0 bg-background-50">
             <div className="flex items-center gap-3 min-w-0">
               <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center shrink-0">
-                <i className={`${typeIcon} text-accent-600 text-sm`}></i>
+                <AppIcon className={`${typeIcon} text-accent-600 text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground-900 truncate">{title}</p>
@@ -439,13 +439,13 @@ export function VideoPlayerModal({
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                 title="Keyboard shortcuts"
               >
-                <i className="ri-keyboard-line text-sm"></i>
+                <AppIcon className="ri-keyboard-line text-sm"></AppIcon>
               </button>
               <button
                 onClick={handleSaveAndClose}
                 className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
               >
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
           </div>
@@ -504,7 +504,7 @@ export function VideoPlayerModal({
                         <div className="w-14 h-14 rounded-full bg-accent-500/90 flex items-center justify-center shadow-lg shadow-accent-500/40 cursor-pointer hover:bg-accent-500 hover:scale-110 transition-all duration-300"
                           onClick={togglePlay}
                         >
-                          <i className="ri-play-fill text-foreground-950 text-2xl ml-0.5"></i>
+                          <AppIcon className="ri-play-fill text-foreground-950 text-2xl ml-0.5"></AppIcon>
                         </div>
                       </div>
                     </div>
@@ -513,15 +513,15 @@ export function VideoPlayerModal({
                       <p className="text-white/40 text-sm">{duration} · {points} points</p>
                     </div>
                     <div className="flex items-center gap-4 text-xs text-white/30">
-                      <span className="flex items-center gap-1"><i className="ri-keyboard-line"></i> Space to play</span>
-                      <span className="flex items-center gap-1"><i className="ri-arrow-right-line"></i> Seek with arrows</span>
-                      <span className="flex items-center gap-1"><i className="ri-question-line"></i> ? for help</span>
+                      <span className="flex items-center gap-1"><AppIcon className="ri-keyboard-line"></AppIcon> Space to play</span>
+                      <span className="flex items-center gap-1"><AppIcon className="ri-arrow-right-line"></AppIcon> Seek with arrows</span>
+                      <span className="flex items-center gap-1"><AppIcon className="ri-question-line"></AppIcon> ? for help</span>
                     </div>
                   </div>
                 ) : showCompletion ? (
                   <div className="relative z-10 flex flex-col items-center gap-5 text-center px-6">
                     <div className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30">
-                      <i className="ri-check-double-line text-emerald-400 text-4xl"></i>
+                      <AppIcon className="ri-check-double-line text-emerald-400 text-4xl"></AppIcon>
                     </div>
                     <div>
                       <p className="text-white text-xl font-semibold mb-2">You completed this video</p>
@@ -532,7 +532,7 @@ export function VideoPlayerModal({
                         onClick={handleCompletionContinue}
                         className="px-6 py-3 rounded-xl bg-accent-500 text-foreground-950 font-semibold hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                       >
-                        <i className="ri-check-line"></i> Mark as Complete
+                        <AppIcon className="ri-check-line"></AppIcon> Mark as Complete
                       </button>
                       <button
                         onClick={handleCompletionClose}
@@ -545,7 +545,7 @@ export function VideoPlayerModal({
                 ) : completedManually ? (
                   <div className="relative z-10 flex flex-col items-center gap-4 text-center px-6">
                     <div className="w-16 h-16 rounded-full bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30">
-                      <i className="ri-check-line text-emerald-400 text-3xl"></i>
+                      <AppIcon className="ri-check-line text-emerald-400 text-3xl"></AppIcon>
                     </div>
                     <p className="text-white text-lg font-semibold">Completed</p>
                     <p className="text-white/40 text-sm">You have earned {points} points and {plannedOTJH}h OTJH</p>
@@ -570,7 +570,7 @@ export function VideoPlayerModal({
                             }`}
                             onClick={() => handleChapterClick(ch)}
                           >
-                            <i className={`${i === 0 ? 'ri-pie-chart-line' : i === 1 ? 'ri-crosshair-line' : i === 2 ? 'ri-rocket-line' : i === 3 ? 'ri-briefcase-line' : 'ri-star-line'} ${isActive ? 'text-accent-400' : 'text-white/30'} text-lg block mb-1`}></i>
+                            <AppIcon className={`${i === 0 ? 'ri-pie-chart-line' : i === 1 ? 'ri-crosshair-line' : i === 2 ? 'ri-rocket-line' : i === 3 ? 'ri-briefcase-line' : 'ri-star-line'} ${isActive ? 'text-accent-400' : 'text-white/30'} text-lg block mb-1`}></AppIcon>
                             <span className={`text-xs ${isActive ? 'text-white/70' : 'text-white/30'}`}>{ch.title}</span>
                             {isActive && (
                               <div className="mt-1.5 h-0.5 bg-white/10 rounded-full overflow-hidden">
@@ -589,7 +589,7 @@ export function VideoPlayerModal({
                 {hasStarted && !playing && !showCompletion && !completedManually && (
                   <div className="absolute inset-0 flex items-center justify-center z-30 bg-foreground-950/30 cursor-pointer" onClick={togglePlay}>
                     <div className="w-16 h-16 rounded-full bg-accent-500/90 flex items-center justify-center shadow-lg shadow-accent-500/40 hover:bg-accent-500 hover:scale-110 transition-all duration-300">
-                      <i className="ri-play-fill text-foreground-950 text-3xl ml-0.5"></i>
+                      <AppIcon className="ri-play-fill text-foreground-950 text-3xl ml-0.5"></AppIcon>
                     </div>
                   </div>
                 )}
@@ -656,21 +656,21 @@ export function VideoPlayerModal({
                             onClick={togglePlay}
                             className="w-9 h-9 rounded-full flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-smooth cursor-pointer"
                           >
-                            <i className={`${playing ? 'ri-pause-fill' : 'ri-play-fill'} text-lg`}></i>
+                            <AppIcon className={`${playing ? 'ri-pause-fill' : 'ri-play-fill'} text-lg`}></AppIcon>
                           </button>
                           {/* Skip back */}
                           <button
                             onClick={() => seekTo(Math.max(currentTime - 10, 0))}
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/80 hover:bg-white/10 transition-smooth cursor-pointer"
                           >
-                            <i className="ri-skip-back-line text-sm"></i>
+                            <AppIcon className="ri-skip-back-line text-sm"></AppIcon>
                           </button>
                           {/* Skip forward */}
                           <button
                             onClick={() => seekTo(Math.min(currentTime + 10, totalDuration))}
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/80 hover:bg-white/10 transition-smooth cursor-pointer"
                           >
-                            <i className="ri-skip-forward-line text-sm"></i>
+                            <AppIcon className="ri-skip-forward-line text-sm"></AppIcon>
                           </button>
                           {/* Volume */}
                           <div className="flex items-center gap-1.5 group">
@@ -678,7 +678,7 @@ export function VideoPlayerModal({
                               onClick={() => setIsMuted(m => !m)}
                               className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/80 hover:bg-white/10 transition-smooth cursor-pointer"
                             >
-                              <i className={`${isMuted || volume === 0 ? 'ri-volume-mute-line' : volume < 50 ? 'ri-volume-down-line' : 'ri-volume-up-line'} text-sm`}></i>
+                              <AppIcon className={`${isMuted || volume === 0 ? 'ri-volume-mute-line' : volume < 50 ? 'ri-volume-down-line' : 'ri-volume-up-line'} text-sm`}></AppIcon>
                             </button>
                             <div className="w-0 group-hover:w-16 transition-all duration-300 overflow-hidden">
                               <input
@@ -724,14 +724,14 @@ export function VideoPlayerModal({
                             }}
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/80 hover:bg-white/10 transition-smooth cursor-pointer"
                           >
-                            <i className="ri-skip-forward-mini-fill text-sm"></i>
+                            <AppIcon className="ri-skip-forward-mini-fill text-sm"></AppIcon>
                           </button>
                           {/* Fullscreen */}
                           <button
                             onClick={toggleFullscreen}
                             className="w-8 h-8 rounded-full flex items-center justify-center text-white/50 hover:text-white/80 hover:bg-white/10 transition-smooth cursor-pointer"
                           >
-                            <i className={`${isFullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} text-sm`}></i>
+                            <AppIcon className={`${isFullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} text-sm`}></AppIcon>
                           </button>
                         </div>
                       </div>
@@ -744,17 +744,17 @@ export function VideoPlayerModal({
               <div className="shrink-0 px-4 py-3 bg-background-50 border-t border-foreground-200/50 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex items-center gap-1.5 text-xs text-foreground-400">
-                    <i className="ri-time-line"></i>
+                    <AppIcon className="ri-time-line"></AppIcon>
                     <span>{duration}</span>
                   </div>
                   <div className="w-px h-3 bg-foreground-200" />
                   <div className="flex items-center gap-1.5 text-xs text-foreground-400">
-                    <i className="ri-hourglass-line"></i>
+                    <AppIcon className="ri-hourglass-line"></AppIcon>
                     <span>{plannedOTJH}h OTJH</span>
                   </div>
                   <div className="w-px h-3 bg-foreground-200" />
                   <div className="flex items-center gap-1.5 text-xs text-foreground-400">
-                    <i className="ri-coin-line text-amber-500"></i>
+                    <AppIcon className="ri-coin-line text-amber-500"></AppIcon>
                     <span>{points} pts</span>
                   </div>
                   {hasStarted && (
@@ -762,7 +762,7 @@ export function VideoPlayerModal({
                   )}
                   {hasStarted && (
                     <div className="flex items-center gap-1.5 text-xs text-foreground-400">
-                      <i className="ri-eye-line text-primary-500"></i>
+                      <AppIcon className="ri-eye-line text-primary-500"></AppIcon>
                       <span>{Math.round(progress)}% watched</span>
                     </div>
                   )}
@@ -783,7 +783,7 @@ export function VideoPlayerModal({
                         : 'bg-background-100 text-foreground-300 cursor-not-allowed'
                     }`}
                   >
-                    <i className="ri-check-line"></i>
+                    <AppIcon className="ri-check-line"></AppIcon>
                     {completedManually ? 'Completed' : 'Mark as Watched'}
                   </button>
                 </div>
@@ -804,9 +804,9 @@ export function VideoPlayerModal({
                         : 'text-foreground-400 hover:text-foreground-600'
                     }`}
                   >
-                    {tab === 'chapters' && <i className="ri-list-check mr-1.5"></i>}
-                    {tab === 'transcript' && <i className="ri-chat-quote-line mr-1.5"></i>}
-                    {tab === 'notes' && <i className="ri-sticky-note-line mr-1.5"></i>}
+                    {tab === 'chapters' && <AppIcon className="ri-list-check mr-1.5"></AppIcon>}
+                    {tab === 'transcript' && <AppIcon className="ri-chat-quote-line mr-1.5"></AppIcon>}
+                    {tab === 'notes' && <AppIcon className="ri-sticky-note-line mr-1.5"></AppIcon>}
                     {tab.charAt(0).toUpperCase() + tab.slice(1)}
                     {tab === 'notes' && notes.length > 0 && (
                       <span className="ml-1 text-[10px] bg-accent-500 text-foreground-950 px-1.5 py-0.5 rounded-full">{notes.length}</span>
@@ -841,7 +841,7 @@ export function VideoPlayerModal({
                             <img src={ch.thumbnail} alt={ch.title} className="w-full h-full object-cover" />
                             {isCompleted && (
                               <div className="absolute inset-0 bg-foreground-950/50 flex items-center justify-center">
-                                <i className="ri-check-line text-white text-sm"></i>
+                                <AppIcon className="ri-check-line text-white text-sm"></AppIcon>
                               </div>
                             )}
                             <span className="absolute bottom-0.5 right-0.5 bg-foreground-950/70 text-white text-[9px] px-1 rounded tabular-nums">
@@ -924,7 +924,7 @@ export function VideoPlayerModal({
                           disabled={!noteInput.trim()}
                           className="px-3 py-2 rounded-lg bg-accent-500 text-foreground-950 hover:bg-accent-600 transition-smooth cursor-pointer text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <i className="ri-add-line"></i>
+                          <AppIcon className="ri-add-line"></AppIcon>
                         </button>
                       </div>
                     </div>
@@ -933,7 +933,7 @@ export function VideoPlayerModal({
                     <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
                       {notes.length === 0 ? (
                         <div className="text-center py-8">
-                          <i className="ri-sticky-note-line text-foreground-200 text-3xl mb-2"></i>
+                          <AppIcon className="ri-sticky-note-line text-foreground-200 text-3xl mb-2"></AppIcon>
                           <p className="text-xs text-foreground-400">No notes yet. Add notes while watching to capture key insights.</p>
                         </div>
                       ) : (
@@ -944,7 +944,7 @@ export function VideoPlayerModal({
                               onClick={() => setNotes(prev => prev.filter((_, idx) => idx !== i))}
                               className="mt-1 text-[10px] text-foreground-400 hover:text-red-500 transition-smooth cursor-pointer"
                             >
-                              <i className="ri-delete-bin-line mr-0.5"></i> Delete
+                              <AppIcon className="ri-delete-bin-line mr-0.5"></AppIcon> Delete
                             </button>
                           </div>
                         ))
@@ -966,7 +966,7 @@ export function VideoPlayerModal({
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-foreground-900">Keyboard Shortcuts</h3>
               <button onClick={() => setShowShortcuts(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer">
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
             <div className="space-y-2">

@@ -1132,6 +1132,39 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     return rows
 
 
+def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
+    """Return a lean learner snapshot for the coach dashboard first paint."""
+    requested_owner = normalize_email(owner_email)
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .only(
+            "id",
+            "full_name",
+            "email",
+            "programme",
+            "programme_status",
+            "cohort",
+            "group_name",
+            "completed_hours",
+            "target_hours",
+            "minimum_hours",
+            "planned_hours",
+            "progress_hours",
+            "progress_variance",
+            "otjh_status",
+            "coach_name",
+            "coach_email",
+            "coach_rag",
+            "start_date",
+            "end_date",
+            "gateway_review_date",
+        )
+        .order_by("full_name", "id")
+    )
+    return [row for row in queryset if clean_text(row.username)]
+
+
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     queryset = (
@@ -1167,12 +1200,32 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
 
 def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
-    rows = [
-        row
-        for row in LearnerProfile.objects.filter(lifecycle_status="active").order_by("full_name", "id")
-        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
-    ]
-    return rows
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(lifecycle_status="active", coach_email_key=requested_owner)
+        .only(
+            "id",
+            "full_name",
+            "email",
+            "programme",
+            "cohort",
+            "group_name",
+            "coach_name",
+            "coach_email",
+            "start_date",
+            "end_date",
+            "gateway_review_date",
+            "minimum_hours",
+            "planned_hours",
+            "completed_hours",
+            "target_hours",
+            "otjh_status",
+            "programme_status",
+            "lifecycle_status",
+        )
+        .order_by("full_name", "id")
+    )
+    return [row for row in queryset if clean_text(row.username)]
 
 
 def fetch_source_schedule_rows(
@@ -1476,6 +1529,91 @@ def serialize_caseload_learner(
         "plannedEndDate": format_date(getattr(row, "end_date", None)),
         "coachName": clean_text(row.coach_name) or None,
         "coachEmail": clean_text(row.coach_email) or None,
+        "rawProgramStatus": program_status or "--",
+        "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
+    }
+
+
+def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+    """Serialize only the fields the coach dashboard needs immediately."""
+    target_hours_value = (
+        clean_text(getattr(row, "target_hours", None))
+        or clean_text(getattr(row, "minimum_hours", None))
+        or clean_text(getattr(row, "planned_hours", None))
+    )
+    hours_available = bool(clean_text(getattr(row, "completed_hours", None)) or target_hours_value)
+    hours_progress = percentage(getattr(row, "completed_hours", None), target_hours_value) if target_hours_value else 0
+    otjh_status = clean_text(getattr(row, "otjh_status", None))
+    progress_variance = clean_text(getattr(row, "progress_variance", None))
+    program_status = get_lms_row_program_status(row)
+    performance_status = determine_active_user_status(
+        program_status=program_status,
+        otjh_status=otjh_status,
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=0,
+        ksb_available=False,
+        component_progress=0,
+        component_available=False,
+    )
+    risk_flags = build_active_user_risk_flags(
+        otjh_status=otjh_status,
+        ksb_status="",
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=0,
+        ksb_available=False,
+        component_progress=0,
+        component_available=False,
+    )
+    cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
+    group_name = clean_text(getattr(row, "group", None)) or "--"
+    programme_name = clean_text(getattr(row, "programme", None)) or cohort_name
+    cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+
+    return {
+        "id": str(row.id),
+        "name": clean_text(row.username) or "Unknown learner",
+        "initials": build_initials(row.username),
+        "employer": "--",
+        "cohortId": cohort_id,
+        "cohortName": cohort_name,
+        "programme": programme_name,
+        "group": group_name,
+        "status": performance_status,
+        "enrollmentStatus": normalize_program_status(program_status),
+        "riskFlags": risk_flags,
+        "overallProgress": hours_progress,
+        "overallProgressAvailable": hours_available,
+        "attendanceRate": 0,
+        "attendanceRateAvailable": False,
+        "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
+        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
+        "otjhPlanned": to_number(getattr(row, "planned_hours", None)),
+        "otjhProgressHours": clean_text(getattr(row, "progress_hours", None)) or "--",
+        "otjhStatus": otjh_status,
+        "ksbCompleted": None,
+        "ksbTarget": None,
+        "ksbStatus": "",
+        "ksbProgress": 0,
+        "ksbProgressAvailable": False,
+        "evidenceCount": 0,
+        "evidenceCompletedCount": 0,
+        "evidenceCountAvailable": False,
+        "nextCoaching": "--",
+        "nextReview": "--",
+        "lastContact": "--",
+        "recentFlag": risk_flags[0] if risk_flags else None,
+        "email": clean_text(getattr(row, "email", None)) or None,
+        "progressVariance": progress_variance or "--",
+        "startDate": format_date(getattr(row, "start_date", None)),
+        "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
+        "plannedEndDate": format_date(getattr(row, "end_date", None)),
+        "coachName": clean_text(getattr(row, "coach_name", None)) or None,
+        "coachEmail": clean_text(getattr(row, "coach_email", None)) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
     }
@@ -3224,10 +3362,28 @@ def build_timetable_summary(
     return summary
 
 
-def iterate_generated_schedule_dates(start_date: date, end_date: date, interval: timedelta):
+def iterate_generated_schedule_dates(
+    start_date: date,
+    end_date: date,
+    interval: timedelta,
+    *,
+    range_start: date | None = None,
+    range_end: date | None = None,
+):
     current = start_date + interval
     sequence = 1
+    if range_start and current < range_start:
+        interval_days = max(int(interval.days), 1)
+        skipped_steps = max((range_start - current).days // interval_days, 0)
+        if skipped_steps:
+            current += interval * skipped_steps
+            sequence += skipped_steps
+        while current < range_start:
+            current += interval
+            sequence += 1
     while current <= end_date:
+        if range_end and current > range_end:
+            break
         yield sequence, current
         current += interval
         sequence += 1
@@ -4205,7 +4361,14 @@ def collect_live_session_events(
     return events
 
 
-def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
+def collect_generated_timetable(
+    owner_email: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    *,
+    include_live_sessions: bool = True,
+    include_scheduler_queues: bool = True,
+) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     learner_profile_map = build_learner_profile_map(active_rows)
     owner_name = next(
@@ -4213,8 +4376,10 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         "Med Maher",
     )
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
-    live_session_events = collect_live_session_events(
-        owner_email, owner_name, start_date=start_date, end_date=end_date
+    live_session_events = (
+        collect_live_session_events(owner_email, owner_name, start_date=start_date, end_date=end_date)
+        if include_live_sessions
+        else []
     )
 
     generated_events: list[dict] = []
@@ -4236,6 +4401,8 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             learner_start_date,
             learner_end_date,
             TIMETABLE_MCR_INTERVAL,
+            range_start=start_date,
+            range_end=end_date,
         ):
             generated_events.append(
                 build_generated_calendar_event(
@@ -4253,6 +4420,8 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             learner_start_date,
             learner_end_date,
             TIMETABLE_PROGRESS_REVIEW_INTERVAL,
+            range_start=start_date,
+            range_end=end_date,
         ):
             generated_events.append(
                 build_generated_calendar_event(
@@ -4275,18 +4444,20 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         )
         for record in persisted_standalone_records
     ]
-    persisted_catchup_records = [
-        record
-        for record in persisted_standalone_records
-        if clean_text(record.event_type).lower() == CATCH_UP_EVENT_TYPE
-    ]
-    scheduler_catchups = build_catchup_scheduler_events(
-        owner_email,
-        owner_name,
-        active_rows,
-        learner_profile_map,
-        persisted_catchup_records,
-    )
+    scheduler_catchups: list[dict] = []
+    if include_scheduler_queues:
+        persisted_catchup_records = [
+            record
+            for record in persisted_standalone_records
+            if clean_text(record.event_type).lower() == CATCH_UP_EVENT_TYPE
+        ]
+        scheduler_catchups = build_catchup_scheduler_events(
+            owner_email,
+            owner_name,
+            active_rows,
+            learner_profile_map,
+            persisted_catchup_records,
+        )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
 
     record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
@@ -5019,13 +5190,21 @@ def coach_timetable(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     start_date = parse_date_value(request.GET.get("start"))
     end_date = parse_date_value(request.GET.get("end"))
+    include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
+    include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
     if isinstance(start_date, datetime):
         start_date = start_date.date()
     if isinstance(end_date, datetime):
         end_date = end_date.date()
 
     try:
-        timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
+        timetable_payload = collect_generated_timetable(
+            owner_email,
+            start_date=start_date,
+            end_date=end_date,
+            include_live_sessions=include_live_sessions,
+            include_scheduler_queues=include_scheduler_queues,
+        )
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach timetable data.", "error": str(exc)},
@@ -5112,13 +5291,18 @@ def coach_monthly_activity(request):
 def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
+    summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
 
     try:
-        rows = fetch_caseload_learner_profiles(owner_email)
-        learners = [
-            serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
-            for row in rows
-        ]
+        if summary_only:
+            rows = fetch_caseload_dashboard_profiles(owner_email)
+            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+        else:
+            rows = fetch_caseload_learner_profiles(owner_email)
+            learners = [
+                serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
+                for row in rows
+            ]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},

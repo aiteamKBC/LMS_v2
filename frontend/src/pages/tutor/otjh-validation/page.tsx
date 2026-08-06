@@ -53,7 +53,7 @@ export default function TutorOtjhValidationPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-time-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-time-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">OTJH Validation Queue</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{pendingCount} claims awaiting review · {totalHours} total hours claimed · {unconfirmed} employer confirmations missing</p>
@@ -74,7 +74,7 @@ export default function TutorOtjhValidationPage() {
             { l: 'Avg Hours/Claim', v: `${(totalHours / OTJH_CLAIMS.length).toFixed(1)}h`, i: 'ri-bar-chart-line', c: 'primary' },
           ].map(s => (
             <div key={s.l} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'emerald' ? 'bg-emerald-100 text-emerald-600' : s.c === 'red' ? 'bg-red-100 text-red-600' : 'bg-primary-100 text-primary-600'}`}><i className={`${s.i} text-sm`}></i></span>
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.c === 'amber' ? 'bg-amber-100 text-amber-600' : s.c === 'emerald' ? 'bg-emerald-100 text-emerald-600' : s.c === 'red' ? 'bg-red-100 text-red-600' : 'bg-primary-100 text-primary-600'}`}><AppIcon className={`${s.i} text-sm`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400 mb-1">{s.l}</p>
               <p className="text-2xl font-heading font-semibold text-foreground-900">{s.v}</p>
             </div>
@@ -109,7 +109,7 @@ export default function TutorOtjhValidationPage() {
                   <div className="flex items-center gap-2 shrink-0">
                     {!claim.employerConfirmed && <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">No Employer OK</span>}
                     <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sc.bg}`}>{claim.status}</span>
-                    <i className={expandedId === claim.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></i>
+                    <AppIcon className={expandedId === claim.id ? 'ri-arrow-up-s-line text-foreground-300' : 'ri-arrow-down-s-line text-foreground-300'}></AppIcon>
                   </div>
                 </div>
                 {expandedId === claim.id && (
@@ -132,13 +132,13 @@ export default function TutorOtjhValidationPage() {
                     <div className="flex items-center gap-2">
                       {claim.status === 'Pending' && (
                         <>
-                          <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Approve</button>
-                          <button className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[10px] font-semibold hover:bg-amber-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-pencil-line mr-1"></i> Amend</button>
-                          <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-close-line mr-1"></i> Reject</button>
+                          <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Approve</button>
+                          <button className="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-[10px] font-semibold hover:bg-amber-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-pencil-line mr-1"></AppIcon> Amend</button>
+                          <button className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-[10px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-close-line mr-1"></AppIcon> Reject</button>
                         </>
                       )}
                       {claim.status === 'Amended' && (
-                        <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Approve Amended</button>
+                        <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Approve Amended</button>
                       )}
                     </div>
                   </div>

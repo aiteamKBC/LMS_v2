@@ -71,13 +71,13 @@ export default function EngagementReportsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/workspace/engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-dashboard-line text-sm"></i> Dashboard
+            <AppIcon className="ri-dashboard-line text-sm"></AppIcon> Dashboard
           </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
           <button onClick={() => navigate('/engagement/attendance-risk')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-alert-line text-sm"></i> Attendance Risk
+            <AppIcon className="ri-alert-line text-sm"></AppIcon> Attendance Risk
           </button>
         </div>
 
@@ -92,7 +92,7 @@ export default function EngagementReportsPage() {
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
             {['all', 'dashboard', 'summary', 'detailed', 'export'].map(t => (
               <button key={t} onClick={() => setTypeFilter(t)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={`${t === 'all' ? 'ri-list-check' : typeConfig[t]?.icon || 'ri-file-line'} text-sm`}></i>
+                <AppIcon className={`${t === 'all' ? 'ri-list-check' : typeConfig[t]?.icon || 'ri-file-line'} text-sm`}></AppIcon>
                 {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
             ))}
@@ -110,7 +110,7 @@ export default function EngagementReportsPage() {
               return (
                 <div key={report.id} className="p-4 flex items-center gap-4">
                   <span className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${cfg.bg} ${cfg.text}`}>
-                    <i className={`${cfg.icon} text-sm`}></i>
+                    <AppIcon className={`${cfg.icon} text-sm`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -128,11 +128,11 @@ export default function EngagementReportsPage() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                      <i className="ri-play-line mr-1"></i> Generate
+                      <AppIcon className="ri-play-line mr-1"></AppIcon> Generate
                     </button>
                     {report.type !== 'dashboard' && (
                       <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-download-line mr-1"></i> Download
+                        <AppIcon className="ri-download-line mr-1"></AppIcon> Download
                       </button>
                     )}
                   </div>

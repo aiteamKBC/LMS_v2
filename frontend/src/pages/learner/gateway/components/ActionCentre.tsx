@@ -5,7 +5,7 @@ export function ActionCentre() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-4">
         <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-          <i className="ri-lightbulb-flash-line text-primary-600"></i>
+          <AppIcon className="ri-lightbulb-flash-line text-primary-600"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Next Best Actions</h3>
@@ -21,7 +21,7 @@ export function ActionCentre() {
             className="flex items-start gap-3 p-3 bg-background-100/50 rounded-lg border border-background-200/30 hover:border-primary-300/50 hover:bg-primary-50/50 transition-smooth group cursor-pointer"
           >
             <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-primary-100 transition-smooth">
-              <i className={`${action.icon} text-foreground-500 text-sm group-hover:text-primary-600 transition-smooth`}></i>
+              <AppIcon className={`${action.icon} text-foreground-500 text-sm group-hover:text-primary-600 transition-smooth`}></AppIcon>
             </span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
@@ -35,7 +35,7 @@ export function ActionCentre() {
               </div>
               <p className="text-xs text-foreground-400 mt-0.5">{action.detail}</p>
             </div>
-            <i className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0 mt-1"></i>
+            <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0 mt-1"></AppIcon>
           </a>
         ))}
       </div>

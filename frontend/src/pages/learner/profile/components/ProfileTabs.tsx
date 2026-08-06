@@ -153,7 +153,7 @@ function ContactCard({ role, name, email, phone, icon }: { role: string; name: s
     <div className="bg-background-100/60 rounded-xl p-4 border border-background-200/40">
       <div className="flex items-center gap-3 mb-3">
         <div className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-          <i className={`${icon} text-base`} />
+          <AppIcon className={`${icon} text-base`} />
         </div>
         <div>
           <p className="text-xs text-foreground-400">{role}</p>
@@ -162,11 +162,11 @@ function ContactCard({ role, name, email, phone, icon }: { role: string; name: s
       </div>
       <div className="space-y-1.5">
         <div className="flex items-center gap-2 text-xs text-foreground-500">
-          <i className="ri-mail-line text-foreground-300" />
+          <AppIcon className="ri-mail-line text-foreground-300" />
           <span className="truncate">{email}</span>
         </div>
         <div className="flex items-center gap-2 text-xs text-foreground-500">
-          <i className="ri-phone-line text-foreground-300" />
+          <AppIcon className="ri-phone-line text-foreground-300" />
           <span>{phone}</span>
         </div>
       </div>
@@ -285,7 +285,7 @@ function OverviewTab({ p }: { p: ProfileData }) {
               <div className="bg-background-100/60 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center">
-                    <i className="ri-calculator-line text-sm" />
+                    <AppIcon className="ri-calculator-line text-sm" />
                   </div>
                   <span className="text-sm font-semibold text-foreground-900">Maths</span>
                 </div>
@@ -303,7 +303,7 @@ function OverviewTab({ p }: { p: ProfileData }) {
               <div className="bg-background-100/60 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-8 h-8 rounded-lg bg-accent-100 text-accent-600 flex items-center justify-center">
-                    <i className="ri-english-input text-sm" />
+                    <AppIcon className="ri-english-input text-sm" />
                   </div>
                   <span className="text-sm font-semibold text-foreground-900">English</span>
                 </div>
@@ -499,7 +499,7 @@ function LearningSupportTab({ p }: { p: ProfileData }) {
           <div className="bg-background-100/60 rounded-lg p-4">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center">
-                <i className="ri-calculator-line text-base" />
+                <AppIcon className="ri-calculator-line text-base" />
               </div>
               <p className="text-sm font-semibold text-foreground-900">Maths</p>
             </div>
@@ -517,7 +517,7 @@ function LearningSupportTab({ p }: { p: ProfileData }) {
           <div className="bg-background-100/60 rounded-lg p-4">
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center">
-                <i className="ri-english-input text-base" />
+                <AppIcon className="ri-english-input text-base" />
               </div>
               <p className="text-sm font-semibold text-foreground-900">English</p>
             </div>
@@ -604,7 +604,7 @@ function EPATab({ p }: { p: ProfileData }) {
 
       <div className="bg-primary-50/40 rounded-xl border border-primary-200/40 p-4">
         <div className="flex items-start gap-3">
-          <i className="ri-information-line text-primary-500 text-lg mt-0.5" />
+          <AppIcon className="ri-information-line text-primary-500 text-lg mt-0.5" />
           <p className="text-sm text-foreground-600 leading-relaxed">EPA information will become available as the learner approaches gateway.</p>
         </div>
       </div>
@@ -650,7 +650,7 @@ function OnboardingTab({ p }: { p: ProfileData }) {
                 }`}>
                   {step.status === 'completed' ? (
                     <span className="flex items-center gap-1">
-                      <i className="ri-check-line text-xs" /> Complete
+                      <AppIcon className="ri-check-line text-xs" /> Complete
                     </span>
                   ) : (
                     'Pending'
@@ -674,7 +674,7 @@ function HistoryTab({ p }: { p: ProfileData }) {
       <div className="bg-background-50 rounded-xl border border-background-200/50 p-8">
         <div className="flex flex-col items-center justify-center py-10 text-center">
           <div className="w-14 h-14 rounded-full bg-background-100 flex items-center justify-center mb-4">
-            <i className="ri-robot-line text-foreground-300 text-2xl" />
+            <AppIcon className="ri-robot-line text-foreground-300 text-2xl" />
           </div>
           <p className="text-sm font-semibold text-foreground-500 mb-1">No virtual assistant history available yet.</p>
           <p className="text-sm text-foreground-400">Conversations with the virtual assistant will appear here.</p>

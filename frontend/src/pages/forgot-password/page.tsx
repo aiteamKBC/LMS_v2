@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
           {submitted ? (
             <div className="space-y-6">
               <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-[13px] text-emerald-700">
-                <i className="ri-checkbox-circle-line text-sm shrink-0" />
+                <AppIcon className="ri-checkbox-circle-line text-sm shrink-0" />
                 <span>Reset link sent to your email address</span>
               </div>
               <p className="text-[13px] text-foreground-400 leading-relaxed">
@@ -70,7 +70,7 @@ export default function ForgotPasswordPage() {
                 </label>
                 <div className="relative">
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                    <i className="ri-mail-line text-[15px]" />
+                    <AppIcon className="ri-mail-line text-[15px]" />
                   </span>
                   <input
                     id="email"
@@ -86,7 +86,7 @@ export default function ForgotPasswordPage() {
 
               {error && (
                 <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-700">
-                  <i className="ri-error-warning-line text-sm shrink-0" />
+                  <AppIcon className="ri-error-warning-line text-sm shrink-0" />
                   <span>{error}</span>
                 </div>
               )}

@@ -14,7 +14,7 @@ export default function CatchUpEvidenceTracker() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
       <div className="p-5 border-b border-background-200/50 flex items-center gap-3">
         <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-          <i className="ri-folder-check-line text-primary-600 text-sm"></i>
+          <AppIcon className="ri-folder-check-line text-primary-600 text-sm"></AppIcon>
         </span>
         <h3 className="text-base font-heading font-semibold text-foreground-900">Catch-Up Evidence Tracker</h3>
       </div>

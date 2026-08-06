@@ -58,7 +58,7 @@ export default function MonthSummaryPanel({ month }: MonthSummaryPanelProps) {
         {items.map(item => (
           <div key={item.label} className="p-2.5 rounded-lg border border-background-200/50 bg-background-50/50">
             <div className="flex items-center gap-1.5 mb-1">
-              <i className={`${item.icon} text-foreground-400 text-[10px]`}></i>
+              <AppIcon className={`${item.icon} text-foreground-400 text-[10px]`}></AppIcon>
               <span className="text-[10px] font-medium text-foreground-500">{item.label}</span>
             </div>
             <p className="text-xs font-semibold text-foreground-800">{item.value}</p>

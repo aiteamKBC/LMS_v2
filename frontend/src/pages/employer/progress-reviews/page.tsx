@@ -56,7 +56,7 @@ export default function EmployerProgressReviews() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-file-chart-line text-white text-2xl"></i>
+              <AppIcon className="ri-file-chart-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Progress Reviews</h2>
@@ -81,14 +81,14 @@ export default function EmployerProgressReviews() {
         {awaiting > 0 && (
           <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-              <i className="ri-pen-nib-line text-red-600 text-base"></i>
+              <AppIcon className="ri-pen-nib-line text-red-600 text-base"></AppIcon>
             </span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-red-800">{awaiting} progress reviews need your signature</p>
               <p className="text-[12px] text-red-600 mt-0.5">Employer sign-off is required to confirm progress and keep funding compliant</p>
             </div>
             <button className="px-4 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-pen-nib-line mr-1"></i> Review &amp; Sign
+              <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Review &amp; Sign
             </button>
           </div>
         )}
@@ -96,7 +96,7 @@ export default function EmployerProgressReviews() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search reviews..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -138,7 +138,7 @@ export default function EmployerProgressReviews() {
                     <span>{review.progressAtReview}% progress</span>
                     <span>{review.attendanceSinceLast}% att.</span>
                   </div>
-                  <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300`}></i>
+                  <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300`}></AppIcon>
                 </div>
                 {isOpen && (
                   <div className="mt-4 ml-14 pt-3 border-t border-background-200/30 space-y-4">
@@ -161,7 +161,7 @@ export default function EmployerProgressReviews() {
                       <p className="text-[12px] text-foreground-800">{review.summary}</p>
                       {review.actionRequired && (
                         <div className="flex items-start gap-2 mt-2 p-2 bg-amber-50 rounded-lg border border-amber-100">
-                          <i className="ri-alert-line text-amber-600 text-xs mt-0.5"></i>
+                          <AppIcon className="ri-alert-line text-amber-600 text-xs mt-0.5"></AppIcon>
                           <p className="text-[11px] text-amber-700">{review.actionRequired}</p>
                         </div>
                       )}
@@ -169,15 +169,15 @@ export default function EmployerProgressReviews() {
                     <div className="flex items-center gap-2">
                       {review.status === 'Awaiting Employer' ? (
                         <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-pen-nib-line mr-1"></i> Sign Now
+                          <AppIcon className="ri-pen-nib-line mr-1"></AppIcon> Sign Now
                         </button>
                       ) : (
                         <button className="px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-eye-line mr-1"></i> View Full Review
+                          <AppIcon className="ri-eye-line mr-1"></AppIcon> View Full Review
                         </button>
                       )}
                       <button className="px-4 py-2 bg-background-50 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-chat-1-line mr-1"></i> Discuss with Coach
+                        <AppIcon className="ri-chat-1-line mr-1"></AppIcon> Discuss with Coach
                       </button>
                     </div>
                   </div>

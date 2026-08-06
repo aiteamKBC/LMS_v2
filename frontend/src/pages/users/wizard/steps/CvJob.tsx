@@ -22,7 +22,7 @@ export default function CvJob() {
             <FileList files={[{ id: 'cv', name: cv.cvFile }]} onDelete={() => set({ cvFile: undefined })} />
           ) : (
             <label className="inline-flex items-center gap-2 px-3 py-2 text-[13px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-              <i className="ri-upload-2-line" />Upload CV
+              <AppIcon className="ri-upload-2-line" />Upload CV
               <input type="file" className="hidden" onChange={(e) => set({ cvFile: e.target.files?.[0]?.name })} />
             </label>
           )}

@@ -68,14 +68,14 @@ export function ReviewActions({ record }: ReviewActionsProps) {
   return (
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
       <div className="flex items-center gap-2 mb-4">
-        <i className="ri-tools-line text-foreground-400"></i>
+        <AppIcon className="ri-tools-line text-foreground-400"></AppIcon>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">Review Actions</h3>
       </div>
 
       {/* Feedback banner */}
       {actionFeedback && (
         <div className="mb-4 px-3 py-2.5 bg-emerald-50 rounded-lg border border-emerald-200/50 flex items-start gap-2">
-          <i className="ri-checkbox-circle-line text-emerald-500 text-sm mt-0.5 shrink-0"></i>
+          <AppIcon className="ri-checkbox-circle-line text-emerald-500 text-sm mt-0.5 shrink-0"></AppIcon>
           <div className="flex-1 min-w-0">
             <p className="text-[12px] text-emerald-700">{actionFeedback}</p>
           </div>
@@ -83,7 +83,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
             onClick={() => setActionFeedback(null)}
             className="text-emerald-400 hover:text-emerald-600 cursor-pointer shrink-0"
           >
-            <i className="ri-close-line"></i>
+            <AppIcon className="ri-close-line"></AppIcon>
           </button>
         </div>
       )}
@@ -95,7 +95,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           disabled={isReturnedOrAbove}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200/50 text-emerald-700 hover:bg-emerald-100 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <i className="ri-check-line"></i>
+          <AppIcon className="ri-check-line"></AppIcon>
           Approve for Eligibility
         </button>
 
@@ -104,7 +104,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           onClick={() => setShowReturnForm(true)}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200/50 text-amber-700 hover:bg-amber-100 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-arrow-go-back-line"></i>
+          <AppIcon className="ri-arrow-go-back-line"></AppIcon>
           Return to Learner
         </button>
 
@@ -113,7 +113,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           onClick={() => setShowEvidenceForm(true)}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary-50 border border-primary-200/50 text-primary-700 hover:bg-primary-100 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-file-search-line"></i>
+          <AppIcon className="ri-file-search-line"></AppIcon>
           Request Evidence
         </button>
 
@@ -122,7 +122,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           onClick={() => setShowNoteForm(true)}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-background-100 border border-background-200/50 text-foreground-600 hover:bg-background-200/60 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-sticky-note-line"></i>
+          <AppIcon className="ri-sticky-note-line"></AppIcon>
           Add Internal Note
         </button>
 
@@ -131,7 +131,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           onClick={() => setShowEscalateConfirm(true)}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-secondary-50 border border-secondary-200/50 text-secondary-700 hover:bg-secondary-100 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-alert-line"></i>
+          <AppIcon className="ri-alert-line"></AppIcon>
           Escalate
         </button>
 
@@ -141,7 +141,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           disabled={record.overallStatus === 'Rejected at Enrolment'}
           className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200/50 text-red-700 hover:bg-red-100 transition-smooth text-[12px] font-medium cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <i className="ri-close-circle-line"></i>
+          <AppIcon className="ri-close-circle-line"></AppIcon>
           Reject Case
         </button>
       </div>
@@ -154,7 +154,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-emerald-100 flex items-center justify-center">
-                <i className="ri-check-line text-emerald-600"></i>
+                <AppIcon className="ri-check-line text-emerald-600"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Approve for Eligibility Review</h4>
             </div>
@@ -178,7 +178,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
-                <i className="ri-arrow-go-back-line text-amber-600"></i>
+                <AppIcon className="ri-arrow-go-back-line text-amber-600"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Return to Learner</h4>
             </div>
@@ -206,7 +206,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                <i className="ri-file-search-line text-primary-600"></i>
+                <AppIcon className="ri-file-search-line text-primary-600"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Request Evidence</h4>
             </div>
@@ -234,7 +234,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-background-200 flex items-center justify-center">
-                <i className="ri-sticky-note-line text-foreground-500"></i>
+                <AppIcon className="ri-sticky-note-line text-foreground-500"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Add Internal Note</h4>
             </div>
@@ -262,7 +262,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-                <i className="ri-alert-line text-secondary-600"></i>
+                <AppIcon className="ri-alert-line text-secondary-600"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Escalate Case</h4>
             </div>
@@ -290,7 +290,7 @@ export function ReviewActions({ record }: ReviewActionsProps) {
           <div className="p-5">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                <i className="ri-close-circle-line text-red-600"></i>
+                <AppIcon className="ri-close-circle-line text-red-600"></AppIcon>
               </div>
               <h4 className="text-sm font-heading font-semibold text-foreground-900">Reject at Enrolment</h4>
             </div>
