@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -12,6 +12,7 @@ from coach_api.views import (
     coach_caseload,
     completed_ksb_codes,
     fetch_source_schedule_rows,
+    iterate_generated_schedule_dates,
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
@@ -58,6 +59,28 @@ class CoachCaseloadViewTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
+    @patch("coach_api.views.serialize_caseload_dashboard_learner")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_coach_caseload_can_return_dashboard_summary_snapshots(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com", "summary": "1"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        fetch_rows.assert_called_once_with("coach@example.com")
+        serialize_learner.assert_called_once_with(row)
+
     @patch("coach_api.views.serialize_caseload_learner")
     @patch("coach_api.views.fetch_caseload_learner_profiles")
     def test_coach_caseload_uses_cached_snapshots_by_default(
@@ -99,6 +122,27 @@ class CoachCaseloadViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+
+
+class CoachTimetableWindowTests(SimpleTestCase):
+    def test_generated_schedule_dates_respect_requested_window(self):
+        generated_dates = list(
+            iterate_generated_schedule_dates(
+                date(2026, 1, 1),
+                date(2026, 2, 28),
+                timedelta(days=7),
+                range_start=date(2026, 1, 20),
+                range_end=date(2026, 2, 2),
+            )
+        )
+
+        self.assertEqual(
+            generated_dates,
+            [
+                (3, date(2026, 1, 22)),
+                (4, date(2026, 1, 29)),
+            ],
+        )
 
 
 @override_settings(

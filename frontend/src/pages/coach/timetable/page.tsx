@@ -111,6 +111,17 @@ interface ScheduleNavigationIntent {
   title?: string;
 }
 
+interface TimetableFocusIntent {
+  source?: string;
+  eventKey?: string;
+  date?: string | null;
+  title?: string;
+  scheduledTime?: string;
+  programme?: string;
+  cohort?: string;
+  group?: string;
+}
+
 type CoachBookableSessionType = 'catch-up' | 'student-support';
 type ApiError = Error & { status?: number };
 
@@ -598,6 +609,33 @@ function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent
   };
 }
 
+function parseTimetableFocusIntent(value: unknown): TimetableFocusIntent | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const focus = value as Record<string, unknown>;
+  const source = typeof focus.source === 'string' ? focus.source : undefined;
+  const eventKey = typeof focus.eventKey === 'string' ? focus.eventKey : undefined;
+  const date = typeof focus.date === 'string' ? focus.date : undefined;
+  const title = typeof focus.title === 'string' ? focus.title : undefined;
+  const scheduledTime = typeof focus.scheduledTime === 'string' ? focus.scheduledTime : undefined;
+  const programme = typeof focus.programme === 'string' ? focus.programme : undefined;
+  const cohort = typeof focus.cohort === 'string' ? focus.cohort : undefined;
+  const group = typeof focus.group === 'string' ? focus.group : undefined;
+
+  if (!source && !eventKey && !date && !title) return null;
+
+  return {
+    source,
+    eventKey,
+    date,
+    title,
+    scheduledTime,
+    programme,
+    cohort,
+    group,
+  };
+}
+
 function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
   if (source === 'all') return true;
   if (source === 'live-session') return event.source === 'live-session' || event.type === 'live-session';
@@ -607,6 +645,33 @@ function eventMatchesSourceFilter(event: TimetableEvent, source: SourceFilter) {
 
 function eventIdentity(event: TimetableEvent) {
   return event.eventKey || event.id;
+}
+
+function isLiveSessionEvent(event: TimetableEvent) {
+  return event.source === 'live-session' || event.type === 'live-session';
+}
+
+function normalizeNavigationText(value?: string | null) {
+  return (value || '')
+    .toLowerCase()
+    .replace(/[—–]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function eventMatchesFocusIntent(event: TimetableEvent, focus: TimetableFocusIntent) {
+  if (focus.eventKey && eventIdentity(event) === focus.eventKey) return true;
+  if (focus.source && focus.source !== event.source && focus.source !== event.type) return false;
+  if (focus.date) {
+    const eventDate = eventDisplayDateValue(event);
+    if (eventDate !== focus.date && eventTargetDateValue(event) !== focus.date) return false;
+  }
+  if (focus.title && normalizeNavigationText(event.title) !== normalizeNavigationText(focus.title)) return false;
+  if (focus.programme && normalizeNavigationText(event.programme) !== normalizeNavigationText(focus.programme)) return false;
+  if (focus.cohort && normalizeNavigationText(event.cohort) !== normalizeNavigationText(focus.cohort)) return false;
+  if (focus.group && normalizeNavigationText(event.group) !== normalizeNavigationText(focus.group)) return false;
+  if (focus.scheduledTime && !(event.timeLabel || '').startsWith(focus.scheduledTime)) return false;
+  return true;
 }
 
 function learnerIdentity(event: TimetableEvent) {
@@ -780,6 +845,9 @@ export default function CoachTimetablePage() {
   const [pendingScheduleIntent, setPendingScheduleIntent] = useState<ScheduleNavigationIntent | null>(() => (
     parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent)
   ));
+  const [pendingFocusIntent, setPendingFocusIntent] = useState<TimetableFocusIntent | null>(() => (
+    parseTimetableFocusIntent((location.state as { focusEvent?: unknown } | null)?.focusEvent)
+  ));
 
   const todayDay = now.getDate();
   const todayMonth = now.getMonth();
@@ -845,14 +913,10 @@ export default function CoachTimetablePage() {
 
         const nextEvents = data.events || [];
         const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
-        const anchorDate = new Date();
 
         setEvents(nextEvents);
         setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
         setSummary(nextSummary);
-        setViewYear(anchorDate.getFullYear());
-        setViewMonth(anchorDate.getMonth());
-        setSelectedDay(anchorDate.getDate());
         setSelectedEvent(currentSelectedEvent => {
           if (!currentSelectedEvent) return null;
           return nextEvents.find(event => event.id === currentSelectedEvent.id) || null;
@@ -888,8 +952,13 @@ export default function CoachTimetablePage() {
 
   useEffect(() => {
     const nextIntent = parseScheduleNavigationIntent((location.state as { scheduleIntent?: unknown } | null)?.scheduleIntent);
-    if (!nextIntent) return;
-    setPendingScheduleIntent(nextIntent);
+    if (nextIntent) {
+      setPendingScheduleIntent(nextIntent);
+    }
+    const nextFocusIntent = parseTimetableFocusIntent((location.state as { focusEvent?: unknown } | null)?.focusEvent);
+    if (nextFocusIntent) {
+      setPendingFocusIntent(nextFocusIntent);
+    }
   }, [location.key, location.state]);
 
   useEffect(() => {
@@ -1203,6 +1272,15 @@ export default function CoachTimetablePage() {
     setSelectedDay(Math.min(day, getDaysInMonth(year, month)));
   }, []);
 
+  const focusEventOnCalendar = useCallback((event: TimetableEvent | null) => {
+    if (!event) {
+      setSelectedEvent(null);
+      return;
+    }
+    setCalendarDate(event.year, event.month, event.dayOfMonth);
+    setSelectedEvent(event);
+  }, [setCalendarDate]);
+
   const handlePrev = () => {
     if (viewMode === 'month') { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
     else if (viewMode === 'day') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() - 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
@@ -1327,13 +1405,36 @@ export default function CoachTimetablePage() {
     }
 
     if (preferredEvent) {
-      setSelectedEvent(preferredEvent);
+      focusEventOnCalendar(preferredEvent);
     } else {
-      setSelectedEvent(null);
+      focusEventOnCalendar(null);
     }
 
     setPendingScheduleIntent(null);
-  }, [loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
+  }, [focusEventOnCalendar, loading, pendingScheduleIntent, schedulableEvents, setCalendarDate]);
+
+  useEffect(() => {
+    if (!pendingFocusIntent || loading) return;
+
+    setViewMode('month');
+    setFilterStatus('all');
+    setFilterSource(pendingFocusIntent.source === 'live-session' ? 'live-session' : 'all');
+    setSearchTerm('');
+    setScheduleModalOpen(false);
+    setScheduleModalError(null);
+    setScheduleModalNotice(null);
+
+    const preferredEvent = events.find((event) => eventMatchesFocusIntent(event, pendingFocusIntent)) || null;
+    const anchorDate = parseDateOnly(pendingFocusIntent.date)
+      || (preferredEvent ? parseEventDate(preferredEvent) : null);
+
+    if (anchorDate) {
+      setCalendarDate(anchorDate.getFullYear(), anchorDate.getMonth(), anchorDate.getDate());
+    }
+
+    focusEventOnCalendar(preferredEvent);
+    setPendingFocusIntent(null);
+  }, [events, focusEventOnCalendar, loading, pendingFocusIntent, setCalendarDate]);
 
   const handleScheduleSave = useCallback(async () => {
     if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
@@ -1401,9 +1502,8 @@ export default function CoachTimetablePage() {
 
       setFilterSource('all');
       setFilterStatus('all');
-      setCalendarDate(createdEvent.year, createdEvent.month, createdEvent.dayOfMonth);
       setViewMode('day');
-      setSelectedEvent(createdEvent);
+      focusEventOnCalendar(createdEvent);
       setEventActionError(null);
       setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
       setCreateSessionOpen(false);
@@ -1425,7 +1525,7 @@ export default function CoachTimetablePage() {
     createSessionNotes,
     createSessionTime,
     createSessionType,
-    setCalendarDate,
+    focusEventOnCalendar,
     updateSingleEvent,
   ]);
 
@@ -1452,9 +1552,8 @@ export default function CoachTimetablePage() {
 
       const updatedEvent = data.event as TimetableEvent;
       updateSingleEvent(updatedEvent);
-      setCalendarDate(updatedEvent.year, updatedEvent.month, updatedEvent.dayOfMonth);
       setViewMode('day');
-      setSelectedEvent(updatedEvent);
+      focusEventOnCalendar(updatedEvent);
       setEventActionError(null);
       setEventActionNotice(sanitizeCalendarSyncMessage(data.warning) || null);
       setScheduleModalOpen(false);
@@ -1468,11 +1567,11 @@ export default function CoachTimetablePage() {
       setScheduleModalBusy(false);
     }
   }, [
+    focusEventOnCalendar,
     scheduleModalDate,
     scheduleModalDuration,
     scheduleModalTime,
     selectedScheduleEvent,
-    setCalendarDate,
     updateSingleEvent,
   ]);
 
@@ -1517,7 +1616,11 @@ export default function CoachTimetablePage() {
     if (!selectedEvent) return;
     const url = selectedEvent.meetingLink || selectedEvent.graphWebLink;
     if (!url) {
-      setEventActionError('This event does not have a meeting link yet. Schedule it again first.');
+      setEventActionError(
+        isLiveSessionEvent(selectedEvent)
+          ? 'This live session does not have a launch link yet.'
+          : 'This event does not have a meeting link yet. Schedule it again first.',
+      );
       return;
     }
     window.open(url, '_blank', 'noopener,noreferrer');
@@ -1925,7 +2028,7 @@ export default function CoachTimetablePage() {
                             return (
                               <div
                                 key={ev.id}
-                                onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }}
+                                onClick={(e) => { e.stopPropagation(); focusEventOnCalendar(ev); }}
                                 className={`w-full rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[11px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md`}
                                 title={ev.title}
                               >
@@ -2014,7 +2117,7 @@ export default function CoachTimetablePage() {
                                 return (
                                   <div
                                     key={ev.id}
-                                    onClick={(e) => { e.stopPropagation(); setSelectedEvent(ev); }}
+                                    onClick={(e) => { e.stopPropagation(); focusEventOnCalendar(ev); }}
                                     className={`${tc.bg} ${tc.border} border rounded-md px-1.5 py-1 mb-0.5 cursor-pointer transition-all duration-150 hover:brightness-95`}
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
@@ -2079,7 +2182,7 @@ export default function CoachTimetablePage() {
                               return (
                                 <div
                                   key={ev.id}
-                                  onClick={() => setSelectedEvent(ev)}
+                                  onClick={() => focusEventOnCalendar(ev)}
                                   className={`p-3 rounded-lg border-l-[3px] cursor-pointer transition-smooth hover:shadow-sm hover:brightness-95 ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
                                 >
                                   <div className="flex items-center justify-between mb-1">
@@ -2154,7 +2257,7 @@ export default function CoachTimetablePage() {
                     return (
                       <div
                         key={ev.id}
-                        onClick={() => setSelectedEvent(ev)}
+                        onClick={() => focusEventOnCalendar(ev)}
                         className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
                       >
                         <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-white/70 ${tc.text}`}>
@@ -2292,7 +2395,25 @@ export default function CoachTimetablePage() {
                       {selectedEventFeedback}
                     </div>
                   )}
-                  {!['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
+                  {isLiveSessionEvent(selectedEvent) && (
+                    <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
+                      <p className="text-[11px] text-sky-800">
+                        Live sessions are managed from the curriculum delivery schedule, so they cannot be rescheduled from the coach timetable.
+                      </p>
+                      {(selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-sky-200/70 pt-3">
+                          <button
+                            onClick={handleJoinSelectedMeeting}
+                            disabled={eventActionBusy}
+                            className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-play-circle-line mr-1"></i>Join Session
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!isLiveSessionEvent(selectedEvent) && !['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
@@ -2467,7 +2588,7 @@ export default function CoachTimetablePage() {
                     return (
                       <button
                         key={ev.id}
-                        onClick={() => { setSelectedDay(ev.dayOfMonth); setViewMonth(ev.month); setViewYear(ev.year); setSelectedEvent(ev); }}
+                        onClick={() => focusEventOnCalendar(ev)}
                         className={`group flex w-full items-stretch gap-3 rounded-xl border p-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
                           selectedEvent?.id === ev.id
                             ? 'border-primary-300 bg-primary-50/60 ring-2 ring-primary-100'
