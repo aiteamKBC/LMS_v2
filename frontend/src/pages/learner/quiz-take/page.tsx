@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -374,7 +375,7 @@ function QuestionInput({ question, value, onChange }: {
       return <OrderingInput question={question} value={value as number[] | undefined} onChange={onChange} />;
     case 'matching':
     case 'image_matching':
-      return <MatchingInput question={question} value={value as Record<string, string> | undefined} onChange={onChange} />;
+      return <MatchingInputRich question={question} value={value as Record<string, string> | undefined} onChange={onChange} />;
     default:
       return <p className="text-sm text-foreground-400 italic">This question type isn't supported yet — skip and continue.</p>;
   }
@@ -533,6 +534,56 @@ function MatchingInput({ question, value, onChange }: {
           </select>
         </div>
       ))}
+    </div>
+  );
+}
+
+function MatchingInputRich({ question, value, onChange }: {
+  question: QuizQuestion; value: Record<string, string> | undefined; onChange: (v: QuizAnswerValue) => void;
+}) {
+  const pairs = value || {};
+  const setMatch = (key: string, right: string) => {
+    onChange({ ...pairs, [key]: right });
+  };
+  const rightOptions = question.rightOptions || [];
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-foreground-400 mb-1">Match each item on the left with the correct option</p>
+      {question.answers.map((answer, index) => {
+        const answerKey = answer.leftKey || answer.left || String(answer.id);
+        const label = answer.label || answer.left || `Item ${index + 1}`;
+        const hasImage = Boolean(answer.imageUrl);
+
+        return (
+          <div key={answer.id} className="flex items-center gap-3">
+            <span className={`flex-1 rounded-lg bg-background-100 ${hasImage ? 'px-3 py-3' : 'px-3 py-2.5'} text-sm text-foreground-800`}>
+              {hasImage ? (
+                <span className="flex items-center gap-3">
+                  <img src={answer.imageUrl} alt={label} className="h-20 w-20 rounded-lg object-cover border border-foreground-200/60 bg-white shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold uppercase tracking-wide text-foreground-400">Image {String.fromCharCode(65 + index)}</span>
+                    <span className="block break-words">{label}</span>
+                  </span>
+                </span>
+              ) : (
+                answer.left
+              )}
+            </span>
+            <AppIcon className="ri-arrow-right-line text-foreground-300 shrink-0" />
+            <select
+              value={pairs[answerKey] || ''}
+              onChange={(e) => setMatch(answerKey, e.target.value)}
+              className="flex-1 h-10 px-3 text-sm bg-background-50 border border-foreground-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-300 text-foreground-800"
+            >
+              <option value="">Select...</option>
+              {rightOptions.map((rightOption) => (
+                <option key={rightOption} value={rightOption}>{rightOption}</option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
     </div>
   );
 }
