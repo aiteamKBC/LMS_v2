@@ -77,6 +77,8 @@ export type LearnerActivity = {
   learner_activity_date: string | null;
   activity_period: string | null;
   time_from_to: string | null;
+  time_from: string | null;
+  time_to: string | null;
   actual_lms_hours: number | null;
   activity_category: string;
   activity_unit: string;

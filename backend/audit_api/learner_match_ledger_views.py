@@ -80,6 +80,39 @@ def _period_of(iso_date):
     return iso_date[:7] if iso_date else None
 
 
+def _clock(value):
+    """Pull the ``HH:MM`` clock time out of a timestamp string
+    (``2024-11-17 19:04:59``, ``2024-11-17T19:04:59+01:00``). Anchored on the
+    ``T``/space separator so a bare date — or a ``+01:00`` offset — never
+    matches. Returns None when there's no time-of-day part."""
+    if not value:
+        return None
+    match = re.search(r"[T ](\d{2}:\d{2})", str(value))
+    return match.group(1) if match else None
+
+
+def _stamp_parts(value):
+    """``(YYYY-MM-DD, HH:MM)`` for a timestamp, or None if either half is
+    missing. Ordering these tuples orders the timestamps themselves."""
+    date, clock = _iso_date(value), _clock(value)
+    return (date, clock) if date and clock else None
+
+
+def _time_from_to(started_at, completed_at):
+    """The ledger's "Timestamp" column: when the learner started and finished,
+    e.g. ``19:04 – 19:26``. Falls back to whichever single end we have; None
+    when neither timestamp carries a time-of-day."""
+    start = _clock(started_at)
+    end = _clock(completed_at)
+    if start and end:
+        return f"{start} – {end}"
+    if start:
+        return f"{start} – …"
+    if end:
+        return f"… – {end}"
+    return None
+
+
 def _integer_param(request, name, default, minimum, maximum):
     raw = request.GET.get(name)
     if raw is None or raw == "":
@@ -244,6 +277,10 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
     actual_seconds_total = 0.0
     completed_count = 0
     last_date = None
+    # Earliest start / latest finish across the bundle's materials, each kept as
+    # a (date, HH:MM) pair so the span can be rejected when it crosses days.
+    first_start = None
+    last_end = None
     category_counts = collections.Counter()
     for item in items:
         act = item.get("activity") if isinstance(item.get("activity"), dict) else {}
@@ -263,6 +300,12 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
         item_date = _iso_date(act.get("completed_at")) or _iso_date(act.get("started_at"))
         if item_date and (last_date is None or item_date > last_date):
             last_date = item_date
+        started = _stamp_parts(act.get("started_at"))
+        if started and (first_start is None or started < first_start):
+            first_start = started
+        ended = _stamp_parts(act.get("completed_at"))
+        if ended and (last_end is None or ended > last_end):
+            last_end = ended
         material = (item.get("material_type") or "").strip() or "reading"
         category_counts[material] += 1
         attempt_records = act.get("quiz_attempt_records") or 0
@@ -292,6 +335,14 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
 
     total = len(components)
     month_period = _period_of(last_date) or planned_month_period
+    # A bundle spans several materials, so its span is only meaningful when they
+    # were all worked on the same day — otherwise "19:04 – 21:30" would silently
+    # hide a multi-day gap.
+    same_day_span = (
+        (first_start[1], last_end[1])
+        if first_start and last_end and first_start[0] == last_end[0]
+        else None
+    )
     # Bundle id is stable across learners for the same week group, so the
     # cross-learner "who has this" view lines them up.
     week_slug = _norm_group(group_week).replace(" ", "-") if group_week else f"m{month_no}"
@@ -309,7 +360,11 @@ def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
         "activity_date": last_date,
         "learner_activity_date": last_date,
         "activity_period": month_period,
-        "time_from_to": None,
+        "time_from_to": (
+            f"{same_day_span[0]} – {same_day_span[1]}" if same_day_span else None
+        ),
+        "time_from": same_day_span[0] if same_day_span else None,
+        "time_to": same_day_span[1] if same_day_span else None,
         "actual_lms_hours": round(actual_seconds_total / 3600, 2) if actual_seconds_total else None,
         "activity_category": "reading+quiz",
         "activity_unit": group_week or "Readings & quizzes",
@@ -390,7 +445,10 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
-                "time_from_to": otjh.get("logged_time") or item.get("time_spent_formatted") or None,
+                "time_from_to": _time_from_to(item.get("started_at"), item.get("completed_at")),
+                # Same span split out, for the two-column "From / To" header.
+                "time_from": _clock(item.get("started_at")),
+                "time_to": _clock(item.get("completed_at")),
                 "actual_lms_hours": actual_hours,
                 "otjh_credited": bool(otjh.get("credited")) if otjh else None,
                 "activity_category": _lms_category(item),
@@ -429,7 +487,10 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
+                # Assignments/attendance carry dates only — no time of day.
                 "time_from_to": None,
+                "time_from": None,
+                "time_to": None,
                 "actual_lms_hours": _to_float(item.get("actual_hours")),
                 "activity_category": "assignment",
                 "activity_unit": item.get("name") or "Assignment",
@@ -470,7 +531,10 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
+                # Assignments/attendance carry dates only — no time of day.
                 "time_from_to": None,
+                "time_from": None,
+                "time_to": None,
                 "actual_lms_hours": _to_float(item.get("actual_hours")),
                 "activity_category": "attendance",
                 "activity_unit": item.get("module") or "Attendance",

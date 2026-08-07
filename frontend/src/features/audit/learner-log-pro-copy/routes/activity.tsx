@@ -235,7 +235,7 @@ function ActivityLogPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-[88rem] flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-baseline gap-3">
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Live off-the-job activity</span>
@@ -259,7 +259,7 @@ function ActivityLogPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[88rem] space-y-6 px-6 py-8">
+      <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         {overview.isLoading && (
           <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground">Loading activity from Neon…</div>
         )}

@@ -102,6 +102,13 @@ function formatHours(value: number) {
   return `${value.toFixed(2)} h`;
 }
 
+// Per-activity hours are shown as whole hours in the log tables; the section
+// totals above still use the exact values, so a column can differ from its
+// total by the rounding remainder.
+function roundHours(value: number | null | undefined) {
+  return value == null ? "—" : String(Math.round(value));
+}
+
 function SearchPage() {
   const [learnerSearch, setLearnerSearch] = useState("");
   const [sharedPeriod, setSharedPeriod] = useState("");
@@ -169,7 +176,7 @@ function SearchPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-[88rem] flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-baseline gap-3">
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Live learner search</span>
@@ -185,7 +192,7 @@ function SearchPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[88rem] space-y-6 px-6 py-8">
+      <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         <section className="rounded-lg border border-border bg-card shadow-panel">
           <header className="border-b border-border px-7 py-5">
             <h1 className="font-serif text-lg text-foreground">Learner search</h1>
@@ -369,30 +376,40 @@ function SearchPage() {
             <div className="max-h-[36rem] overflow-auto">
               <Table>
                 <TableHeader>
+                  {/* Two header rows: "Timestamp" spans the From / To pair, every
+                      other column spans both rows so the grid stays aligned. */}
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="label-caps pl-7">Activity ID</TableHead>
-                    <TableHead className="label-caps">Date</TableHead>
-                    <TableHead className="label-caps">Learner</TableHead>
-                    <TableHead className="label-caps">Month</TableHead>
-                    <TableHead className="label-caps">Category</TableHead>
-                    <TableHead className="label-caps">Activity</TableHead>
-                    <TableHead className="label-caps">Timestamp</TableHead>
-                    <TableHead className="label-caps text-right">Planned</TableHead>
-                    <TableHead className="label-caps pr-7 text-right">Actual</TableHead>
+                    <TableHead rowSpan={2} className="label-caps pl-7">Activity ID</TableHead>
+                    <TableHead rowSpan={2} className="label-caps">Date</TableHead>
+                    <TableHead rowSpan={2} className="label-caps">Learner</TableHead>
+                    <TableHead rowSpan={2} className="label-caps">Month</TableHead>
+                    <TableHead rowSpan={2} className="label-caps">Category</TableHead>
+                    <TableHead rowSpan={2} className="label-caps">Activity</TableHead>
+                    <TableHead colSpan={2} className="label-caps h-auto border-b border-border pb-1 pt-3 text-center">Timestamp</TableHead>
+                    <TableHead rowSpan={2} className="label-caps text-right">Planned</TableHead>
+                    <TableHead rowSpan={2} className="label-caps pr-7 text-right">Actual</TableHead>
+                  </TableRow>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">From</TableHead>
+                    <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">To</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {activities.isLoading && (
-                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
                     <TableRow key={row.id}>
-                      <TableCell className="pl-7 font-mono text-xs">{row.plan_id}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
-                      <TableCell className="text-sm font-medium">{row.learner}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{row.month_unit}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                      <TableCell className="max-w-sm text-sm">
+                      {/* Bundle ids (rqb:…) run long — clip them so they can't
+                          starve the narrow columns further right. */}
+                      <TableCell className="max-w-56 truncate pl-7 font-mono text-xs" title={row.plan_id}>{row.plan_id}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm font-medium">{row.learner}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.month_unit}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.activity_category}</TableCell>
+                      {/* The flexible column — capped so the slack on a wide
+                          screen doesn't open a gap before the Timestamp pair. */}
+                      <TableCell className="min-w-72 max-w-[44rem] text-sm">
                         <Link
                           to="/activity"
                           search={{ learner: row.learner.toLowerCase(), activity: row.plan_id }}
@@ -401,9 +418,10 @@ function SearchPage() {
                           {row.activity_unit}
                         </Link>
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">{row.planned_hours ?? "—"}</TableCell>
-                      <TableCell className="pr-7 text-right font-mono text-sm text-success">{row.actual_lms_hours ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_to ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
+                      <TableCell className="pr-7 text-right font-mono text-sm text-success">{roundHours(row.actual_lms_hours)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
