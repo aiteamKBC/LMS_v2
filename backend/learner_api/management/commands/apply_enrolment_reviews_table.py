@@ -4,6 +4,13 @@ Idempotent: safe to re-run. Creates the table if absent and adds any missing
 column, so extending the model later means adding an ADD COLUMN IF NOT EXISTS
 line here rather than a hand-run ALTER.
 
+This file is the single source of truth for the table's shape: every column
+EnrolmentReview declares must appear in both CREATE_SQL and ADD_COLUMNS. The
+employer sign-off columns once lived only in apply_employer_signing, so a fresh
+database got a table the model could not query at all (UndefinedColumn on every
+read). apply_employer_signing still adds them — both use IF NOT EXISTS, so the
+two commands agree in either order — but the definition belongs here.
+
 One row per booked review, keyed by Event_key — the same key as the
 "Coach".coach_calendar_event row the booking creates, so the enrolment record and
 the live calendar can always be reconciled. The unique index on it makes the
@@ -55,6 +62,13 @@ CREATE TABLE IF NOT EXISTS enrolment."{TABLE}" (
     "Admin_signature"   text,
     "Admin_signed_name" text,
     "Admin_signed_at"   timestamptz,
+    -- Third signing party: the learner's employer. Employer_signature_required is
+    -- nullable so the API decides the default per review type rather than the DDL
+    -- freezing it (see EnrolmentReview.employer_signature_required).
+    "Employer_signature"          text,
+    "Employer_signed_name"        text,
+    "Employer_signed_at"          timestamptz,
+    "Employer_signature_required" boolean,
     "Booked_at"         timestamptz,
     "Cancelled_at"      timestamptz,
     "Created_at"        timestamptz NOT NULL DEFAULT now(),
@@ -95,6 +109,14 @@ ADD_COLUMNS = [
     ('"Admin_signature"', "text"),
     ('"Admin_signed_name"', "text"),
     ('"Admin_signed_at"', "timestamptz"),
+    # Third signing party: the learner's employer (see
+    # EnrolmentReview.employer_signature). Previously added only by
+    # apply_employer_signing, which left a fresh database without them and made
+    # every EnrolmentReview query fail with UndefinedColumn.
+    ('"Employer_signature"', "text"),
+    ('"Employer_signed_name"', "text"),
+    ('"Employer_signed_at"', "timestamptz"),
+    ('"Employer_signature_required"', "boolean"),
     ('"Booked_at"', "timestamptz"),
     ('"Cancelled_at"', "timestamptz"),
     ('"Created_at"', "timestamptz NOT NULL DEFAULT now()"),
@@ -112,6 +134,10 @@ INDEXES_SQL = [
     # Enrolment officers review their own caseload's bookings.
     f'''CREATE INDEX IF NOT EXISTS enrolment_reviews_coach_idx
             ON enrolment."{TABLE}" ("Coach_email")''',
+    # Employers pull their own "what still needs signing?" list. Also created by
+    # apply_employer_signing; both are IF NOT EXISTS so either order is safe.
+    f'''CREATE INDEX IF NOT EXISTS enrolment_reviews_employer_signed_idx
+            ON enrolment."{TABLE}" ("Employer_signed_at")''',
 ]
 
 

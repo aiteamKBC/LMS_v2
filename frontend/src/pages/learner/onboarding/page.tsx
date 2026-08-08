@@ -10,7 +10,7 @@ import { WIZARD_STEPS, type EnrolmentBoard } from '@/pages/users/types';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
-import { ONBOARDING_NAV_ITEMS, ONBOARDING_REVIEWS_ROUTE, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
+import { ONBOARDING_REVIEWS_ROUTE } from '@/hooks/useOnboardingRedirect';
 
 const learnerNav = roleNavMap.learner;
 
@@ -112,23 +112,14 @@ export default function LearnerOnboardingPage() {
   const idx = WIZARD_STEPS.findIndex((s) => s.slug === stepSlug);
   const currentIndex = idx === -1 ? 0 : idx;
 
-  // Hide the rest of the learner workspace while they are onboarding — a learner
-  // revisiting this page after enrolment keeps their full nav.
-  //
-  // Assume onboarding until the board proves otherwise: deriving this from a
-  // still-null board would start false and flip true on load, flashing the full
-  // sidebar and then collapsing it. Being on this page at all means onboarding in
-  // almost every case, so the minimal nav is the better guess while loading.
-  const onboardingOnly = loading || !board ? true : isOnboardingStatus(board.programme.status);
-
   return (
     <WorkspaceShell
       role="learner"
       roleLabel={learnerNav.label}
-      // Onboarding learners see only this page in the sidebar — the rest of the
-      // learner workspace needs an enrolled learner with a training plan. Once
-      // staff move them off 'Onboarding' the full nav returns.
-      navItems={onboardingOnly ? ONBOARDING_NAV_ITEMS : learnerNav.items}
+      // WorkspaceShell trims this to match the learner's programme status
+      // (onboarding and delivery each get a reduced menu), so the full nav is
+      // handed over here and gated in one place for every learner page.
+      navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle="My Enrolment"
       pageSubtitle="Complete your onboarding"

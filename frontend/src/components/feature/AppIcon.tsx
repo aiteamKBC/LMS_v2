@@ -210,6 +210,7 @@ function resolveIcon(name: string): LucideIcon {
   if (/bar-chart|line-chart|chart|progress|analytics|insight|trend/.test(key)) return BarChart3;
   if (/pie-chart/.test(key)) return BarChart3;
   if (/stack/.test(key)) return Layers3;
+  if (/draft/.test(key)) return FileEdit;
   if (/database|data/.test(key)) return Database;
   if (/code|xml/.test(key)) return Code2;
   if (/link/.test(key)) return Link;

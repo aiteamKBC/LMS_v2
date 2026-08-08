@@ -3,6 +3,7 @@ import { useToast } from '@/hooks/useToast';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
 import { createEnrolmentUser } from '@/api/enrolmentUsers';
+import { listEmployers, type EmployerRow } from '@/api/employers';
 import { COUNTRY_OPTIONS as ALL_COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
 import type { UserListRow } from '../types';
 import { Modal } from './Modal';
@@ -39,9 +40,17 @@ interface FieldDef {
   /**
    * Options are loaded from the database rather than given in `options`.
    * The programme/cohort/group trio is a cascade — each level stays disabled
-   * until its parent is chosen. `caseOwner` is independent, loaded once.
+   * until its parent is chosen. `caseOwner` and `employer` are independent,
+   * loaded once.
    */
-  lookup?: 'programme' | 'cohort' | 'group' | 'caseOwner';
+  lookup?: 'programme' | 'cohort' | 'group' | 'caseOwner' | 'employer';
+  /**
+   * This field's value is filled in from another field rather than typed. Shown
+   * read-only, since editing it would just be overwritten by the next change to
+   * its source — and a value that disagrees with the employer record would be
+   * worse than no value.
+   */
+  derivedFrom?: 'employer';
 }
 
 interface SectionDef {
@@ -132,11 +141,20 @@ const SECTIONS: SectionDef[] = [
     fields: [
       { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner' },
       { name: 'learningProvider', label: 'Learning provider', type: 'select', options: PROVIDER_OPTIONS },
-      { name: 'employer', label: 'Employer', type: 'text', placeholder: 'e.g. Al Fanar Construction' },
+      // Picked from enrolment."Employers" — choosing one auto-fills the
+      // organisation below it from that employer's Employer Group.
+      { name: 'employer', label: 'Employer', type: 'select', lookup: 'employer' },
       { name: 'employerAddress', label: 'Employer address', type: 'text' },
       { name: 'lineManager', label: 'Manager', type: 'text', placeholder: 'e.g. Jane Smith' },
       { name: 'mentor', label: 'Mentor', type: 'text' },
-      { name: 'organization', label: 'Organisation', type: 'text', placeholder: 'e.g. Kent Business College' },
+      {
+        name: 'organization',
+        label: 'Organisation',
+        type: 'text',
+        placeholder: 'e.g. Kent Business College',
+        derivedFrom: 'employer',
+        hint: 'Filled from the selected employer’s organisation.',
+      },
       { name: 'referenceNumber', label: 'Reference number', type: 'text', placeholder: 'refnumber' },
       { name: 'extendedBreak', label: 'Extended break', type: 'text' },
     ],
@@ -170,8 +188,12 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
   // Case owners come from Staff_users (positions Caseowner / Admin) — independent
   // of the programme cascade, so loaded once alongside programmes.
   const [caseOwners, setCaseOwners] = useState<string[]>([]);
+  // Whole employer records, not just names: picking one has to read its
+  // organisation to auto-fill the Organisation field below.
+  const [employers, setEmployers] = useState<EmployerRow[]>([]);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [staffError, setStaffError] = useState<string | null>(null);
+  const [employerError, setEmployerError] = useState<string | null>(null);
 
   const programme = formData.programme ?? '';
   const cohort = formData.cohort ?? '';
@@ -182,6 +204,15 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       // Picking a new programme/cohort invalidates the levels below it.
       if (name === 'programme') { next.cohort = ''; next.group = ''; }
       if (name === 'cohort') { next.group = ''; }
+      // The employer select carries the record's id (names repeat, ids don't),
+      // so the stored employer name and the derived organisation are both looked
+      // up from it. Clearing the employer clears the organisation with it, rather
+      // than stranding a company the chosen employer has nothing to do with.
+      if (name === 'employerId') {
+        const picked = employers.find((e) => e.id === value);
+        next.employer = picked?.name ?? '';
+        next.organization = picked ? picked.employerGroupNames.join(', ') : '';
+      }
       return next;
     });
   const isOn = (name: string) => formData[name] === 'true';
@@ -196,6 +227,12 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
     fetchCaseOwners()
       .then((rows) => { if (!cancelled) setCaseOwners(rows); })
       .catch((e: Error) => { if (!cancelled) setStaffError(e.message); });
+    // A failure here doesn't block the form — but it must not be silent either.
+    // Reported separately so "the lookup broke" can't be mistaken for "no
+    // employers exist yet", which is what the empty-state hint means.
+    listEmployers()
+      .then((res) => { if (!cancelled) setEmployers(res.results); })
+      .catch((e: Error) => { if (!cancelled) setEmployerError(e.message); });
     return () => { cancelled = true; };
   }, []);
 
@@ -222,8 +259,13 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
     return () => { cancelled = true; };
   }, [programme, cohort]);
 
-  /** Options + disabled state for a database-backed field. */
-  const lookupState = (level: NonNullable<FieldDef['lookup']>) => {
+  /**
+   * Options + disabled state for a database-backed field.
+   *
+   * `employer` is absent on purpose: its options are id/label pairs rather than
+   * plain strings, so renderField handles that select directly.
+   */
+  const lookupState = (level: Exclude<NonNullable<FieldDef['lookup']>, 'employer'>) => {
     if (level === 'programme') return { values: programmes, disabled: false, waitingFor: '', empty: 'None available' };
     if (level === 'cohort') return { values: cohorts, disabled: !programme, waitingFor: 'programme', empty: 'None available' };
     if (level === 'group') return { values: groups, disabled: !cohort, waitingFor: 'cohort', empty: 'None available' };
@@ -279,6 +321,11 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       cohort: formData.cohort,
       group: formData.group,
       employer: formData.employer,
+      // The employer's record id, alongside the display name above: the name is
+      // what listings show, this is what reaches the rest of that employer's
+      // data. Empty string -> null so "no employer" clears the reference rather
+      // than failing the unknown-id check.
+      employerId: formData.employerId ? Number(formData.employerId) : null,
       lineManager: formData.lineManager,
       organization: formData.organization,
       title: formData.title,
@@ -336,7 +383,42 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
           {field.required ? <span className="text-red-500 ml-0.5">*</span> : <span className="text-foreground-300 ml-1">(O)</span>}
         </label>
         <div className="min-w-0">
-          {field.lookup ? (
+          {field.lookup === 'employer' ? (
+            /* Keyed on the record id, not the name: two employers can share a
+               name, and picking the wrong record would auto-fill the wrong
+               organisation. `employer` itself still stores the name, which is
+               what the learner column holds. */
+            <select
+              id={`cu-${field.name}`}
+              value={formData.employerId ?? ''}
+              onChange={(e) => setField('employerId', e.target.value)}
+              className={`${inputClass} cursor-pointer`}
+            >
+              <option value="">
+                {employerError
+                  ? 'Could not load employers — see below'
+                  : employers.length === 0
+                    ? 'No employers — create an employer profile first'
+                    : 'Select…'}
+              </option>
+              {employers.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.employerGroupNames.length ? `${e.name} — ${e.employerGroupNames.join(', ')}` : e.name}
+                </option>
+              ))}
+            </select>
+          ) : field.derivedFrom ? (
+            /* Read-only: it mirrors the employer's organisation, so a typed value
+               would be silently replaced on the next employer change. */
+            <input
+              id={`cu-${field.name}`}
+              type="text"
+              value={value}
+              readOnly
+              placeholder={formData.employerId ? '—' : 'Select an employer first…'}
+              className={`${inputClass} bg-background-100/60 text-foreground-600 cursor-not-allowed`}
+            />
+          ) : field.lookup ? (
             (() => {
               const { values, disabled, waitingFor, empty } = lookupState(field.lookup);
               return (
@@ -449,6 +531,13 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
               {section.title === 'Delivery & employer' && staffError && (
                 <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
                   <AppIcon className="ri-error-warning-line mr-1" />Could not load case owners: {staffError}
+                </p>
+              )}
+              {section.title === 'Delivery & employer' && employerError && (
+                <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
+                  <i className="ri-error-warning-line mr-1" />Could not load employers: {employerError}. The
+                  dropdown is empty because the lookup failed, not because no employers exist — if the backend was
+                  started before this feature was added, restart it.
                 </p>
               )}
             </section>

@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import SimpleTestCase, override_settings
 
@@ -13,6 +13,7 @@ from .active_users import (
     _reported_minutes,
     completed_hours_from_progress,
     refresh_learner_ksb_snapshot,
+    hydrate_training_plan,
 )
 from .attendance import _summarize_attendance
 from .evidence_storage import (
@@ -29,6 +30,7 @@ from .learner_detail import (
     _schedule_based_week_target,
     _sequential_week_target,
 )
+from .learner_progression import ACTIVE_STATUS, READY_TO_ENROL_STATUS, _as_date, advance_learner
 from .mappers import to_learner_detail
 from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
 
@@ -38,6 +40,71 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertEqual(_serialise_quiz_ref("42"), 42)
         self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
         self.assertIsNone(_serialise_quiz_ref(None))
+
+
+class LearnerProgressionTests(SimpleTestCase):
+    def _learner(self, status, start_date="2026-09-01"):
+        return SimpleNamespace(
+            pk=19,
+            learner_type="apprenticeship",
+            programme_status=status,
+            start_date=start_date,
+            save=Mock(),
+        )
+
+    @patch("learner_api.learner_progression.compliance_documents_complete", return_value=True)
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 9, 1))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_completed_documents_move_delivery_learner_to_ready_to_enrol(self, _today, _start, complete):
+        learner = self._learner("Delivery")
+
+        self.assertEqual(advance_learner(learner), READY_TO_ENROL_STATUS)
+        self.assertEqual(learner.programme_status, READY_TO_ENROL_STATUS)
+        learner.save.assert_called_once_with(update_fields=["programme_status"])
+        complete.assert_called_once_with("apprenticeship", 19)
+
+    @patch("learner_api.active_users.sync_active_user")
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 8, 8))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_ready_learner_becomes_active_on_their_start_date(self, _today, _start, sync):
+        learner = self._learner(READY_TO_ENROL_STATUS)
+
+        self.assertEqual(advance_learner(learner), ACTIVE_STATUS)
+        self.assertEqual(learner.programme_status, ACTIVE_STATUS)
+        learner.save.assert_called_once_with(update_fields=["programme_status"])
+        sync.assert_called_once_with(learner)
+
+    def test_parses_legacy_text_start_dates(self):
+        self.assertEqual(_as_date("2026-08-08"), date(2026, 8, 8))
+        self.assertEqual(_as_date("2026-08-08T09:30:00Z"), date(2026, 8, 8))
+
+
+class TrainingPlanHydrationTests(SimpleTestCase):
+    @patch("learner_api.active_users.connections")
+    def test_selected_modules_are_expanded_with_authored_weeks_and_components(self, connections):
+        cursor = MagicMock()
+        connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
+        cursor.fetchall.return_value = [
+            ("mod-1", "Module 1", 11, "Week 1", 1, 101, "Watch this", "video"),
+            ("mod-1", "Module 1", 11, "Week 1", 1, 102, "Quiz", "quiz"),
+            ("mod-1", "Module 1", 12, "Week 2", 2, 103, "Read this", "reading"),
+        ]
+
+        result = hydrate_training_plan([{"moduleId": "mod-1", "moduleTitle": "Old title"}])
+
+        self.assertEqual(result, [{
+            "moduleId": "mod-1",
+            "moduleTitle": "Module 1",
+            "weeks": [
+                {"weekId": "11", "weekTitle": "Week 1", "components": [
+                    {"componentId": "101", "componentTitle": "Watch this"},
+                    {"componentId": "102", "componentTitle": "Quiz"},
+                ]},
+                {"weekId": "12", "weekTitle": "Week 2", "components": [
+                    {"componentId": "103", "componentTitle": "Read this"},
+                ]},
+            ],
+        }])
 
 
 class LearnerActivityFeedProjectionTests(SimpleTestCase):

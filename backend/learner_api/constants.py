@@ -74,33 +74,29 @@ ORGANISATION_GROUP_TYPE_CHOICES = [
     "Other",
 ]
 
+# The programme lifecycle, in the order a learner moves through it. Only these
+# values can be written; rows created before this list was trimmed may still
+# hold older statuses, which display as-is but can no longer be selected.
 PROGRAMME_STATUS_CHOICES = [
-    "Ready to enrol",
+    # Account exists but the learner hasn't been put into the enrolment flow
+    # yet. Also the display fallback when no status has been set at all.
+    "Fresh user",
     # Learner is filling in their own enrolment wizard. While a learner sits at
     # this status their /workspace/learner landing page redirects them to
     # /learner/onboarding instead of the normal overview.
     "Onboarding",
-    "On probation",
+    "Delivery",
+    "Ready to enrol",
     "Active",
-    "Non starter",
-    "Under review",
-    "On maternity break",
-    "On illness break",
-    "On other break",
-    "Entered EPA",
-    "Completed",
-    "Withdrawn (w/o funding)",
-    "Early Leaver (funded)",
-    "Not Eligible",
-    "Imported",
-    "On a break",
     "Withdrawn",
-    "Pending Change of Programme",
-    "Did Not Attend",
-    "Early Completer",
-    "Left Employment Active",
-    "In Work (Mandatory)",
-    "Outcome",
-    "Tracking",
-    "In Work (Voluntary)",
+    "On break",
+    "Completed",
 ]
+
+# Shown for a learner whose programme status has never been set.
+DEFAULT_PROGRAMME_STATUS = "Fresh user"
+
+# Reached automatically once all three onboarding reviews are signed by every
+# party (see learning_plan.promote_to_delivery_if_ready). A learner at this
+# status has a learning plan to build, so the users table offers it there.
+DELIVERY_PROGRAMME_STATUS = "Delivery"
